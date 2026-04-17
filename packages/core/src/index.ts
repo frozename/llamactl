@@ -10,3 +10,5 @@ export * as presets from './presets.js';
 export * as target from './target.js';
 export * as bench from './bench/index.js';
 export * as hf from './hf.js';
+export * as quant from './quant.js';
+export * as recommendations from './recommendations.js';

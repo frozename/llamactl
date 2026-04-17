@@ -1893,6 +1893,16 @@ llama-candidate-test() {
 }
 
 llama-recommendations() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" recommendations "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_recommendations_legacy() {
   local requested_profile="${1:-current}"
   local profile=""
   local profiles=()
