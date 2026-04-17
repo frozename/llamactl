@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "bun run src/bin.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "@llamactl/core": "workspace:*"

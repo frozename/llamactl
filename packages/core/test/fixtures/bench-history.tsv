@@ -1,0 +1,3 @@
+2026-04-17T08:21:03-0300	macbook-pro-48g	Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf	text	65536	82764d8f4	conservative	43.206589	586.907857	-fa off -b 1024 -ub 256
+2026-04-17T08:21:54-0300	macbook-pro-48g	Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf	text	65536	82764d8f4	default	42.632656	715.181562	-fa on -b 2048 -ub 512
+2026-04-15T04:39:09-0300	gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf	throughput	52.122793	737.703442	-fa on -b 4096 -ub 1024

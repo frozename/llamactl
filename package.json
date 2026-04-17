@@ -12,7 +12,10 @@
   "scripts": {
     "cli": "bun run --cwd packages/cli src/bin.ts",
     "typecheck": "bun run --cwd packages/core tsc --noEmit && bun run --cwd packages/cli tsc --noEmit",
-    "test": "bun test"
+    "test": "zsh test/run-all.zsh",
+    "test:core": "bun run --cwd packages/core test",
+    "test:cli": "bun run --cwd packages/cli test",
+    "test:shell": "zsh test/shell-smoke.zsh"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",

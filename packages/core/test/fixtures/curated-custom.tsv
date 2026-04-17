@@ -1,0 +1,3 @@
+test-qwen3-4b-q4	Test Qwen 4B	qwen35	multimodal	candidate	Qwen3.5-4B-GGUF/Qwen3.5-4B-UD-Q4_K_XL.gguf	unsloth/Qwen3.5-4B-GGUF
+# this comment line should be skipped
+test-deepseek-14b	Test DS 14B	deepseek	reasoning	candidate	DeepSeek-Distill-14B-GGUF/DeepSeek-Distill-14B-UD-Q4_K_M.gguf	unsloth/DeepSeek-Distill-14B-GGUF

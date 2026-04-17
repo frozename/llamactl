@@ -1,0 +1,3 @@
+macbook-pro-48g	Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf	text	65536	82764d8f4	default	42.632656	715.181562	2026-04-17T08:21:54-0300
+macbook-pro-48g	gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf	vision	32768	82764d8f4	throughput	51.181301	766.668202	2026-04-17T10:06:59-0300
+gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf	throughput	39.173486	771.465810	2026-04-15T04:16:03-0300
