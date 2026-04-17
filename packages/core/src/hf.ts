@@ -1,6 +1,5 @@
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { findByRel } from './catalog.js';
 import { resolveEnv } from './env.js';
 import type {
@@ -87,13 +86,19 @@ function readJsonFile<T>(file: string): T | null {
 }
 
 /**
- * Write a JSON document to disk atomically via a tmp file + rename.
- * Keeps readers from seeing partially-written cache entries when a
- * second CLI invocation races against a refresh.
+ * Write a JSON document to disk atomically via a same-directory tmp
+ * file + rename. Using the target's own directory avoids EXDEV when
+ * $LOCAL_AI_RUNTIME_DIR is on a different filesystem than $TMPDIR
+ * (e.g. an external SSD mount on macOS). Keeps readers from seeing
+ * partially-written cache entries on concurrent refreshes.
  */
 function writeJsonFile(file: string, body: string): void {
-  mkdirSync(dirname(file), { recursive: true });
-  const tmp = join(tmpdir(), `llamactl-hf-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+  const dir = dirname(file);
+  mkdirSync(dir, { recursive: true });
+  const tmp = join(
+    dir,
+    `.${file.slice(dir.length + 1)}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`,
+  );
   writeFileSync(tmp, body);
   renameSync(tmp, file);
 }
@@ -130,11 +135,26 @@ async function fetchWithCache(opts: FetchWithCacheOpts): Promise<string | null> 
     });
     if (res.ok) {
       const body = await res.text();
-      writeJsonFile(cacheFile, body);
+      try {
+        writeJsonFile(cacheFile, body);
+      } catch (err) {
+        // Cache write failed (full disk, permission problem, cross-fs
+        // surprise). Still return the fetched body — we'd rather do the
+        // work of hitting HF again next time than hide the actual data
+        // from the caller right now.
+        process.stderr.write(
+          `llamactl: failed to cache ${cacheFile}: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
       return body;
     }
-  } catch {
-    // network failure — fall through to stale cache below
+    process.stderr.write(
+      `llamactl: HF returned status ${res.status} for ${url}\n`,
+    );
+  } catch (err) {
+    process.stderr.write(
+      `llamactl: HF fetch failed for ${url}: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
   }
 
   const stale = readJsonFile<unknown>(cacheFile);
