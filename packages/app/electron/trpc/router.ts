@@ -8,6 +8,7 @@ import {
   presets,
   recommendations,
   target as targetMod,
+  uninstall as uninstallMod,
   type MachineProfile,
 } from '@llamactl/core';
 
@@ -125,6 +126,20 @@ export const router = t.router({
       presets.deletePresetOverride(input.profile, input.preset);
       const resolved = envMod.resolveEnv();
       return presets.readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE);
+    }),
+
+  uninstall: t.procedure
+    .input(
+      z.object({
+        rel: z.string().min(1),
+        force: z.boolean().optional(),
+      }),
+    )
+    .mutation(({ input }) => {
+      // Surface the structured report as-is. `code` is 0 on success,
+      // non-zero on refusal (e.g. non-candidate scope without --force),
+      // with `error` carrying the human message the CLI prints.
+      return uninstallMod.uninstall({ rel: input.rel, force: input.force });
     }),
 
   discover: t.procedure
