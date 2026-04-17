@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "./electron",
+    "outDir": "./out/main",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    "jsx": "preserve"
+  },
+  "include": ["electron/**/*.ts"]
+}
