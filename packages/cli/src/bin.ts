@@ -4,6 +4,7 @@ import { runCatalog } from './commands/catalog.js';
 import { runBench } from './commands/bench.js';
 import { runRecommendations } from './commands/recommendations.js';
 import { runDiscover } from './commands/discover.js';
+import { runPull } from './commands/pull.js';
 import { runUninstall } from './commands/uninstall.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
@@ -29,6 +30,11 @@ Write commands:
                                               Write a preset override
   llamactl catalog promotions                 List active promotions
   llamactl uninstall <rel> [--force]          Remove a pulled model and TSV state
+  llamactl pull <repo> [target]               Bulk pull an HF repo
+  llamactl pull file <repo> <file>            Pull a single GGUF + mmproj sibling
+  llamactl pull candidate <repo> [file] [profile]
+                                              Pick the best GGUF for the profile
+                                              and pull it (--json supported)
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -49,6 +55,8 @@ async function main(argv: string[]): Promise<number> {
       return runDiscover(rest);
     case 'uninstall':
       return runUninstall(rest);
+    case 'pull':
+      return runPull(rest);
     case undefined:
     case '--help':
     case '-h':

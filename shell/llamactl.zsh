@@ -1838,6 +1838,31 @@ llama-pull-candidate() {
   local repo="$1"
   local file="${2:-}"
   local profile="${3:-$LLAMA_CPP_MACHINE_PROFILE}"
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  local summary="" rel="" was_missing=0
+
+  if [ -z "$repo" ]; then
+    echo "Usage: llama-pull-candidate <hf-repo> [gguf-file] [profile]"
+    return 1
+  fi
+
+  if ! command -v bun >/dev/null 2>&1 || [ ! -f "$cli" ]; then
+    echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+    return 1
+  fi
+
+  summary="$(bun "$cli" pull candidate --json "$repo" "$file" "$profile")" || return $?
+  rel="$(printf '%s\n' "$summary" | jq -r '.rel // empty' 2>/dev/null)"
+  was_missing="$(printf '%s\n' "$summary" | jq -r 'if .wasMissing then 1 else 0 end' 2>/dev/null)"
+  [ -n "$rel" ] || return 1
+
+  _llama_maybe_tune_after_pull "$rel" "${was_missing:-0}"
+}
+
+_llama_pull_candidate_legacy() {
+  local repo="$1"
+  local file="${2:-}"
+  local profile="${3:-$LLAMA_CPP_MACHINE_PROFILE}"
 
   if [ -z "$repo" ]; then
     echo "Usage: llama-pull-candidate <hf-repo> [gguf-file] [profile]"
@@ -1849,7 +1874,7 @@ llama-pull-candidate() {
     return 1
   }
 
-  _llama_pull_repo_model "$repo" "$file"
+  _llama_pull_repo_model_legacy "$repo" "$file"
 }
 
 llama-candidate-test() {
@@ -2597,6 +2622,16 @@ hf-search() {
 }
 
 llama-pull() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" pull "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_pull_legacy() {
   local repo="$1"
   local target="${2:-}"
 
@@ -2616,7 +2651,6 @@ llama-pull() {
 llama-pull-file() {
   local repo="$1"
   local file="$2"
-  local target
 
   if [ -z "$repo" ] || [ -z "$file" ]; then
     echo "Usage: llama-pull-file <hf-repo> <filename.gguf>"
@@ -2627,6 +2661,30 @@ llama-pull-file() {
 }
 
 _llama_pull_repo_model() {
+  local repo="$1"
+  local file="$2"
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  local summary="" rel="" was_missing=0
+
+  if [ -z "$repo" ] || [ -z "$file" ]; then
+    echo "Usage: _llama_pull_repo_model <hf-repo> <filename.gguf>" >&2
+    return 1
+  fi
+
+  if ! command -v bun >/dev/null 2>&1 || [ ! -f "$cli" ]; then
+    echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+    return 1
+  fi
+
+  summary="$(bun "$cli" pull file --json "$repo" "$file")" || return $?
+  rel="$(printf '%s\n' "$summary" | jq -r '.rel // empty' 2>/dev/null)"
+  was_missing="$(printf '%s\n' "$summary" | jq -r 'if .wasMissing then 1 else 0 end' 2>/dev/null)"
+  [ -n "$rel" ] || return 1
+
+  _llama_maybe_tune_after_pull "$rel" "${was_missing:-0}"
+}
+
+_llama_pull_repo_model_legacy() {
   local repo="$1"
   local file="$2"
   local rel="$(_llama_rel_from_repo_and_file "$repo" "$file")"
