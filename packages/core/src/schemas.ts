@@ -34,14 +34,20 @@ export const curatedTsvFields = [
 ] as const;
 
 // ---- preset-overrides.tsv ----------------------------------------------
+/**
+ * Rows produced by `llama-curated-promote` / the TS equivalent. Writers
+ * emit four fields; readers tolerate the three-field form that existed
+ * briefly before `updated_at` was added.
+ */
 export const PresetOverride = z.object({
   profile: z.enum(['mac-mini-16g', 'balanced', 'macbook-pro-48g']),
   preset: z.enum(['best', 'vision', 'balanced', 'fast']),
   rel: z.string().min(1),
+  updated_at: z.string().optional().default(''),
 });
 export type PresetOverride = z.infer<typeof PresetOverride>;
 
-export const presetOverrideFields = ['profile', 'preset', 'rel'] as const;
+export const presetOverrideFields = ['profile', 'preset', 'rel', 'updated_at'] as const;
 
 // ---- bench-profiles.tsv ------------------------------------------------
 /**
@@ -50,6 +56,12 @@ export const presetOverrideFields = ['profile', 'preset', 'rel'] as const;
  * have only five fields (rel, profile, gen_ts, prompt_ts, updated_at);
  * they are parsed via `BenchProfileLegacy`.
  */
+/**
+ * Numeric bench fields are kept as strings on the wire so the exact
+ * textual representation written by the zsh `printf "%f"` calls (which
+ * can include trailing zeros like `729.821530`) survives round-tripping.
+ * Consumers that need arithmetic can `Number()` on demand.
+ */
 export const BenchProfile = z.object({
   machine: z.string().min(1),
   rel: z.string().min(1),
@@ -57,8 +69,8 @@ export const BenchProfile = z.object({
   ctx: z.string().min(1),
   build: z.string().min(1),
   profile: z.string().min(1),
-  gen_ts: z.coerce.number(),
-  prompt_ts: z.coerce.number(),
+  gen_ts: z.string(),
+  prompt_ts: z.string(),
   updated_at: z.string().min(1),
 });
 export type BenchProfile = z.infer<typeof BenchProfile>;
@@ -78,8 +90,8 @@ export const benchProfileFields = [
 export const BenchProfileLegacy = z.object({
   rel: z.string().min(1),
   profile: z.string().min(1),
-  gen_ts: z.coerce.number(),
-  prompt_ts: z.coerce.number(),
+  gen_ts: z.string(),
+  prompt_ts: z.string(),
   updated_at: z.string().min(1),
 });
 export type BenchProfileLegacy = z.infer<typeof BenchProfileLegacy>;
@@ -97,8 +109,8 @@ export const BenchHistoryEntry = z.object({
   ctx: z.string().min(1),
   build: z.string().min(1),
   profile: z.string().min(1),
-  gen_ts: z.coerce.number(),
-  prompt_ts: z.coerce.number(),
+  gen_ts: z.string(),
+  prompt_ts: z.string(),
   launch_args: z.string(),
 });
 export type BenchHistoryEntry = z.infer<typeof BenchHistoryEntry>;
@@ -128,10 +140,10 @@ export const BenchVision = z.object({
   rel: z.string().min(1),
   ctx: z.string().min(1),
   build: z.string().min(1),
-  load_ms: z.coerce.number(),
-  image_encode_ms: z.coerce.number(),
-  prompt_tps: z.coerce.number(),
-  gen_tps: z.coerce.number(),
+  load_ms: z.string(),
+  image_encode_ms: z.string(),
+  prompt_tps: z.string(),
+  gen_tps: z.string(),
   updated_at: z.string().min(1),
 });
 export type BenchVision = z.infer<typeof BenchVision>;

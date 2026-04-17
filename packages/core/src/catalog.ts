@@ -172,3 +172,34 @@ export function formatCatalogRow(entry: CuratedModel): string {
 export function formatCatalogTsv(entries: readonly CuratedModel[]): string {
   return entries.map(formatCatalogRow).join('\n');
 }
+
+/**
+ * Look up a catalog entry by relative GGUF path. Searches `all` by
+ * default (builtin first, then custom) to match the shell helper's
+ * priority order.
+ */
+export function findByRel(
+  rel: string,
+  opts: CatalogLoadOptions & { scope?: CatalogScope } = {},
+): CuratedModel | null {
+  const entries = listCatalog(opts.scope ?? 'all', opts);
+  for (const entry of entries) {
+    if (entry.rel === rel) return entry;
+  }
+  return null;
+}
+
+/** Look up a catalog entry by (repo, file); `file` may be a relpath. */
+export function findByRepoFile(
+  repo: string,
+  file: string,
+  opts: CatalogLoadOptions & { scope?: CatalogScope } = {},
+): CuratedModel | null {
+  const entries = listCatalog(opts.scope ?? 'all', opts);
+  for (const entry of entries) {
+    if (entry.repo !== repo) continue;
+    if (entry.rel === file) return entry;
+    if (entry.rel.endsWith(`/${file}`)) return entry;
+  }
+  return null;
+}

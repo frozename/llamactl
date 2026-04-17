@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { runEnv } from './commands/env.js';
 import { runCatalog } from './commands/catalog.js';
+import { runBench } from './commands/bench.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
 
@@ -9,6 +10,9 @@ Usage:
   llamactl env --json                         Emit the resolved environment as JSON
   llamactl catalog list [all|builtin|custom]  List curated + custom catalog rows
       [--json|--tsv]
+  llamactl bench show <target>                Latest tuned bench record for target
+  llamactl bench history [target]             Last 20 bench-history rows (optionally
+                                              filtered to a single rel/preset)
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -21,6 +25,8 @@ async function main(argv: string[]): Promise<number> {
       return runEnv(rest);
     case 'catalog':
       return runCatalog(rest);
+    case 'bench':
+      return runBench(rest);
     case undefined:
     case '--help':
     case '-h':

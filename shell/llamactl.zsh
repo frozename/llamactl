@@ -853,62 +853,23 @@ llama-bench-vision-show() {
 }
 
 llama-bench-show() {
-  local target="${1:-current}"
-  local rel=""
-  local profile=""
-  local file="$(_llama_bench_profile_file)"
-  local mode=""
-  local ctx=""
-  local build=""
-  local machine=""
-
-  rel="$(_local_ai_resolve_model_target "$target")" || return 1
-  mode="$(_llama_bench_default_mode_for_rel "$rel")"
-  ctx="$(_llama_bench_context_ctx "$rel")"
-  build="$(_llama_llama_cpp_build_id)"
-  machine="$(_llama_bench_context_machine)"
-  profile="$(_llama_bench_profile_get "$rel" "$mode" "$ctx" "$machine" "$build")"
-
-  if [ -z "$profile" ]; then
-    echo "No tuned launch profile recorded for $rel"
-    return 1
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" bench show "$@"
+    return $?
   fi
-
-  awk -F '\t' -v machine="$machine" -v rel="$rel" -v mode="$mode" -v ctx="$ctx" -v build="$build" '
-    NF >= 9 && $1 == machine && $2 == rel && $3 == mode && $4 == ctx && $5 == build {
-      printf "machine=%s\nmodel=%s\nmode=%s\nctx=%s\nbuild=%s\nprofile=%s\ngen_tps=%s\nprompt_tps=%s\nupdated_at=%s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9
-      found = 1
-    }
-    END {
-      if (!found) exit 1
-    }
-  ' "$file" | tail -n 9 || awk -F '\t' -v rel="$rel" 'NF == 5 && $1 == rel { printf "machine=legacy\nmodel=%s\nmode=legacy\nctx=legacy\nbuild=legacy\nprofile=%s\ngen_tps=%s\nprompt_tps=%s\nupdated_at=%s\n", $1, $2, $3, $4, $5 }' "$file" | tail -n 9
-  echo "launch_args=$(_llama_server_profile_args "$profile")"
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
 }
 
 llama-bench-history() {
-  local target="${1:-all}"
-  local file="$(_llama_bench_history_file)"
-
-  if [ ! -f "$file" ]; then
-    echo "No benchmark history recorded yet"
-    return 1
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" bench history "$@"
+    return $?
   fi
-
-  if [ "$target" = "all" ]; then
-    awk -F '\t' '
-      NF >= 10 { printf "%s | %s | model=%s | mode=%s | ctx=%s | build=%s | profile=%s | gen_tps=%s | prompt_tps=%s | launch_args=%s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9, $10; next }
-      NF == 6 { printf "%s | legacy | model=%s | profile=%s | gen_tps=%s | prompt_tps=%s | launch_args=%s\n", $1, $2, $3, $4, $5, $6 }
-    ' "$file" | tail -n 20
-    return 0
-  fi
-
-  local rel=""
-  rel="$(_local_ai_resolve_model_target "$target")" || return 1
-  awk -F '\t' -v rel="$rel" '
-    NF >= 10 && $3 == rel { printf "%s | %s | model=%s | mode=%s | ctx=%s | build=%s | profile=%s | gen_tps=%s | prompt_tps=%s | launch_args=%s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9, $10 }
-    NF == 6 && $2 == rel { printf "%s | legacy | model=%s | profile=%s | gen_tps=%s | prompt_tps=%s | launch_args=%s\n", $1, $2, $3, $4, $5, $6 }
-  ' "$file" | tail -n 20
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
 }
 
 _llama_bench_latest_record() {
