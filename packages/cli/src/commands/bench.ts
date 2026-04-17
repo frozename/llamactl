@@ -1,4 +1,5 @@
 import { bench, build, ctx, env as envMod, target as targetMod } from '@llamactl/core';
+import type { ModelClass } from '@llamactl/core';
 
 const USAGE = `Usage: llamactl bench <subcommand>
 
@@ -11,6 +12,11 @@ Subcommands:
   history [target]          Print the 20 most recent bench-history rows.
                             target 'all' (default) shows every model; any
                             other value filters to that rel.
+
+  compare [class] [scope]   Side-by-side view of tuned bench + vision rows for
+                            every catalog entry. class and scope default to 'all'.
+                            A 'vision=' continuation line is emitted under any
+                            row that has a recorded vision bench.
 `;
 
 function printShow(opts: {
@@ -162,6 +168,96 @@ async function runHistory(args: string[]): Promise<number> {
   return 0;
 }
 
+function padRight(value: string, width: number): string {
+  return value.length >= width ? value : value + ' '.repeat(width - value.length);
+}
+
+async function runCompare(args: string[]): Promise<number> {
+  if (args.includes('-h') || args.includes('--help')) {
+    process.stdout.write(USAGE);
+    return 0;
+  }
+
+  const classFilter = (args[0] ?? 'all') as BenchCompareClassFilter;
+  const scopeFilter = args[1] ?? 'all';
+
+  const rows = bench.benchCompare({ classFilter, scopeFilter });
+  if (rows.length === 0) {
+    process.stdout.write(`class=${classFilter} scope=${scopeFilter}\n`);
+    return 0;
+  }
+
+  // If no row has a tuned record at all, the shell exits 1 with a "No tuned
+  // launch profiles recorded yet" message. Match that behaviour.
+  if (!bench.hasAnyTunedRecord(rows)) {
+    process.stdout.write('No tuned launch profiles recorded yet\n');
+    return 1;
+  }
+
+  process.stdout.write(`class=${classFilter} scope=${scopeFilter}\n`);
+
+  type Tuned = NonNullable<bench.BenchCompareRow['tuned']>;
+  const sortable: Array<{ row: bench.BenchCompareRow; tuned: Tuned }> = [];
+  const missing: bench.BenchCompareRow[] = [];
+  for (const row of rows) {
+    if (row.tuned) sortable.push({ row, tuned: row.tuned });
+    else missing.push(row);
+  }
+
+  sortable.sort((a, b) => {
+    const ga = Number.parseFloat(a.tuned.gen_tps);
+    const gb = Number.parseFloat(b.tuned.gen_tps);
+    if (gb !== ga) return gb - ga;
+    const pa = Number.parseFloat(a.tuned.prompt_tps);
+    const pb = Number.parseFloat(b.tuned.prompt_tps);
+    return pb - pa;
+  });
+
+  for (const { row, tuned } of sortable) {
+    const label = padRight(row.label, 24);
+    const cls = padRight(row.class, 11);
+    const scope = padRight(row.scope, 16);
+    const gen = padRight(tuned.gen_tps, 10);
+    const prompt = padRight(tuned.prompt_tps, 10);
+    const profile = padRight(tuned.profile, 12);
+    const mode = padRight(row.mode, 6);
+    const ctx = padRight(row.ctx, 6);
+    const installed = padRight(row.installed ? 'yes' : 'no', 3);
+    process.stdout.write(
+      `${label} class=${cls} scope=${scope} gen=${gen} prompt=${prompt} tuned=${profile} mode=${mode} ctx=${ctx} installed=${installed} model=${row.rel}\n`,
+    );
+    if (row.vision) {
+      const pad = padRight('', 24);
+      const loadMs = padRight(row.vision.load_ms, 7);
+      const encodeMs = padRight(row.vision.image_encode_ms, 5);
+      const vPrompt = padRight(row.vision.prompt_tps, 9);
+      const vGen = padRight(row.vision.gen_tps, 9);
+      process.stdout.write(
+        `${pad} vision=         load_ms=${loadMs} encode_ms=${encodeMs} prompt_tps=${vPrompt} gen_tps=${vGen} updated=${row.vision.updated_at}\n`,
+      );
+    }
+  }
+
+  if (missing.length > 0) {
+    process.stdout.write('\nmissing_benchmarks:\n');
+    for (const row of missing) {
+      const label = padRight(row.label, 24);
+      const cls = padRight(row.class, 11);
+      const scope = padRight(row.scope, 16);
+      const mode = padRight(row.mode, 6);
+      const ctx = padRight(row.ctx, 6);
+      const installed = padRight(row.installed ? 'yes' : 'no', 3);
+      process.stdout.write(
+        `${label} class=${cls} scope=${scope} mode=${mode} ctx=${ctx} installed=${installed} model=${row.rel}\n`,
+      );
+    }
+  }
+
+  return 0;
+}
+
+type BenchCompareClassFilter = ModelClass | 'all';
+
 export async function runBench(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
@@ -169,6 +265,8 @@ export async function runBench(args: string[]): Promise<number> {
       return runShow(rest);
     case 'history':
       return runHistory(rest);
+    case 'compare':
+      return runCompare(rest);
     case undefined:
     case '-h':
     case '--help':

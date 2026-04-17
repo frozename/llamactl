@@ -5,8 +5,10 @@ import {
   BenchHistoryEntry,
   BenchProfile,
   BenchProfileLegacy,
+  BenchVision,
   benchHistoryFields,
   benchProfileFields,
+  benchVisionFields,
   splitTsvRow,
 } from '../schemas.js';
 
@@ -132,6 +134,53 @@ export function findLegacyProfile(
   let match: BenchProfileLegacy | null = null;
   for (const row of rows.legacy) {
     if (row.rel === rel) match = row;
+  }
+  return match;
+}
+
+/**
+ * Parse bench-vision.tsv. Single-schema file — no legacy fallback
+ * because the format was introduced together with `llama-bench-vision`.
+ * Rows shorter than the expected column count are dropped silently.
+ */
+export function readBenchVision(file: string): BenchVision[] {
+  const out: BenchVision[] = [];
+  for (const line of readLines(file)) {
+    if (line.trim() === '') continue;
+    const cols = splitTsvRow(line);
+    if (cols.length < benchVisionFields.length) continue;
+    const record: Record<string, string> = {};
+    for (let i = 0; i < benchVisionFields.length; i += 1) {
+      const field = benchVisionFields[i];
+      if (field === undefined) continue;
+      record[field] = cols[i] ?? '';
+    }
+    const parsed = BenchVision.safeParse(record);
+    if (parsed.success) out.push(parsed.data);
+  }
+  return out;
+}
+
+/**
+ * Latest vision bench row for a `(machine, rel, build)` triple. Unlike
+ * `findLatestProfile` which keys on (machine, rel, mode, ctx, build),
+ * the vision record schema uses ctx inline and build as the version
+ * axis — callers usually care about "newest for my machine + current
+ * llama.cpp build" regardless of the exact ctx size that was used.
+ */
+export function findLatestVision(
+  rows: BenchVision[],
+  key: { machine: string; rel: string; build: string },
+): BenchVision | null {
+  let match: BenchVision | null = null;
+  for (const row of rows) {
+    if (
+      row.machine === key.machine &&
+      row.rel === key.rel &&
+      row.build === key.build
+    ) {
+      match = row;
+    }
   }
   return match;
 }

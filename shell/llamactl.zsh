@@ -2003,6 +2003,16 @@ _llama_recommendations_legacy() {
 }
 
 llama-bench-compare() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" bench compare "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_bench_compare_legacy() {
   local class_filter="${1:-all}"
   local scope_filter="${2:-all}"
   local file="$(_llama_bench_profile_file)"
