@@ -160,6 +160,46 @@ export const benchVisionFields = [
   'updated_at',
 ] as const;
 
+// ---- Hugging Face API responses ----------------------------------------
+/**
+ * Subset of the `GET /api/models/<repo>` response we actually consume.
+ * The real payload has many more fields; we mark unknown ones passthrough
+ * so caching preserves the full document byte-for-byte even if zod rejects
+ * a future field rename on the fields we do care about.
+ */
+export const HFModelSibling = z.object({
+  rfilename: z.string(),
+  size: z.number().optional(),
+  lfs: z.object({ size: z.number().optional() }).passthrough().optional(),
+}).passthrough();
+export type HFModelSibling = z.infer<typeof HFModelSibling>;
+
+export const HFModelInfo = z.object({
+  id: z.string(),
+  downloads: z.number().optional(),
+  likes: z.number().optional(),
+  lastModified: z.string().optional(),
+  pipeline_tag: z.string().nullable().optional(),
+  pipelineTag: z.string().nullable().optional(),
+  tags: z.array(z.string()).optional(),
+  siblings: z.array(HFModelSibling).optional(),
+}).passthrough();
+export type HFModelInfo = z.infer<typeof HFModelInfo>;
+
+export const HFTreeEntry = z.object({
+  path: z.string(),
+  type: z.enum(['file', 'directory']).optional(),
+  size: z.number().optional(),
+  lfs: z.object({ size: z.number().optional() }).passthrough().optional(),
+}).passthrough();
+export type HFTreeEntry = z.infer<typeof HFTreeEntry>;
+
+export const HFTree = z.array(HFTreeEntry);
+export type HFTree = z.infer<typeof HFTree>;
+
+export const HFDiscoveryFeed = z.array(HFModelInfo);
+export type HFDiscoveryFeed = z.infer<typeof HFDiscoveryFeed>;
+
 // ---- generic TSV helpers -----------------------------------------------
 
 /** Split a TSV row into columns without mangling empty trailing fields. */

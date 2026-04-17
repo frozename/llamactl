@@ -9,3 +9,4 @@ export * as mmproj from './mmproj.js';
 export * as presets from './presets.js';
 export * as target from './target.js';
 export * as bench from './bench/index.js';
+export * as hf from './hf.js';
