@@ -1,7 +1,14 @@
+import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { schemas } from '@llamactl/core';
 import { trpc } from '@/lib/trpc';
 
 type PresetOverride = schemas.PresetOverride;
+type Profile = 'mac-mini-16g' | 'balanced' | 'macbook-pro-48g';
+type Preset = 'best' | 'vision' | 'balanced' | 'fast';
+
+const PROFILES: readonly Profile[] = ['mac-mini-16g', 'balanced', 'macbook-pro-48g'];
+const PRESETS: readonly Preset[] = ['best', 'vision', 'balanced', 'fast'];
 
 const GROUPS: { title: string; keys: string[] }[] = [
   {
@@ -58,9 +65,223 @@ const GROUPS: { title: string; keys: string[] }[] = [
   },
 ];
 
+function PromotionsEditor(): JSX.Element {
+  const queryClient = useQueryClient();
+  const promotions = trpc.promotions.useQuery();
+  const catalog = trpc.catalogList.useQuery('all');
+
+  const [profile, setProfile] = useState<Profile>('macbook-pro-48g');
+  const [preset, setPreset] = useState<Preset>('best');
+  const [rel, setRel] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const invalidate = async () => {
+    await queryClient.invalidateQueries({
+      queryKey: [['promotions'], { type: 'query' }],
+    });
+  };
+
+  const promoteMutation = trpc.promote.useMutation({
+    onSuccess: async () => {
+      setRel('');
+      setError(null);
+      await invalidate();
+    },
+    onError: (err) => setError(err.message),
+  });
+  const deleteMutation = trpc.promoteDelete.useMutation({
+    onSuccess: async () => {
+      setPendingDelete(null);
+      await invalidate();
+    },
+    onError: (err) => setError(err.message),
+  });
+
+  const rels = useMemo(
+    () => (catalog.data ?? []).map((row) => row.rel),
+    [catalog.data],
+  );
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (rel.trim().length === 0) {
+      setError('Rel is required');
+      return;
+    }
+    promoteMutation.mutate({ profile, preset, rel: rel.trim() });
+  };
+
+  const rows = promotions.data ?? [];
+  const busy = promoteMutation.isPending || deleteMutation.isPending;
+
+  return (
+    <section>
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+        Preset promotions ({rows.length})
+      </h2>
+
+      {error && (
+        <div className="mb-3 rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+          {error}
+        </div>
+      )}
+
+      {rows.length === 0 ? (
+        <div className="mb-4 rounded-md border border-dashed border-[var(--color-border)] p-4 text-[color:var(--color-fg-muted)]">
+          No active promotions. Use the form below or{' '}
+          <span className="mono">llamactl catalog promote</span> to add one.
+        </div>
+      ) : (
+        <div className="mb-4 overflow-hidden rounded-md border border-[var(--color-border)]">
+          <table className="w-full mono text-sm">
+            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-fg-muted)]">
+              <tr>
+                <th className="px-3 py-2 font-medium">Profile</th>
+                <th className="px-3 py-2 font-medium">Preset</th>
+                <th className="px-3 py-2 font-medium">Rel</th>
+                <th className="px-3 py-2 font-medium">Updated</th>
+                <th className="w-28 px-3 py-2 font-medium text-right"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((p: PresetOverride) => {
+                const key = `${p.profile}:${p.preset}`;
+                const isPending = pendingDelete === key;
+                return (
+                  <tr
+                    key={key}
+                    className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
+                  >
+                    <td className="px-3 py-2 text-[color:var(--color-brand)]">{p.profile}</td>
+                    <td className="px-3 py-2">{p.preset}</td>
+                    <td className="px-3 py-2 text-[color:var(--color-accent)] break-all">
+                      {p.rel}
+                    </td>
+                    <td className="px-3 py-2 text-[color:var(--color-fg-muted)]">
+                      {p.updated_at ?? ''}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {isPending ? (
+                        <span className="inline-flex gap-1">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              deleteMutation.mutate({
+                                profile: p.profile as Profile,
+                                preset: p.preset as Preset,
+                              })
+                            }
+                            className="rounded border border-[var(--color-danger)] px-2 py-0.5 text-xs text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)]"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => setPendingDelete(null)}
+                            className="rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)]"
+                          >
+                            Cancel
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => setPendingDelete(key)}
+                          className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-fg-muted)] hover:border-[var(--color-border)] hover:text-[color:var(--color-fg)]"
+                          aria-label={`Remove promotion ${key}`}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <form
+        onSubmit={handleSubmit}
+        className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
+      >
+        <div className="mb-3 text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+          Add / update promotion
+        </div>
+        <div className="grid grid-cols-12 gap-3">
+          <label className="col-span-3 text-sm">
+            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">Profile</span>
+            <select
+              value={profile}
+              onChange={(e) => setProfile(e.target.value as Profile)}
+              disabled={busy}
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+            >
+              {PROFILES.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="col-span-2 text-sm">
+            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">Preset</span>
+            <select
+              value={preset}
+              onChange={(e) => setPreset(e.target.value as Preset)}
+              disabled={busy}
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+            >
+              {PRESETS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="col-span-5 text-sm">
+            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">Rel</span>
+            <input
+              list="rel-suggestions"
+              value={rel}
+              onChange={(e) => setRel(e.target.value)}
+              disabled={busy}
+              placeholder="e.g. gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+            />
+            <datalist id="rel-suggestions">
+              {rels.map((r) => (
+                <option key={r} value={r} />
+              ))}
+            </datalist>
+          </label>
+          <div className="col-span-2 flex items-end">
+            <button
+              type="submit"
+              disabled={busy}
+              className="w-full rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:opacity-50"
+            >
+              {promoteMutation.isPending ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+        <div className="mt-3 text-xs text-[color:var(--color-fg-muted)]">
+          Existing (profile, preset) pairs are replaced in place. Rels autocomplete from the
+          catalog.
+        </div>
+      </form>
+    </section>
+  );
+}
+
 export default function Settings(): JSX.Element {
   const env = trpc.env.useQuery();
-  const promotions = trpc.promotions.useQuery();
 
   if (env.isLoading) {
     return <div className="p-6 text-[color:var(--color-fg-muted)]">Loading…</div>;
@@ -102,46 +323,7 @@ export default function Settings(): JSX.Element {
           </section>
         ))}
 
-        <section>
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
-            Preset promotions ({promotions.data?.length ?? 0})
-          </h2>
-          {(promotions.data ?? []).length === 0 ? (
-            <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-[color:var(--color-fg-muted)]">
-              No active promotions. Use <span className="mono">llamactl catalog promote</span> to add one.
-            </div>
-          ) : (
-            <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
-              <table className="w-full mono text-sm">
-                <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-fg-muted)]">
-                  <tr>
-                    <th className="px-3 py-2 font-medium">Profile</th>
-                    <th className="px-3 py-2 font-medium">Preset</th>
-                    <th className="px-3 py-2 font-medium">Rel</th>
-                    <th className="px-3 py-2 font-medium">Updated</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(promotions.data ?? []).map((p: PresetOverride) => (
-                    <tr
-                      key={`${p.profile}:${p.preset}`}
-                      className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
-                    >
-                      <td className="px-3 py-2 text-[color:var(--color-brand)]">{p.profile}</td>
-                      <td className="px-3 py-2">{p.preset}</td>
-                      <td className="px-3 py-2 text-[color:var(--color-accent)] break-all">
-                        {p.rel}
-                      </td>
-                      <td className="px-3 py-2 text-[color:var(--color-fg-muted)]">
-                        {p.updated_at ?? ''}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+        <PromotionsEditor />
       </div>
     </div>
   );

@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { copyFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { readPresetOverrides, resolvePreset, writePresetOverride } from '../src/presets.js';
+import {
+  deletePresetOverride,
+  readPresetOverrides,
+  resolvePreset,
+  writePresetOverride,
+} from '../src/presets.js';
 import { envForTemp, FIXTURE_DIR, makeTempRuntime } from './helpers.js';
 
 describe('presets.readPresetOverrides', () => {
@@ -73,5 +78,46 @@ describe('presets.writePresetOverride (round-trip)', () => {
     const rows = readPresetOverrides(env.LOCAL_AI_PRESET_OVERRIDES_FILE!);
     expect(rows.length).toBe(1);
     expect(rows[0]?.rel).toBe('second/model.gguf');
+  });
+});
+
+describe('presets.deletePresetOverride', () => {
+  const temp = makeTempRuntime();
+  const env = envForTemp(temp);
+
+  afterEach(() => {
+    try {
+      const file = env.LOCAL_AI_PRESET_OVERRIDES_FILE!;
+      if (existsSync(file)) Bun.write(file, '');
+    } catch {
+      // no-op
+    }
+  });
+
+  test('removes the matching row and preserves others', () => {
+    writePresetOverride('balanced', 'best', 'a/one.gguf', env);
+    writePresetOverride('balanced', 'fast', 'a/two.gguf', env);
+    expect(deletePresetOverride('balanced', 'best', env)).toBe(true);
+    const rows = readPresetOverrides(env.LOCAL_AI_PRESET_OVERRIDES_FILE!);
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.preset).toBe('fast');
+  });
+
+  test('unlinks the file when the last row is removed', () => {
+    writePresetOverride('balanced', 'best', 'only/one.gguf', env);
+    expect(deletePresetOverride('balanced', 'best', env)).toBe(true);
+    expect(existsSync(env.LOCAL_AI_PRESET_OVERRIDES_FILE!)).toBe(false);
+  });
+
+  test('no-op when no row matches', () => {
+    writePresetOverride('balanced', 'best', 'kept/row.gguf', env);
+    expect(deletePresetOverride('macbook-pro-48g', 'fast', env)).toBe(false);
+    const rows = readPresetOverrides(env.LOCAL_AI_PRESET_OVERRIDES_FILE!);
+    expect(rows.length).toBe(1);
+  });
+
+  test('returns false when the file does not exist', () => {
+    // presumes the afterEach or earlier tests cleared the file
+    expect(deletePresetOverride('balanced', 'best', env)).toBe(false);
   });
 });

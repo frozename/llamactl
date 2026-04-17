@@ -100,6 +100,33 @@ export const router = t.router({
     return presets.readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE);
   }),
 
+  promote: t.procedure
+    .input(
+      z.object({
+        profile: z.enum(['mac-mini-16g', 'balanced', 'macbook-pro-48g']),
+        preset: z.enum(['best', 'vision', 'balanced', 'fast']),
+        rel: z.string().min(1),
+      }),
+    )
+    .mutation(({ input }) => {
+      presets.writePresetOverride(input.profile, input.preset, input.rel);
+      const resolved = envMod.resolveEnv();
+      return presets.readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE);
+    }),
+
+  promoteDelete: t.procedure
+    .input(
+      z.object({
+        profile: z.enum(['mac-mini-16g', 'balanced', 'macbook-pro-48g']),
+        preset: z.enum(['best', 'vision', 'balanced', 'fast']),
+      }),
+    )
+    .mutation(({ input }) => {
+      presets.deletePresetOverride(input.profile, input.preset);
+      const resolved = envMod.resolveEnv();
+      return presets.readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE);
+    }),
+
   discover: t.procedure
     .input(
       z

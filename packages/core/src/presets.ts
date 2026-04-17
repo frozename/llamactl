@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { resolveEnv } from './env.js';
 import { atomicWriteFile } from './fsAtomic.js';
 import { normalizeProfile } from './profile.js';
@@ -153,6 +153,39 @@ export function writePresetOverride(
     .map((row) => `${row.profile}\t${row.preset}\t${row.rel}\t${row.updated_at ?? ''}`)
     .join('\n');
   atomicWriteFile(file, body === '' ? '' : `${body}\n`);
+}
+
+/**
+ * Remove the override row matching `(profile, preset)` if present.
+ * Returns `true` when a row was actually removed, `false` on no-op.
+ * Deletes the file entirely when no rows remain, matching the
+ * `pruneTsv` sweeper used by `uninstall`.
+ */
+export function deletePresetOverride(
+  profile: MachineProfile,
+  preset: PresetName,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const resolved = resolveEnv(env);
+  const file = resolved.LOCAL_AI_PRESET_OVERRIDES_FILE;
+  const existing = readPresetOverrides(file);
+  const next = existing.filter(
+    (row) => !(row.profile === profile && row.preset === preset),
+  );
+  if (next.length === existing.length) return false;
+  if (next.length === 0) {
+    try {
+      unlinkSync(file);
+    } catch {
+      // File already absent — still counts as "the row is gone".
+    }
+    return true;
+  }
+  const body = next
+    .map((row) => `${row.profile}\t${row.preset}\t${row.rel}\t${row.updated_at ?? ''}`)
+    .join('\n');
+  atomicWriteFile(file, `${body}\n`);
+  return true;
 }
 
 /**
