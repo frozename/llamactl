@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolveEnv } from './env.js';
+import { atomicWriteFile } from './fsAtomic.js';
 import { normalizeProfile } from './profile.js';
 import { PresetOverride, presetOverrideFields, splitTsvRow } from './schemas.js';
 import type { MachineProfile } from './types.js';
@@ -109,4 +110,61 @@ export function resolvePreset(
 
   const normalized = normalizeProfile(profile) ?? 'macbook-pro-48g';
   return { rel: BUILTIN_PRESETS[normalized][preset], source: null };
+}
+
+function formatIso(date: Date = new Date()): string {
+  // Matches `date +%Y-%m-%dT%H:%M:%S%z` used by the shell library —
+  // local time with an offset like `-0300`, no colon in the offset.
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const y = date.getFullYear();
+  const mo = pad(date.getMonth() + 1);
+  const d = pad(date.getDate());
+  const h = pad(date.getHours());
+  const mi = pad(date.getMinutes());
+  const s = pad(date.getSeconds());
+  const off = -date.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  const abs = Math.abs(off);
+  const oh = pad(Math.floor(abs / 60));
+  const om = pad(abs % 60);
+  return `${y}-${mo}-${d}T${h}:${mi}:${s}${sign}${oh}${om}`;
+}
+
+/**
+ * Write a preset override row. If an existing row matches
+ * `(profile, preset)` it is replaced in-place; otherwise the row is
+ * appended. File write is atomic via `atomicWriteFile` so concurrent
+ * readers never see a partial update.
+ */
+export function writePresetOverride(
+  profile: MachineProfile,
+  preset: PresetName,
+  rel: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const resolved = resolveEnv(env);
+  const file = resolved.LOCAL_AI_PRESET_OVERRIDES_FILE;
+  const existing = readPresetOverrides(file);
+  const updatedAt = formatIso();
+  const next: PresetOverride[] = existing
+    .filter((row) => !(row.profile === profile && row.preset === preset))
+    .concat([{ profile, preset, rel, updated_at: updatedAt }]);
+  const body = next
+    .map((row) => `${row.profile}\t${row.preset}\t${row.rel}\t${row.updated_at ?? ''}`)
+    .join('\n');
+  atomicWriteFile(file, body === '' ? '' : `${body}\n`);
+}
+
+/**
+ * Human-facing list of the current promotions. Matches the
+ * `llama-curated-promotions` output line format
+ * (`profile=... preset=... model=... updated_at=...`).
+ */
+export function formatPromotionsList(overrides: readonly PresetOverride[]): string {
+  return overrides
+    .map(
+      (row) =>
+        `profile=${row.profile} preset=${row.preset} model=${row.rel} updated_at=${row.updated_at ?? ''}`,
+    )
+    .join('\n');
 }

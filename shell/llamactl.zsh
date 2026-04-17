@@ -1724,6 +1724,16 @@ llama-curated-list() {
 }
 
 llama-curated-add() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" catalog add "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_curated_add_legacy() {
   local repo="$1"
   local file_or_rel="$2"
   local label="${3:-}"
@@ -2793,6 +2803,16 @@ llama-clean() {
 }
 
 llama-uninstall() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" uninstall "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_uninstall_legacy() {
   local rel=""
   local force=0
   local arg=""
@@ -3836,17 +3856,27 @@ _local_ai_profile_preset_set() {
 }
 
 llama-curated-promotions() {
-  local file="$(_local_ai_preset_overrides_file)"
-
-  if [ ! -f "$file" ]; then
-    echo "No preset promotions recorded"
-    return 1
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" catalog promotions
+    return $?
   fi
-
-  awk -F '\t' '{ printf "profile=%s preset=%s model=%s updated_at=%s\n", $1, $2, $3, $4 }' "$file"
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
 }
 
 llama-curated-promote() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    local profile="${1:-$LLAMA_CPP_MACHINE_PROFILE}"
+    bun "$cli" catalog promote "$profile" "$2" "$3"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_curated_promote_legacy() {
   local profile="${1:-$LLAMA_CPP_MACHINE_PROFILE}"
   local preset="$2"
   local target="$3"

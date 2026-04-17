@@ -13,3 +13,6 @@ export * as hf from './hf.js';
 export * as quant from './quant.js';
 export * as recommendations from './recommendations.js';
 export * as discovery from './discovery.js';
+export * as catalogWriter from './catalogWriter.js';
+export * as uninstall from './uninstall.js';
+export * as fsAtomic from './fsAtomic.js';

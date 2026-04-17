@@ -1,4 +1,13 @@
-import { catalog, env as envMod, hf, quant } from '@llamactl/core';
+import {
+  catalog,
+  catalogWriter,
+  env as envMod,
+  hf,
+  presets,
+  profile as profileMod,
+  quant,
+  target as targetMod,
+} from '@llamactl/core';
 import type { ModelClass } from '@llamactl/core';
 
 type Format = 'tsv' | 'json';
@@ -76,6 +85,21 @@ Subcommands:
       Inspect a rel: catalog membership, layered class resolution
       (catalog -> HF pipeline -> path pattern), quant, scope, family,
       and whether the file is installed on disk.
+
+  add <hf-repo> <gguf-file-or-relpath> [label] [family] [class] [scope]
+      Append an entry to the custom catalog. Missing fields are
+      derived: label from the GGUF basename, family from the repo
+      substring, class from the HF pipeline_tag (falls back to
+      path-pattern classifier), scope defaults to 'candidate'.
+      Refuses to add a rel that's already in any catalog.
+
+  promote <profile> <best|vision|balanced|fast> <rel-or-alias>
+      Write a preset override so <profile>:<preset> resolves to the
+      given rel. Updates in place when a row for (profile, preset)
+      already exists.
+
+  promotions
+      Print the active preset-override rows.
 `;
 
 interface StatusReport {
@@ -213,6 +237,88 @@ async function runStatus(args: string[]): Promise<number> {
   return 0;
 }
 
+async function runAdd(args: string[]): Promise<number> {
+  if (args.length < 2 || args.includes('-h') || args.includes('--help')) {
+    process.stdout.write(USAGE);
+    return args.length < 2 ? 1 : 0;
+  }
+  const [repo, fileOrRel, label, family, klass, scope] = args;
+  const result = await catalogWriter.addCurated({
+    repo: repo ?? '',
+    fileOrRel: fileOrRel ?? '',
+    label,
+    family,
+    class: klass,
+    scope,
+  });
+  if (!result.ok) {
+    process.stderr.write(`${result.error}\n`);
+    return 1;
+  }
+  process.stdout.write(
+    [
+      `Added curated entry to ${result.file}`,
+      `  id=${result.entry.id}`,
+      `  model=${result.entry.rel}`,
+      '',
+    ].join('\n'),
+  );
+  return 0;
+}
+
+async function runPromote(args: string[]): Promise<number> {
+  if (args.length < 3 || args.includes('-h') || args.includes('--help')) {
+    process.stderr.write(
+      'Usage: llamactl catalog promote <profile> <best|vision|balanced|fast> <rel-or-alias>\n',
+    );
+    return args.length < 3 ? 1 : 0;
+  }
+  const [profileArg, preset, targetArg] = args;
+  const normalized = profileMod.normalizeProfile(profileArg);
+  if (!normalized) {
+    process.stderr.write(`Unknown profile: ${profileArg}\n`);
+    return 1;
+  }
+  if (preset !== 'best' && preset !== 'vision' && preset !== 'balanced' && preset !== 'fast') {
+    process.stderr.write(
+      `Unknown preset: ${preset} (expected best|vision|balanced|fast)\n`,
+    );
+    return 1;
+  }
+
+  let rel: string;
+  if (targetArg && (targetArg.endsWith('.gguf') || targetArg.includes('/'))) {
+    rel = targetArg;
+  } else {
+    const resolved = targetMod.resolveTarget(targetArg);
+    if (!resolved) {
+      process.stderr.write(`Unknown model target: ${targetArg}\n`);
+      return 1;
+    }
+    rel = resolved;
+  }
+
+  presets.writePresetOverride(normalized, preset, rel);
+  process.stdout.write(`Promoted ${rel}\n`);
+  process.stdout.write(`profile=${normalized} preset=${preset}\n`);
+  return 0;
+}
+
+async function runPromotions(args: string[]): Promise<number> {
+  if (args.includes('-h') || args.includes('--help')) {
+    process.stdout.write(USAGE);
+    return 0;
+  }
+  const resolved = envMod.resolveEnv();
+  const rows = presets.readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE);
+  if (rows.length === 0) {
+    process.stdout.write('No preset promotions recorded\n');
+    return 1;
+  }
+  process.stdout.write(`${presets.formatPromotionsList(rows)}\n`);
+  return 0;
+}
+
 export async function runCatalog(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
@@ -220,6 +326,12 @@ export async function runCatalog(args: string[]): Promise<number> {
       return runList(rest);
     case 'status':
       return runStatus(rest);
+    case 'add':
+      return runAdd(rest);
+    case 'promote':
+      return runPromote(rest);
+    case 'promotions':
+      return runPromotions(rest);
     case undefined:
     case '-h':
     case '--help':
