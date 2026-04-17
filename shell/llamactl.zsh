@@ -1594,6 +1594,16 @@ _llama_discovery_filter_matches() {
 }
 
 llama-discover-models() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" discover "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_discover_models_legacy() {
   local filter="${1:-other}"
   local requested_profile="${2:-current}"
   local limit="${3:-${LOCAL_AI_DISCOVERY_LIMIT:-24}}"

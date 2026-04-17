@@ -3,6 +3,7 @@ import { runEnv } from './commands/env.js';
 import { runCatalog } from './commands/catalog.js';
 import { runBench } from './commands/bench.js';
 import { runRecommendations } from './commands/recommendations.js';
+import { runDiscover } from './commands/discover.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
 
@@ -16,6 +17,9 @@ Usage:
                                               filtered to a single rel/preset)
   llamactl catalog status <rel> [--json]      Layered class + scope + HF lookup
   llamactl recommendations [current|all|<p>]  Preset ladder per profile with live HF
+  llamactl discover [filter] [profile] [limit]
+                                              HF discovery feed, classified and
+                                              scored for fit on the chosen profile
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -32,6 +36,8 @@ async function main(argv: string[]): Promise<number> {
       return runBench(rest);
     case 'recommendations':
       return runRecommendations(rest);
+    case 'discover':
+      return runDiscover(rest);
     case undefined:
     case '--help':
     case '-h':

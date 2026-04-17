@@ -267,15 +267,18 @@ export function fileSizeFromTree(tree: HFTree, file: string): number | null {
 
 /**
  * Human-readable size formatter, matching the shell awk helper:
- *   - `n/a` for non-numeric input
+ *   - `null` / `undefined` are coerced to 0 (mirroring the shell's
+ *     `${1:-0}` default) and render as `0 B`. The only `n/a` result is
+ *     for genuinely non-numeric inputs like `NaN`.
  *   - integer for bytes
  *   - one decimal for KiB / MiB / GiB / TiB
  */
 export function humanSize(bytes: number | null | undefined): string {
-  if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return 'n/a';
+  const n = bytes === null || bytes === undefined ? 0 : bytes;
+  if (!Number.isFinite(n)) return 'n/a';
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
   let i = 0;
-  let x = bytes;
+  let x = n;
   while (x >= 1024 && i < units.length - 1) {
     x /= 1024;
     i += 1;

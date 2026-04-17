@@ -12,3 +12,4 @@ export * as bench from './bench/index.js';
 export * as hf from './hf.js';
 export * as quant from './quant.js';
 export * as recommendations from './recommendations.js';
+export * as discovery from './discovery.js';

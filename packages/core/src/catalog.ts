@@ -203,3 +203,53 @@ export function findByRepoFile(
   }
   return null;
 }
+
+/** Is this HF repo id referenced by any catalog entry? */
+export function repoKnown(
+  repo: string,
+  opts: CatalogLoadOptions & { scope?: CatalogScope } = {},
+): boolean {
+  for (const entry of listCatalog(opts.scope ?? 'all', opts)) {
+    if (entry.repo === repo) return true;
+  }
+  return false;
+}
+
+/** Is this rel covered by any catalog entry? */
+export function relKnown(
+  rel: string,
+  opts: CatalogLoadOptions & { scope?: CatalogScope } = {},
+): boolean {
+  return findByRel(rel, opts) !== null;
+}
+
+/**
+ * Join a repo id and a file name into a rel path. If `file` already
+ * contains a slash we assume it's already a relpath; otherwise we
+ * prefix with the repo basename (matching `_llama_rel_from_repo_and_file`
+ * in the shell library).
+ */
+export function relFromRepoAndFile(repo: string, file: string): string {
+  if (file.includes('/')) return file;
+  const basename = repo.includes('/') ? repo.slice(repo.lastIndexOf('/') + 1) : repo;
+  return `${basename}/${file}`;
+}
+
+/**
+ * Classify a (repo, file) pair against the catalog: `curated` when the
+ * rel is in the catalog, `family-known` when the repo is in the catalog
+ * but this specific rel isn't, and `new` otherwise. Used by discovery
+ * to annotate rows with their catalog provenance.
+ */
+export type CuratedStatus = 'curated' | 'family-known' | 'new';
+
+export function curatedStatusForRepoFile(
+  repo: string,
+  file: string,
+  opts: CatalogLoadOptions = {},
+): CuratedStatus {
+  const rel = relFromRepoAndFile(repo, file);
+  if (relKnown(rel, opts)) return 'curated';
+  if (repoKnown(repo, opts)) return 'family-known';
+  return 'new';
+}
