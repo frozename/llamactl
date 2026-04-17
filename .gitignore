@@ -1,0 +1,24 @@
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Node / Electron (future)
+node_modules/
+dist/
+build/
+out/
+*.log
+.npm/
+.pnpm-store/
+
+# Python (in case helper scripts show up)
+__pycache__/
+*.pyc
+.venv/
+
+# Local env and runtime artifacts
+.env
+.env.local
