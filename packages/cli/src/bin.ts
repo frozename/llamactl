@@ -1,12 +1,14 @@
 #!/usr/bin/env bun
 import { runEnv } from './commands/env.js';
+import { runCatalog } from './commands/catalog.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
 
 Usage:
-  llamactl env --eval        Emit POSIX export lines for a shell to eval
-  llamactl env --json        Emit the resolved environment as JSON
-  llamactl env               Shorthand for --eval
+  llamactl env --eval                         Emit POSIX export lines for eval
+  llamactl env --json                         Emit the resolved environment as JSON
+  llamactl catalog list [all|builtin|custom]  List curated + custom catalog rows
+      [--json|--tsv]
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -17,6 +19,8 @@ async function main(argv: string[]): Promise<number> {
   switch (command) {
     case 'env':
       return runEnv(rest);
+    case 'catalog':
+      return runCatalog(rest);
     case undefined:
     case '--help':
     case '-h':

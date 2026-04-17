@@ -1739,23 +1739,17 @@ llama-discover-models() {
 }
 
 llama-curated-list() {
-  local mode="${1:-all}"
-  local custom_file="$(_llama_custom_catalog_file)"
-
-  case "$mode" in
-    custom)
-      if [ -f "$custom_file" ]; then
-        awk -F '\t' 'NF >= 7 && $0 !~ /^[[:space:]]*#/ { print $0 }' "$custom_file"
-      fi
-      ;;
-    all|"")
-      _llama_curated_catalog
-      ;;
-    *)
-      echo "Usage: llama-curated-list [all|custom]"
-      return 1
-      ;;
-  esac
+  # Delegates to the TypeScript CLI. The heredoc-backed shell catalog in
+  # `_llama_curated_catalog` is still used by other shell helpers during
+  # Phase 1 migration; it mirrors the TS `BUILTIN_CATALOG` row-for-row
+  # and both sides read the same custom TSV file.
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" catalog list "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
 }
 
 llama-curated-add() {
