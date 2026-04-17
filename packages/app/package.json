@@ -1,0 +1,10 @@
+{
+  "name": "@llamactl/app",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Electron app for llamactl. Scaffolding only during Phase 0; renderer and main process land in Phase 3.",
+  "type": "module",
+  "scripts": {
+    "noop": "echo 'Electron app scaffolded; implementation lands in Phase 3'"
+  }
+}

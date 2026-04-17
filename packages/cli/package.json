@@ -1,0 +1,21 @@
+{
+  "name": "@llamactl/cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "llamactl CLI. Runs on Bun.",
+  "type": "module",
+  "bin": {
+    "llamactl": "./src/bin.ts"
+  },
+  "scripts": {
+    "start": "bun run src/bin.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@llamactl/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.7.2"
+  }
+}

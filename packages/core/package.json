@@ -1,0 +1,24 @@
+{
+  "name": "@llamactl/core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Core library for llamactl. Node-compat TypeScript.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./env": "./src/env.ts",
+    "./profile": "./src/profile.ts",
+    "./schemas": "./src/schemas.ts",
+    "./types": "./src/types.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

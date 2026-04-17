@@ -1,119 +1,62 @@
 # llamactl environment setup
 #
-# Intended to be sourced from a shell profile or other env module.
-# Defines paths, default models, and OpenAI-compatible URLs used by
-# llamactl.zsh. Every value is guarded so callers can override any
-# individual variable upstream.
+# Preferred path: delegate to the TypeScript CLI (`llamactl env --eval`),
+# which produces POSIX `export` lines plus a `mkdir -p` for managed dirs
+# and a PATH tweak for $LLAMA_CPP_BIN. Running through the TS core keeps
+# the shell and the Electron app sharing one source of truth for env
+# resolution (machine profile, default model, provider URL, etc.).
 #
-# Requires $DEV_STORAGE to be set by the caller. If unset, falls back to
-# $HOME/.llamactl so the library still works out of the box.
+# Fallback path: when `bun` is unavailable or the CLI cannot be located,
+# a small block below sets the same variables with static defaults so an
+# interactive shell still boots usefully. That block intentionally does
+# not do machine-profile detection or default-model resolution — those
+# only work properly through the TS core — but it establishes the paths
+# that other scripts depend on.
+#
+# Callers should keep $DEV_STORAGE set before sourcing this file.
+# $LLAMACTL_HOME defaults to the working location under DEV_STORAGE.
 
 if [ -z "$DEV_STORAGE" ]; then
   export DEV_STORAGE="$HOME/.llamactl"
 fi
 
+: "${LLAMACTL_HOME:=$DEV_STORAGE/repos/personal/llamactl}"
+
+_llamactl_ts_env_eval() {
+  local cli="$LLAMACTL_HOME/packages/cli/src/bin.ts"
+  [ -f "$cli" ] || return 1
+  command -v bun >/dev/null 2>&1 || return 1
+  local output
+  output="$(bun "$cli" env --eval 2>/dev/null)" || return 1
+  [ -n "$output" ] || return 1
+  eval "$output"
+}
+
+if _llamactl_ts_env_eval; then
+  unset -f _llamactl_ts_env_eval
+  return 0 2>/dev/null || true
+fi
+
+unset -f _llamactl_ts_env_eval
+
+# ---- fallback (Bun or CLI unavailable) ----------------------------------
+# Static defaults so a broken Bun install doesn't strand shell integrations.
+
 export HF_HOME="${HF_HOME:-$DEV_STORAGE/cache/huggingface}"
 export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"
-
 export OLLAMA_MODELS="${OLLAMA_MODELS:-$DEV_STORAGE/ai-models/ollama}"
 
 export LLAMA_CPP_SRC="${LLAMA_CPP_SRC:-$DEV_STORAGE/src/llama.cpp}"
 export LLAMA_CPP_BIN="${LLAMA_CPP_BIN:-$LLAMA_CPP_SRC/build/bin}"
-
 export LLAMA_CPP_ROOT="${LLAMA_CPP_ROOT:-$DEV_STORAGE/ai-models/llama.cpp}"
 export LLAMA_CPP_MODELS="${LLAMA_CPP_MODELS:-$LLAMA_CPP_ROOT/models}"
 export LLAMA_CPP_CACHE="${LLAMA_CPP_CACHE:-$LLAMA_CPP_ROOT/.cache}"
 export LLAMA_CPP_LOGS="${LLAMA_CPP_LOGS:-$DEV_STORAGE/logs/llama.cpp}"
+export LLAMA_CACHE="${LLAMA_CACHE:-$LLAMA_CPP_CACHE}"
 
 export LLAMA_CPP_HOST="${LLAMA_CPP_HOST:-127.0.0.1}"
 export LLAMA_CPP_PORT="${LLAMA_CPP_PORT:-8080}"
-
-if [ -z "$LLAMA_CPP_MACHINE_PROFILE" ]; then
-  _llama_cpp_hw_mem_bytes="$(sysctl -n hw.memsize 2>/dev/null || true)"
-
-  case "$_llama_cpp_hw_mem_bytes" in
-    ''|*[!0-9]*)
-      export LLAMA_CPP_MACHINE_PROFILE="macbook-pro-48g"
-      ;;
-    *)
-      if [ "$_llama_cpp_hw_mem_bytes" -le 17179869184 ]; then
-        export LLAMA_CPP_MACHINE_PROFILE="mac-mini-16g"
-      elif [ "$_llama_cpp_hw_mem_bytes" -le 34359738368 ]; then
-        export LLAMA_CPP_MACHINE_PROFILE="balanced"
-      else
-        export LLAMA_CPP_MACHINE_PROFILE="macbook-pro-48g"
-      fi
-      ;;
-  esac
-
-  unset _llama_cpp_hw_mem_bytes
-fi
-
-if [ -z "$LLAMA_CPP_GEMMA_CTX_SIZE" ]; then
-  case "$LLAMA_CPP_MACHINE_PROFILE" in
-    mac-mini-16g)
-      export LLAMA_CPP_GEMMA_CTX_SIZE="16384"
-      ;;
-    balanced)
-      export LLAMA_CPP_GEMMA_CTX_SIZE="24576"
-      ;;
-    *)
-      export LLAMA_CPP_GEMMA_CTX_SIZE="32768"
-      ;;
-  esac
-fi
-
-if [ -z "$LLAMA_CPP_QWEN_CTX_SIZE" ]; then
-  case "$LLAMA_CPP_MACHINE_PROFILE" in
-    mac-mini-16g)
-      export LLAMA_CPP_QWEN_CTX_SIZE="16384"
-      ;;
-    balanced)
-      export LLAMA_CPP_QWEN_CTX_SIZE="32768"
-      ;;
-    *)
-      export LLAMA_CPP_QWEN_CTX_SIZE="65536"
-      ;;
-  esac
-fi
-
-if [ -z "$LLAMA_CPP_DEFAULT_MODEL" ]; then
-  if [ "$LLAMA_CPP_MACHINE_PROFILE" = "mac-mini-16g" ]; then
-    if [ -f "$LLAMA_CPP_MODELS/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf" ]; then
-      export LLAMA_CPP_DEFAULT_MODEL="gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf"
-    elif [ -f "$LLAMA_CPP_MODELS/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf" ]; then
-      export LLAMA_CPP_DEFAULT_MODEL="gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf"
-    elif [ -f "$LLAMA_CPP_MODELS/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf" ]; then
-      export LLAMA_CPP_DEFAULT_MODEL="gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf"
-    else
-      export LLAMA_CPP_DEFAULT_MODEL="gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf"
-    fi
-  elif [ "$LLAMA_CPP_MACHINE_PROFILE" = "balanced" ]; then
-    if [ -f "$LLAMA_CPP_MODELS/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf" ]; then
-      export LLAMA_CPP_DEFAULT_MODEL="gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf"
-    elif [ -f "$LLAMA_CPP_MODELS/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf" ]; then
-      export LLAMA_CPP_DEFAULT_MODEL="gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf"
-    elif [ -f "$LLAMA_CPP_MODELS/gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf" ]; then
-      export LLAMA_CPP_DEFAULT_MODEL="gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
-    else
-      export LLAMA_CPP_DEFAULT_MODEL="gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf"
-    fi
-  else
-    if [ -f "$LLAMA_CPP_MODELS/gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf" ]; then
-      export LLAMA_CPP_DEFAULT_MODEL="gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
-    elif [ -f "$LLAMA_CPP_MODELS/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf" ]; then
-      export LLAMA_CPP_DEFAULT_MODEL="gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf"
-    elif [ -f "$LLAMA_CPP_MODELS/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf" ]; then
-      export LLAMA_CPP_DEFAULT_MODEL="gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf"
-    else
-      export LLAMA_CPP_DEFAULT_MODEL="gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
-    fi
-  fi
-fi
-
 export LLAMA_CPP_SERVER_ALIAS="${LLAMA_CPP_SERVER_ALIAS:-local}"
-
-export LLAMA_CACHE="${LLAMA_CACHE:-$LLAMA_CPP_CACHE}"
 
 export LOCAL_AI_LMSTUDIO_HOST="${LOCAL_AI_LMSTUDIO_HOST:-127.0.0.1}"
 export LOCAL_AI_LMSTUDIO_PORT="${LOCAL_AI_LMSTUDIO_PORT:-1234}"
@@ -135,25 +78,16 @@ export LLAMA_CPP_AUTO_TUNE_ON_PULL="${LLAMA_CPP_AUTO_TUNE_ON_PULL:-true}"
 export LLAMA_CPP_AUTO_BENCH_VISION="${LLAMA_CPP_AUTO_BENCH_VISION:-true}"
 export LOCAL_AI_BENCH_IMAGE="${LOCAL_AI_BENCH_IMAGE:-}"
 
-LOCAL_AI_SOURCE_MODEL="${LOCAL_AI_SOURCE_MODEL:-$LLAMA_CPP_DEFAULT_MODEL}"
-
-if [ -z "$LOCAL_AI_PROVIDER" ]; then
-  export LOCAL_AI_PROVIDER="llama.cpp"
-fi
-
-export LOCAL_AI_CONTEXT_LENGTH="${LOCAL_AI_CONTEXT_LENGTH:-$LLAMA_CPP_GEMMA_CTX_SIZE}"
-
+export LOCAL_AI_PROVIDER="${LOCAL_AI_PROVIDER:-llama.cpp}"
 case "$LOCAL_AI_PROVIDER" in
   lmstudio)
     export LOCAL_AI_PROVIDER_URL="$LOCAL_AI_LMSTUDIO_BASE_URL"
     export LOCAL_AI_API_KEY="${LM_API_TOKEN:-local}"
-    export LOCAL_AI_MODEL="${LOCAL_AI_MODEL:-local/${LOCAL_AI_SOURCE_MODEL%%/*}}"
     ;;
   *)
     export LOCAL_AI_PROVIDER="llama.cpp"
     export LOCAL_AI_PROVIDER_URL="$LOCAL_AI_LLAMA_CPP_BASE_URL"
     export LOCAL_AI_API_KEY="local"
-    export LOCAL_AI_MODEL="${LOCAL_AI_MODEL:-$LLAMA_CPP_SERVER_ALIAS}"
     ;;
 esac
 
@@ -161,12 +95,10 @@ export OPENAI_BASE_URL="$LOCAL_AI_PROVIDER_URL"
 export OPENAI_API_KEY="$LOCAL_AI_API_KEY"
 
 if [ -d "$LLAMA_CPP_BIN" ]; then
-  if [ -n "$ZSH_VERSION" ]; then
-    path=("$LLAMA_CPP_BIN" $path)
-    export PATH
-  else
-    export PATH="$LLAMA_CPP_BIN:$PATH"
-  fi
+  case ":$PATH:" in
+    *:$LLAMA_CPP_BIN:*) ;;
+    *) export PATH="$LLAMA_CPP_BIN:$PATH" ;;
+  esac
 fi
 
 mkdir -p \
