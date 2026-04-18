@@ -20,6 +20,7 @@ import { runSirius } from './commands/sirius.js';
 import { runEmbersynth } from './commands/embersynth.js';
 import { runRunbookCmd } from './commands/runbook.js';
 import { runHeal } from './commands/heal.js';
+import { runDeployNode } from './commands/deploy.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
@@ -119,6 +120,10 @@ Agentic operations:
       [--dry-run] [--params <json>]           (see llamactl runbook --help)
   llamactl heal [--once] [--interval=<s>]     Observe fleet health + journal
       [--quiet] [--journal=<path>]            state transitions
+  llamactl deploy-node <name>                 Mint a bootstrap token for a
+      [--central-url=<url>] [--ttl=<m>]       new node + print the
+                                              curl-pipe-sh one-liner
+      [--list | --prune]                      List or prune outstanding
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -175,6 +180,8 @@ async function main(argv: string[]): Promise<number> {
       return runRunbookCmd(rest);
     case 'heal':
       return runHeal(rest);
+    case 'deploy-node':
+      return runDeployNode(rest);
     case undefined:
     case '--help':
     case '-h':

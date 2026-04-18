@@ -2,6 +2,7 @@ export { router, type AppRouter } from './router.js';
 export * as config from './config/kubeconfig.js';
 export * as configSchema from './config/schema.js';
 export * as agentConfig from './config/agent-config.js';
+export * as bootstrapTokens from './config/bootstrap-tokens.js';
 export * as siriusProviders from './config/sirius-providers.js';
 export * as embersynth from './config/embersynth.js';
 export * as providerNodes from './config/provider-nodes.js';
