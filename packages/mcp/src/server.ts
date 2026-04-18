@@ -5,11 +5,13 @@ import {
   catalog,
   env as envMod,
   presets,
+  server as serverMod,
 } from '@llamactl/core';
 import {
   config as kubecfg,
   embersynth,
   resolveNodeKind,
+  workloadStore,
 } from '@llamactl/remote';
 import { appendAudit, toTextContent } from '@nova/mcp-shared';
 
@@ -108,6 +110,78 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
           scopeFilter: scopeFilter ?? 'all',
         }),
       );
+    },
+  );
+
+  server.registerTool(
+    'llamactl.server.status',
+    {
+      title: 'Local llama-server status',
+      description:
+        'Return the control plane\'s local llama-server state: up/down, running rel, PID, endpoint, and extraArgs. Operators use this alongside workload.list to reconcile "what the manifest wants" against "what is actually serving".',
+      inputSchema: {},
+    },
+    async () => toTextContent(await serverMod.serverStatus()),
+  );
+
+  server.registerTool(
+    'llamactl.workload.list',
+    {
+      title: 'List persisted ModelRun manifests',
+      description:
+        'Return every ModelRun manifest under ~/.llamactl/workloads/, each with the last-recorded status field. Live runtime phase (per-node server probing) is a CLI-only operation — callers chaining several steps should cross-reference llamactl.server.status for the control plane\'s node.',
+      inputSchema: {},
+    },
+    async () => {
+      const manifests = workloadStore.listWorkloads();
+      const rows = manifests.map((m) => ({
+        name: m.metadata.name,
+        node: m.spec.node,
+        rel: m.spec.target.value,
+        gateway: m.spec.gateway,
+        restartPolicy: m.spec.restartPolicy,
+        status: m.status ?? null,
+      }));
+      return toTextContent({ count: rows.length, workloads: rows });
+    },
+  );
+
+  server.registerTool(
+    'llamactl.workload.delete',
+    {
+      title: 'Remove a ModelRun manifest',
+      description:
+        'Delete the persisted ModelRun file under ~/.llamactl/workloads/. Does NOT stop the server — that\'s a separate imperative operation. Dry-run reports what the wet-run would have removed.',
+      inputSchema: {
+        name: z.string().min(1).describe('metadata.name of the manifest'),
+        dryRun: z.boolean().default(false),
+      },
+    },
+    async (input) => {
+      const { name, dryRun } = input;
+      const manifests = workloadStore.listWorkloads();
+      const match = manifests.find((m) => m.metadata.name === name);
+      if (dryRun) {
+        appendAudit({ server: SERVER_SLUG, tool: 'llamactl.workload.delete', input, dryRun: true });
+        return toTextContent({
+          dryRun: true,
+          found: !!match,
+          node: match?.spec.node ?? null,
+          rel: match?.spec.target.value ?? null,
+          message: match
+            ? `would remove manifest ${name} (node=${match.spec.node}, rel=${match.spec.target.value})`
+            : `no manifest named ${name}`,
+        });
+      }
+      const removed = workloadStore.deleteWorkload(name);
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.workload.delete',
+        input,
+        dryRun: false,
+        result: { removed, found: !!match },
+      });
+      return toTextContent({ ok: true, removed, manifest: match ?? null });
     },
   );
 

@@ -19,6 +19,10 @@ export interface RunbookResult {
   ok: boolean;
   steps: RunbookStep[];
   error?: string;
+  /** Optional aggregated payload the runbook wants the caller to
+   *  consume directly (e.g. audit-fleet's unified snapshot). Runbooks
+   *  that only need to report per-step results leave this unset. */
+  summary?: unknown;
 }
 
 export interface ToolCallInput {

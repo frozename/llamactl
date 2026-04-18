@@ -79,6 +79,9 @@ describe('@llamactl/mcp read surface', () => {
       'llamactl.embersynth.sync',
       'llamactl.node.ls',
       'llamactl.promotions.list',
+      'llamactl.server.status',
+      'llamactl.workload.delete',
+      'llamactl.workload.list',
     ]);
   });
 
@@ -91,6 +94,30 @@ describe('@llamactl/mcp read surface', () => {
     const parsed = JSON.parse(textOf(result)) as unknown[];
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed.length).toBeGreaterThan(0);
+  });
+
+  test('llamactl.workload.list returns the empty shape when no manifests exist', async () => {
+    // runtime dir is a freshly-created tempdir with no workloads/.
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: 'llamactl.workload.list',
+      arguments: {},
+    });
+    const parsed = JSON.parse(textOf(result)) as { count: number; workloads: unknown[] };
+    expect(parsed.count).toBe(0);
+    expect(parsed.workloads).toEqual([]);
+  });
+
+  test('llamactl.workload.delete dry-run reports "no manifest" when absent', async () => {
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: 'llamactl.workload.delete',
+      arguments: { name: 'does-not-exist', dryRun: true },
+    });
+    const parsed = JSON.parse(textOf(result)) as { dryRun: boolean; found: boolean; message: string };
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.found).toBe(false);
+    expect(parsed.message).toMatch(/no manifest named/);
   });
 });
 
