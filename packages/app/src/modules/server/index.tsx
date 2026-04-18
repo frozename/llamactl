@@ -127,6 +127,25 @@ export default function Server(): JSX.Element {
   const envData = env.data as Record<string, string> | undefined;
   const busy = starting !== null;
 
+  const keepAliveStatus = trpc.keepAliveStatus.useQuery(undefined, { refetchInterval: 5000 });
+  const keepAliveStartMutation = trpc.keepAliveStart.useMutation({
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: [['keepAliveStatus'], { type: 'query' }],
+      });
+    },
+    onError: (err) => setError(err.message),
+  });
+  const keepAliveStopMutation = trpc.keepAliveStop.useMutation({
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: [['keepAliveStatus'], { type: 'query' }],
+      });
+    },
+    onError: (err) => setError(err.message),
+  });
+  const ka = keepAliveStatus.data;
+
   return (
     <div className="h-full overflow-auto p-6">
       <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
@@ -261,6 +280,70 @@ export default function Server(): JSX.Element {
           {error}
         </div>
       )}
+
+      <section className="mb-6 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+            Keep-alive supervisor
+          </h2>
+          <span
+            className={
+              ka?.running
+                ? 'mono text-xs text-[color:var(--color-accent)]'
+                : 'mono text-xs text-[color:var(--color-fg-muted)]'
+            }
+          >
+            {ka?.running ? `running (pid=${ka.pid})` : 'stopped'}
+          </span>
+        </div>
+        <div className="grid grid-cols-12 gap-3">
+          <label className="col-span-7 text-sm">
+            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+              Target
+            </span>
+            <input
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              disabled={ka?.running || keepAliveStartMutation.isPending}
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+            />
+          </label>
+          <div className="col-span-5 flex items-end gap-2">
+            <button
+              type="button"
+              onClick={() => keepAliveStartMutation.mutate({ target: target.trim() || 'current' })}
+              disabled={ka?.running || keepAliveStartMutation.isPending}
+              className="flex-1 rounded bg-[var(--color-accent)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:opacity-50"
+            >
+              {keepAliveStartMutation.isPending ? 'Starting…' : 'Start supervisor'}
+            </button>
+            <button
+              type="button"
+              onClick={() => keepAliveStopMutation.mutate({ graceSeconds: 10 })}
+              disabled={!ka?.running || keepAliveStopMutation.isPending}
+              className="flex-1 rounded border border-[var(--color-danger)] px-3 py-1 text-sm text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+            >
+              {keepAliveStopMutation.isPending ? 'Stopping…' : 'Stop supervisor'}
+            </button>
+          </div>
+        </div>
+        {ka?.state && (
+          <div className="mt-3 grid grid-cols-4 gap-2 text-xs text-[color:var(--color-fg-muted)]">
+            <div>
+              state=<span className="text-[color:var(--color-fg)]">{ka.state.state ?? '—'}</span>
+            </div>
+            <div>
+              model=<span className="text-[color:var(--color-fg)]">{ka.state.model ?? '—'}</span>
+            </div>
+            <div>
+              restarts=<span className="text-[color:var(--color-fg)]">{ka.state.restarts ?? 0}</span>
+            </div>
+            <div>
+              backoff=<span className="text-[color:var(--color-fg)]">{ka.state.backoff_seconds ?? 0}s</span>
+            </div>
+          </div>
+        )}
+      </section>
 
       <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)]">
         <div className="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">

@@ -3,9 +3,12 @@ import { observable } from '@trpc/server/observable';
 import { z } from 'zod';
 import {
   bench,
+  candidateTest as candidateMod,
   catalog,
   discovery,
   env as envMod,
+  keepAlive as keepAliveMod,
+  lmstudio as lmstudioMod,
   presets,
   pull,
   recommendations,
@@ -28,6 +31,10 @@ type BenchStreamEvent =
 type ServerStartEvent =
   | serverMod.ServerEvent
   | { type: 'done'; result: serverMod.StartServerResult };
+
+type CandidateStreamEvent =
+  | candidateMod.CandidateTestEvent
+  | { type: 'done-candidate-test'; result: candidateMod.CandidateTestResult };
 
 // Plain JSON serialisation — the core read surface returns POJOs only
 // (strings, numbers, arrays, nested objects). We'd swap in superjson if
@@ -191,6 +198,127 @@ export const router = t.router({
           // the readiness polling. For now, teardown just stops
           // forwarding events; the detached server keeps running.
           cancelled = true;
+        };
+      });
+    }),
+
+  lmstudioScan: t.procedure
+    .input(z.object({ root: z.string().optional() }).optional())
+    .query(({ input }) => lmstudioMod.scanLMStudio({ root: input?.root })),
+
+  lmstudioPlan: t.procedure
+    .input(
+      z
+        .object({
+          root: z.string().optional(),
+          link: z.boolean().optional(),
+        })
+        .optional(),
+    )
+    .query(({ input }) =>
+      lmstudioMod.planImport({ root: input?.root, link: input?.link }),
+    ),
+
+  lmstudioImport: t.procedure
+    .input(
+      z.object({
+        root: z.string().optional(),
+        link: z.boolean().optional(),
+      }),
+    )
+    .mutation(({ input }) =>
+      lmstudioMod.applyImport({ root: input.root, link: input.link, apply: true }),
+    ),
+
+  keepAliveStatus: t.procedure.query(() => keepAliveMod.keepAliveStatus()),
+
+  keepAliveStop: t.procedure
+    .input(
+      z.object({ graceSeconds: z.number().int().positive().max(60).optional() }).optional(),
+    )
+    .mutation(async ({ input }) =>
+      keepAliveMod.stopKeepAlive({ graceSeconds: input?.graceSeconds }),
+    ),
+
+  keepAliveStart: t.procedure
+    .input(z.object({ target: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      // Spawn a detached `llamactl keep-alive worker <target>` child by
+      // shelling out to `bun` with the CLI entry. Matches what
+      // \`llamactl keep-alive start\` does from a shell session.
+      const { spawn } = await import('node:child_process');
+      const { join } = await import('node:path');
+      const resolved = envMod.resolveEnv();
+      const existing = keepAliveMod.readKeepAlivePid(resolved);
+      if (existing !== null) {
+        return {
+          ok: false,
+          pid: existing,
+          error: `keep-alive already running (pid=${existing})`,
+        };
+      }
+      const llamactlHome = process.env.LLAMACTL_HOME
+        ?? join(resolved.DEV_STORAGE, 'repos', 'personal', 'llamactl');
+      const entry = join(llamactlHome, 'packages', 'cli', 'src', 'bin.ts');
+      const child = spawn('bun', [entry, 'keep-alive', 'worker', input.target], {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env },
+      });
+      child.unref();
+      const startedAt = Date.now();
+      let pid: number | null = null;
+      while (Date.now() - startedAt < 2000) {
+        pid = keepAliveMod.readKeepAlivePid(resolved);
+        if (pid !== null) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return {
+        ok: pid !== null,
+        pid,
+        error: pid === null ? 'supervisor did not register a PID within 2s' : undefined,
+      };
+    }),
+
+  candidateTestRun: t.procedure
+    .input(
+      z.object({
+        repo: z.string().min(1),
+        file: z.string().optional(),
+        profile: z.string().optional(),
+      }),
+    )
+    .subscription(({ input }) => {
+      return observable<CandidateStreamEvent>((emit) => {
+        let cancelled = false;
+        const controller = new AbortController();
+        void (async () => {
+          try {
+            const result = await candidateMod.candidateTest({
+              repo: input.repo,
+              file: input.file,
+              profile: input.profile,
+              signal: controller.signal,
+              onEvent: (e) => {
+                if (!cancelled) emit.next(e);
+              },
+            });
+            if (cancelled) return;
+            if ('error' in result) {
+              emit.error(new Error(result.error));
+              return;
+            }
+            emit.next({ type: 'done-candidate-test', result });
+            emit.complete();
+          } catch (err) {
+            if (!cancelled) {
+              emit.error(err instanceof Error ? err : new Error(String(err)));
+            }
+          }
+        })();
+        return () => {
+          cancelled = true;
+          controller.abort();
         };
       });
     }),

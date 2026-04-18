@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
 
-type Mode = 'file' | 'candidate';
+type Mode = 'file' | 'candidate' | 'test';
 type Profile = 'mac-mini-16g' | 'balanced' | 'macbook-pro-48g';
 
 interface LogLine {
@@ -27,6 +27,7 @@ export default function Pulls(): JSX.Element {
   const [active, setActive] = useState<
     | { mode: 'file'; repo: string; file: string }
     | { mode: 'candidate'; repo: string; file?: string; profile?: Profile }
+    | { mode: 'test'; repo: string; file?: string; profile?: Profile }
     | null
   >(null);
   const [log, setLog] = useState<LogLine[]>([]);
@@ -87,6 +88,45 @@ export default function Pulls(): JSX.Element {
         });
         break;
       }
+      case 'profile-start':
+        appendLog({ kind: 'start', text: `-- profile=${String(e.profile)} --`, at: now });
+        break;
+      case 'profile-done':
+        appendLog({
+          kind: 'start',
+          text: `-- profile=${String(e.profile)} gen_ts=${String(e.gen_ts)} prompt_ts=${String(e.prompt_ts)} --`,
+          at: now,
+        });
+        break;
+      case 'profile-fail':
+        appendLog({
+          kind: 'error',
+          text: `-- profile=${String(e.profile)} failed (code=${String(e.code)}) --`,
+          at: now,
+        });
+        break;
+      case 'done-candidate-test': {
+        const result = e.result as {
+          rel?: string;
+          curatedAdded?: boolean;
+          preset?: { ran?: boolean; reason?: string };
+          vision?: { ran?: boolean; reason?: string };
+        };
+        const text = `candidate-test: rel=${result.rel} curated_added=${result.curatedAdded} preset=${result.preset?.ran ? 'ran' : (result.preset?.reason ?? 'skipped')} vision=${result.vision?.ran ? 'ran' : (result.vision?.reason ?? 'skipped')}`;
+        appendLog({ kind: 'done', text, at: now });
+        setSummary(text);
+        setActive(null);
+        void queryClient.invalidateQueries({
+          queryKey: [['catalogList'], { type: 'query' }],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: [['benchHistory'], { type: 'query' }],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: [['benchCompare'], { type: 'query' }],
+        });
+        break;
+      }
       default:
         appendLog({ kind: 'stdout', text: JSON.stringify(e), at: now });
     }
@@ -120,6 +160,17 @@ export default function Pulls(): JSX.Element {
     },
   );
 
+  trpc.candidateTestRun.useSubscription(
+    active?.mode === 'test'
+      ? { repo: active.repo, file: active.file, profile: active.profile }
+      : { repo: '' },
+    {
+      enabled: active?.mode === 'test',
+      onData: handleData,
+      onError: handleError,
+    },
+  );
+
   const start = (e: React.FormEvent) => {
     e.preventDefault();
     const r = repo.trim();
@@ -136,9 +187,16 @@ export default function Pulls(): JSX.Element {
         return;
       }
       setActive({ mode: 'file', repo: r, file: file.trim() });
-    } else {
+    } else if (mode === 'candidate') {
       setActive({
         mode: 'candidate',
+        repo: r,
+        file: file.trim() || undefined,
+        profile: profile || undefined,
+      });
+    } else {
+      setActive({
+        mode: 'test',
         repo: r,
         file: file.trim() || undefined,
         profile: profile || undefined,
@@ -168,7 +226,7 @@ export default function Pulls(): JSX.Element {
         className="mb-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
       >
         <div className="mb-3 flex gap-1 text-xs">
-          {(['file', 'candidate'] as Mode[]).map((m) => (
+          {(['file', 'candidate', 'test'] as Mode[]).map((m) => (
             <button
               key={m}
               type="button"
@@ -180,7 +238,7 @@ export default function Pulls(): JSX.Element {
                   : 'rounded border border-transparent px-3 py-1 text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)]'
               }
             >
-              {m === 'file' ? 'Pull file' : 'Pull candidate'}
+              {m === 'file' ? 'Pull file' : m === 'candidate' ? 'Pull candidate' : 'Candidate test'}
             </button>
           ))}
         </div>
@@ -209,7 +267,7 @@ export default function Pulls(): JSX.Element {
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
             />
           </label>
-          {mode === 'candidate' && (
+          {(mode === 'candidate' || mode === 'test') && (
             <label className="col-span-2 text-sm">
               <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
                 Profile
@@ -231,7 +289,7 @@ export default function Pulls(): JSX.Element {
           )}
           <div
             className={
-              mode === 'candidate' ? 'col-span-12 flex justify-end' : 'col-span-2 flex items-end'
+              mode === 'file' ? 'col-span-2 flex items-end' : 'col-span-12 flex justify-end'
             }
           >
             <button
@@ -239,7 +297,13 @@ export default function Pulls(): JSX.Element {
               disabled={busy}
               className="rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:opacity-50"
             >
-              {busy ? 'Pulling…' : 'Pull'}
+              {busy
+                ? mode === 'test'
+                  ? 'Testing…'
+                  : 'Pulling…'
+                : mode === 'test'
+                  ? 'Run test'
+                  : 'Pull'}
             </button>
             {busy && (
               <button
