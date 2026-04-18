@@ -9,3 +9,6 @@ export { createNodeClient, createRemoteNodeClient, type NodeClient } from './cli
 export { LOCAL_NODE_NAME, LOCAL_NODE_ENDPOINT } from './config/schema.js';
 export * as workloadSchema from './workload/schema.js';
 export * as workloadStore from './workload/store.js';
+export * as workloadApply from './workload/apply.js';
+export * as workloadLock from './workload/lock.js';
+export * as workloadReconciler from './workload/reconciler.js';

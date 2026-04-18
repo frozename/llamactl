@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import {
+  workloadApply,
   workloadSchema,
   workloadStore,
 } from '@llamactl/remote';
@@ -67,12 +68,6 @@ function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
   return { file, json };
 }
 
-function sameExtraArgs(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
-
 export async function runApply(args: string[]): Promise<number> {
   const parsed = parseApplyFlags(args);
   if ('error' in parsed) {
@@ -95,97 +90,39 @@ export async function runApply(args: string[]): Promise<number> {
   }
 
   const client = getNodeClientByName(manifest.spec.node);
-  const status = await client.serverStatus.query();
-
-  const desiredRel = manifest.spec.target.value;
-  const desiredArgs = manifest.spec.extraArgs;
-  const liveRel = status.rel;
-  const liveArgs = status.extraArgs ?? [];
-  const running = status.state === 'up';
-  const matches =
-    running && liveRel === desiredRel && sameExtraArgs(liveArgs, desiredArgs);
-
-  let action: 'unchanged' | 'started' | 'restarted' = 'unchanged';
-  type StartDone = { ok: boolean; pid: number | null; endpoint: string; error?: string };
-  let startResult: StartDone | null = null;
-
-  if (matches) {
-    action = 'unchanged';
-  } else {
-    if (running) {
-      await client.serverStop.mutate({ graceSeconds: 5 });
-      action = 'restarted';
-    } else {
-      action = 'started';
-    }
-    startResult = await new Promise<StartDone | null>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error('serverStart timed out')),
-        (manifest.spec.timeoutSeconds + 5) * 1000,
-      );
-      let done: StartDone | null = null;
-      const sub = client.serverStart.subscribe(
-        {
-          target: desiredRel,
-          extraArgs: desiredArgs.length > 0 ? desiredArgs : undefined,
-          timeoutSeconds: manifest.spec.timeoutSeconds,
-        },
-        {
-          onData: (evt: unknown) => {
-            const e = evt as { type?: string; result?: unknown };
-            if (e.type === 'done') done = e.result as typeof done;
-          },
-          onError: (err: unknown) => {
-            clearTimeout(timer);
-            reject(err as Error);
-          },
-          onComplete: () => {
-            clearTimeout(timer);
-            resolve(done);
-          },
-        },
-      );
-      void sub;
-    });
-    if (!startResult || !startResult.ok) {
-      const err = startResult?.error ?? 'serverStart failed';
-      process.stderr.write(`apply: ${err}\n`);
-      return 1;
-    }
+  let result: workloadApply.ApplyResult;
+  try {
+    result = await workloadApply.applyOne(manifest, client);
+  } catch (err) {
+    process.stderr.write(`apply: ${(err as Error).message}\n`);
+    return 1;
+  }
+  if (result.error) {
+    process.stderr.write(`apply: ${result.error}\n`);
+    return 1;
   }
 
-  const now = new Date().toISOString();
-  const statusSection: workloadSchema.ModelRunStatus = {
-    phase: 'Running',
-    serverPid: startResult?.pid ?? status.pid,
-    endpoint: startResult?.endpoint ?? status.endpoint,
-    lastTransitionTime: now,
-    conditions: [
-      {
-        type: 'Applied',
-        status: 'True',
-        reason: action,
-        lastTransitionTime: now,
-      },
-    ],
-  };
   const persisted: workloadSchema.ModelRun = {
     ...manifest,
-    status: statusSection,
+    status: result.statusSection,
   };
   const savedPath = workloadStore.saveWorkload(persisted);
 
   if (parsed.json) {
     process.stdout.write(
-      `${JSON.stringify({ action, path: savedPath, status: statusSection }, null, 2)}\n`,
+      `${JSON.stringify({ action: result.action, path: savedPath, status: result.statusSection }, null, 2)}\n`,
     );
   } else {
     process.stdout.write(
-      `${action} modelrun/${manifest.metadata.name} on node ${manifest.spec.node}\n`,
+      `${result.action} modelrun/${manifest.metadata.name} on node ${manifest.spec.node}\n`,
     );
     process.stdout.write(`  manifest: ${savedPath}\n`);
-    if (statusSection.endpoint) process.stdout.write(`  endpoint: ${statusSection.endpoint}\n`);
-    if (statusSection.serverPid) process.stdout.write(`  pid:      ${statusSection.serverPid}\n`);
+    if (result.statusSection.endpoint) {
+      process.stdout.write(`  endpoint: ${result.statusSection.endpoint}\n`);
+    }
+    if (result.statusSection.serverPid) {
+      process.stdout.write(`  pid:      ${result.statusSection.serverPid}\n`);
+    }
   }
   return 0;
 }
