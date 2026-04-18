@@ -1,5 +1,12 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
-import { LayoutDashboard, Database, Download, Settings, type LucideIcon } from 'lucide-react';
+import {
+  Activity,
+  Database,
+  Download,
+  LayoutDashboard,
+  Settings,
+  type LucideIcon,
+} from 'lucide-react';
 
 /**
  * Activity-bar module descriptor. To add a new module:
@@ -23,6 +30,7 @@ export interface AppModule {
 const LazyDashboard = lazy(() => import('./dashboard/index'));
 const LazyModels = lazy(() => import('./models/index'));
 const LazyPulls = lazy(() => import('./pulls/index'));
+const LazyBench = lazy(() => import('./bench/index'));
 const LazySettings = lazy(() => import('./settings/index'));
 
 export const APP_MODULES: AppModule[] = [
@@ -46,6 +54,13 @@ export const APP_MODULES: AppModule[] = [
     icon: Download,
     Component: LazyPulls,
     shortcut: 3,
+  },
+  {
+    id: 'bench',
+    labelKey: 'Bench',
+    icon: Activity,
+    Component: LazyBench,
+    shortcut: 4,
   },
   {
     id: 'settings',

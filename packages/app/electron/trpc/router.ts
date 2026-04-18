@@ -19,6 +19,11 @@ type PullStreamEvent =
   | { type: 'done'; result: pull.PullFileResult }
   | { type: 'done-candidate'; result: pull.PullCandidateResult };
 
+type BenchStreamEvent =
+  | bench.BenchEvent
+  | { type: 'done-preset'; result: bench.BenchPresetResult }
+  | { type: 'done-vision'; result: bench.BenchVisionResult };
+
 // Plain JSON serialisation — the core read surface returns POJOs only
 // (strings, numbers, arrays, nested objects). We'd swap in superjson if
 // we started returning Date/Map/Set, but electron-trpc v0.7 doesn't pass
@@ -182,6 +187,128 @@ export const router = t.router({
           // The subprocess keeps running; this just stops forwarding
           // further events. A hard-abort story is a follow-up — it
           // needs an AbortSignal plumbed through `RunHf`.
+          cancelled = true;
+        };
+      });
+    }),
+
+  benchHistory: t.procedure
+    .input(
+      z
+        .object({
+          rel: z.string().optional(),
+          limit: z.number().int().positive().max(500).optional(),
+        })
+        .optional(),
+    )
+    .query(({ input }) => {
+      const resolved = envMod.resolveEnv();
+      const rows = bench.readBenchHistory(bench.benchHistoryFile(resolved));
+      const limit = input?.limit ?? 50;
+      const filter = input?.rel;
+      const merged = [
+        ...rows.current.map((r) => ({
+          updated_at: r.updated_at,
+          machine: r.machine,
+          rel: r.rel,
+          mode: r.mode,
+          ctx: r.ctx,
+          build: r.build,
+          profile: r.profile,
+          gen_ts: r.gen_ts,
+          prompt_ts: r.prompt_ts,
+          launch_args: r.launch_args,
+          kind: 'current' as const,
+        })),
+        ...rows.legacy.map((r) => ({
+          updated_at: r.updated_at,
+          machine: 'legacy',
+          rel: r.rel,
+          mode: 'legacy',
+          ctx: 'legacy',
+          build: 'legacy',
+          profile: r.profile,
+          gen_ts: r.gen_ts,
+          prompt_ts: r.prompt_ts,
+          launch_args: r.launch_args,
+          kind: 'legacy' as const,
+        })),
+      ];
+      const filtered = filter ? merged.filter((r) => r.rel === filter) : merged;
+      filtered.sort((a, b) => a.updated_at.localeCompare(b.updated_at));
+      return filtered.slice(-limit);
+    }),
+
+  benchVisionRows: t.procedure.query(() => {
+    const resolved = envMod.resolveEnv();
+    return bench.readBenchVision(bench.benchVisionFile(resolved));
+  }),
+
+  benchPresetRun: t.procedure
+    .input(
+      z.object({
+        target: z.string().min(1),
+        mode: z.enum(['auto', 'text', 'vision']).optional(),
+      }),
+    )
+    .subscription(({ input }) => {
+      return observable<BenchStreamEvent>((emit) => {
+        let cancelled = false;
+        void (async () => {
+          try {
+            const result = await bench.benchPreset({
+              target: input.target,
+              mode: input.mode,
+              onEvent: (e) => {
+                if (!cancelled) emit.next(e);
+              },
+            });
+            if (cancelled) return;
+            if ('error' in result) {
+              emit.error(new Error(result.error));
+              return;
+            }
+            emit.next({ type: 'done-preset', result });
+            emit.complete();
+          } catch (err) {
+            if (!cancelled) {
+              emit.error(err instanceof Error ? err : new Error(String(err)));
+            }
+          }
+        })();
+        return () => {
+          cancelled = true;
+        };
+      });
+    }),
+
+  benchVisionRun: t.procedure
+    .input(z.object({ target: z.string().min(1) }))
+    .subscription(({ input }) => {
+      return observable<BenchStreamEvent>((emit) => {
+        let cancelled = false;
+        void (async () => {
+          try {
+            const result = await bench.benchVision({
+              target: input.target,
+              onEvent: (e) => {
+                if (!cancelled) emit.next(e);
+              },
+            });
+            if (cancelled) return;
+            if ('error' in result) {
+              emit.error(new Error(result.error));
+              return;
+            }
+            emit.next({ type: 'done-vision', result });
+            emit.complete();
+          } catch (err) {
+            if (!cancelled) {
+              emit.error(err instanceof Error ? err : new Error(String(err)));
+            }
+          }
+        })();
+        return () => {
           cancelled = true;
         };
       });
