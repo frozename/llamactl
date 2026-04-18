@@ -5,6 +5,7 @@ import { runBench } from './commands/bench.js';
 import { runCandidate } from './commands/candidate.js';
 import { runServer } from './commands/server.js';
 import { runKeepAlive } from './commands/keepAlive.js';
+import { runLMStudio } from './commands/lmstudio.js';
 import { runRecommendations } from './commands/recommendations.js';
 import { runDiscover } from './commands/discover.js';
 import { runPull } from './commands/pull.js';
@@ -55,6 +56,10 @@ Write commands:
                                               restarts llama-server on exit
   llamactl keep-alive stop                    Signal the supervisor to exit
   llamactl keep-alive status                  Show supervisor + state snapshot
+  llamactl lmstudio scan [--root=<dir>]       List GGUFs in LM Studio's tree
+  llamactl lmstudio import [--apply] [--no-link]
+                                              Plan or apply a custom-catalog
+                                              import of LM Studio models
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -83,6 +88,8 @@ async function main(argv: string[]): Promise<number> {
       return runServer(rest);
     case 'keep-alive':
       return runKeepAlive(rest);
+    case 'lmstudio':
+      return runLMStudio(rest);
     case undefined:
     case '--help':
     case '-h':
