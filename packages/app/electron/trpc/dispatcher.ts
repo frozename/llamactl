@@ -145,15 +145,49 @@ function resolveDispatchTarget(path: string): DispatchTarget {
   };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ProxyClient = Record<string, any>;
+
+/**
+ * Typed caller over the base router. Hoisted to module scope because
+ * `baseRouter` is a module-level constant and the caller has no
+ * request-scoped context — creating a fresh caller per procedure call
+ * (as we used to) was pure waste. The `as any` cast is erased by the
+ * `ProxyClient` type alias so downstream reads are still dynamically
+ * dispatched but we don't repeat the cast every hot path.
+ */
+const baseCaller: ProxyClient = baseRouter.createCaller({}) as unknown as ProxyClient;
+
+/**
+ * Pinned remote-client cache, keyed by the (endpoint + fingerprint +
+ * token) tuple. A fresh node registration, token rotation, or cert
+ * change produces a new key and a cache miss; existing keys reuse
+ * the already-built `createTRPCClient` instance, avoiding the
+ * linkBuilder + eventsource-ponyfill wiring cost on every query.
+ */
+const clientCache = new Map<string, ProxyClient>();
+
+function cacheKey(target: DispatchTarget): string {
+  if (!target.node || !target.token) return '';
+  const fp = target.node.certificateFingerprint ?? '';
+  // Use only the token's first 8 chars in the key — the full token is
+  // already the cache invalidation signal; 8 chars is enough to
+  // disambiguate independent rotations without keeping the secret in
+  // an in-memory map key any longer than necessary.
+  return `${target.node.endpoint}|${fp}|${target.token.slice(0, 8)}`;
+}
+
 function buildRemoteClient(
   target: DispatchTarget,
   fetchFactory: PinnedFetchFactory,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): any {
+): ProxyClient {
   if (!target.node || !target.token) {
     throw new Error('remote target missing node or token');
   }
-  return createTRPCClient({
+  const key = cacheKey(target);
+  const cached = clientCache.get(key);
+  if (cached) return cached;
+  const client = createTRPCClient({
     links: buildPinnedLinks(
       {
         name: target.node.name,
@@ -164,22 +198,29 @@ function buildRemoteClient(
       target.token,
       fetchFactory,
     ),
-  });
+  }) as unknown as ProxyClient;
+  clientCache.set(key, client);
+  return client;
+}
+
+/**
+ * Test-only helper — clears the pinned-client cache so tests that
+ * rotate tokens or swap cert fingerprints see fresh state. Paired
+ * with `__resetActiveNodeOverrideForTests`.
+ */
+export function __resetClientCacheForTests(): void {
+  clientCache.clear();
 }
 
 function wrapQueryOrMutation(
   path: string,
   type: 'query' | 'mutation',
   fetchFactory: PinnedFetchFactory,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): any {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const resolver = async ({ input }: { input: any }) => {
+): unknown {
+  const resolver = async ({ input }: { input: unknown }) => {
     const target = resolveDispatchTarget(path);
     if (target.kind === 'local') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const caller = baseRouter.createCaller({}) as any;
-      return caller[path](input);
+      return baseCaller[path](input);
     }
     const client = buildRemoteClient(target, fetchFactory);
     return type === 'query'
@@ -199,10 +240,8 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
     const target = resolveDispatchTarget(path);
     const clientSignal = opts.signal as AbortSignal | undefined;
     if (target.kind === 'local') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const caller = baseRouter.createCaller({}) as any;
-      const iterable = await caller[path](opts.input);
-      for await (const ev of iterable as AsyncIterable<unknown>) {
+      const iterable = (await baseCaller[path](opts.input)) as AsyncIterable<unknown>;
+      for await (const ev of iterable) {
         if (clientSignal?.aborted) break;
         yield ev;
       }

@@ -48,7 +48,10 @@ describe('Electron dispatcher router', () => {
       c.clusterConfigPath,
     );
     const urls: string[] = [];
-    const { buildDispatcherRouter } = await import('../electron/trpc/dispatcher');
+    const { buildDispatcherRouter, __resetClientCacheForTests } = await import(
+      '../electron/trpc/dispatcher'
+    );
+    __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter(spyFactory(urls));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const caller = (dispatcher as any).createCaller({});
@@ -68,7 +71,10 @@ describe('Electron dispatcher router', () => {
       c.clusterConfigPath,
     );
     const urls: string[] = [];
-    const { buildDispatcherRouter } = await import('../electron/trpc/dispatcher');
+    const { buildDispatcherRouter, __resetClientCacheForTests } = await import(
+      '../electron/trpc/dispatcher'
+    );
+    __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter((node) => {
       const inner = makePinnedFetch(node);
       return async (input, init) => {
@@ -92,7 +98,10 @@ describe('Electron dispatcher router', () => {
       c.clusterConfigPath,
     );
     const urls: string[] = [];
-    const { buildDispatcherRouter } = await import('../electron/trpc/dispatcher');
+    const { buildDispatcherRouter, __resetClientCacheForTests } = await import(
+      '../electron/trpc/dispatcher'
+    );
+    __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter(spyFactory(urls));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const caller = (dispatcher as any).createCaller({});
@@ -123,7 +132,10 @@ describe('Electron dispatcher router', () => {
       c.clusterConfigPath,
     );
     const urls: string[] = [];
-    const { buildDispatcherRouter } = await import('../electron/trpc/dispatcher');
+    const { buildDispatcherRouter, __resetClientCacheForTests } = await import(
+      '../electron/trpc/dispatcher'
+    );
+    __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter(spyFactory(urls));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const caller = (dispatcher as any).createCaller({});
@@ -146,7 +158,10 @@ describe('Electron dispatcher router', () => {
       c.clusterConfigPath,
     );
     const urls: string[] = [];
-    const { buildDispatcherRouter } = await import('../electron/trpc/dispatcher');
+    const { buildDispatcherRouter, __resetClientCacheForTests } = await import(
+      '../electron/trpc/dispatcher'
+    );
+    __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter((node) => {
       const inner = makePinnedFetch(node);
       return async (input, init) => {

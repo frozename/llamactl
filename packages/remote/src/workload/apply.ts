@@ -1,5 +1,43 @@
-import type { NodeClient } from '../client/node-client.js';
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
+
+/**
+ * Structural subset of `NodeClient` that `applyOne` actually touches.
+ * Declared here so the workload layer doesn't force its consumers
+ * (router.ts, the CLI) to pass the full typed `NodeClient` — both
+ * `clientForNode` inside the router and the CLI's pinned client
+ * satisfy this narrower shape, which eliminates an unsafe `as any`
+ * cast at the router boundary.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SubscribeCallbacks = { onData: (e: any) => void; onError: (err: any) => void; onComplete: () => void };
+type Unsubscribable = { unsubscribe?: () => void };
+
+export interface WorkloadClient {
+  serverStatus: {
+    query(): Promise<{
+      state: string;
+      rel: string | null;
+      extraArgs: string[];
+      pid: number | null;
+      endpoint: string;
+      advertisedEndpoint?: string | null;
+    }>;
+  };
+  serverStop: { mutate(input?: { graceSeconds?: number }): Promise<unknown> };
+  serverStart: {
+    subscribe(
+      input: { target: string; extraArgs?: string[]; timeoutSeconds?: number },
+      callbacks: SubscribeCallbacks,
+    ): Unsubscribable;
+  };
+  rpcServerStart: {
+    subscribe(
+      input: { host?: string; port: number; extraArgs?: string[]; timeoutSeconds?: number },
+      callbacks: SubscribeCallbacks,
+    ): Unsubscribable;
+  };
+  rpcServerStop: { mutate(input?: { graceSeconds?: number }): Promise<unknown> };
+}
 
 export type ApplyAction = 'unchanged' | 'started' | 'restarted';
 
@@ -31,7 +69,7 @@ interface StartDone {
  *  "host:port,host:port,..." suitable for llama-server's --rpc flag. */
 async function startWorkers(
   workers: readonly ModelRunWorker[],
-  getClient: (nodeName: string) => NodeClient,
+  getClient: (nodeName: string) => WorkloadClient,
   onEvent?: (e: ApplyEvent) => void,
 ): Promise<{ rpcList: string; error?: string }> {
   const endpoints: string[] = [];
@@ -86,7 +124,7 @@ async function startWorkers(
 
 async function stopWorkers(
   workers: readonly ModelRunWorker[],
-  getClient: (nodeName: string) => NodeClient,
+  getClient: (nodeName: string) => WorkloadClient,
 ): Promise<void> {
   // Reverse order mirrors start order — keeps logs easier to read.
   for (const worker of [...workers].reverse()) {
@@ -111,7 +149,7 @@ async function stopWorkers(
  */
 export async function applyOne(
   manifest: ModelRun,
-  getClient: (nodeName: string) => NodeClient,
+  getClient: (nodeName: string) => WorkloadClient,
   onEvent?: (e: ApplyEvent) => void,
 ): Promise<ApplyResult> {
   const client = getClient(manifest.spec.node);

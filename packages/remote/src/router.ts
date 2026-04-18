@@ -13,25 +13,19 @@ import {
 import { buildPinnedLinks } from './client/links.js';
 
 /**
- * Minimal structural type of a tRPC NodeClient limited to the methods
- * the workload procedures call. Declared inline here so router.ts does
- * not import `NodeClient` from `./client/node-client.js`, which would
- * re-introduce the `AppRouter → NodeClient → AppRouter` circular alias.
- * `applyOne`'s full `NodeClient` shape is structurally compatible — we
- * cast with `as unknown as` where applyOne expects the richer type.
+ * Router↔client circular-type escape hatch — the `AppRouter → NodeClient
+ * → AppRouter` alias is unresolvable in TypeScript, so router.ts never
+ * imports `NodeClient` from `./client/node-client.js`. Instead we route
+ * workload forwarding through `WorkloadClient` (defined in
+ * `./workload/apply.js`), which is structurally narrower than
+ * `NodeClient` and carries no AppRouter reference.
+ *
+ * Same pattern applies elsewhere: if a router procedure ever needs to
+ * call another tRPC client (remote or caller-proxy), give it a
+ * hand-rolled structural interface. Importing the typed `NodeClient`
+ * is always a cycle.
  */
-interface WorkloadNodeClient {
-  serverStatus: { query(): Promise<{
-    state: string;
-    rel: string | null;
-    extraArgs: string[];
-    pid: number | null;
-    endpoint: string;
-    advertisedEndpoint?: string | null;
-  }> };
-  serverStop: { mutate(input?: { graceSeconds?: number }): Promise<unknown> };
-  rpcServerStop: { mutate(input?: { graceSeconds?: number }): Promise<unknown> };
-}
+type WorkloadNodeClient = workloadApplyMod.WorkloadClient;
 
 /**
  * Build a tRPC-client-shaped proxy over `router.createCaller({})` so
@@ -441,11 +435,11 @@ export const router = t.router({
       // at the type level. clientForNode returns a structurally-compatible
       // surface (serverStatus/serverStop/rpcServerStop + the subscription
       // helpers for serverStart/rpcServerStart arrive from the pinned tRPC
-      // client on the remote path; local path wraps core directly). The
-      // double-cast erases the cycle without introducing a runtime gap.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // client on the remote path; local path wraps core directly).
+      // `WorkloadClient` was widened from `NodeClient` precisely so this
+      // callsite no longer needs an `as any` escape.
       const result = await workloadApplyMod.applyOne(manifest, (nodeName) =>
-        clientForNode(cfg, nodeName) as unknown as any,
+        clientForNode(cfg, nodeName),
       );
       if (result.error) {
         throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
