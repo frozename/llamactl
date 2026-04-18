@@ -12,6 +12,7 @@ import {
   Server as ServerIcon,
   Settings,
   Star,
+  Workflow,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -37,6 +38,7 @@ export interface AppModule {
 const LazyDashboard = lazy(() => import('./dashboard/index'));
 const LazyNodes = lazy(() => import('./nodes/index'));
 const LazyChat = lazy(() => import('./chat/index'));
+const LazyPipelines = lazy(() => import('./pipelines/index'));
 const LazyWorkloads = lazy(() => import('./workloads/index'));
 const LazyModels = lazy(() => import('./models/index'));
 const LazyPresets = lazy(() => import('./presets/index'));
@@ -68,6 +70,12 @@ export const APP_MODULES: AppModule[] = [
     icon: MessageSquare,
     Component: LazyChat,
     shortcut: 3,
+  },
+  {
+    id: 'pipelines',
+    labelKey: 'Pipelines',
+    icon: Workflow,
+    Component: LazyPipelines,
   },
   {
     id: 'workloads',
