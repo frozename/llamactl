@@ -13,6 +13,7 @@ import {
   presets,
   pull,
   recommendations,
+  rpcServer as rpcServerMod,
   server as serverMod,
   serverLogs as serverLogsMod,
   target as targetMod,
@@ -263,6 +264,54 @@ export const router = t.router({
     ),
 
   keepAliveStatus: t.procedure.query(() => keepAliveMod.keepAliveStatus()),
+
+  rpcServerStatus: t.procedure.query(async () => rpcServerMod.rpcServerStatus()),
+
+  rpcServerStop: t.procedure
+    .input(
+      z.object({ graceSeconds: z.number().int().positive().max(60).optional() }).optional(),
+    )
+    .mutation(async ({ input }) =>
+      rpcServerMod.stopRpcServer({ graceSeconds: input?.graceSeconds }),
+    ),
+
+  rpcServerStart: t.procedure
+    .input(
+      z.object({
+        host: z.string().min(1).optional(),
+        port: z.number().int().min(1).max(65535),
+        modelPath: z.string().optional(),
+        extraArgs: z.array(z.string()).optional(),
+        timeoutSeconds: z.number().int().positive().max(300).optional(),
+      }),
+    )
+    .subscription(({ input }) => {
+      return observable<
+        rpcServerMod.RpcServerEvent | { type: 'done'; result: rpcServerMod.StartRpcServerResult }
+      >((emit) => {
+        let cancelled = false;
+        const controller = new AbortController();
+        void (async () => {
+          try {
+            const result = await rpcServerMod.startRpcServer({
+              ...input,
+              signal: controller.signal,
+              onEvent: (e) => emit.next(e),
+            });
+            if (!cancelled) {
+              emit.next({ type: 'done', result });
+              emit.complete();
+            }
+          } catch (err) {
+            emit.error(err);
+          }
+        })();
+        return () => {
+          cancelled = true;
+          controller.abort();
+        };
+      });
+    }),
 
   keepAliveStop: t.procedure
     .input(

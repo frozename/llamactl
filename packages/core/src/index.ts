@@ -21,6 +21,7 @@ export * as autotune from './autotune.js';
 export * as candidateTest from './candidateTest.js';
 export * as server from './server.js';
 export * as serverLogs from './serverLogs.js';
+export * as rpcServer from './rpcServer.js';
 export * as keepAlive from './keepAlive.js';
 export * as lmstudio from './lmstudio.js';
 export * as fsAtomic from './fsAtomic.js';
