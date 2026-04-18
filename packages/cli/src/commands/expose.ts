@@ -128,6 +128,7 @@ export async function runExpose(args: string[]): Promise<number> {
       workers: [],
       restartPolicy: 'Always',
       timeoutSeconds,
+      gateway: false,
     },
   };
 

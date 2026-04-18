@@ -39,10 +39,10 @@ export interface WorkloadClient {
   rpcServerStop: { mutate(input?: { graceSeconds?: number }): Promise<unknown> };
 }
 
-export type ApplyAction = 'unchanged' | 'started' | 'restarted';
+export type ApplyAction = 'unchanged' | 'started' | 'restarted' | 'pending';
 
 export interface ApplyEvent {
-  type: 'stop' | 'start' | 'started' | 'skipped' | 'worker-start' | 'worker-ready';
+  type: 'stop' | 'start' | 'started' | 'skipped' | 'worker-start' | 'worker-ready' | 'gateway-pending';
   message: string;
 }
 
@@ -152,6 +152,31 @@ export async function applyOne(
   getClient: (nodeName: string) => WorkloadClient,
   onEvent?: (e: ApplyEvent) => void,
 ): Promise<ApplyResult> {
+  if (manifest.spec.gateway) {
+    const now = new Date().toISOString();
+    const msg =
+      `gateway workload targeting '${manifest.spec.node}': ` +
+      `registry wiring lands in a follow-up — manifest is validated and tracked but no upstream mutation yet`;
+    onEvent?.({ type: 'gateway-pending', message: `${manifest.metadata.name}: ${msg}` });
+    return {
+      action: 'pending',
+      statusSection: {
+        phase: 'Pending',
+        serverPid: null,
+        endpoint: null,
+        lastTransitionTime: now,
+        conditions: [
+          {
+            type: 'Applied',
+            status: 'False',
+            reason: 'GatewayRegistrationPending',
+            message: msg,
+            lastTransitionTime: now,
+          },
+        ],
+      },
+    };
+  }
   const client = getClient(manifest.spec.node);
   const status = await client.serverStatus.query();
 

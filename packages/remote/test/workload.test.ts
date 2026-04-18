@@ -6,6 +6,7 @@ import {
   ModelRunSchema,
   type ModelRun,
 } from '../src/workload/schema.js';
+import { applyOne } from '../src/workload/apply.js';
 import {
   defaultWorkloadsDir,
   deleteWorkload,
@@ -142,6 +143,64 @@ describe('ModelRun schema', () => {
   test('defaults workers to [] when absent', () => {
     const m = parseWorkload(minimalYaml);
     expect(m.spec.workers).toEqual([]);
+  });
+
+  test('defaults spec.gateway to false', () => {
+    const m = parseWorkload(minimalYaml);
+    expect(m.spec.gateway).toBe(false);
+  });
+
+  test('parses a gateway workload manifest', () => {
+    const gw = `
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: register-gpt4o
+spec:
+  node: sirius-primary
+  gateway: true
+  target:
+    kind: rel
+    value: openai/gpt-4o
+`;
+    const m = parseWorkload(gw);
+    expect(m.spec.gateway).toBe(true);
+    expect(m.spec.node).toBe('sirius-primary');
+    expect(m.spec.target.value).toBe('openai/gpt-4o');
+  });
+});
+
+describe('applyOne gateway branch', () => {
+  test('gateway workload returns Pending without calling the client', async () => {
+    const manifest: ModelRun = {
+      apiVersion: 'llamactl/v1',
+      kind: 'ModelRun',
+      metadata: { name: 'register-gpt4o', labels: {} },
+      spec: {
+        node: 'sirius-primary',
+        gateway: true,
+        target: { kind: 'rel', value: 'openai/gpt-4o' },
+        extraArgs: [],
+        workers: [],
+        restartPolicy: 'Always',
+        timeoutSeconds: 60,
+      },
+    };
+    let clientCalls = 0;
+    const events: Array<{ type: string; message: string }> = [];
+    const result = await applyOne(
+      manifest,
+      () => {
+        clientCalls++;
+        throw new Error('applyOne should not call getClient for gateway workloads');
+      },
+      (e) => events.push(e),
+    );
+    expect(clientCalls).toBe(0);
+    expect(result.action).toBe('pending');
+    expect(result.statusSection.phase).toBe('Pending');
+    expect(result.statusSection.conditions[0]?.reason).toBe('GatewayRegistrationPending');
+    expect(events[0]?.type).toBe('gateway-pending');
   });
 });
 

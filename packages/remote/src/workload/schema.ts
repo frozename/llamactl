@@ -62,6 +62,17 @@ export const ModelRunSpecSchema = z.object({
    *  Phase-D-and-beyond controller to prefer a specific endpoint. */
   endpoint: ModelRunEndpointSchema.optional(),
   timeoutSeconds: z.number().int().positive().max(600).default(60),
+  /**
+   * Marks this workload as a gateway registration rather than an
+   * agent llama-server launch. When true, `spec.node` must name a
+   * gateway-kind node (sirius/embersynth/…); the reconciler takes
+   * the gateway path — register `target` in the gateway's model
+   * catalog instead of starting a local process. Full cross-repo
+   * registry wiring is the follow-up; for now the gateway branch
+   * lands a `Pending` status with a clear condition so the seam is
+   * visible and manifests validate cleanly.
+   */
+  gateway: z.boolean().default(false),
 });
 
 export const ModelRunConditionSchema = z.object({
