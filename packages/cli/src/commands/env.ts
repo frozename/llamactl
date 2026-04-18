@@ -1,4 +1,5 @@
 import { env } from '@llamactl/core';
+import { getGlobals, getNodeClient, isLocalDispatch } from '../dispatcher.js';
 
 interface ParsedFlags {
   mode: 'eval' | 'json';
@@ -28,7 +29,17 @@ export async function runEnv(args: string[]): Promise<number> {
     return 1;
   }
 
-  const resolved = env.resolveEnv();
+  let resolved: ReturnType<typeof env.resolveEnv>;
+  if (isLocalDispatch()) {
+    resolved = env.resolveEnv();
+  } else {
+    try {
+      resolved = await getNodeClient().env.query() as ReturnType<typeof env.resolveEnv>;
+    } catch (err) {
+      process.stderr.write(`env: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
   if (parsed.mode === 'json') {
     process.stdout.write(`${JSON.stringify(resolved, null, 2)}\n`);
     return 0;

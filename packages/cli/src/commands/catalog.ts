@@ -9,6 +9,15 @@ import {
   target as targetMod,
 } from '@llamactl/core';
 import type { ModelClass } from '@llamactl/core';
+import type { schemas } from '@llamactl/core';
+type CuratedModel = schemas.CuratedModel;
+import {
+  fanOut,
+  getGlobals,
+  getNodeClient,
+  isFanOut,
+  isLocalDispatch,
+} from '../dispatcher.js';
 
 type Format = 'tsv' | 'json';
 type Scope = catalog.CatalogScope;
@@ -61,7 +70,39 @@ async function runList(args: string[]): Promise<number> {
     return 1;
   }
 
-  const entries = catalog.listCatalog(parsed.scope);
+  // `-n all` fans out across every node in the current context.
+  if (isFanOut()) {
+    const results = await fanOut((client) => client.catalogList.query(parsed.scope));
+    if (parsed.format === 'json') {
+      process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
+      return results.some((r) => !r.ok) ? 2 : 0;
+    }
+    for (const r of results) {
+      if (!r.ok) {
+        process.stderr.write(`[${r.node}] error: ${r.error}\n`);
+        continue;
+      }
+      const rows = r.data as CuratedModel[];
+      if (rows.length === 0) continue;
+      // Prefix each TSV row with the node name so output stays grep-able.
+      for (const line of catalog.formatCatalogTsv(rows).split('\n')) {
+        if (line) process.stdout.write(`${r.node}\t${line}\n`);
+      }
+    }
+    return results.some((r) => !r.ok) ? 2 : 0;
+  }
+
+  let entries: CuratedModel[];
+  if (isLocalDispatch()) {
+    entries = catalog.listCatalog(parsed.scope);
+  } else {
+    try {
+      entries = await getNodeClient().catalogList.query(parsed.scope) as CuratedModel[];
+    } catch (err) {
+      process.stderr.write(`catalog list: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
 
   if (parsed.format === 'json') {
     process.stdout.write(`${JSON.stringify(entries, null, 2)}\n`);

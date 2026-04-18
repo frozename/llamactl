@@ -145,3 +145,60 @@ export function getNodeClient(
   return createNodeClient(cfg, opts);
 }
 
+export function getNodeClientByName(
+  nodeName: string,
+  globals: Globals = currentGlobals,
+  env: NodeJS.ProcessEnv = process.env,
+): NodeClient {
+  const cfgPath = globals.configPath ?? kubecfg.defaultConfigPath(env);
+  const cfg = kubecfg.loadConfig(cfgPath);
+  const opts: Parameters<typeof createNodeClient>[1] = { nodeName, env };
+  if (globals.contextName) opts.contextName = globals.contextName;
+  return createNodeClient(cfg, opts);
+}
+
+/** True when the user passed `--node all` to fan a read out over every
+ *  node in the current context. Not a real kubeconfig entry. */
+export function isFanOut(globals: Globals = currentGlobals): boolean {
+  return globals.nodeName === 'all';
+}
+
+export function listContextNodes(
+  globals: Globals = currentGlobals,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const cfgPath = globals.configPath ?? kubecfg.defaultConfigPath(env);
+  const cfg = kubecfg.loadConfig(cfgPath);
+  const ctxName = globals.contextName ?? cfg.currentContext;
+  const ctx = cfg.contexts.find((c) => c.name === ctxName);
+  if (!ctx) return [];
+  const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
+  return cluster?.nodes.map((n) => n.name) ?? [];
+}
+
+export interface FanOutResult<T> {
+  node: string;
+  ok: boolean;
+  data?: T;
+  error?: string;
+}
+
+export async function fanOut<T>(
+  perNode: (client: NodeClient, nodeName: string) => Promise<T>,
+  globals: Globals = currentGlobals,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<FanOutResult<T>[]> {
+  const names = listContextNodes(globals, env);
+  const settled = await Promise.allSettled(
+    names.map(async (n) => {
+      const client = getNodeClientByName(n, globals, env);
+      return perNode(client, n);
+    }),
+  );
+  return names.map((name, i) => {
+    const r = settled[i]!;
+    if (r.status === 'fulfilled') return { node: name, ok: true, data: r.value };
+    return { node: name, ok: false, error: (r.reason as Error).message };
+  });
+}
+
