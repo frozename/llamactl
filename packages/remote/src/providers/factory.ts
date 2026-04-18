@@ -68,7 +68,7 @@ export function providerForNode(opts: {
 }): AiProvider {
   const { node, user, env = process.env, fetchFactory } = opts;
   const kind = resolveNodeKind(node);
-  if (kind === 'cloud') return providerForCloudNode(node, env);
+  if (kind === 'gateway') return providerForCloudNode(node, env);
 
   if (node.endpoint === LOCAL_NODE_ENDPOINT) {
     throw new Error(

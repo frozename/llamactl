@@ -394,7 +394,7 @@ export const router = t.router({
         const provider = providerForCloudNode({
           name: input.name,
           endpoint: '',
-          kind: 'cloud',
+          kind: 'gateway',
           cloud: binding,
         });
         const health = await provider.healthCheck?.();
@@ -410,7 +410,7 @@ export const router = t.router({
       cfg = kubecfg.upsertNode(cfg, ctx.cluster, {
         name: input.name,
         endpoint: '',
-        kind: 'cloud',
+        kind: 'gateway',
         cloud: binding,
       });
       kubecfg.saveConfig(cfg, cfgPath);
@@ -556,7 +556,7 @@ export const router = t.router({
       const resolved = kubecfg.resolveNode(cfg, input.name);
       const { resolveNodeKind } = await import('./config/schema.js');
       const kind = resolveNodeKind(resolved.node);
-      if (kind === 'cloud') {
+      if (kind === 'gateway') {
         const { providerForCloudNode } = await import('./providers/factory.js');
         const provider = providerForCloudNode(resolved.node);
         const models = (await provider.listModels?.()) ?? [];

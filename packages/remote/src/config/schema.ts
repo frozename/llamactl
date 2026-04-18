@@ -58,7 +58,24 @@ export const CloudBindingSchema = z.object({
 });
 export type CloudBinding = z.infer<typeof CloudBindingSchema>;
 
-export const NodeKindSchema = z.enum(['agent', 'cloud', 'gateway']);
+/**
+ * Node taxonomy — only two shapes:
+ *
+ *   * `agent`   — self-hosted llama.cpp behind an llamactl-native
+ *     agent (HTTPS + bearer + pinned TLS).
+ *   * `gateway` — any external OpenAI-compatible URL: sirius, a
+ *     direct OpenAI/Anthropic/Together/groq/Mistral endpoint,
+ *     OpenRouter, LiteLLM, a peer llamactl's `/v1`, whatever. The
+ *     runtime is identical for all of them (nova.createOpenAICompatProvider);
+ *     the `provider` label in the binding is for UI differentiation,
+ *     not routing.
+ *
+ * The previous `cloud` discriminator collapsed into `gateway` to
+ * dissolve the overlap with sirius — sirius already aggregates every
+ * provider, so there's no semantic gap between "sirius gateway" and
+ * "OpenAI direct" beyond the badge the UI renders.
+ */
+export const NodeKindSchema = z.enum(['agent', 'gateway']);
 export type NodeKind = z.infer<typeof NodeKindSchema>;
 
 export const ClusterNodeSchema = z.object({
@@ -74,12 +91,23 @@ export const ClusterNodeSchema = z.object({
   cloud: CloudBindingSchema.optional(),
 }).refine(
   (n) => {
-    const k = n.kind ?? (n.cloud ? 'cloud' : 'agent');
-    if (k === 'cloud') return !!n.cloud;
+    // Legacy kubeconfigs may carry `kind: 'cloud'`. Treat that as
+    // gateway for validation — the data shape is identical.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rawKind = (n as any).kind as string | undefined;
+    const k =
+      rawKind === 'gateway' || rawKind === 'agent'
+        ? rawKind
+        : rawKind === 'cloud'
+          ? 'gateway'
+          : n.cloud
+            ? 'gateway'
+            : 'agent';
+    if (k === 'gateway') return !!n.cloud;
     // agent nodes must carry an endpoint
     return typeof n.endpoint === 'string' && n.endpoint.length > 0;
   },
-  { message: "agent nodes require endpoint; cloud nodes require cloud{} block" },
+  { message: "agent nodes require endpoint; gateway nodes require cloud{} block" },
 );
 
 export const ClusterSchema = z.object({
@@ -123,23 +151,21 @@ export const LOCAL_NODE_NAME = 'local';
 export const LOCAL_NODE_ENDPOINT = 'inproc://local';
 
 /**
- * Derive the effective kind of a node without requiring every callsite
- * to read `kind` / `cloud` / `cloud.provider` in a specific order.
+ * Derive the effective kind of a node.
  *
- *   * Explicit `kind` wins (forward-compat for new discriminators).
- *   * Cloud block with a gateway provider (sirius today; openrouter
- *     and other aggregators later) folds to `'gateway'` even when
- *     `kind` was never written — older kubeconfigs auto-upgrade.
- *   * Otherwise any cloud block = `'cloud'`, nothing = `'agent'`.
- *
- * The gateway kind matters for UI (distinct badge, "fans out to N
- * providers" hint) and for overlap guidance — if a gateway node is
- * registered, direct-to-provider cloud nodes are usually redundant.
+ *   * Explicit `kind` wins. Legacy `'cloud'` values auto-upgrade to
+ *     `'gateway'` on read so older kubeconfigs keep working after
+ *     the cloud→gateway collapse.
+ *   * Any node carrying a `cloud` binding is a gateway — that block
+ *     carries the OpenAI-compat URL regardless of upstream variety.
+ *   * Otherwise it's an agent.
  */
 export function resolveNodeKind(node: ClusterNode): NodeKind {
-  if (node.kind) return node.kind;
-  if (node.cloud?.provider === 'sirius') return 'gateway';
-  return node.cloud ? 'cloud' : 'agent';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const explicit = (node as any).kind as string | undefined;
+  if (explicit === 'gateway' || explicit === 'agent') return explicit;
+  if (explicit === 'cloud') return 'gateway';
+  return node.cloud ? 'gateway' : 'agent';
 }
 
 /** Default OpenAI-compatible base URLs for each built-in provider.

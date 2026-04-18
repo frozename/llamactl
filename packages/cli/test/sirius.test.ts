@@ -106,17 +106,76 @@ describe('llamactl sirius export', () => {
     expect(captured).toContain('name: gpu1');
   });
 
-  test('skips cloud-kind nodes', async () => {
+  test('add-provider writes YAML and list-providers reads it back', async () => {
+    process.env.DEV_STORAGE = tmp;
+    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, 'providers.yaml');
+    const addCode = await runSirius([
+      'add-provider',
+      'openai',
+      '--api-key-ref',
+      '$OPENAI_API_KEY',
+    ]);
+    expect(addCode).toBe(0);
+    expect(captured).toContain("registered sirius provider 'openai'");
+
+    captured = '';
+    const listCode = await runSirius(['list-providers']);
+    expect(listCode).toBe(0);
+    const parsed = JSON.parse(captured) as Array<{ name: string; kind: string; baseUrl: string }>;
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]!.name).toBe('openai');
+    expect(parsed[0]!.kind).toBe('openai');
+    expect(parsed[0]!.baseUrl).toBe('https://api.openai.com/v1');
+  });
+
+  test('add-provider rejects a named provider without --api-key-ref', async () => {
+    process.env.DEV_STORAGE = tmp;
+    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, 'providers.yaml');
+    const code = await runSirius(['add-provider', 'anthropic']);
+    expect(code).toBe(1);
+  });
+
+  test('add-provider openai-compatible allows anonymous (no --api-key-ref)', async () => {
+    process.env.DEV_STORAGE = tmp;
+    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, 'providers.yaml');
+    const code = await runSirius([
+      'add-provider',
+      'openai-compatible',
+      '--name',
+      'vllm',
+      '--base-url',
+      'http://gpu.lan:8000/v1',
+    ]);
+    expect(code).toBe(0);
+    expect(captured).toContain("registered sirius provider 'vllm'");
+  });
+
+  test('remove-provider deletes entries by name', async () => {
+    process.env.DEV_STORAGE = tmp;
+    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, 'providers.yaml');
+    await runSirius(['add-provider', 'openai', '--api-key-ref', '$X']);
+    captured = '';
+    const removeCode = await runSirius(['remove-provider', 'openai']);
+    expect(removeCode).toBe(0);
+    expect(captured).toContain("removed sirius provider 'openai'");
+    captured = '';
+    await runSirius(['list-providers']);
+    expect(JSON.parse(captured)).toEqual([]);
+  });
+
+  test('skips non-agent nodes', async () => {
+    // Gateway nodes (sirius, openai-compat aggregators) are sirius's
+    // own upstreams — they must not be re-exported to sirius as
+    // llamactl agents. Only `kind: agent` nodes show up.
     process.env.LLAMACTL_CONFIG = writeConfig(
       [
         {
-          name: 'openai-prod',
+          name: 'sirius',
           endpoint: '',
-          kind: 'cloud',
+          kind: 'gateway',
           cloud: {
-            provider: 'openai',
-            baseUrl: 'https://api.openai.com/v1',
-            apiKeyRef: '$OPENAI_API_KEY',
+            provider: 'sirius',
+            baseUrl: 'http://localhost:3000/v1',
           },
         },
         { name: 'gpu1', endpoint: 'https://gpu1.lan:7843', certificateFingerprint: 'sha256:aa' },
