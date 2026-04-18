@@ -11,9 +11,13 @@ import {
 const USAGE = `Usage: llamactl agent <subcommand>
 
 Subcommands:
-  init [--dir=<path>] [--host=<host>] [--port=<n>] [--name=<node>] [--bind=<host>] [--san=<host,...>]
+  init [--dir=<path>] [--host=<host>] [--port=<n>] [--name=<node>] [--bind=<host>] [--san=<host,...>] [--json]
       Generate a TLS cert + bearer token, write agent.yaml.
-      Prints a single 'llamactl node add' bootstrap line.
+      Default output is a human-readable summary + a 'llamactl node add'
+      bootstrap line. With --json emits a single-line JSON record
+      (configPath, nodeName, bindHost, port, fingerprint, blob) so the
+      install-agent.sh flow can capture stdout and shell-extract the
+      bootstrap blob without jq.
   serve [--dir=<path>] [--bind=<host>] [--port=<n>]
       Run the node agent (blocks until SIGINT/SIGTERM).
   status [--dir=<path>]
@@ -50,6 +54,7 @@ interface InitFlags {
   nodeName: string;
   bindHost: string;            // what Bun.serve binds to
   sans: string[];              // SANs baked into the cert
+  json: boolean;               // emit single-line JSON instead of human summary
 }
 
 function parseInitFlags(args: string[]): InitFlags | { error: string } {
@@ -60,8 +65,14 @@ function parseInitFlags(args: string[]): InitFlags | { error: string } {
     nodeName: hostname() || 'local',
     bindHost: '127.0.0.1',
     sans: [],
+    json: false,
   };
   for (const arg of args) {
+    // --json is a flag-only switch; everything else is --key=value.
+    if (arg === '--json') {
+      flags.json = true;
+      continue;
+    }
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent init: flag must be --key=value: ${arg}` };
     switch (k) {
@@ -129,6 +140,31 @@ async function runInit(args: string[]): Promise<number> {
     token: token.token,
     certificate: cert.certPem,
   });
+
+  if (f.json) {
+    // Single-line JSON so the install-agent.sh flow can capture stdout
+    // with `$()` and shell-extract `blob` via sed without needing jq
+    // on the target host. All side-effect logging goes to stderr.
+    process.stderr.write(
+      [
+        `wrote ${configPath}`,
+        `cert   ${cert.certPath}`,
+        `key    ${cert.keyPath}`,
+        `bind   ${f.bindHost}:${f.port}`,
+        `fp     ${cert.fingerprint}`,
+      ].join('\n') + '\n',
+    );
+    const record = {
+      configPath,
+      nodeName: f.nodeName,
+      bindHost: f.bindHost,
+      port: f.port,
+      fingerprint: cert.fingerprint,
+      blob: bootstrap,
+    };
+    process.stdout.write(`${JSON.stringify(record)}\n`);
+    return 0;
+  }
 
   process.stdout.write(
     [

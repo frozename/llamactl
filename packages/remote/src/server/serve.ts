@@ -15,6 +15,10 @@ import {
 } from './metrics.js';
 import { publishAgentMdns, type PublishedAgent } from './mdns.js';
 import { handleRegister, type RegisterHandlerOptions } from './register.js';
+import {
+  handleInstallScript,
+  type InstallScriptHandlerOptions,
+} from './install-script.js';
 
 export interface StartAgentOptions {
   bindHost?: string;          // default '127.0.0.1'
@@ -42,6 +46,8 @@ export interface StartAgentOptions {
    * ~/.llamactl/config; tests inject tempdirs.
    */
   registerOptions?: RegisterHandlerOptions;
+  /** Tempdir injection for /install-agent.sh in tests. */
+  installScriptOptions?: InstallScriptHandlerOptions;
 }
 
 export interface RunningAgent {
@@ -108,6 +114,13 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // single-use token from deploy-node, writes to kubeconfig.
     if (url.pathname === '/register') {
       return handleRegister(req, opts.registerOptions ?? {});
+    }
+    // Install-script endpoint — returns the curl-pipe-sh bootstrap
+    // script for the given token. Unauthenticated; the token query
+    // param is the capability. Hits /artifacts + /register once the
+    // target host runs it.
+    if (url.pathname === '/install-agent.sh') {
+      return handleInstallScript(req, opts.installScriptOptions ?? {});
     }
     // Prometheus scrape endpoint. Bearer-auth'd like everything else;
     // scrapers can set the standard Authorization header.
