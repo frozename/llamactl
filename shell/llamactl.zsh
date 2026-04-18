@@ -644,6 +644,16 @@ _llama_wait_for_ready() {
 }
 
 llama-bench-preset() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" bench preset "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_bench_preset_legacy() {
   local target="${1:-current}"
   local mode_arg="${2:-auto}"
   local rel=""
@@ -724,6 +734,16 @@ llama-bench-preset() {
 }
 
 llama-bench-vision() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" bench vision "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_bench_vision_legacy() {
   local target="${1:-current}"
   local rel=""
   local model_path=""

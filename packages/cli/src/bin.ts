@@ -35,6 +35,11 @@ Write commands:
   llamactl pull candidate <repo> [file] [profile]
                                               Pick the best GGUF for the profile
                                               and pull it (--json supported)
+  llamactl bench preset <target> [auto|text|vision]
+                                              Sweep llama-bench across three
+                                              profiles and save the fastest
+  llamactl bench vision <target>              Run the multimodal bench and
+                                              record the timings (--json supported)
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.

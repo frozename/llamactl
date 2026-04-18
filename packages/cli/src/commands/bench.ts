@@ -17,6 +17,16 @@ Subcommands:
                             every catalog entry. class and scope default to 'all'.
                             A 'vision=' continuation line is emitted under any
                             row that has a recorded vision bench.
+
+  preset <target> [auto|text|vision] [--json]
+                            Sweep llama-bench across the three canonical
+                            profiles (default / throughput / conservative) and
+                            save the fastest as the tuned record for the
+                            target. --json emits the structured result.
+
+  vision <target> [--json]  Run the real multimodal bench via llama-mtmd-cli
+                            on the target's mmproj sibling and record the
+                            timings into bench-vision.tsv. --json emits JSON.
 `;
 
 function printShow(opts: {
@@ -258,6 +268,101 @@ async function runCompare(args: string[]): Promise<number> {
 
 type BenchCompareClassFilter = ModelClass | 'all';
 
+function forwardBenchEvent(e: bench.BenchEvent): void {
+  if (e.type === 'stderr' || e.type === 'stdout') {
+    process.stderr.write(`${e.line}\n`);
+  } else if (e.type === 'start') {
+    process.stderr.write(`$ ${e.command} ${e.args.join(' ')}\n`);
+  } else if (e.type === 'profile-start') {
+    process.stderr.write(`-- profile=${e.profile} --\n`);
+  } else if (e.type === 'profile-done') {
+    process.stderr.write(
+      `-- profile=${e.profile} gen_ts=${e.gen_ts} prompt_ts=${e.prompt_ts} --\n`,
+    );
+  } else if (e.type === 'profile-fail') {
+    process.stderr.write(`-- profile=${e.profile} failed (code=${e.code}) --\n`);
+  }
+}
+
+async function runPreset(args: string[]): Promise<number> {
+  const positional: string[] = [];
+  let json = false;
+  for (const arg of args) {
+    if (arg === '--json') json = true;
+    else if (arg === '-h' || arg === '--help') {
+      process.stdout.write(USAGE);
+      return 0;
+    } else if (arg.startsWith('--')) {
+      process.stderr.write(`Unknown flag: ${arg}\n`);
+      return 1;
+    } else positional.push(arg);
+  }
+  const target = positional[0] ?? 'current';
+  const modeRaw = (positional[1] ?? 'auto') as 'auto' | 'text' | 'vision';
+  if (modeRaw !== 'auto' && modeRaw !== 'text' && modeRaw !== 'vision') {
+    process.stderr.write(`Unknown bench mode: ${modeRaw}\n`);
+    return 1;
+  }
+
+  const result = await bench.benchPreset({
+    target,
+    mode: modeRaw,
+    onEvent: forwardBenchEvent,
+  });
+  if ('error' in result) {
+    if (json) process.stdout.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
+    else process.stderr.write(`${result.error}\n`);
+    return 1;
+  }
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
+  }
+  process.stdout.write(`Saved tuned launch profile for ${result.rel}\n`);
+  process.stdout.write(
+    `machine=${result.machine} mode=${result.mode} ctx=${result.ctx} build=${result.build}\n`,
+  );
+  process.stdout.write(
+    `profile=${result.bestProfile} gen_tps=${result.gen_ts} prompt_tps=${result.prompt_ts}\n`,
+  );
+  return 0;
+}
+
+async function runVision(args: string[]): Promise<number> {
+  const positional: string[] = [];
+  let json = false;
+  for (const arg of args) {
+    if (arg === '--json') json = true;
+    else if (arg === '-h' || arg === '--help') {
+      process.stdout.write(USAGE);
+      return 0;
+    } else if (arg.startsWith('--')) {
+      process.stderr.write(`Unknown flag: ${arg}\n`);
+      return 1;
+    } else positional.push(arg);
+  }
+  const target = positional[0] ?? 'current';
+
+  const result = await bench.benchVision({ target, onEvent: forwardBenchEvent });
+  if ('error' in result) {
+    if (json) process.stdout.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
+    else process.stderr.write(`${result.error}\n`);
+    return 1;
+  }
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
+  }
+  process.stdout.write(`Saved vision bench record for ${result.rel}\n`);
+  process.stdout.write(
+    `machine=${result.machine} rel=${result.rel} ctx=${result.ctx} build=${result.build}\n`,
+  );
+  process.stdout.write(
+    `load_ms=${result.load_ms} image_encode_ms=${result.image_encode_ms} prompt_tps=${result.prompt_tps} gen_tps=${result.gen_tps}\n`,
+  );
+  return 0;
+}
+
 export async function runBench(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
@@ -267,6 +372,10 @@ export async function runBench(args: string[]): Promise<number> {
       return runHistory(rest);
     case 'compare':
       return runCompare(rest);
+    case 'preset':
+      return runPreset(rest);
+    case 'vision':
+      return runVision(rest);
     case undefined:
     case '-h':
     case '--help':
