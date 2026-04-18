@@ -59,36 +59,51 @@ export const CloudBindingSchema = z.object({
 export type CloudBinding = z.infer<typeof CloudBindingSchema>;
 
 /**
- * Node taxonomy — only two shapes:
+ * Node taxonomy:
  *
- *   * `agent`   — self-hosted llama.cpp behind an llamactl-native
+ *   * `agent`    — self-hosted llama.cpp behind an llamactl-native
  *     agent (HTTPS + bearer + pinned TLS).
- *   * `gateway` — any external OpenAI-compatible URL: sirius, a
- *     direct OpenAI/Anthropic/Together/groq/Mistral endpoint,
- *     OpenRouter, LiteLLM, a peer llamactl's `/v1`, whatever. The
- *     runtime is identical for all of them (nova.createOpenAICompatProvider);
- *     the `provider` label in the binding is for UI differentiation,
- *     not routing.
- *
- * The previous `cloud` discriminator collapsed into `gateway` to
- * dissolve the overlap with sirius — sirius already aggregates every
- * provider, so there's no semantic gap between "sirius gateway" and
- * "OpenAI direct" beyond the badge the UI renders.
+ *   * `gateway`  — any external OpenAI-compatible URL: sirius,
+ *     OpenRouter, LiteLLM, a peer llamactl's `/v1`. Runtime is
+ *     identical across all of them (nova.createOpenAICompatProvider).
+ *   * `provider` — *synthesized*, not persisted. For every gateway
+ *     node, llamactl projects one provider-kind virtual node per
+ *     entry in `sirius-providers.yaml`. Name shape
+ *     `<gateway>.<provider>` (e.g., `sirius.openai`). Chat traffic
+ *     for a provider node hits its parent gateway; the model picker
+ *     is scoped to models that gateway's `/v1/models` reports as
+ *     `owned_by === providerName`. First-class targets for every
+ *     feature (bench, workload, chat, logs) — no per-feature
+ *     special cases.
  */
-export const NodeKindSchema = z.enum(['agent', 'gateway']);
+export const NodeKindSchema = z.enum(['agent', 'gateway', 'provider']);
 export type NodeKind = z.infer<typeof NodeKindSchema>;
+
+/**
+ * Pointer from a provider-kind virtual node to its parent gateway
+ * + the name it carries within that gateway's upstream catalog. Only
+ * set on synthesized nodes (never persisted to disk); `nodeList`
+ * derives these from `sirius-providers.yaml` at read time.
+ */
+export const ProviderBindingSchema = z.object({
+  gateway: z.string().min(1),
+  providerName: z.string().min(1),
+});
+export type ProviderBinding = z.infer<typeof ProviderBindingSchema>;
 
 export const ClusterNodeSchema = z.object({
   name: z.string().min(1),
   /** Agent endpoint — `https://host:port` for a remote agent or the
    *  `inproc://local` sentinel. Ignored (may be empty or absent on
-   *  disk) for cloud nodes; the cloud `baseUrl` is what matters. */
+   *  disk) for gateway and provider nodes. */
   endpoint: z.string().default(''),
   kind: NodeKindSchema.optional(),
   certificateFingerprint: z.string().optional(),
   certificate: z.string().optional(),
   facts: NodeFactsSchema.partial().optional(),
   cloud: CloudBindingSchema.optional(),
+  /** Provider-kind only — pointer into a gateway's upstream catalog. */
+  provider: ProviderBindingSchema.optional(),
 }).refine(
   (n) => {
     // Legacy kubeconfigs may carry `kind: 'cloud'`. Treat that as
@@ -96,18 +111,23 @@ export const ClusterNodeSchema = z.object({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rawKind = (n as any).kind as string | undefined;
     const k =
-      rawKind === 'gateway' || rawKind === 'agent'
+      rawKind === 'gateway' || rawKind === 'agent' || rawKind === 'provider'
         ? rawKind
         : rawKind === 'cloud'
           ? 'gateway'
-          : n.cloud
-            ? 'gateway'
-            : 'agent';
+          : n.provider
+            ? 'provider'
+            : n.cloud
+              ? 'gateway'
+              : 'agent';
+    if (k === 'provider') return !!n.provider;
     if (k === 'gateway') return !!n.cloud;
-    // agent nodes must carry an endpoint
     return typeof n.endpoint === 'string' && n.endpoint.length > 0;
   },
-  { message: "agent nodes require endpoint; gateway nodes require cloud{} block" },
+  {
+    message:
+      "agent nodes require endpoint; gateway nodes require cloud{} block; provider nodes require provider{} block",
+  },
 );
 
 export const ClusterSchema = z.object({
@@ -163,8 +183,9 @@ export const LOCAL_NODE_ENDPOINT = 'inproc://local';
 export function resolveNodeKind(node: ClusterNode): NodeKind {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const explicit = (node as any).kind as string | undefined;
-  if (explicit === 'gateway' || explicit === 'agent') return explicit;
+  if (explicit === 'gateway' || explicit === 'agent' || explicit === 'provider') return explicit;
   if (explicit === 'cloud') return 'gateway';
+  if (node.provider) return 'provider';
   return node.cloud ? 'gateway' : 'agent';
 }
 

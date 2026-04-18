@@ -372,7 +372,7 @@ function NodeRow(props: {
   name: string;
   endpoint: string;
   defaultNode: string;
-  kind: 'agent' | 'gateway';
+  kind: 'agent' | 'gateway' | 'provider';
   cloud?: {
     provider: string;
     baseUrl: string;
@@ -411,6 +411,7 @@ function NodeRow(props: {
   const isLocal = props.name === 'local' || props.endpoint.startsWith('inproc://');
   const isDefault = props.name === props.defaultNode;
   const isGateway = props.kind === 'gateway';
+  const isProvider = props.kind === 'provider';
 
   return (
     <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
@@ -432,6 +433,11 @@ function NodeRow(props: {
               gateway · {props.cloud?.provider ?? '?'}
             </span>
           )}
+          {isProvider && (
+            <span className="ml-4 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]">
+              provider
+            </span>
+          )}
         </div>
         <div className="flex gap-1 text-xs">
           <button
@@ -442,7 +448,7 @@ function NodeRow(props: {
           >
             {test.isFetching ? 'Testing…' : 'Test'}
           </button>
-          {!isLocal && (
+          {!isLocal && !isProvider && (
             <>
               {confirmRm ? (
                 <>
@@ -475,11 +481,17 @@ function NodeRow(props: {
         </div>
       </div>
       <div className="mt-1 text-xs text-[color:var(--color-fg-muted)]">
-        {isGateway ? 'baseUrl' : 'endpoint'}:{' '}
+        {isProvider
+          ? 'via gateway'
+          : isGateway
+            ? 'baseUrl'
+            : 'endpoint'}:{' '}
         <span className="font-mono">
-          {isGateway
-            ? props.cloud?.baseUrl ?? '(missing)'
-            : props.endpoint}
+          {isProvider
+            ? props.name.split('.')[0]
+            : isGateway
+              ? props.cloud?.baseUrl ?? '(missing)'
+              : props.endpoint}
         </span>
       </div>
       {testResult && (
@@ -509,7 +521,7 @@ function NodeRow(props: {
           )}
         </div>
       )}
-      {!isLocal && <OpenAIConfigPanel node={props.name} />}
+      {!isLocal && !isProvider && <OpenAIConfigPanel node={props.name} />}
     </div>
   );
 }
@@ -649,9 +661,9 @@ export default function Nodes(): React.JSX.Element {
           </div>
         )}
         {data.nodes.map((n) => {
-          const explicit = (n as { effectiveKind?: 'agent' | 'gateway' })
+          const explicit = (n as { effectiveKind?: 'agent' | 'gateway' | 'provider' })
             .effectiveKind;
-          const kind: 'agent' | 'gateway' =
+          const kind: 'agent' | 'gateway' | 'provider' =
             explicit ?? (n.cloud ? 'gateway' : 'agent');
           return (
             <NodeRow

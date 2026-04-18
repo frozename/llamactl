@@ -6,6 +6,7 @@ import {
   type ClusterNode,
   type CloudBinding,
   type CloudProvider,
+  type Config,
   type User,
 } from '../config/schema.js';
 import { resolveApiKeyRef, resolveToken } from '../config/kubeconfig.js';
@@ -60,14 +61,50 @@ export function providerForCloudNode(
 export function providerForNode(opts: {
   node: ClusterNode;
   user: User;
+  /** Whole config — required for provider-kind lookups that need to
+   *  trace back to the parent gateway. */
+  cfg?: Config;
   env?: NodeJS.ProcessEnv;
   /** Runtime-specific pinned-fetch factory for agent nodes. Omit for
    *  CLI (Bun's native fetch picks up `tls.ca` from the link layer).
    *  Electron main passes `makeNodePinnedFetch`. */
   fetchFactory?: PinnedFetchFactory;
 }): AiProvider {
-  const { node, user, env = process.env, fetchFactory } = opts;
+  const { node, user, cfg, env = process.env, fetchFactory } = opts;
   const kind = resolveNodeKind(node);
+
+  // Provider-kind virtual nodes resolve by walking to their parent
+  // gateway and using that binding. The adapter keeps the virtual
+  // node's name so telemetry / observers see `llamactl-sirius.openai`
+  // rather than the parent gateway name.
+  if (kind === 'provider') {
+    if (!node.provider) {
+      throw new Error(`provider-kind node '${node.name}' is missing provider{}`);
+    }
+    if (!cfg) {
+      throw new Error(
+        `provider-kind node '${node.name}' requires opts.cfg to resolve its parent gateway`,
+      );
+    }
+    const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
+    const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
+    const parent = cluster?.nodes.find((n) => n.name === node.provider!.gateway);
+    if (!parent || !parent.cloud) {
+      throw new Error(
+        `provider-kind node '${node.name}': parent gateway '${node.provider.gateway}' not found or missing cloud{}`,
+      );
+    }
+    const apiKey = parent.cloud.apiKeyRef
+      ? resolveApiKeyRef(parent.cloud.apiKeyRef, env)
+      : '';
+    return createOpenAICompatProvider({
+      name: node.name,
+      displayName: parent.cloud.displayName ?? node.name,
+      baseUrl: parent.cloud.baseUrl,
+      apiKey,
+    });
+  }
+
   if (kind === 'gateway') return providerForCloudNode(node, env);
 
   if (node.endpoint === LOCAL_NODE_ENDPOINT) {

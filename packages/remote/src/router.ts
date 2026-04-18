@@ -231,17 +231,23 @@ export const router = t.router({
     const ctx = kubecfg.currentContext(cfg);
     const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
     const { resolveNodeKind } = await import('./config/schema.js');
-    // Decorate each node with its effective kind so the UI can render
-    // agent vs cloud badges without reimplementing the fallback rule.
-    const nodes = (cluster?.nodes ?? []).map((n) => ({
+    const { synthesizeProviderNodes } = await import('./config/provider-nodes.js');
+    // Provider-kind virtual nodes derived from sirius-providers.yaml
+    // for each gateway. Synthesized fresh on every read — no cache.
+    const synthetic = synthesizeProviderNodes(cfg);
+    const persisted = (cluster?.nodes ?? []).map((n) => ({
       ...n,
       effectiveKind: resolveNodeKind(n),
+    }));
+    const virtual = synthetic.map((n) => ({
+      ...n,
+      effectiveKind: 'provider' as const,
     }));
     return {
       context: ctx.name,
       cluster: ctx.cluster,
       defaultNode: ctx.defaultNode,
-      nodes,
+      nodes: [...persisted, ...virtual],
     };
   }),
 
@@ -467,7 +473,7 @@ export const router = t.router({
       }
       const { providerForNode } = await import('./providers/factory.js');
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const provider = providerForNode({ node: resolved.node, user: resolved.user });
+      const provider = providerForNode({ node: resolved.node, user: resolved.user, cfg });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return provider.createResponse(input.request as any);
     }),
@@ -527,7 +533,7 @@ export const router = t.router({
         return;
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const provider = providerForNode({ node: resolved.node, user: resolved.user });
+      const provider = providerForNode({ node: resolved.node, user: resolved.user, cfg });
       const stream = provider.streamResponse?.(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         input.request as any,
@@ -556,6 +562,29 @@ export const router = t.router({
       const resolved = kubecfg.resolveNode(cfg, input.name);
       const { resolveNodeKind } = await import('./config/schema.js');
       const kind = resolveNodeKind(resolved.node);
+      if (kind === 'provider') {
+        // Scope to the parent gateway's catalog, filtered by
+        // `owned_by === providerName`. Sirius tags each model with
+        // the provider that serves it, so this is the natural
+        // narrowing for the chat UI's picker.
+        const binding = resolved.node.provider!;
+        const parent = cfg.clusters
+          .find((c) => c.name === kubecfg.currentContext(cfg).cluster)
+          ?.nodes.find((n) => n.name === binding.gateway);
+        if (!parent) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: `parent gateway '${binding.gateway}' not found`,
+          });
+        }
+        const { providerForCloudNode } = await import('./providers/factory.js');
+        const gatewayProvider = providerForCloudNode(parent);
+        const all = (await gatewayProvider.listModels?.()) ?? [];
+        const filtered = all.filter(
+          (m) => (m as { owned_by?: string }).owned_by === binding.providerName,
+        );
+        return { node: input.name, kind, models: filtered };
+      }
       if (kind === 'gateway') {
         const { providerForCloudNode } = await import('./providers/factory.js');
         const provider = providerForCloudNode(resolved.node);

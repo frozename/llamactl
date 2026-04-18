@@ -58,11 +58,31 @@ export function resolveNode(
   if (!context) throw new Error(`context '${contextName}' not found`);
   const cluster = config.clusters.find((c) => c.name === context.cluster);
   if (!cluster) throw new Error(`cluster '${context.cluster}' not found`);
-  const node = cluster.nodes.find((n) => n.name === nodeName);
-  if (!node) throw new Error(`node '${nodeName}' not found in cluster '${cluster.name}'`);
   const user = config.users.find((u) => u.name === context.user);
   if (!user) throw new Error(`user '${context.user}' not found`);
-  return { node, context, user };
+
+  // Direct match first (agent + gateway nodes).
+  const direct = cluster.nodes.find((n) => n.name === nodeName);
+  if (direct) return { node: direct, context, user };
+
+  // Provider-kind virtual node? Shape is `<gateway>.<providerName>`.
+  const dot = nodeName.indexOf('.');
+  if (dot > 0 && dot < nodeName.length - 1) {
+    const gatewayName = nodeName.slice(0, dot);
+    const providerName = nodeName.slice(dot + 1);
+    const gateway = cluster.nodes.find((n) => n.name === gatewayName);
+    if (gateway && gateway.cloud) {
+      const virtualNode: ClusterNode = {
+        name: nodeName,
+        endpoint: '',
+        kind: 'provider',
+        provider: { gateway: gatewayName, providerName },
+      };
+      return { node: virtualNode, context, user };
+    }
+  }
+
+  throw new Error(`node '${nodeName}' not found in cluster '${cluster.name}'`);
 }
 
 export function resolveToken(
