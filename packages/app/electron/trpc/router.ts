@@ -172,6 +172,7 @@ export const router = t.router({
     .subscription(({ input }) => {
       return observable<ServerStartEvent>((emit) => {
         let cancelled = false;
+        const controller = new AbortController();
         void (async () => {
           try {
             const result = await serverMod.startServer({
@@ -179,6 +180,7 @@ export const router = t.router({
               extraArgs: input.extraArgs,
               timeoutSeconds: input.timeoutSeconds,
               skipTuned: input.skipTuned,
+              signal: controller.signal,
               onEvent: (e) => {
                 if (!cancelled) emit.next(e);
               },
@@ -193,11 +195,8 @@ export const router = t.router({
           }
         })();
         return () => {
-          // Server start can't be cancelled mid-flight today — the
-          // llama-server subprocess is detached and we can only abort
-          // the readiness polling. For now, teardown just stops
-          // forwarding events; the detached server keeps running.
           cancelled = true;
+          controller.abort();
         };
       });
     }),

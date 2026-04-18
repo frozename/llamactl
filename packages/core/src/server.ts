@@ -181,6 +181,12 @@ export interface StartServerOptions {
   onEvent?: (e: ServerEvent) => void;
   resolved?: ResolvedEnv;
   env?: NodeJS.ProcessEnv;
+  /**
+   * When set, aborts an in-flight start: SIGTERMs the detached
+   * llama-server child (tracked via PID) and short-circuits the
+   * readiness polling with `aborted` outcome.
+   */
+  signal?: AbortSignal;
 }
 
 export interface StartServerResult {
@@ -197,8 +203,10 @@ async function pollReady(
   healthUrl: string,
   timeoutSeconds: number,
   onEvent?: (e: ServerEvent) => void,
-): Promise<'ready' | 'exited' | 'timeout'> {
+  signal?: AbortSignal,
+): Promise<'ready' | 'exited' | 'timeout' | 'aborted'> {
   for (let attempt = 0; attempt < timeoutSeconds; attempt += 1) {
+    if (signal?.aborted) return 'aborted';
     let httpCode: string | null = null;
     try {
       const res = await fetch(healthUrl, {
@@ -216,8 +224,20 @@ async function pollReady(
       if (!isProcessAlive(pid)) return 'exited';
       onEvent?.({ type: 'waiting', attempt, httpCode });
     }
-    await new Promise((r) => setTimeout(r, 1000));
+    // Interruptible sleep so SIGTERM + abort react within ~1s.
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, 1000);
+      signal?.addEventListener(
+        'abort',
+        () => {
+          clearTimeout(t);
+          resolve();
+        },
+        { once: true },
+      );
+    });
   }
+  if (signal?.aborted) return 'aborted';
   return isProcessAlive(pid) ? 'timeout' : 'exited';
 }
 
@@ -314,10 +334,38 @@ export async function startServer(
   });
   writeServerPid(resolved, pid);
 
+  // Wire the caller's abort signal to SIGTERM the detached child so
+  // a tRPC unsubscribe or Ctrl-C doesn't leave an orphan server.
+  const killOnAbort = () => {
+    try {
+      if (isProcessAlive(pid)) process.kill(pid, 'SIGTERM');
+    } catch {
+      // already gone
+    }
+  };
+  if (opts.signal) {
+    if (opts.signal.aborted) killOnAbort();
+    else opts.signal.addEventListener('abort', killOnAbort, { once: true });
+  }
+
   const timeoutSeconds = opts.timeoutSeconds ?? 60;
   const healthUrl = `${endpoint(resolved)}/health`;
-  let outcome = await pollReady(pid, healthUrl, timeoutSeconds, opts.onEvent);
+  let outcome = await pollReady(pid, healthUrl, timeoutSeconds, opts.onEvent, opts.signal);
+  if (outcome === 'aborted') {
+    opts.signal?.removeEventListener('abort', killOnAbort);
+    killOnAbort();
+    removeServerPid(resolved);
+    return {
+      ok: false,
+      pid: null,
+      endpoint: endpoint(resolved),
+      tunedProfile,
+      retried: false,
+      error: 'Start aborted by caller',
+    };
+  }
   if (outcome === 'ready') {
+    opts.signal?.removeEventListener('abort', killOnAbort);
     opts.onEvent?.({ type: 'ready', pid, endpoint: endpoint(resolved) });
     return {
       ok: true,
@@ -342,9 +390,27 @@ export async function startServer(
       onEvent: opts.onEvent,
     });
     writeServerPid(resolved, retryPid);
-    outcome = await pollReady(retryPid, healthUrl, timeoutSeconds, opts.onEvent);
+    outcome = await pollReady(retryPid, healthUrl, timeoutSeconds, opts.onEvent, opts.signal);
     retried = true;
+    if (outcome === 'aborted') {
+      try {
+        if (isProcessAlive(retryPid)) process.kill(retryPid, 'SIGTERM');
+      } catch {
+        // already gone
+      }
+      removeServerPid(resolved);
+      opts.signal?.removeEventListener('abort', killOnAbort);
+      return {
+        ok: false,
+        pid: null,
+        endpoint: endpoint(resolved),
+        tunedProfile,
+        retried: true,
+        error: 'Start aborted by caller',
+      };
+    }
     if (outcome === 'ready') {
+      opts.signal?.removeEventListener('abort', killOnAbort);
       opts.onEvent?.({ type: 'ready', pid: retryPid, endpoint: endpoint(resolved) });
       return {
         ok: true,
@@ -355,6 +421,8 @@ export async function startServer(
       };
     }
   }
+
+  opts.signal?.removeEventListener('abort', killOnAbort);
 
   if (outcome === 'timeout') {
     opts.onEvent?.({ type: 'timeout', pid });

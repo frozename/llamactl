@@ -1,12 +1,39 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { relFromRepoAndFile } from './catalog.js';
 import { eligibleGgufSiblings, pickFile } from './discovery.js';
 import { resolveEnv } from './env.js';
 import { fetchModelInfo, mmprojFileForRepo } from './hf.js';
 import { normalizeProfile, resolveProfile } from './profile.js';
 import type { MachineProfile, ResolvedEnv } from './types.js';
+
+/**
+ * Resolve which HuggingFace CLI binary to invoke. Probe order:
+ *   1. LOCAL_AI_HF_BIN env override (accepts an absolute path).
+ *   2. Any of `hf` / `huggingface-cli` on PATH.
+ *   3. Literal `hf` so the spawn fails with a clear ENOENT the caller
+ *      can surface, rather than hanging on a non-existent command.
+ * Exported so the Electron UI can report which binary was chosen.
+ */
+export function resolveHfBin(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.LOCAL_AI_HF_BIN;
+  if (override && override.length > 0) return override;
+  const path = env.PATH ?? '';
+  const candidates = ['hf', 'huggingface-cli'];
+  const extensions =
+    process.platform === 'win32' ? (env.PATHEXT ?? '.EXE;.BAT;.CMD').split(';') : [''];
+  for (const dir of path.split(delimiter)) {
+    if (!dir) continue;
+    for (const name of candidates) {
+      for (const ext of extensions) {
+        const full = join(dir, `${name}${ext}`);
+        if (existsSync(full)) return full;
+      }
+    }
+  }
+  return 'hf';
+}
 
 /**
  * Progress + lifecycle events emitted by a pull. Consumers shape these
@@ -67,7 +94,8 @@ function drainLines(
 
 export const defaultRunHf: RunHf = (args, onEvent, signal) => {
   return new Promise((resolve, reject) => {
-    const child = spawn('hf', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const bin = resolveHfBin();
+    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const forward = (
       stream: NodeJS.ReadableStream,
       kind: 'stdout' | 'stderr',
