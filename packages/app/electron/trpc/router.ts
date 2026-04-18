@@ -1,4 +1,5 @@
 import { initTRPC } from '@trpc/server';
+import { observable } from '@trpc/server/observable';
 import { z } from 'zod';
 import {
   bench,
@@ -6,11 +7,17 @@ import {
   discovery,
   env as envMod,
   presets,
+  pull,
   recommendations,
   target as targetMod,
   uninstall as uninstallMod,
   type MachineProfile,
 } from '@llamactl/core';
+
+type PullStreamEvent =
+  | pull.PullEvent
+  | { type: 'done'; result: pull.PullFileResult }
+  | { type: 'done-candidate'; result: pull.PullCandidateResult };
 
 // Plain JSON serialisation — the core read surface returns POJOs only
 // (strings, numbers, arrays, nested objects). We'd swap in superjson if
@@ -140,6 +147,84 @@ export const router = t.router({
       // non-zero on refusal (e.g. non-candidate scope without --force),
       // with `error` carrying the human message the CLI prints.
       return uninstallMod.uninstall({ rel: input.rel, force: input.force });
+    }),
+
+  pullFile: t.procedure
+    .input(
+      z.object({
+        repo: z.string().min(1),
+        file: z.string().min(1),
+      }),
+    )
+    .subscription(({ input }) => {
+      return observable<PullStreamEvent>((emit) => {
+        let cancelled = false;
+        void (async () => {
+          try {
+            const result = await pull.pullRepoFile({
+              repo: input.repo,
+              file: input.file,
+              onEvent: (e) => {
+                if (!cancelled) emit.next(e);
+              },
+            });
+            if (!cancelled) {
+              emit.next({ type: 'done', result });
+              emit.complete();
+            }
+          } catch (err) {
+            if (!cancelled) {
+              emit.error(err instanceof Error ? err : new Error(String(err)));
+            }
+          }
+        })();
+        return () => {
+          // The subprocess keeps running; this just stops forwarding
+          // further events. A hard-abort story is a follow-up — it
+          // needs an AbortSignal plumbed through `RunHf`.
+          cancelled = true;
+        };
+      });
+    }),
+
+  pullCandidate: t.procedure
+    .input(
+      z.object({
+        repo: z.string().min(1),
+        file: z.string().optional(),
+        profile: z.string().optional(),
+      }),
+    )
+    .subscription(({ input }) => {
+      return observable<PullStreamEvent>((emit) => {
+        let cancelled = false;
+        void (async () => {
+          try {
+            const result = await pull.pullCandidate({
+              repo: input.repo,
+              file: input.file,
+              profile: input.profile,
+              onEvent: (e) => {
+                if (!cancelled) emit.next(e);
+              },
+            });
+            if (cancelled) return;
+            if ('error' in result) {
+              emit.error(new Error(result.error));
+              return;
+            }
+            emit.next({ type: 'done-candidate', result });
+            emit.complete();
+          } catch (err) {
+            if (!cancelled) {
+              emit.error(err instanceof Error ? err : new Error(String(err)));
+            }
+          }
+        })();
+        return () => {
+          cancelled = true;
+        };
+      });
     }),
 
   discover: t.procedure
