@@ -43,8 +43,7 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
     const name = manifest.metadata.name;
     const { spec } = manifest;
     try {
-      const client = opts.getClient(spec.node);
-      const result = await applyOne(manifest, client, (e) => {
+      const result = await applyOne(manifest, opts.getClient, (e) => {
         opts.onEvent?.({ ...e, name });
       });
       if (result.error) errors++;

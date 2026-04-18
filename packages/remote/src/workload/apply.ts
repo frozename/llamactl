@@ -1,10 +1,10 @@
 import type { NodeClient } from '../client/node-client.js';
-import type { ModelRun, ModelRunStatus } from './schema.js';
+import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
 
 export type ApplyAction = 'unchanged' | 'started' | 'restarted';
 
 export interface ApplyEvent {
-  type: 'stop' | 'start' | 'started' | 'skipped';
+  type: 'stop' | 'start' | 'started' | 'skipped' | 'worker-start' | 'worker-ready';
   message: string;
 }
 
@@ -27,23 +27,113 @@ interface StartDone {
   error?: string;
 }
 
+/** Fan out rpc-server starts across every worker in the spec. Returns
+ *  "host:port,host:port,..." suitable for llama-server's --rpc flag. */
+async function startWorkers(
+  workers: readonly ModelRunWorker[],
+  getClient: (nodeName: string) => NodeClient,
+  onEvent?: (e: ApplyEvent) => void,
+): Promise<{ rpcList: string; error?: string }> {
+  const endpoints: string[] = [];
+  for (const worker of workers) {
+    onEvent?.({
+      type: 'worker-start',
+      message: `worker ${worker.node}: starting rpc-server on ${worker.rpcHost}:${worker.rpcPort}`,
+    });
+    const wc = getClient(worker.node);
+    // Stop any prior rpc-server on that node; ignore errors.
+    try { await wc.rpcServerStop.mutate({ graceSeconds: 2 }); } catch {}
+    const started = await new Promise<{ ok: boolean; endpoint: string; error?: string } | null>(
+      (resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error(`rpc-server start timeout on ${worker.node}`)),
+          (worker.timeoutSeconds + 5) * 1000,
+        );
+        let done: { ok: boolean; endpoint: string; error?: string } | null = null;
+        const sub = wc.rpcServerStart.subscribe(
+          {
+            host: '0.0.0.0',
+            port: worker.rpcPort,
+            ...(worker.extraArgs.length > 0 ? { extraArgs: worker.extraArgs } : {}),
+            timeoutSeconds: worker.timeoutSeconds,
+          },
+          {
+            onData: (e: unknown) => {
+              const evt = e as { type?: string; result?: unknown };
+              if (evt.type === 'done') done = evt.result as typeof done;
+            },
+            onError: (err: unknown) => { clearTimeout(timer); reject(err as Error); },
+            onComplete: () => { clearTimeout(timer); resolve(done); },
+          },
+        );
+        void sub;
+      },
+    );
+    if (!started || !started.ok) {
+      return {
+        rpcList: '',
+        error: `worker ${worker.node}: ${started?.error ?? 'rpc-server failed to start'}`,
+      };
+    }
+    onEvent?.({
+      type: 'worker-ready',
+      message: `worker ${worker.node}: ready on ${worker.rpcHost}:${worker.rpcPort}`,
+    });
+    endpoints.push(`${worker.rpcHost}:${worker.rpcPort}`);
+  }
+  return { rpcList: endpoints.join(',') };
+}
+
+async function stopWorkers(
+  workers: readonly ModelRunWorker[],
+  getClient: (nodeName: string) => NodeClient,
+): Promise<void> {
+  // Reverse order mirrors start order — keeps logs easier to read.
+  for (const worker of [...workers].reverse()) {
+    try {
+      const wc = getClient(worker.node);
+      await wc.rpcServerStop.mutate({ graceSeconds: 3 });
+    } catch {
+      // best effort
+    }
+  }
+}
+
 /**
  * Diff one workload against the live status of its target node and
  * converge: stop the running server if the config differs, then start
  * the new spec. No-op when observed already matches desired.
  *
  * Shared by the CLI `apply` command and the controller reconciler so
- * both land the same restart semantics.
+ * both land the same restart semantics. When spec.workers is
+ * non-empty, starts rpc-server on each worker first and appends
+ * `--rpc host1:p1,host2:p2,...` to the coordinator's extraArgs.
  */
 export async function applyOne(
   manifest: ModelRun,
-  client: NodeClient,
+  getClient: (nodeName: string) => NodeClient,
   onEvent?: (e: ApplyEvent) => void,
 ): Promise<ApplyResult> {
+  const client = getClient(manifest.spec.node);
   const status = await client.serverStatus.query();
 
   const desiredRel = manifest.spec.target.value;
-  const desiredArgs = manifest.spec.extraArgs;
+  // Compose the effective extraArgs: user args + the --rpc flag if
+  // this workload has workers. The coordinator's server.rel /
+  // extraArgs comparison below uses the composed form so a diff
+  // between "with --rpc" and "without" triggers a restart.
+  let effectiveExtraArgs: string[] = manifest.spec.extraArgs;
+  const workers = manifest.spec.workers;
+
+  let rpcFlag: string[] = [];
+  if (workers.length > 0) {
+    rpcFlag = [
+      '--rpc',
+      workers.map((w) => `${w.rpcHost}:${w.rpcPort}`).join(','),
+    ];
+    effectiveExtraArgs = [...manifest.spec.extraArgs, ...rpcFlag];
+  }
+  const desiredArgs = effectiveExtraArgs;
   const liveRel = status.rel;
   const liveArgs = status.extraArgs ?? [];
   const running = status.state === 'up';
@@ -80,6 +170,32 @@ export async function applyOne(
     action = 'started';
   }
 
+  if (workers.length > 0) {
+    const wres = await startWorkers(workers, getClient, onEvent);
+    if (wres.error) {
+      const when = new Date().toISOString();
+      return {
+        action,
+        statusSection: {
+          phase: 'Failed',
+          serverPid: null,
+          endpoint: null,
+          lastTransitionTime: when,
+          conditions: [
+            {
+              type: 'Applied',
+              status: 'False',
+              reason: action,
+              message: wres.error,
+              lastTransitionTime: when,
+            },
+          ],
+        },
+        error: wres.error,
+      };
+    }
+  }
+
   onEvent?.({ type: 'start', message: `${manifest.metadata.name}: starting ${desiredRel}` });
   const startResult = await new Promise<StartDone | null>((resolve, reject) => {
     const timer = setTimeout(
@@ -90,7 +206,7 @@ export async function applyOne(
     const sub = client.serverStart.subscribe(
       {
         target: desiredRel,
-        extraArgs: desiredArgs.length > 0 ? desiredArgs : undefined,
+        ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
         timeoutSeconds: manifest.spec.timeoutSeconds,
       },
       {
@@ -113,6 +229,9 @@ export async function applyOne(
 
   if (!startResult || !startResult.ok) {
     const err = startResult?.error ?? 'serverStart failed';
+    // Tear down any workers we just started so a failed coordinator
+    // doesn't leave rpc-servers listening forever.
+    if (workers.length > 0) await stopWorkers(workers, getClient);
     return {
       action,
       statusSection: {

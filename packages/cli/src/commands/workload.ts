@@ -89,10 +89,9 @@ export async function runApply(args: string[]): Promise<number> {
     return 1;
   }
 
-  const client = getNodeClientByName(manifest.spec.node);
   let result: workloadApply.ApplyResult;
   try {
-    result = await workloadApply.applyOne(manifest, client);
+    result = await workloadApply.applyOne(manifest, (name) => getNodeClientByName(name));
   } catch (err) {
     process.stderr.write(`apply: ${(err as Error).message}\n`);
     return 1;
@@ -308,6 +307,20 @@ export async function runDelete(args: string[]): Promise<number> {
       process.stderr.write(
         `warning: failed to reach node ${manifest.spec.node}: ${(err as Error).message}\n`,
       );
+    }
+
+    // Stop rpc-server workers in reverse order. Best-effort — we still
+    // want to remove the manifest even if a worker node is unreachable.
+    for (const worker of [...manifest.spec.workers].reverse()) {
+      try {
+        const wc = getNodeClientByName(worker.node);
+        await wc.rpcServerStop.mutate({ graceSeconds: 3 });
+        process.stdout.write(`stopped rpc-server on worker ${worker.node}\n`);
+      } catch (err) {
+        process.stderr.write(
+          `warning: failed to stop rpc-server on ${worker.node}: ${(err as Error).message}\n`,
+        );
+      }
     }
   }
   const ok = workloadStore.deleteWorkload(name);

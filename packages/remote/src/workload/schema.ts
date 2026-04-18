@@ -28,10 +28,28 @@ export const ModelRunEndpointSchema = z.object({
   port: z.number().int().min(1).max(65535).default(8080),
 });
 
+export const ModelRunWorkerSchema = z.object({
+  node: z.string().min(1),
+  /** IP or hostname the coordinator can reach this worker on. */
+  rpcHost: z.string().min(1),
+  /** TCP port rpc-server binds to on this worker. */
+  rpcPort: z.number().int().min(1).max(65535),
+  extraArgs: z.array(z.string()).default([]),
+  timeoutSeconds: z.number().int().positive().max(600).default(30),
+});
+
 export const ModelRunSpecSchema = z.object({
   node: z.string().min(1),
   target: ModelRunTargetSchema,
   extraArgs: z.array(z.string()).default([]),
+  /**
+   * Optional worker pool for llama.cpp RPC (Phase E). When non-empty,
+   * `spec.node` is treated as the coordinator: each worker is started
+   * with rpc-server on its (rpcHost, rpcPort), then the coordinator's
+   * llama-server launches with `--rpc host1:port1,host2:port2,...`
+   * appended to extraArgs. Delete tears down in reverse order.
+   */
+  workers: z.array(ModelRunWorkerSchema).default([]),
   /**
    * Restart semantics for the optional controller daemon. `Always`
    * restarts the server whenever /health drops. `OnFailure` restarts
@@ -78,6 +96,7 @@ export const ModelRunSchema = z.object({
 
 export type ModelRunTarget = z.infer<typeof ModelRunTargetSchema>;
 export type ModelRunEndpoint = z.infer<typeof ModelRunEndpointSchema>;
+export type ModelRunWorker = z.infer<typeof ModelRunWorkerSchema>;
 export type ModelRunSpec = z.infer<typeof ModelRunSpecSchema>;
 export type ModelRunCondition = z.infer<typeof ModelRunConditionSchema>;
 export type ModelRunStatus = z.infer<typeof ModelRunStatusSchema>;

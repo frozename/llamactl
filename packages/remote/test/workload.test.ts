@@ -59,6 +59,26 @@ spec:
     value: foo/bar.gguf
 `;
 
+const multiNodeYaml = `
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: llama-70b-split
+spec:
+  node: coordinator
+  target:
+    kind: rel
+    value: llama-70b.gguf
+  workers:
+    - node: gpu-worker-1
+      rpcHost: 10.0.0.21
+      rpcPort: 50052
+    - node: gpu-worker-2
+      rpcHost: 10.0.0.22
+      rpcPort: 50052
+  timeoutSeconds: 60
+`;
+
 describe('ModelRun schema', () => {
   test('parses a fully-specified manifest', () => {
     const m = parseWorkload(sampleYaml);
@@ -98,6 +118,30 @@ describe('ModelRun schema', () => {
     const path = saveWorkload(m, dir);
     const reloaded = loadWorkload(path);
     expect(reloaded).toEqual(m);
+  });
+
+  test('parses a multi-node manifest with workers', () => {
+    const m = parseWorkload(multiNodeYaml);
+    expect(m.spec.node).toBe('coordinator');
+    expect(m.spec.workers).toHaveLength(2);
+    expect(m.spec.workers[0]).toEqual({
+      node: 'gpu-worker-1',
+      rpcHost: '10.0.0.21',
+      rpcPort: 50052,
+      extraArgs: [],
+      timeoutSeconds: 30,
+    });
+    expect(m.spec.workers[1]?.rpcHost).toBe('10.0.0.22');
+  });
+
+  test('rejects a worker with port out of range', () => {
+    const bad = multiNodeYaml.replace('rpcPort: 50052', 'rpcPort: 99999');
+    expect(() => parseWorkload(bad)).toThrow();
+  });
+
+  test('defaults workers to [] when absent', () => {
+    const m = parseWorkload(minimalYaml);
+    expect(m.spec.workers).toEqual([]);
   });
 });
 
