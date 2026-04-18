@@ -1,4 +1,5 @@
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
+import { openaiProxy } from '@llamactl/core';
 import { router as appRouter } from '../router.js';
 import { verifyBearer } from './auth.js';
 import { loadCert } from './tls.js';
@@ -35,6 +36,22 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     opts.onRequest?.(url);
     if (url.pathname === '/healthz') {
       return new Response('ok', { status: 200 });
+    }
+    // OpenAI-compatible gateway. Anything under /v1/* is bearer-auth'd
+    // then either listed (GET /v1/models — static, no upstream call)
+    // or proxied straight to the local llama-server so external tools
+    // can speak plain OpenAI SDK to the agent's URL.
+    if (url.pathname.startsWith('/v1/') || url.pathname === '/v1') {
+      if (!verifyBearer(req, opts.tokenHash)) {
+        return new Response('unauthorized', {
+          status: 401,
+          headers: { 'www-authenticate': 'Bearer realm="llamactl-agent"' },
+        });
+      }
+      if (req.method === 'GET' && url.pathname === '/v1/models') {
+        return Response.json(openaiProxy.listOpenAIModels());
+      }
+      return openaiProxy.proxyOpenAI(req);
     }
     if (!url.pathname.startsWith(endpoint)) {
       return new Response('not found', { status: 404 });
