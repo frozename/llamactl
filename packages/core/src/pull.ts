@@ -24,10 +24,13 @@ export type PullEvent =
 /**
  * Runner signature for `hf`. Overridable so tests can assert the argv
  * assembled by the pull functions without spawning a real subprocess.
+ * When a caller passes a `signal`, the default runner SIGTERMs the
+ * child on abort so subscription teardown can cancel in-flight pulls.
  */
 export type RunHf = (
   args: string[],
   onEvent?: (e: PullEvent) => void,
+  signal?: AbortSignal,
 ) => Promise<number>;
 
 function repoBasename(repo: string): string {
@@ -62,7 +65,7 @@ function drainLines(
   return remaining;
 }
 
-export const defaultRunHf: RunHf = (args, onEvent) => {
+export const defaultRunHf: RunHf = (args, onEvent, signal) => {
   return new Promise((resolve, reject) => {
     const child = spawn('hf', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const forward = (
@@ -80,8 +83,23 @@ export const defaultRunHf: RunHf = (args, onEvent) => {
     };
     if (child.stdout) forward(child.stdout, 'stdout');
     if (child.stderr) forward(child.stderr, 'stderr');
-    child.once('error', reject);
+    const onAbort = () => {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // child may already be gone
+      }
+    };
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    }
+    child.once('error', (err) => {
+      signal?.removeEventListener('abort', onAbort);
+      reject(err);
+    });
     child.once('exit', (code) => {
+      signal?.removeEventListener('abort', onAbort);
       const c = code ?? 1;
       onEvent?.({ type: 'exit', code: c });
       resolve(c);
@@ -98,6 +116,7 @@ export interface PullRepoOptions {
   onEvent?: (e: PullEvent) => void;
   runHf?: RunHf;
   resolved?: ResolvedEnv;
+  signal?: AbortSignal;
 }
 
 export interface PullRepoResult {
@@ -123,7 +142,7 @@ export async function pullRepo(opts: PullRepoOptions): Promise<PullRepoResult> {
   const args = ['download', opts.repo, '--local-dir', target];
   opts.onEvent?.({ type: 'start', command: 'hf', args, target });
   const run = opts.runHf ?? defaultRunHf;
-  const code = await run(args, opts.onEvent);
+  const code = await run(args, opts.onEvent, opts.signal);
   return { repo: opts.repo, target, code };
 }
 
@@ -135,6 +154,7 @@ export interface PullFileOptions {
   onEvent?: (e: PullEvent) => void;
   runHf?: RunHf;
   resolved?: ResolvedEnv;
+  signal?: AbortSignal;
   /**
    * Skip the HF model-info lookup for the mmproj sidecar. Callers who
    * already know the repo is text-only (or who are running offline)
@@ -193,7 +213,7 @@ export async function pullRepoFile(
   const args = ['download', opts.repo, ...requestedFiles, '--local-dir', target];
   opts.onEvent?.({ type: 'start', command: 'hf', args, target });
   const run = opts.runHf ?? defaultRunHf;
-  const code = await run(args, opts.onEvent);
+  const code = await run(args, opts.onEvent, opts.signal);
 
   return {
     repo: opts.repo,
@@ -277,6 +297,7 @@ export interface PullCandidateOptions {
   onEvent?: (e: PullEvent) => void;
   runHf?: RunHf;
   resolved?: ResolvedEnv;
+  signal?: AbortSignal;
   skipMmproj?: boolean;
 }
 
@@ -312,6 +333,7 @@ export async function pullCandidate(
     onEvent: opts.onEvent,
     runHf: opts.runHf,
     resolved: opts.resolved,
+    signal: opts.signal,
     skipMmproj: opts.skipMmproj,
   });
 

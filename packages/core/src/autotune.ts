@@ -64,6 +64,7 @@ export interface MaybeTuneAfterPullOptions {
   runCli?: RunCli;
   resolved?: ResolvedEnv;
   env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
 }
 
 export interface MaybeTuneSkipReason {
@@ -182,6 +183,7 @@ export async function maybeTuneAfterPull(
     onEvent: opts.onEvent,
     runCli: opts.runCli,
     resolved,
+    signal: opts.signal,
   });
   if ('error' in presetOut) {
     return {
@@ -205,6 +207,7 @@ export async function maybeTuneAfterPull(
     runCli: opts.runCli,
     resolved,
     env,
+    signal: opts.signal,
   });
 
   return {
@@ -221,6 +224,7 @@ interface MaybeVisionArgs {
   runCli?: RunCli;
   resolved: ResolvedEnv;
   env: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
 }
 
 async function maybeVisionBenchAfterPull(
@@ -283,6 +287,7 @@ async function maybeVisionBenchAfterPull(
     onEvent: args.onEvent,
     runCli: args.runCli,
     resolved: args.resolved,
+    signal: args.signal,
   });
   if ('error' in out) {
     return { ran: false, reason: { kind: 'error', message: out.error } };

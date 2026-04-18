@@ -167,6 +167,10 @@ export default function Bench(): JSX.Element {
 
   const busy = active !== null;
   const recentHistory = history.data ?? [];
+  const cancel = () => {
+    setActive(null);
+    setError('Cancelled by user');
+  };
 
   return (
     <div className="h-full overflow-auto p-6">
@@ -217,22 +221,32 @@ export default function Bench(): JSX.Element {
             </select>
           </label>
           <div className="col-span-3 flex items-end gap-2">
-            <button
-              type="button"
-              onClick={() => start('preset')}
-              disabled={busy}
-              className="flex-1 rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:opacity-50"
-            >
-              {active?.kind === 'preset' ? 'Running…' : 'Run preset'}
-            </button>
-            <button
-              type="button"
-              onClick={() => start('vision')}
-              disabled={busy}
-              className="flex-1 rounded border border-[var(--color-accent)] px-3 py-1 text-sm font-medium text-[color:var(--color-accent)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-            >
-              {active?.kind === 'vision' ? 'Running…' : 'Run vision'}
-            </button>
+            {busy ? (
+              <button
+                type="button"
+                onClick={cancel}
+                className="flex-1 rounded border border-[var(--color-danger)] px-3 py-1 text-sm text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)]"
+              >
+                Cancel
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => start('preset')}
+                  className="flex-1 rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90"
+                >
+                  Run preset
+                </button>
+                <button
+                  type="button"
+                  onClick={() => start('vision')}
+                  className="flex-1 rounded border border-[var(--color-accent)] px-3 py-1 text-sm font-medium text-[color:var(--color-accent)] hover:bg-[var(--color-surface-2)]"
+                >
+                  Run vision
+                </button>
+              </>
+            )}
           </div>
         </div>
       </form>

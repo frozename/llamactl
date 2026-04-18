@@ -42,12 +42,14 @@ export interface SpawnResult {
 /**
  * Injectable runner for `llama-bench` / `llama-mtmd-cli`. Tests swap in
  * a fake to assert argv assembly and exercise the parser without a
- * real llama.cpp binary on PATH.
+ * real llama.cpp binary on PATH. When a caller passes a `signal`, the
+ * default runner SIGTERMs the child on abort.
  */
 export type RunCli = (
   bin: string,
   args: string[],
   onEvent?: (e: BenchEvent) => void,
+  signal?: AbortSignal,
 ) => Promise<SpawnResult>;
 
 function drainLines(buf: string, onLine: (line: string) => void): string {
@@ -67,7 +69,7 @@ function drainLines(buf: string, onLine: (line: string) => void): string {
   return remaining;
 }
 
-export const defaultRunCli: RunCli = (bin, args, onEvent) => {
+export const defaultRunCli: RunCli = (bin, args, onEvent, signal) => {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
@@ -90,8 +92,23 @@ export const defaultRunCli: RunCli = (bin, args, onEvent) => {
     };
     if (child.stdout) attach(child.stdout, 'stdout', (t) => { stdout += t; });
     if (child.stderr) attach(child.stderr, 'stderr', (t) => { stderr += t; });
-    child.once('error', reject);
+    const onAbort = () => {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // child may already be gone
+      }
+    };
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    }
+    child.once('error', (err) => {
+      signal?.removeEventListener('abort', onAbort);
+      reject(err);
+    });
     child.once('exit', (code) => {
+      signal?.removeEventListener('abort', onAbort);
       const c = code ?? 1;
       onEvent?.({ type: 'exit', code: c });
       resolve({ code: c, stdout, stderr });
@@ -370,6 +387,7 @@ export interface BenchPresetOptions {
   onEvent?: (e: BenchEvent) => void;
   runCli?: RunCli;
   resolved?: ResolvedEnv;
+  signal?: AbortSignal;
 }
 
 export interface BenchPresetAttempt {
@@ -451,7 +469,10 @@ export async function benchPreset(
       '-o', 'jsonl',
     ];
     opts.onEvent?.({ type: 'start', command: bin, args });
-    const result = await run(bin, args, opts.onEvent);
+    if (opts.signal?.aborted) {
+      return { error: 'Bench preset aborted' };
+    }
+    const result = await run(bin, args, opts.onEvent, opts.signal);
     if (result.code !== 0) {
       attempts.push({ profile, gen_ts: '-1', prompt_ts: '-1', code: result.code, success: false });
       opts.onEvent?.({ type: 'profile-fail', profile, code: result.code });
@@ -516,6 +537,7 @@ export interface BenchVisionOptions {
   onEvent?: (e: BenchEvent) => void;
   runCli?: RunCli;
   resolved?: ResolvedEnv;
+  signal?: AbortSignal;
 }
 
 export interface BenchVisionResult {
@@ -587,7 +609,10 @@ export async function benchVision(
     '--no-warmup',
   ];
   opts.onEvent?.({ type: 'start', command: bin, args });
-  const result = await run(bin, args, opts.onEvent);
+  if (opts.signal?.aborted) {
+    return { error: 'Bench vision aborted' };
+  }
+  const result = await run(bin, args, opts.onEvent, opts.signal);
   if (result.code !== 0) {
     const tail = result.stderr.split('\n').slice(-20).join('\n');
     return { error: `llama-mtmd-cli failed (code=${result.code})\n${tail}` };

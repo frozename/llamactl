@@ -48,6 +48,7 @@ export interface CandidateTestOptions {
   runCli?: RunCli;
   resolved?: ResolvedEnv;
   env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
 }
 
 export interface CandidateTestStep<T> {
@@ -124,6 +125,7 @@ export async function candidateTest(
     onEvent: opts.onEvent,
     runHf: opts.runHf,
     resolved,
+    signal: opts.signal,
   });
   if (pulled.code !== 0) {
     return { error: `Pull failed (code=${pulled.code}) for ${rel}` };
@@ -154,6 +156,7 @@ export async function candidateTest(
         onEvent: opts.onEvent,
         runCli: opts.runCli,
         resolved,
+        signal: opts.signal,
       });
       if ('error' in out) return { error: out.error };
       preset = { ran: true, result: out };
@@ -188,6 +191,7 @@ export async function candidateTest(
         onEvent: opts.onEvent,
         runCli: opts.runCli,
         resolved,
+        signal: opts.signal,
       });
       if ('error' in out) {
         vision = { ran: false, reason: out.error };

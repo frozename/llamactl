@@ -164,11 +164,13 @@ export const router = t.router({
     .subscription(({ input }) => {
       return observable<PullStreamEvent>((emit) => {
         let cancelled = false;
+        const controller = new AbortController();
         void (async () => {
           try {
             const result = await pull.pullRepoFile({
               repo: input.repo,
               file: input.file,
+              signal: controller.signal,
               onEvent: (e) => {
                 if (!cancelled) emit.next(e);
               },
@@ -184,10 +186,8 @@ export const router = t.router({
           }
         })();
         return () => {
-          // The subprocess keeps running; this just stops forwarding
-          // further events. A hard-abort story is a follow-up — it
-          // needs an AbortSignal plumbed through `RunHf`.
           cancelled = true;
+          controller.abort();
         };
       });
     }),
@@ -254,11 +254,13 @@ export const router = t.router({
     .subscription(({ input }) => {
       return observable<BenchStreamEvent>((emit) => {
         let cancelled = false;
+        const controller = new AbortController();
         void (async () => {
           try {
             const result = await bench.benchPreset({
               target: input.target,
               mode: input.mode,
+              signal: controller.signal,
               onEvent: (e) => {
                 if (!cancelled) emit.next(e);
               },
@@ -278,6 +280,7 @@ export const router = t.router({
         })();
         return () => {
           cancelled = true;
+          controller.abort();
         };
       });
     }),
@@ -287,10 +290,12 @@ export const router = t.router({
     .subscription(({ input }) => {
       return observable<BenchStreamEvent>((emit) => {
         let cancelled = false;
+        const controller = new AbortController();
         void (async () => {
           try {
             const result = await bench.benchVision({
               target: input.target,
+              signal: controller.signal,
               onEvent: (e) => {
                 if (!cancelled) emit.next(e);
               },
@@ -310,6 +315,7 @@ export const router = t.router({
         })();
         return () => {
           cancelled = true;
+          controller.abort();
         };
       });
     }),
@@ -325,12 +331,14 @@ export const router = t.router({
     .subscription(({ input }) => {
       return observable<PullStreamEvent>((emit) => {
         let cancelled = false;
+        const controller = new AbortController();
         void (async () => {
           try {
             const result = await pull.pullCandidate({
               repo: input.repo,
               file: input.file,
               profile: input.profile,
+              signal: controller.signal,
               onEvent: (e) => {
                 if (!cancelled) emit.next(e);
               },
@@ -350,6 +358,7 @@ export const router = t.router({
         })();
         return () => {
           cancelled = true;
+          controller.abort();
         };
       });
     }),

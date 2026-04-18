@@ -147,6 +147,12 @@ export default function Pulls(): JSX.Element {
   };
 
   const busy = active !== null;
+  const cancel = () => {
+    // Tearing down the active subscription triggers the subscription
+    // cleanup in the tRPC router which aborts the child process.
+    setActive(null);
+    setError('Cancelled by user');
+  };
 
   return (
     <div className="h-full overflow-auto p-6">
@@ -235,6 +241,15 @@ export default function Pulls(): JSX.Element {
             >
               {busy ? 'Pulling…' : 'Pull'}
             </button>
+            {busy && (
+              <button
+                type="button"
+                onClick={cancel}
+                className="ml-2 rounded border border-[var(--color-danger)] px-3 py-1 text-sm text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)]"
+              >
+                Cancel
+              </button>
+            )}
           </div>
         </div>
       </form>
