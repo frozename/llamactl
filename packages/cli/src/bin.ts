@@ -18,6 +18,7 @@ import { runController } from './commands/controller.js';
 import { runExpose } from './commands/expose.js';
 import { runSirius } from './commands/sirius.js';
 import { runEmbersynth } from './commands/embersynth.js';
+import { runRunbookCmd } from './commands/runbook.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
@@ -111,6 +112,11 @@ Declarative workloads (Kubernetes-style):
       [--format json|yaml|env]                 a sirius-gateway deployment.
       [--token-inline]
 
+Agentic operations:
+  llamactl runbook list                       Enumerate operator runbooks
+  llamactl runbook run <name>                 Chain MCP tools end-to-end
+      [--dry-run] [--params <json>]           (see llamactl runbook --help)
+
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
 `;
@@ -162,6 +168,8 @@ async function main(argv: string[]): Promise<number> {
       return runSirius(rest);
     case 'embersynth':
       return runEmbersynth(rest);
+    case 'runbook':
+      return runRunbookCmd(rest);
     case undefined:
     case '--help':
     case '-h':

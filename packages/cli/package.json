@@ -13,6 +13,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@llamactl/agents": "workspace:*",
     "@llamactl/core": "workspace:*",
     "@llamactl/remote": "workspace:*",
     "yaml": "2.8.3"
