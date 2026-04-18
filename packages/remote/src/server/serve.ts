@@ -19,6 +19,7 @@ import {
   handleInstallScript,
   type InstallScriptHandlerOptions,
 } from './install-script.js';
+import { handleArtifact, type ArtifactsHandlerOptions } from './artifacts.js';
 
 export interface StartAgentOptions {
   bindHost?: string;          // default '127.0.0.1'
@@ -48,6 +49,8 @@ export interface StartAgentOptions {
   registerOptions?: RegisterHandlerOptions;
   /** Tempdir injection for /install-agent.sh in tests. */
   installScriptOptions?: InstallScriptHandlerOptions;
+  /** Tempdir injection for /artifacts/* in tests. */
+  artifactsOptions?: ArtifactsHandlerOptions;
 }
 
 export interface RunningAgent {
@@ -121,6 +124,13 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // target host runs it.
     if (url.pathname === '/install-agent.sh') {
       return handleInstallScript(req, opts.installScriptOptions ?? {});
+    }
+    // Artifact server — streams pre-built llamactl-agent binaries
+    // to the curl-pipe-sh installer. Public, no auth (the binary is
+    // the same thing anyone can compile from git; serving it over
+    // TLS with caching is a convenience, not a privilege).
+    if (url.pathname.startsWith('/artifacts/')) {
+      return handleArtifact(req, url, opts.artifactsOptions ?? {});
     }
     // Prometheus scrape endpoint. Bearer-auth'd like everything else;
     // scrapers can set the standard Authorization header.
