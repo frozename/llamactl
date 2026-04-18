@@ -1,11 +1,201 @@
-import { Suspense } from 'react';
+import * as React from 'react';
+import { Suspense, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { stringify as yamlStringify } from 'yaml';
 import type { bench, schemas } from '@llamactl/core';
 import { trpc } from '@/lib/trpc';
 
 type BenchCompareRow = bench.BenchCompareRow;
 type PresetOverride = schemas.PresetOverride;
 
-function StatusCard({ title, body }: { title: string; body: string }): JSX.Element {
+/**
+ * "Expose a model" shortcut — wraps the CLI's `llamactl expose <rel>`
+ * flow in a form. Builds a ModelRun manifest from (name, node, rel),
+ * applies it via workloadApply, and surfaces the advertised URL so
+ * other LAN hosts can hit the llama-server immediately.
+ */
+function ExposePanel(): React.JSX.Element {
+  const qc = useQueryClient();
+  const utils = trpc.useUtils();
+  const nodes = trpc.nodeList.useQuery();
+  const catalog = trpc.catalogList.useQuery();
+  const [name, setName] = useState('');
+  const [node, setNode] = useState('local');
+  const [rel, setRel] = useState('');
+  const [status, setStatus] = useState<
+    | { kind: 'idle' }
+    | { kind: 'error'; message: string }
+    | { kind: 'ok'; name: string; action: string; endpoint: string | null }
+  >({ kind: 'idle' });
+
+  const apply = trpc.workloadApply.useMutation({
+    onSuccess: (result) => {
+      setStatus({
+        kind: 'ok',
+        name: result.name,
+        action: result.action,
+        endpoint: result.status?.endpoint ?? null,
+      });
+      void utils.workloadList.invalidate();
+      void qc.invalidateQueries();
+    },
+    onError: (err) => setStatus({ kind: 'error', message: err.message }),
+  });
+
+  function onSubmit(e: React.FormEvent<HTMLFormElement>): void {
+    e.preventDefault();
+    setStatus({ kind: 'idle' });
+    if (!name.trim() || !rel.trim() || !node.trim()) {
+      setStatus({ kind: 'error', message: 'name, node, and rel are required' });
+      return;
+    }
+    const manifest = {
+      apiVersion: 'llamactl/v1' as const,
+      kind: 'ModelRun' as const,
+      metadata: { name: name.trim(), labels: {} },
+      spec: {
+        node: node.trim(),
+        target: { kind: 'rel' as const, value: rel.trim() },
+        extraArgs: [],
+        timeoutSeconds: 60,
+        workers: [],
+      },
+    };
+    apply.mutate({ yaml: yamlStringify(manifest) });
+  }
+
+  const nodeOptions = nodes.data?.nodes.map((n) => n.name) ?? ['local'];
+  const catalogRels = useMemo(() => {
+    if (!catalog.data) return [] as string[];
+    const rows = catalog.data as Array<{ rel?: string; name?: string }>;
+    return rows
+      .map((r) => r.rel)
+      .filter((s): s is string => typeof s === 'string' && s.length > 0);
+  }, [catalog.data]);
+
+  return (
+    <form
+      onSubmit={onSubmit}
+      className="mt-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
+    >
+      <div className="mb-2 text-sm font-medium text-[color:var(--color-fg)]">Expose a model</div>
+      <div className="flex flex-wrap items-end gap-2 text-xs">
+        <div className="flex flex-col">
+          <label className="text-[color:var(--color-fg-muted)]">name</label>
+          <input
+            type="text"
+            placeholder="gemma-qa"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-40 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+          />
+        </div>
+        <div className="flex flex-col">
+          <label className="text-[color:var(--color-fg-muted)]">node</label>
+          <select
+            value={node}
+            onChange={(e) => setNode(e.target.value)}
+            className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+          >
+            {nodeOptions.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-1 flex-col">
+          <label className="text-[color:var(--color-fg-muted)]">rel</label>
+          <input
+            type="text"
+            placeholder="gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
+            list="dashboard-rel-suggestions"
+            value={rel}
+            onChange={(e) => setRel(e.target.value)}
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-fg)]"
+          />
+          <datalist id="dashboard-rel-suggestions">
+            {catalogRels.map((r) => (
+              <option key={r} value={r} />
+            ))}
+          </datalist>
+        </div>
+        <button
+          type="submit"
+          disabled={apply.isPending}
+          className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+        >
+          {apply.isPending ? 'Exposing…' : 'Expose'}
+        </button>
+      </div>
+      {status.kind === 'error' && (
+        <div className="mt-2 text-xs text-[color:var(--color-danger)]">{status.message}</div>
+      )}
+      {status.kind === 'ok' && (
+        <div className="mt-2 text-xs text-[color:var(--color-success)]">
+          {status.action} {status.name}
+          {status.endpoint && (
+            <>
+              {' · '}
+              <a href={status.endpoint} target="_blank" rel="noreferrer" className="font-mono underline">
+                {status.endpoint}
+              </a>
+            </>
+          )}
+        </div>
+      )}
+    </form>
+  );
+}
+
+function ExposedWorkloads(): React.JSX.Element {
+  const list = trpc.workloadList.useQuery(undefined, { refetchInterval: 5000 });
+  const rows = (list.data ?? []) as Array<{
+    name: string;
+    node: string;
+    rel: string;
+    phase: string;
+    endpoint: string | null;
+  }>;
+  const running = rows.filter((r) => r.phase === 'Running' && r.endpoint);
+  if (running.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-[color:var(--color-fg-muted)]">
+        No workloads currently serving. Use "Expose a model" above to start one.
+      </div>
+    );
+  }
+  return (
+    <ul className="space-y-1 mono text-sm">
+      {running.map((w) => (
+        <li
+          key={w.name}
+          className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2"
+        >
+          <div>
+            <span className="text-[color:var(--color-brand)]">{w.name}</span>
+            <span className="mx-1 text-[color:var(--color-fg-muted)]">·</span>
+            <span className="text-[color:var(--color-fg-muted)]">{w.node}</span>
+            <span className="mx-1 text-[color:var(--color-fg-muted)]">·</span>
+            <span>{w.rel}</span>
+          </div>
+          {w.endpoint && (
+            <a
+              href={w.endpoint}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[color:var(--color-accent)] underline"
+            >
+              {w.endpoint}
+            </a>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function StatusCard({ title, body }: { title: string; body: string }): React.JSX.Element {
   return (
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
       <div className="text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
@@ -16,7 +206,7 @@ function StatusCard({ title, body }: { title: string; body: string }): JSX.Eleme
   );
 }
 
-function DashboardBody(): JSX.Element {
+function DashboardBody(): React.JSX.Element {
   const envQuery = trpc.env.useQuery();
   const compareQuery = trpc.benchCompare.useQuery();
   const promotionsQuery = trpc.promotions.useQuery();
@@ -51,6 +241,14 @@ function DashboardBody(): JSX.Element {
         <StatusCard title="Context Length" body={env?.LOCAL_AI_CONTEXT_LENGTH ?? '—'} />
         <StatusCard title="Provider URL" body={env?.LOCAL_AI_PROVIDER_URL ?? '—'} />
       </div>
+
+      <section className="mt-8">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+          Exposed workloads
+        </h2>
+        <ExposedWorkloads />
+        <ExposePanel />
+      </section>
 
       <section className="mt-8">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
@@ -124,7 +322,7 @@ function DashboardBody(): JSX.Element {
   );
 }
 
-export default function Dashboard(): JSX.Element {
+export default function Dashboard(): React.JSX.Element {
   return (
     <Suspense
       fallback={<div className="p-6 text-[color:var(--color-fg-muted)]">Loading…</div>}
