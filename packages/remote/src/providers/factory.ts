@@ -1,4 +1,4 @@
-import { createOpenAICompatProvider, type AiProvider } from '@llamactl/nova';
+import { createOpenAICompatProvider, type AiProvider } from '@nova/contracts';
 import {
   DEFAULT_CLOUD_BASE_URLS,
   LOCAL_NODE_ENDPOINT,

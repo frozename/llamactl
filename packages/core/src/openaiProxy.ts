@@ -1,4 +1,4 @@
-import type { ModelInfo, ModelListResponse } from '@llamactl/nova';
+import type { ModelInfo, ModelListResponse } from '@nova/contracts';
 import { resolveEnv } from './env.js';
 import { endpoint as llamaEndpoint, readServerState, readServerPid } from './server.js';
 import type { ResolvedEnv } from './types.js';

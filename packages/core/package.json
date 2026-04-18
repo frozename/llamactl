@@ -17,7 +17,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@llamactl/nova": "workspace:*",
+    "@nova/contracts": "file:../../../nova",
     "zod": "4.3.6"
   },
   "devDependencies": {

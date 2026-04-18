@@ -558,7 +558,7 @@ export const router = t.router({
       // sentinel). resolveEnv() gives us LLAMA_CPP_HOST/PORT.
       if (resolved.node.endpoint === 'inproc://local') {
         const { env: envMod } = await import('@llamactl/core');
-        const { createOpenAICompatProvider } = await import('@llamactl/nova');
+        const { createOpenAICompatProvider } = await import('@nova/contracts');
         const rEnv = envMod.resolveEnv();
         const provider = createOpenAICompatProvider({
           name: 'local',
