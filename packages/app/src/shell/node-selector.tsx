@@ -1,35 +1,75 @@
 import * as React from 'react';
+import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { trpc } from '@/lib/trpc';
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+import { trpc, trpcUIClient } from '@/lib/trpc';
 
 /**
- * Title-bar dropdown that shows the current active node and lets the
- * user switch between every registered node. Every 30s it probes the
- * active (non-local) node via `nodeTest` and surfaces a green/red
+ * Title-bar dropdown that shows the currently-selected node and lets
+ * the user switch between every registered node. Every 30s it probes
+ * the active (non-local) node via `nodeTest` and surfaces a green/red
  * health dot. When the remote node is unreachable, a "switch to local"
- * action appears so the user can reconnect UI traffic without editing
+ * action appears so the user can route UI traffic home without editing
  * kubeconfig by hand.
+ *
+ * The renderer's selection is separate from kubeconfig's `defaultNode`
+ * (which controls the CLI's default). We persist the selection in a
+ * per-renderer zustand store and sync it to Electron main via the
+ * `uiSetActiveNode` UI-only tRPC procedure — the dispatcher there
+ * reads this override first when deciding whether a call forwards to
+ * a remote agent or runs locally.
  */
+
+interface NodeSelectionStore {
+  selectedNode: string | null;
+  setSelectedNode: (name: string | null) => void;
+}
+
+export const useNodeSelection = create<NodeSelectionStore>()(
+  persist(
+    (set) => ({
+      selectedNode: null,
+      setSelectedNode: (name) => set({ selectedNode: name }),
+    }),
+    { name: 'llamactl-node-selection' },
+  ),
+);
+
 export function NodeSelector(): React.JSX.Element | null {
   const qc = useQueryClient();
   const utils = trpc.useUtils();
   const list = trpc.nodeList.useQuery();
-  const setDefault = trpc.nodeSetDefault.useMutation({
-    onSuccess: () => {
-      void utils.nodeList.invalidate();
-      void qc.invalidateQueries();
-    },
-  });
+  const { selectedNode, setSelectedNode } = useNodeSelection();
 
-  const defaultNode = list.data?.defaultNode;
-  const isLocalSelection = defaultNode === 'local' || !defaultNode;
+  // Resolve the effective selection: explicit override → kubeconfig
+  // default → `local`. Kept outside the store so when a user hasn't
+  // picked anything yet we still show something sensible.
+  const effective = selectedNode ?? list.data?.defaultNode ?? 'local';
+  const isLocalSelection = effective === 'local';
 
-  // Probe the currently-selected node. Disabled for local (no HTTP
-  // round-trip needed) and while the node list is still loading.
+  // On first mount (and whenever the selection changes) push the
+  // override into main so the dispatcher picks it up. No-op when the
+  // renderer-picked value already matches what main has.
+  useEffect(() => {
+    if (!effective) return;
+    void trpcUIClient.uiSetActiveNode
+      .mutate({ name: effective })
+      .then(() => {
+        void utils.invalidate();
+        void qc.invalidateQueries();
+      })
+      .catch(() => {
+        // Main-side error (cert tamper, etc.) — the dispatcher falls
+        // back to kubeconfig anyway.
+      });
+  }, [effective, utils, qc]);
+
+  // Probe the currently-selected remote node. Disabled for local.
   const test = trpc.nodeTest.useQuery(
-    { name: defaultNode ?? 'local' },
+    { name: effective },
     {
-      enabled: Boolean(defaultNode) && !isLocalSelection,
+      enabled: !isLocalSelection && Boolean(list.data),
       refetchInterval: 30_000,
       retry: 0,
       staleTime: 15_000,
@@ -39,17 +79,13 @@ export function NodeSelector(): React.JSX.Element | null {
   if (list.isLoading || !list.data) return null;
   const { nodes } = list.data;
   if (nodes.length <= 1) {
-    // Single-node install — hide the control to avoid visual noise.
     return (
       <span className="font-mono text-[10px] text-[color:var(--color-fg-muted)]">
-        {defaultNode}
+        {effective}
       </span>
     );
   }
 
-  // Health state: green for local (always), probe result otherwise.
-  // Undetermined during an in-flight probe; red when probe failed or
-  // returned ok:false.
   const healthy = isLocalSelection
     ? true
     : test.data?.ok === true
@@ -84,10 +120,9 @@ export function NodeSelector(): React.JSX.Element | null {
         className={`h-1.5 w-1.5 rounded-full ${dotClass}`}
       />
       <select
-        value={defaultNode}
-        disabled={setDefault.isPending}
-        onChange={(e) => setDefault.mutate({ name: e.target.value })}
-        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)] disabled:opacity-50"
+        value={effective}
+        onChange={(e) => setSelectedNode(e.target.value)}
+        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)]"
       >
         {nodes.map((n) => (
           <option key={n.name} value={n.name}>
@@ -108,9 +143,8 @@ export function NodeSelector(): React.JSX.Element | null {
           </button>
           <button
             type="button"
-            onClick={() => setDefault.mutate({ name: 'local' })}
-            disabled={setDefault.isPending}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-danger)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+            onClick={() => setSelectedNode('local')}
+            className="rounded border border-[var(--color-border)] bg-[var(--color-danger)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)]"
             title="route UI traffic back to the local node"
           >
             switch to local

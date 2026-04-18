@@ -112,6 +112,31 @@ describe('Electron dispatcher router', () => {
     expect(Array.isArray(events)).toBe(true);
   }, 15_000);
 
+  test('UI active-node override takes precedence over kubeconfig', async () => {
+    const c = cluster ?? (await makeCluster({ nodes: [{ name: 'remote1' }] }));
+    cluster = c;
+    process.env['LLAMACTL_CONFIG'] = c.clusterConfigPath;
+    // Kubeconfig says LOCAL, override says REMOTE → dispatcher must
+    // forward (override wins).
+    kubecfg.saveConfig(
+      kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), 'local'),
+      c.clusterConfigPath,
+    );
+    const urls: string[] = [];
+    const { buildDispatcherRouter } = await import('../electron/trpc/dispatcher');
+    const dispatcher = buildDispatcherRouter(spyFactory(urls));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const caller = (dispatcher as any).createCaller({});
+    const mod = await import('../electron/trpc/dispatcher');
+    await caller.uiSetActiveNode({ name: 'remote1' });
+    try {
+      await caller.env();
+      expect(urls.some((u) => u.includes(c.nodes[0]!.url))).toBe(true);
+    } finally {
+      mod.__resetActiveNodeOverrideForTests();
+    }
+  }, 15_000);
+
   test('control-plane-only procedures bypass dispatch', async () => {
     const c = cluster ?? (await makeCluster({ nodes: [{ name: 'remote1' }] }));
     cluster = c;

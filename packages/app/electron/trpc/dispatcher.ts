@@ -1,8 +1,9 @@
 import { initTRPC } from '@trpc/server';
 import { createTRPCClient } from '@trpc/client';
+import { z } from 'zod';
 import {
   router as baseRouter,
-  type AppRouter,
+  type AppRouter as BaseAppRouter,
   buildPinnedLinks,
   config as kubecfg,
   LOCAL_NODE_ENDPOINT,
@@ -46,7 +47,53 @@ const CONTROL_PLANE_ONLY = new Set<string>([
   'workloadDelete',
   'workloadValidate',
   'workloadTemplate',
+  // UI-only procedures added by this module never go over the wire.
+  'uiSetActiveNode',
+  'uiGetActiveNode',
 ]);
+
+/**
+ * Runtime override for the UI's active node. Separate from kubeconfig's
+ * `currentContext.defaultNode` so switching the renderer's active node
+ * doesn't also silently change the CLI's default. When `null` the
+ * dispatcher falls back to kubeconfig (matches the CLI behavior).
+ */
+let activeNodeOverride: string | null = null;
+
+function setActiveNodeOverride(name: string | null): void {
+  activeNodeOverride = name;
+}
+function getActiveNodeOverride(): string | null {
+  return activeNodeOverride;
+}
+
+/**
+ * Test-only helper — resets the module-level active-node override to
+ * `null`. Tests that exercise the UI override path leave state behind
+ * otherwise, which leaks into later tests that expect kubeconfig-only
+ * dispatch semantics.
+ */
+export function __resetActiveNodeOverrideForTests(): void {
+  activeNodeOverride = null;
+}
+
+/**
+ * Typed UI-only sub-router. Declared up-front so the renderer's
+ * `AppRouter` picks up `uiSetActiveNode` / `uiGetActiveNode` with full
+ * per-procedure inference. These procedures never hit the base router
+ * and never forward; `CONTROL_PLANE_ONLY` blocks accidental routing.
+ */
+const uiRouter = t.router({
+  uiSetActiveNode: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .mutation(({ input }) => {
+      setActiveNodeOverride(input.name);
+      return { ok: true as const, name: input.name };
+    }),
+  uiGetActiveNode: t.procedure.query(() => ({
+    name: activeNodeOverride,
+  })),
+});
 
 interface DispatchTarget {
   kind: 'local' | 'remote';
@@ -69,7 +116,10 @@ function resolveDispatchTarget(path: string): DispatchTarget {
   }
   const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
   if (!ctx) return { kind: 'local' };
-  const nodeName = ctx.defaultNode;
+  // The renderer's selected node takes precedence over kubeconfig's
+  // default — so switching the UI doesn't also change what `llamactl`
+  // defaults to from the CLI.
+  const nodeName = getActiveNodeOverride() ?? ctx.defaultNode;
   const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
   const node = cluster?.nodes.find((n) => n.name === nodeName);
   if (!node || node.endpoint === LOCAL_NODE_ENDPOINT) return { kind: 'local' };
@@ -222,10 +272,10 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
 
 /**
  * Build the dispatching router by introspecting `baseRouter._def.procedures`
- * and creating a forwarding procedure for each. The cast to `AppRouter`
- * at the end preserves the typed wire shape for the renderer — it still
- * imports `AppRouter` from `@llamactl/remote` and gets full
- * per-procedure inference on `trpc.*` hooks.
+ * and creating a forwarding procedure for each, then merging in the
+ * UI-only `uiSetActiveNode` / `uiGetActiveNode` procedures. The
+ * renderer imports the inferred return type as its `AppRouter`, so
+ * every call — base-forwarded or UI-local — has full tRPC inference.
  *
  * `fetchFactory` defaults to the undici-backed Node factory; tests
  * running under Bun can inject the Bun-native one (`makePinnedFetch`
@@ -234,7 +284,8 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
  */
 export function buildDispatcherRouter(
   fetchFactory: PinnedFetchFactory = makeNodePinnedFetch,
-): AppRouter {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): BaseAppRouter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const procs: Record<string, any> = {};
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -247,5 +298,20 @@ export function buildDispatcherRouter(
     else if (type === 'mutation') procs[name] = wrapQueryOrMutation(name, 'mutation', fetchFactory);
     else if (type === 'subscription') procs[name] = wrapSubscription(name, fetchFactory);
   }
-  return t.router(procs) as unknown as AppRouter;
+  // Cast the dynamic wrapped router to the base AppRouter type, then
+  // merge with the typed UI router. The resulting type surfaces every
+  // forwarded procedure AND the two UI procedures to the renderer.
+  const wrappedBase = t.router(procs) as unknown as BaseAppRouter;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return t.mergeRouters(wrappedBase, uiRouter) as any;
 }
+
+/**
+ * Exported type for the renderer's UI-only client. Carries just the
+ * two procedures so the renderer can call `uiSetActiveNode` /
+ * `uiGetActiveNode` through a small typed client without widening the
+ * main `AppRouter` type (which would force a router-merge whose
+ * inferred form references deep `@llamactl/core` paths and breaks
+ * `composite: true` declaration emit in this workspace).
+ */
+export type UIRouter = typeof uiRouter;
