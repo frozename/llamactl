@@ -2,6 +2,7 @@ import { initTRPC } from '@trpc/server';
 import { observable } from '@trpc/server/observable';
 import { z } from 'zod';
 import {
+  autotune as autotuneMod,
   bench,
   candidateTest as candidateMod,
   catalog,
@@ -416,6 +417,42 @@ export const router = t.router({
       // non-zero on refusal (e.g. non-candidate scope without --force),
       // with `error` carrying the human message the CLI prints.
       return uninstallMod.uninstall({ rel: input.rel, force: input.force });
+    }),
+
+  autotuneAfterPull: t.procedure
+    .input(
+      z.object({
+        rel: z.string().min(1),
+        wasMissing: z.boolean(),
+      }),
+    )
+    .subscription(({ input }) => {
+      return observable<
+        bench.BenchEvent | { type: 'done-tune'; result: autotuneMod.MaybeTuneAfterPullResult }
+      >((emit) => {
+        let cancelled = false;
+        const controller = new AbortController();
+        void (async () => {
+          try {
+            const result = await autotuneMod.maybeTuneAfterPull({
+              rel: input.rel,
+              wasMissing: input.wasMissing,
+              signal: controller.signal,
+              onEvent: (e) => emit.next(e),
+            });
+            if (!cancelled) {
+              emit.next({ type: 'done-tune', result });
+              emit.complete();
+            }
+          } catch (err) {
+            emit.error(err);
+          }
+        })();
+        return () => {
+          cancelled = true;
+          controller.abort();
+        };
+      });
     }),
 
   pullFile: t.procedure

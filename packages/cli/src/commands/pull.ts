@@ -155,12 +155,29 @@ async function runPullFile(args: string[]): Promise<number> {
   }
 
   let tune: autotune.MaybeTuneAfterPullResult | null = null;
-  if (!parsed.noTune && localDispatch) {
-    tune = await autotune.maybeTuneAfterPull({
-      rel: result.rel,
-      wasMissing: result.wasMissing,
-      onEvent: forwardStream,
-    });
+  if (!parsed.noTune) {
+    if (localDispatch) {
+      tune = await autotune.maybeTuneAfterPull({
+        rel: result.rel,
+        wasMissing: result.wasMissing,
+        onEvent: forwardStream,
+      });
+    } else {
+      try {
+        tune = await subscribeRemote<bench.BenchEvent, autotune.MaybeTuneAfterPullResult>({
+          subscribe: (handlers) => getNodeClient().autotuneAfterPull.subscribe(
+            { rel: result.rel, wasMissing: result.wasMissing },
+            handlers,
+          ),
+          onEvent: forwardStream,
+          extractDone: matchDoneEvent<autotune.MaybeTuneAfterPullResult>('done-tune'),
+        });
+      } catch (err) {
+        process.stderr.write(`autotune: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+        // Pull itself succeeded; don't fail the command on an autotune
+        // error — just skip the tune summary.
+      }
+    }
   }
 
   if (parsed.json) {
@@ -227,12 +244,27 @@ async function runPullCandidate(args: string[]): Promise<number> {
   }
 
   let tune: autotune.MaybeTuneAfterPullResult | null = null;
-  if (!parsed.noTune && localDispatch) {
-    tune = await autotune.maybeTuneAfterPull({
-      rel: result.rel,
-      wasMissing: result.wasMissing,
-      onEvent: forwardStream,
-    });
+  if (!parsed.noTune) {
+    if (localDispatch) {
+      tune = await autotune.maybeTuneAfterPull({
+        rel: result.rel,
+        wasMissing: result.wasMissing,
+        onEvent: forwardStream,
+      });
+    } else {
+      try {
+        tune = await subscribeRemote<bench.BenchEvent, autotune.MaybeTuneAfterPullResult>({
+          subscribe: (handlers) => getNodeClient().autotuneAfterPull.subscribe(
+            { rel: result.rel, wasMissing: result.wasMissing },
+            handlers,
+          ),
+          onEvent: forwardStream,
+          extractDone: matchDoneEvent<autotune.MaybeTuneAfterPullResult>('done-tune'),
+        });
+      } catch (err) {
+        process.stderr.write(`autotune: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      }
+    }
   }
 
   if (parsed.json) {
