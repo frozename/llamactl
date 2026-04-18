@@ -17,7 +17,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@nova/contracts": "file:../../../nova",
+    "@nova/contracts": "file:../../../nova/packages/contracts",
     "zod": "4.3.6"
   },
   "devDependencies": {

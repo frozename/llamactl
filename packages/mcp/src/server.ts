@@ -11,7 +11,7 @@ import {
   embersynth,
   resolveNodeKind,
 } from '@llamactl/remote';
-import { appendAudit, toTextContent } from '@llamactl/mcp-shared';
+import { appendAudit, toTextContent } from '@nova/mcp-shared';
 
 /**
  * `@llamactl/mcp` — Model Context Protocol server exposing llamactl's

@@ -17,9 +17,9 @@
   },
   "dependencies": {
     "@llamactl/core": "workspace:*",
-    "@llamactl/mcp-shared": "workspace:*",
     "@llamactl/remote": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
     "zod": "4.3.6"
   },
   "devDependencies": {
