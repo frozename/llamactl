@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { initTRPC, tracked, TRPCError } from '@trpc/server';
+import { observable } from '@trpc/server/observable';
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
 import {
   createTRPCClient,
@@ -61,6 +62,26 @@ function createSpikeRouter(probe: { seen: { signal: AbortSignal | null } }) {
           if (opts.signal?.aborted) return;
           await new Promise((r) => setTimeout(r, 20));
         }
+      }),
+    // v10 legacy shape — deprecated in v11 but still compiles. The
+    // production router currently uses this form for pullFile + 5
+    // others; if this subscription delivers events over SSE to a v11
+    // client, we can defer the async-generator rewrite.
+    legacyObservable: t.procedure
+      .input(z.object({ count: z.number().int().positive() }))
+      .subscription(({ input }) => {
+        return observable<{ i: number }>((emit) => {
+          let cancelled = false;
+          void (async () => {
+            for (let i = 0; i < input.count; i++) {
+              if (cancelled) return;
+              emit.next({ i });
+              await new Promise((r) => setTimeout(r, 5));
+            }
+            emit.complete();
+          })();
+          return () => { cancelled = true; };
+        });
       }),
   });
 }
@@ -193,5 +214,36 @@ describe('tRPC v11 + Bun.serve + fetchRequestHandler', () => {
     expect(await caller.ping()).toBe('pong');
     expect(await caller.whoami()).toEqual({ token: 'good-token' });
     expect(await caller.echo('in-proc')).toEqual({ echoed: 'IN-PROC' });
+  });
+
+  test('v10 observable subscription is consumable over v11 SSE link', async () => {
+    const client = createTRPCClient<SpikeRouter>({
+      links: [
+        splitLink({
+          condition: (op) => op.type === 'subscription',
+          true: httpSubscriptionLink({ url: svr.url, EventSource }),
+          false: httpBatchLink({ url: svr.url }),
+        }),
+      ],
+    });
+    const received: number[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const sub = client.legacyObservable.subscribe(
+        { count: 4 },
+        {
+          onData: (evt: { i: number } | { data: { i: number } }) => {
+            const i = 'i' in evt ? evt.i : evt.data.i;
+            received.push(i);
+            if (received.length >= 4) {
+              sub.unsubscribe();
+              resolve();
+            }
+          },
+          onError: reject,
+        },
+      );
+      setTimeout(() => reject(new Error('legacy subscription timeout')), 2000);
+    });
+    expect(received).toEqual([0, 1, 2, 3]);
   });
 });

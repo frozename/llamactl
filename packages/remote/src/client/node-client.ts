@@ -1,4 +1,10 @@
-import { createTRPCClient, httpBatchLink } from '@trpc/client';
+import {
+  createTRPCClient,
+  httpBatchLink,
+  httpSubscriptionLink,
+  splitLink,
+} from '@trpc/client';
+import { EventSource } from 'eventsource';
 import { router as appRouter, type AppRouter } from '../router.js';
 import {
   fingerprintsEqual,
@@ -77,20 +83,54 @@ function proxyFromCaller(): NodeClient {
 }
 
 function proxyFromHttp(node: ClusterNode, token: string): NodeClient {
+  const pinnedFetch = makePinnedFetch(node);
+  const trpcUrl = `${node.endpoint}/trpc`;
+  const authHeader = `Bearer ${token}`;
   return createTRPCClient<AppRouter>({
     links: [
-      httpBatchLink({
-        url: `${node.endpoint}/trpc`,
-        headers: { authorization: `Bearer ${token}` },
-        // Bun's native fetch and tRPC's internal FetchEsque type differ
-        // on ReadableStream generics; the runtime shapes are compatible
-        // so we erase the TS mismatch here.
+      splitLink({
+        condition: (op) => op.type === 'subscription',
+        // SSE path for subscriptions. Bun has no global EventSource, so
+        // we ponyfill with `eventsource@4`; tRPC's SSE link routes its
+        // HTTP calls through the ponyfill's `fetch` override, which lets
+        // us carry the pinned-TLS CA and the bearer token that the
+        // agent's auth middleware requires.
+        true: httpSubscriptionLink({
+          url: trpcUrl,
+          EventSource,
+          eventSourceOptions: {
+            fetch: ((url: string | URL, init?: Record<string, unknown>) =>
+              pinnedFetch(url as string, {
+                ...(init as RequestInit | undefined),
+                headers: {
+                  ...((init?.['headers'] as Record<string, string> | undefined) ?? {}),
+                  authorization: authHeader,
+                },
+              })) as unknown as EventSourceFetchLike,
+          },
+        }),
+        // Query + mutation path — same httpBatchLink as before.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        fetch: makePinnedFetch(node) as any,
+        false: httpBatchLink({
+          url: trpcUrl,
+          headers: { authorization: authHeader },
+          // Bun's native fetch and tRPC's internal FetchEsque type
+          // differ on ReadableStream generics; the runtime shapes are
+          // compatible so we erase the TS mismatch here.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          fetch: pinnedFetch as any,
+        }),
       }),
     ],
   });
 }
+
+// eventsource@4's FetchLike is a stripped-down RequestInit. We widen to
+// a loose shape that our pinned fetch wrapper can satisfy.
+type EventSourceFetchLike = (
+  url: string | URL,
+  init?: { headers?: Record<string, string>; signal?: AbortSignal; body?: unknown },
+) => Promise<Response>;
 
 type FetchInput = string | URL | Request;
 type PinnedFetch = (input: FetchInput, init?: RequestInit) => Promise<Response>;
