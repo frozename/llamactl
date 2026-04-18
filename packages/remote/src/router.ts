@@ -1,6 +1,9 @@
-import { initTRPC } from '@trpc/server';
+import { initTRPC, TRPCError } from '@trpc/server';
 import { observable } from '@trpc/server/observable';
 import { z } from 'zod';
+import * as kubecfg from './config/kubeconfig.js';
+import { decodeBootstrap } from './config/agent-config.js';
+import type { ClusterNode } from './config/schema.js';
 import {
   autotune as autotuneMod,
   bench,
@@ -46,10 +49,146 @@ type CandidateStreamEvent =
 // a transformer through ipcLink, so this keeps the pipeline uncomplicated.
 const t = initTRPC.create();
 
+/**
+ * Reach a remote agent's /trpc/nodeFacts endpoint using a pinned TLS
+ * cert and bearer token, returning the parsed facts. Inlined here so
+ * router.ts doesn't pull createRemoteNodeClient from ./client/ (that
+ * module imports AppRouter, which depends on router.ts — TypeScript
+ * refuses to resolve the circular alias).
+ */
+async function probeNodeFacts(opts: {
+  url: string;
+  token: string;
+  certificate: string | null;
+  certificateFingerprint: string | null;
+}): Promise<nodeFactsMod.NodeFacts> {
+  const { fingerprintsEqual, computeFingerprint } = await import('./server/tls.js');
+  if (opts.certificate && opts.certificateFingerprint) {
+    const actual = computeFingerprint(opts.certificate);
+    if (!fingerprintsEqual(actual, opts.certificateFingerprint)) {
+      throw new Error(
+        `certificate fingerprint mismatch: expected ${opts.certificateFingerprint}, got ${actual}`,
+      );
+    }
+  }
+  const ca = opts.certificate;
+  const res = await fetch(`${opts.url}/trpc/nodeFacts?input=${encodeURIComponent(JSON.stringify({}))}`, {
+    method: 'GET',
+    headers: { authorization: `Bearer ${opts.token}` },
+    ...(ca ? ({ tls: { ca } } as Record<string, unknown>) : {}),
+  } as RequestInit);
+  if (!res.ok) {
+    throw new Error(`probe HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+  }
+  // tRPC v11 GET-procedure responses wrap the payload as { result: { data: ... } }.
+  const body = (await res.json()) as { result?: { data?: nodeFactsMod.NodeFacts } };
+  if (!body.result?.data) {
+    throw new Error('probe response missing result.data');
+  }
+  return body.result.data;
+}
+
 export const router = t.router({
   env: t.procedure.query(() => envMod.resolveEnv()),
 
   nodeFacts: t.procedure.query(() => nodeFactsMod.collectNodeFacts()),
+
+  // ---- node management (kubeconfig + reachability) ----------------------
+
+  nodeList: t.procedure.query(() => {
+    const cfg = kubecfg.loadConfig();
+    const ctx = kubecfg.currentContext(cfg);
+    const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
+    return {
+      context: ctx.name,
+      cluster: ctx.cluster,
+      defaultNode: ctx.defaultNode,
+      nodes: cluster?.nodes ?? [],
+    };
+  }),
+
+  nodeTest: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const cfg = kubecfg.loadConfig();
+      const resolved = kubecfg.resolveNode(cfg, input.name);
+      const token = kubecfg.resolveToken(resolved.user);
+      const node = resolved.node;
+      if (node.endpoint.startsWith('inproc://')) {
+        return { ok: true as const, facts: nodeFactsMod.collectNodeFacts() };
+      }
+      try {
+        const facts = await probeNodeFacts({
+          url: node.endpoint,
+          token,
+          certificate: node.certificate ?? null,
+          certificateFingerprint: node.certificateFingerprint ?? null,
+        });
+        return { ok: true as const, facts };
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message };
+      }
+    }),
+
+  nodeAdd: t.procedure
+    .input(
+      z.object({
+        name: z.string().min(1),
+        bootstrap: z.string().min(1),
+        force: z.boolean().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const decoded = decodeBootstrap(input.bootstrap);
+      const force = input.force ?? false;
+
+      if (!force) {
+        try {
+          await probeNodeFacts({
+            url: decoded.url,
+            token: decoded.token,
+            certificate: decoded.certificate,
+            certificateFingerprint: decoded.fingerprint,
+          });
+        } catch (err) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `reachability check failed: ${(err as Error).message}`,
+          });
+        }
+      }
+
+      const cfgPath = kubecfg.defaultConfigPath();
+      let cfg = kubecfg.loadConfig(cfgPath);
+      const ctx = kubecfg.currentContext(cfg);
+
+      cfg = {
+        ...cfg,
+        users: cfg.users.map((u) =>
+          u.name === ctx.user ? { ...u, token: decoded.token } : u,
+        ),
+      };
+      const entry: ClusterNode = {
+        name: input.name,
+        endpoint: decoded.url,
+        certificateFingerprint: decoded.fingerprint,
+        certificate: decoded.certificate,
+      };
+      cfg = kubecfg.upsertNode(cfg, ctx.cluster, entry);
+      kubecfg.saveConfig(cfg, cfgPath);
+      return { ok: true as const, name: input.name, endpoint: decoded.url };
+    }),
+
+  nodeRemove: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .mutation(({ input }) => {
+      const cfgPath = kubecfg.defaultConfigPath();
+      let cfg = kubecfg.loadConfig(cfgPath);
+      const ctx = kubecfg.currentContext(cfg);
+      cfg = kubecfg.removeNode(cfg, ctx.cluster, input.name);
+      kubecfg.saveConfig(cfg, cfgPath);
+      return { ok: true as const };
+    }),
 
   catalogList: t.procedure
     .input(z.enum(['all', 'builtin', 'custom']).default('all'))
