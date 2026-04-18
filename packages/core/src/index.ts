@@ -16,4 +16,5 @@ export * as discovery from './discovery.js';
 export * as catalogWriter from './catalogWriter.js';
 export * as uninstall from './uninstall.js';
 export * as pull from './pull.js';
+export * as autotune from './autotune.js';
 export * as fsAtomic from './fsAtomic.js';

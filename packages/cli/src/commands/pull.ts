@@ -1,58 +1,67 @@
-import { pull } from '@llamactl/core';
+import { autotune, bench, pull } from '@llamactl/core';
 
 const USAGE = `Usage: llamactl pull <subcommand>
 
 Subcommands:
   pull <hf-repo> [target-dir] [--json]
       Bulk pull every file in the repo. Default target is
-      $LLAMA_CPP_MODELS/<repo-basename>.
+      $LLAMA_CPP_MODELS/<repo-basename>. (No auto-tune.)
 
-  pull file <hf-repo> <gguf-file> [--json]
+  pull file <hf-repo> <gguf-file> [--json] [--no-tune]
       Pull a single GGUF plus any mmproj sidecar the repo advertises.
-      Emits { rel, wasMissing } on --json so callers (shell shim,
-      Electron main) can drive post-pull auto-tune.
+      After a successful pull of a previously-absent file, runs
+      \`bench preset\` (and \`bench vision\` when applicable) unless
+      --no-tune is set or LLAMA_CPP_AUTO_TUNE_ON_PULL is disabled.
 
-  pull candidate <hf-repo> [gguf-file] [profile] [--json]
+  pull candidate <hf-repo> [gguf-file] [profile] [--json] [--no-tune]
       Resolve the best GGUF for the machine profile (via HF model-info
-      + profile quant ladder) and pull it. The optional file override
-      short-circuits the picker.
+      + profile quant ladder) and pull it. Same auto-tune behaviour as
+      \`pull file\`.
 
-All forms stream \`hf download\` stderr to this process's stderr so the
-user sees progress. With --json, child output is suppressed and only a
-single JSON summary is written on stdout at the end.
+All forms stream \`hf download\` / \`llama-bench\` stderr to this
+process's stderr so the user sees progress. With --json, child output
+is suppressed from stdout (a single JSON summary is written at the end).
 `;
 
 interface ParsedArgs {
   positional: string[];
   json: boolean;
+  noTune: boolean;
 }
 
 function parseArgs(args: string[]): ParsedArgs | { error: string } {
   const positional: string[] = [];
   let json = false;
+  let noTune = false;
   for (const arg of args) {
     if (arg === '--json') json = true;
+    else if (arg === '--no-tune') noTune = true;
     else if (arg === '-h' || arg === '--help') return { error: 'help' };
     else if (arg.startsWith('--')) return { error: `Unknown flag: ${arg}` };
     else positional.push(arg);
   }
-  return { positional, json };
+  return { positional, json, noTune };
 }
 
 /**
- * Forward child progress to this process's stderr so the user always
- * sees `hf download`'s tqdm bars, regardless of whether --json is set.
- * The only thing --json affects is the final stdout summary; child
- * output never makes it onto stdout (that would break JSON parsing).
+ * Forward child output lines to stderr so tqdm + bench progress stay
+ * visible regardless of --json. Accepts the union of PullEvent and
+ * BenchEvent — both carry line-based events with the same shape.
  */
-function forwardStderr() {
-  return (e: pull.PullEvent) => {
-    if (e.type === 'stderr' || e.type === 'stdout') {
-      process.stderr.write(`${e.line}\n`);
-    } else if (e.type === 'start') {
-      process.stderr.write(`$ ${e.command} ${e.args.join(' ')}\n`);
-    }
-  };
+function forwardStream(e: pull.PullEvent | bench.BenchEvent): void {
+  if (e.type === 'stderr' || e.type === 'stdout') {
+    process.stderr.write(`${e.line}\n`);
+  } else if (e.type === 'start') {
+    process.stderr.write(`$ ${e.command} ${e.args.join(' ')}\n`);
+  } else if (e.type === 'profile-start') {
+    process.stderr.write(`-- profile=${e.profile} --\n`);
+  } else if (e.type === 'profile-done') {
+    process.stderr.write(
+      `-- profile=${e.profile} gen_ts=${e.gen_ts} prompt_ts=${e.prompt_ts} --\n`,
+    );
+  } else if (e.type === 'profile-fail') {
+    process.stderr.write(`-- profile=${e.profile} failed (code=${e.code}) --\n`);
+  }
 }
 
 async function runPullRepo(args: string[]): Promise<number> {
@@ -71,7 +80,7 @@ async function runPullRepo(args: string[]): Promise<number> {
   const result = await pull.pullRepo({
     repo,
     targetDir: target,
-    onEvent: forwardStderr(),
+    onEvent: forwardStream,
   });
   if (parsed.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
@@ -79,6 +88,25 @@ async function runPullRepo(args: string[]): Promise<number> {
     process.stdout.write(`Pulled ${result.repo} into ${result.target}\n`);
   }
   return result.code === 0 ? 0 : 1;
+}
+
+function printTuneSummary(report: autotune.MaybeTuneAfterPullResult): void {
+  if (report.preset.ran) {
+    const r = report.preset.result;
+    process.stdout.write(
+      `Auto-tuned ${r.rel}: profile=${r.bestProfile} gen_tps=${r.gen_ts} prompt_tps=${r.prompt_ts}\n`,
+    );
+  } else {
+    process.stdout.write(`Auto-tune skipped: ${report.preset.reason.message}\n`);
+  }
+  if (report.vision.ran) {
+    const v = report.vision.result;
+    process.stdout.write(
+      `Auto vision bench: prompt_tps=${v.prompt_tps} gen_tps=${v.gen_tps} load_ms=${v.load_ms}\n`,
+    );
+  } else if (report.preset.ran) {
+    process.stdout.write(`Auto vision bench skipped: ${report.vision.reason.message}\n`);
+  }
 }
 
 async function runPullFile(args: string[]): Promise<number> {
@@ -90,23 +118,38 @@ async function runPullFile(args: string[]): Promise<number> {
   }
   const [repo, file] = parsed.positional;
   if (!repo || !file) {
-    process.stderr.write('Usage: llamactl pull file <hf-repo> <gguf-file> [--json]\n');
+    process.stderr.write('Usage: llamactl pull file <hf-repo> <gguf-file> [--json] [--no-tune]\n');
     return 1;
   }
 
   const result = await pull.pullRepoFile({
     repo,
     file,
-    onEvent: forwardStderr(),
+    onEvent: forwardStream,
   });
+  if (result.code !== 0) {
+    if (parsed.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 1;
+  }
+
+  let tune: autotune.MaybeTuneAfterPullResult | null = null;
+  if (!parsed.noTune) {
+    tune = await autotune.maybeTuneAfterPull({
+      rel: result.rel,
+      wasMissing: result.wasMissing,
+      onEvent: forwardStream,
+    });
+  }
+
   if (parsed.json) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  } else if (result.code === 0) {
+    process.stdout.write(`${JSON.stringify({ ...result, tune }, null, 2)}\n`);
+  } else {
     process.stdout.write(
       `Pulled ${result.rel} (wasMissing=${result.wasMissing}${result.mmproj ? `, mmproj=${result.mmproj}` : ''})\n`,
     );
+    if (tune) printTuneSummary(tune);
   }
-  return result.code === 0 ? 0 : 1;
+  return 0;
 }
 
 async function runPullCandidate(args: string[]): Promise<number> {
@@ -119,7 +162,7 @@ async function runPullCandidate(args: string[]): Promise<number> {
   const [repo, file, profile] = parsed.positional;
   if (!repo) {
     process.stderr.write(
-      'Usage: llamactl pull candidate <hf-repo> [gguf-file] [profile] [--json]\n',
+      'Usage: llamactl pull candidate <hf-repo> [gguf-file] [profile] [--json] [--no-tune]\n',
     );
     return 1;
   }
@@ -128,7 +171,7 @@ async function runPullCandidate(args: string[]): Promise<number> {
     repo,
     file,
     profile,
-    onEvent: forwardStderr(),
+    onEvent: forwardStream,
   });
   if ('error' in result) {
     if (parsed.json) {
@@ -138,14 +181,29 @@ async function runPullCandidate(args: string[]): Promise<number> {
     }
     return 1;
   }
+  if (result.code !== 0) {
+    if (parsed.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 1;
+  }
+
+  let tune: autotune.MaybeTuneAfterPullResult | null = null;
+  if (!parsed.noTune) {
+    tune = await autotune.maybeTuneAfterPull({
+      rel: result.rel,
+      wasMissing: result.wasMissing,
+      onEvent: forwardStream,
+    });
+  }
+
   if (parsed.json) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  } else if (result.code === 0) {
+    process.stdout.write(`${JSON.stringify({ ...result, tune }, null, 2)}\n`);
+  } else {
     process.stdout.write(
       `Pulled ${result.rel} (source=${result.picked.source}, profile=${result.picked.profile}, wasMissing=${result.wasMissing}${result.mmproj ? `, mmproj=${result.mmproj}` : ''})\n`,
     );
+    if (tune) printTuneSummary(tune);
   }
-  return result.code === 0 ? 0 : 1;
+  return 0;
 }
 
 export async function runPull(args: string[]): Promise<number> {
