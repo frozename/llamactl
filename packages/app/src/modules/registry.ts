@@ -7,6 +7,7 @@ import {
   Layers,
   Network,
   PackagePlus,
+  ScrollText,
   Server as ServerIcon,
   Settings,
   type LucideIcon,
@@ -38,6 +39,7 @@ const LazyModels = lazy(() => import('./models/index'));
 const LazyPulls = lazy(() => import('./pulls/index'));
 const LazyBench = lazy(() => import('./bench/index'));
 const LazyServer = lazy(() => import('./server/index'));
+const LazyLogs = lazy(() => import('./logs/index'));
 const LazyLMStudio = lazy(() => import('./lmstudio/index'));
 const LazySettings = lazy(() => import('./settings/index'));
 
@@ -92,11 +94,18 @@ export const APP_MODULES: AppModule[] = [
     shortcut: 7,
   },
   {
+    id: 'logs',
+    labelKey: 'Logs',
+    icon: ScrollText,
+    Component: LazyLogs,
+    shortcut: 8,
+  },
+  {
     id: 'lmstudio',
     labelKey: 'LM Studio',
     icon: PackagePlus,
     Component: LazyLMStudio,
-    shortcut: 8,
+    shortcut: 9,
   },
   {
     id: 'settings',
