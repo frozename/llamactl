@@ -1,4 +1,5 @@
 import { uninstall } from '@llamactl/core';
+import { getGlobals, getNodeClient, isLocalDispatch } from '../dispatcher.js';
 
 const USAGE = `Usage: llamactl uninstall <rel> [--force]
 
@@ -40,7 +41,17 @@ export async function runUninstall(args: string[]): Promise<number> {
     return 1;
   }
 
-  const report = uninstall.uninstall({ rel, force });
+  let report: ReturnType<typeof uninstall.uninstall>;
+  if (isLocalDispatch()) {
+    report = uninstall.uninstall({ rel, force });
+  } else {
+    try {
+      report = await getNodeClient().uninstall.mutate({ rel, force }) as typeof report;
+    } catch (err) {
+      process.stderr.write(`uninstall: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
   if (report.error) {
     process.stderr.write(`${report.error}\n`);
     return report.code;

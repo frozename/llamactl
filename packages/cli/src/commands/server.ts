@@ -1,4 +1,5 @@
 import { env as envMod, server } from '@llamactl/core';
+import { getGlobals, getNodeClient, isLocalDispatch } from '../dispatcher.js';
 
 const USAGE = `Usage: llamactl server <subcommand>
 
@@ -124,7 +125,17 @@ async function runStop(args: string[]): Promise<number> {
       return 1;
     }
   }
-  const result = await server.stopServer({ graceSeconds });
+  let result: Awaited<ReturnType<typeof server.stopServer>>;
+  if (isLocalDispatch()) {
+    result = await server.stopServer({ graceSeconds });
+  } else {
+    try {
+      result = await getNodeClient().serverStop.mutate({ graceSeconds }) as typeof result;
+    } catch (err) {
+      process.stderr.write(`server stop: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
   if (json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else {
@@ -147,8 +158,18 @@ async function runStatus(args: string[]): Promise<number> {
       return 1;
     }
   }
-  const resolved = envMod.resolveEnv();
-  const status = await server.serverStatus(resolved);
+  let status: Awaited<ReturnType<typeof server.serverStatus>>;
+  if (isLocalDispatch()) {
+    const resolved = envMod.resolveEnv();
+    status = await server.serverStatus(resolved);
+  } else {
+    try {
+      status = await getNodeClient().serverStatus.query() as typeof status;
+    } catch (err) {
+      process.stderr.write(`server status: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
   if (json) {
     process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return status.state === 'up' ? 0 : 1;

@@ -1,4 +1,5 @@
 import { hf, lmstudio } from '@llamactl/core';
+import { getGlobals, getNodeClient, isLocalDispatch } from '../dispatcher.js';
 
 const USAGE = `Usage: llamactl lmstudio <subcommand>
 
@@ -49,7 +50,17 @@ async function runScan(args: string[]): Promise<number> {
       return 1;
     }
   }
-  const scan = lmstudio.scanLMStudio({ root });
+  let scan: ReturnType<typeof lmstudio.scanLMStudio>;
+  if (isLocalDispatch()) {
+    scan = lmstudio.scanLMStudio({ root });
+  } else {
+    try {
+      scan = await getNodeClient().lmstudioScan.query(root ? { root } : undefined) as typeof scan;
+    } catch (err) {
+      process.stderr.write(`lmstudio scan: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
   if (json) {
     process.stdout.write(`${JSON.stringify(scan, null, 2)}\n`);
     return scan.models.length > 0 ? 0 : 1;
@@ -80,7 +91,20 @@ async function runImport(args: string[]): Promise<number> {
   const { root, apply, link, json } = parsed;
 
   if (!apply) {
-    const plan = lmstudio.planImport({ root, link });
+    let plan: ReturnType<typeof lmstudio.planImport>;
+    if (isLocalDispatch()) {
+      plan = lmstudio.planImport({ root, link });
+    } else {
+      try {
+        const input: { root?: string; link?: boolean } = {};
+        if (root !== undefined) input.root = root;
+        if (link !== true) input.link = link;
+        plan = await getNodeClient().lmstudioPlan.query(Object.keys(input).length > 0 ? input : undefined) as typeof plan;
+      } catch (err) {
+        process.stderr.write(`lmstudio plan: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+        return 1;
+      }
+    }
     if (json) {
       process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
       return 0;
@@ -100,7 +124,20 @@ async function runImport(args: string[]): Promise<number> {
     return 0;
   }
 
-  const result = await lmstudio.applyImport({ root, apply: true, link });
+  let result: Awaited<ReturnType<typeof lmstudio.applyImport>>;
+  if (isLocalDispatch()) {
+    result = await lmstudio.applyImport({ root, apply: true, link });
+  } else {
+    try {
+      const input: { root?: string; link?: boolean } = {};
+      if (root !== undefined) input.root = root;
+      if (link !== true) input.link = link;
+      result = await getNodeClient().lmstudioImport.mutate(input) as typeof result;
+    } catch (err) {
+      process.stderr.write(`lmstudio import: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
   if (json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return result.errors.length === 0 ? 0 : 1;

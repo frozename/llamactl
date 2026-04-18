@@ -339,7 +339,16 @@ async function runPromote(args: string[]): Promise<number> {
     rel = resolved;
   }
 
-  presets.writePresetOverride(normalized, preset, rel);
+  if (isLocalDispatch()) {
+    presets.writePresetOverride(normalized, preset, rel);
+  } else {
+    try {
+      await getNodeClient().promote.mutate({ profile: normalized, preset, rel });
+    } catch (err) {
+      process.stderr.write(`promote: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
   process.stdout.write(`Promoted ${rel}\n`);
   process.stdout.write(`profile=${normalized} preset=${preset}\n`);
   return 0;
@@ -350,8 +359,18 @@ async function runPromotions(args: string[]): Promise<number> {
     process.stdout.write(USAGE);
     return 0;
   }
-  const resolved = envMod.resolveEnv();
-  const rows = presets.readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE);
+  let rows: ReturnType<typeof presets.readPresetOverrides>;
+  if (isLocalDispatch()) {
+    const resolved = envMod.resolveEnv();
+    rows = presets.readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE);
+  } else {
+    try {
+      rows = await getNodeClient().promotions.query() as typeof rows;
+    } catch (err) {
+      process.stderr.write(`promotions: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
   if (rows.length === 0) {
     process.stdout.write('No preset promotions recorded\n');
     return 1;

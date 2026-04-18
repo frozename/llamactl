@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { keepAlive } from '@llamactl/core';
+import { getGlobals, getNodeClient, isLocalDispatch } from '../dispatcher.js';
 
 const USAGE = `Usage: llamactl keep-alive <subcommand>
 
@@ -39,6 +40,27 @@ async function runStart(args: string[]): Promise<number> {
     } else positional.push(arg);
   }
   const target = positional[0] ?? 'current';
+
+  // Remote path: the agent spawns its own supervisor — mirrors the
+  // local flow but on the target node's machine.
+  if (!isLocalDispatch()) {
+    try {
+      const res = await getNodeClient().keepAliveStart.mutate({ target });
+      if (json) {
+        process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
+      } else if (!res.ok) {
+        process.stderr.write(`${res.error ?? 'keep-alive failed to start'}\n`);
+      } else {
+        process.stdout.write(
+          `keep-alive started pid=${res.pid} target=${target} (remote)\n`,
+        );
+      }
+      return res.ok ? 0 : 1;
+    } catch (err) {
+      process.stderr.write(`keep-alive start: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
 
   const existing = keepAlive.readKeepAlivePid();
   if (existing !== null) {
@@ -111,7 +133,17 @@ async function runStop(args: string[]): Promise<number> {
       return 1;
     }
   }
-  const result = await keepAlive.stopKeepAlive({ graceSeconds });
+  let result: Awaited<ReturnType<typeof keepAlive.stopKeepAlive>>;
+  if (isLocalDispatch()) {
+    result = await keepAlive.stopKeepAlive({ graceSeconds });
+  } else {
+    try {
+      result = await getNodeClient().keepAliveStop.mutate({ graceSeconds }) as typeof result;
+    } catch (err) {
+      process.stderr.write(`keep-alive stop: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
   if (json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else {
@@ -134,7 +166,17 @@ async function runStatus(args: string[]): Promise<number> {
       return 1;
     }
   }
-  const status = keepAlive.keepAliveStatus();
+  let status: ReturnType<typeof keepAlive.keepAliveStatus>;
+  if (isLocalDispatch()) {
+    status = keepAlive.keepAliveStatus();
+  } else {
+    try {
+      status = await getNodeClient().keepAliveStatus.query() as typeof status;
+    } catch (err) {
+      process.stderr.write(`keep-alive status: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
   if (json) {
     process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return status.running ? 0 : 1;
