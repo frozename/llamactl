@@ -2518,6 +2518,16 @@ _llama_keep_alive_worker() {
 }
 
 llama-keep-alive() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" keep-alive start "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_keep_alive_legacy() {
   local target="${1:-current}"
   local pid=""
   local log_file="$(_llama_keep_alive_log_file)"
@@ -2547,6 +2557,16 @@ llama-keep-alive() {
 }
 
 llama-keep-alive-stop() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" keep-alive stop "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_keep_alive_stop_legacy() {
   local pid=""
   local stop_file="$(_llama_keep_alive_stop_file)"
   local pid_file="$(_llama_keep_alive_pid_file)"
@@ -2572,12 +2592,22 @@ llama-keep-alive-stop() {
     kill "$pid" >/dev/null 2>&1 || true
   fi
 
-  llama-stop >/dev/null 2>&1 || true
+  _llama_stop_legacy >/dev/null 2>&1 || true
   rm -f "$pid_file" "$stop_file"
   [ -f "$state_file" ] && sed -n '1,20p' "$state_file"
 }
 
 llama-keep-alive-status() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" keep-alive status "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_keep_alive_status_legacy() {
   local pid=""
   local state_file="$(_llama_keep_alive_state_file)"
 

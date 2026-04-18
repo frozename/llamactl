@@ -4,6 +4,7 @@ import { runCatalog } from './commands/catalog.js';
 import { runBench } from './commands/bench.js';
 import { runCandidate } from './commands/candidate.js';
 import { runServer } from './commands/server.js';
+import { runKeepAlive } from './commands/keepAlive.js';
 import { runRecommendations } from './commands/recommendations.js';
 import { runDiscover } from './commands/discover.js';
 import { runPull } from './commands/pull.js';
@@ -50,6 +51,10 @@ Write commands:
                                               background with tuned args
   llamactl server stop [--grace=5]            Stop the tracked llama-server
   llamactl server status                      Show state + endpoint + pid
+  llamactl keep-alive start <target>          Detached supervisor that
+                                              restarts llama-server on exit
+  llamactl keep-alive stop                    Signal the supervisor to exit
+  llamactl keep-alive status                  Show supervisor + state snapshot
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -76,6 +81,8 @@ async function main(argv: string[]): Promise<number> {
       return runCandidate(rest);
     case 'server':
       return runServer(rest);
+    case 'keep-alive':
+      return runKeepAlive(rest);
     case undefined:
     case '--help':
     case '-h':
