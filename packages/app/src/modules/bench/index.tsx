@@ -19,6 +19,207 @@ function truncate(lines: LogLine[]): LogLine[] {
     : lines;
 }
 
+function SchedulerPanel(): React.JSX.Element {
+  const utils = trpc.useUtils();
+  const list = trpc.benchScheduleList.useQuery();
+  const status = trpc.benchSchedulerStatus.useQuery(undefined, {
+    refetchInterval: 5000,
+  });
+  const nodes = trpc.nodeList.useQuery();
+  const add = trpc.benchScheduleAdd.useMutation({
+    onSuccess: () => void utils.benchScheduleList.invalidate(),
+  });
+  const remove = trpc.benchScheduleRemove.useMutation({
+    onSuccess: () => void utils.benchScheduleList.invalidate(),
+  });
+  const toggle = trpc.benchScheduleToggle.useMutation({
+    onSuccess: () => void utils.benchScheduleList.invalidate(),
+  });
+  const start = trpc.benchSchedulerStart.useMutation({
+    onSuccess: () => void utils.benchSchedulerStatus.invalidate(),
+  });
+  const stop = trpc.benchSchedulerStop.useMutation({
+    onSuccess: () => void utils.benchSchedulerStatus.invalidate(),
+  });
+  const kick = trpc.benchSchedulerKick.useMutation({
+    onSuccess: () => {
+      void utils.benchScheduleList.invalidate();
+      void utils.benchSchedulerStatus.invalidate();
+    },
+  });
+
+  const [id, setId] = useState('');
+  const [node, setNode] = useState('local');
+  const [rel, setRel] = useState('');
+  const [hours, setHours] = useState(24);
+  const [error, setError] = useState<string | null>(null);
+
+  const schedules = list.data ?? [];
+  const running = status.data?.running ?? false;
+  const lastTick = status.data?.lastTickAt
+    ? new Date(status.data.lastTickAt).toLocaleTimeString()
+    : '—';
+
+  function onAdd(): void {
+    setError(null);
+    if (!id.trim() || !rel.trim()) {
+      setError('id and rel are required');
+      return;
+    }
+    add.mutate(
+      {
+        id: id.trim(),
+        node: node.trim() || 'local',
+        rel: rel.trim(),
+        intervalSeconds: hours * 3600,
+      },
+      {
+        onSuccess: () => {
+          setId('');
+          setRel('');
+        },
+        onError: (e) => setError(e.message),
+      },
+    );
+  }
+
+  return (
+    <section className="mb-6 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium text-[color:var(--color-fg)]">
+          Bench scheduler
+        </div>
+        <div className="flex items-center gap-2 text-[11px]">
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${running ? 'bg-[var(--color-success)]' : 'bg-[var(--color-fg-muted)]'}`}
+          />
+          <span className="text-[color:var(--color-fg-muted)]">
+            {running ? `running · last ${lastTick}` : 'stopped'}
+          </span>
+          <button
+            type="button"
+            onClick={() => kick.mutate()}
+            disabled={kick.isPending}
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)]"
+          >
+            {kick.isPending ? '…' : 'Kick'}
+          </button>
+          {running ? (
+            <button
+              type="button"
+              onClick={() => stop.mutate()}
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => start.mutate({ tickIntervalSeconds: 60 })}
+              className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)]"
+            >
+              Start
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-end gap-2 text-xs">
+        <input
+          type="text"
+          placeholder="id (e.g. gemma-daily)"
+          value={id}
+          onChange={(e) => setId(e.target.value)}
+          className="w-40 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+        />
+        <select
+          value={node}
+          onChange={(e) => setNode(e.target.value)}
+          className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+        >
+          {(nodes.data?.nodes ?? [{ name: 'local' }]).map((n) => (
+            <option key={n.name} value={n.name}>
+              {n.name}
+            </option>
+          ))}
+        </select>
+        <input
+          type="text"
+          placeholder="rel path"
+          value={rel}
+          onChange={(e) => setRel(e.target.value)}
+          className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-fg)]"
+        />
+        <label className="flex items-center gap-1 text-[color:var(--color-fg-muted)]">
+          every
+          <input
+            type="number"
+            min={1}
+            max={168}
+            value={hours}
+            onChange={(e) => setHours(Math.max(1, Number(e.target.value) || 1))}
+            className="w-14 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-1 text-right text-[color:var(--color-fg)]"
+          />
+          h
+        </label>
+        <button
+          type="button"
+          onClick={onAdd}
+          disabled={add.isPending}
+          className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+        >
+          {add.isPending ? 'Adding…' : 'Add schedule'}
+        </button>
+      </div>
+      {error && (
+        <div className="mt-2 text-xs text-[color:var(--color-danger)]">{error}</div>
+      )}
+      <div className="mt-3 space-y-1">
+        {schedules.length === 0 && (
+          <div className="text-xs text-[color:var(--color-fg-muted)]">
+            No schedules yet. Add one above to run benches on a cadence.
+          </div>
+        )}
+        {schedules.map((s) => (
+          <div
+            key={s.id}
+            className="flex items-center justify-between rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs"
+          >
+            <div>
+              <span className="font-mono text-[color:var(--color-fg)]">{s.id}</span>
+              <span className="mx-1 text-[color:var(--color-fg-muted)]">·</span>
+              <span className="text-[color:var(--color-fg-muted)]">{s.node}</span>
+              <span className="mx-1 text-[color:var(--color-fg-muted)]">·</span>
+              <span className="font-mono text-[11px]">{s.rel}</span>
+              <div className="text-[10px] text-[color:var(--color-fg-muted)]">
+                every {Math.round(s.intervalSeconds / 3600)}h · last {s.lastRunAt ?? '—'}
+                {s.lastError && (
+                  <span className="ml-2 text-[color:var(--color-danger)]">err: {s.lastError}</span>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                onClick={() => toggle.mutate({ id: s.id, enabled: !s.enabled })}
+                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)]"
+              >
+                {s.enabled ? 'pause' : 'resume'}
+              </button>
+              <button
+                type="button"
+                onClick={() => remove.mutate({ id: s.id })}
+                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]"
+              >
+                remove
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function Bench(): React.JSX.Element {
   const queryClient = useQueryClient();
   const catalog = trpc.catalogList.useQuery('all');
@@ -181,6 +382,8 @@ export default function Bench(): React.JSX.Element {
       <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-fg)]">
         Tune + measure
       </h1>
+
+      <SchedulerPanel />
 
       <form
         onSubmit={(e) => e.preventDefault()}

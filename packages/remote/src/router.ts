@@ -7,6 +7,8 @@ import type { ClusterNode, Config } from './config/schema.js';
 import * as workloadStoreMod from './workload/store.js';
 import * as workloadApplyMod from './workload/apply.js';
 import * as reconcileLoopMod from './workload/reconcileLoop.js';
+import * as benchScheduleMod from './bench/schedule.js';
+import * as benchScheduleLoopMod from './bench/scheduleLoop.js';
 import {
   ModelRunSpecSchema,
   type ModelRun,
@@ -26,7 +28,16 @@ import { buildPinnedLinks } from './client/links.js';
  * hand-rolled structural interface. Importing the typed `NodeClient`
  * is always a cycle.
  */
-type WorkloadNodeClient = workloadApplyMod.WorkloadClient;
+/**
+ * Union of every structural-client shape router.ts currently needs.
+ * As new in-process orchestrators arrive (bench scheduler,
+ * workload reconciler, …), their narrow client interface is added
+ * to this intersection — the underlying runtime (`localCallerProxy`
+ * or pinned tRPC) satisfies everything structurally, so this is a
+ * pure type-level accumulator.
+ */
+type WorkloadNodeClient = workloadApplyMod.WorkloadClient &
+  benchScheduleLoopMod.BenchClient;
 
 /**
  * Build a tRPC-client-shaped proxy over `router.createCaller({})` so
@@ -539,6 +550,92 @@ export const router = t.router({
       clientForNode(cfg, nodeName),
     );
     return reconcileLoopMod.reconcileLoopStatus();
+  }),
+
+  // ---- bench scheduler ------------------------------------------------
+
+  benchScheduleList: t.procedure.query(() => benchScheduleMod.loadSchedules()),
+
+  benchScheduleAdd: t.procedure
+    .input(
+      z.object({
+        id: z.string().min(1),
+        node: z.string().min(1),
+        rel: z.string().min(1),
+        mode: z.enum(['auto', 'text', 'vision']).optional(),
+        intervalSeconds: z.number().int().min(60).max(30 * 24 * 3600),
+      }),
+    )
+    .mutation(({ input }) => {
+      const path = benchScheduleMod.defaultScheduleFilePath();
+      const existing = benchScheduleMod.loadSchedules(path);
+      const next = benchScheduleMod.addSchedule(existing, {
+        id: input.id,
+        node: input.node,
+        rel: input.rel,
+        mode: input.mode ?? 'auto',
+        intervalSeconds: input.intervalSeconds,
+        enabled: true,
+      });
+      benchScheduleMod.saveSchedules(next, path);
+      return next;
+    }),
+
+  benchScheduleRemove: t.procedure
+    .input(z.object({ id: z.string().min(1) }))
+    .mutation(({ input }) => {
+      const path = benchScheduleMod.defaultScheduleFilePath();
+      const next = benchScheduleMod.removeSchedule(
+        benchScheduleMod.loadSchedules(path),
+        input.id,
+      );
+      benchScheduleMod.saveSchedules(next, path);
+      return next;
+    }),
+
+  benchScheduleToggle: t.procedure
+    .input(z.object({ id: z.string().min(1), enabled: z.boolean() }))
+    .mutation(({ input }) => {
+      const path = benchScheduleMod.defaultScheduleFilePath();
+      const next = benchScheduleMod.updateSchedule(
+        benchScheduleMod.loadSchedules(path),
+        input.id,
+        { enabled: input.enabled },
+      );
+      benchScheduleMod.saveSchedules(next, path);
+      return next;
+    }),
+
+  benchSchedulerStatus: t.procedure.query(() =>
+    benchScheduleLoopMod.benchSchedulerStatus(),
+  ),
+
+  benchSchedulerStart: t.procedure
+    .input(
+      z.object({
+        tickIntervalSeconds: z.number().int().min(30).max(3600).optional(),
+      }).optional(),
+    )
+    .mutation(({ input }) => {
+      const cfg = kubecfg.loadConfig();
+      benchScheduleLoopMod.startBenchScheduler({
+        tickIntervalMs: (input?.tickIntervalSeconds ?? 60) * 1000,
+        getClient: (nodeName) => clientForNode(cfg, nodeName),
+      });
+      return benchScheduleLoopMod.benchSchedulerStatus();
+    }),
+
+  benchSchedulerStop: t.procedure.mutation(() => {
+    benchScheduleLoopMod.stopBenchScheduler();
+    return benchScheduleLoopMod.benchSchedulerStatus();
+  }),
+
+  benchSchedulerKick: t.procedure.mutation(async () => {
+    const cfg = kubecfg.loadConfig();
+    await benchScheduleLoopMod.kickBenchScheduler((nodeName) =>
+      clientForNode(cfg, nodeName),
+    );
+    return benchScheduleLoopMod.benchSchedulerStatus();
   }),
 
   workloadTemplate: t.procedure
