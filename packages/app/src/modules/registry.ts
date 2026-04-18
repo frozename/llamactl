@@ -11,6 +11,7 @@ import {
   ScrollText,
   Server as ServerIcon,
   Settings,
+  Star,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -38,6 +39,7 @@ const LazyNodes = lazy(() => import('./nodes/index'));
 const LazyChat = lazy(() => import('./chat/index'));
 const LazyWorkloads = lazy(() => import('./workloads/index'));
 const LazyModels = lazy(() => import('./models/index'));
+const LazyPresets = lazy(() => import('./presets/index'));
 const LazyPulls = lazy(() => import('./pulls/index'));
 const LazyBench = lazy(() => import('./bench/index'));
 const LazyServer = lazy(() => import('./server/index'));
@@ -80,6 +82,12 @@ export const APP_MODULES: AppModule[] = [
     icon: Database,
     Component: LazyModels,
     shortcut: 5,
+  },
+  {
+    id: 'presets',
+    labelKey: 'Presets',
+    icon: Star,
+    Component: LazyPresets,
   },
   {
     id: 'pulls',
