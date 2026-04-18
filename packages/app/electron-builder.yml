@@ -1,0 +1,57 @@
+appId: com.frozename.llamactl
+productName: llamactl
+copyright: Copyright © 2026 Alexandre Cordeiro
+
+directories:
+  output: release
+  buildResources: build
+
+# electron-vite emits into out/{main,preload,renderer}; pack those plus
+# the package.json (so Electron finds main at runtime).
+files:
+  - out/**/*
+  - package.json
+
+# The app ships as an ASAR archive. Keeping @llamactl/core and
+# @llamactl/remote *outside* the asar lets child_process.spawn resolve
+# their workspace node_modules symlinks at runtime — Electron 34+
+# asar-integrity otherwise rejects writes into the packed archive.
+asar: true
+asarUnpack:
+  - node_modules/@llamactl/**
+
+# Skip native-module rebuild; the workspace has none that need it.
+npmRebuild: false
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  category: public.app-category.developer-tools
+  # Ad-hoc signing ("-") is the minimum Apple Silicon requires to boot
+  # an unnotarized app. The user still gets a Gatekeeper prompt on
+  # first launch (right-click -> Open); swap this out for a real Dev
+  # ID once the project signs up for an Apple Developer account.
+  identity: "-"
+  hardenedRuntime: false
+  gatekeeperAssess: false
+
+dmg:
+  icon: null
+  title: "${productName} ${version}"
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+# Linux + Windows builds land in follow-up work; producing a macOS
+# artifact for the primary Mac mini workflow is enough for now.

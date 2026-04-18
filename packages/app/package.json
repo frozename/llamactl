@@ -3,13 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "description": "Electron dashboard for llamactl.",
+  "author": "Alexandre Cordeiro <alexandre.s.b.cordeiro@gmail.com>",
   "type": "module",
   "main": "./out/main/index.cjs",
   "scripts": {
     "dev": "env -u ELECTRON_RUN_AS_NODE electron-vite dev",
     "build": "electron-vite build",
     "start": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "package": "bun run build && electron-builder --config electron-builder.yml",
+    "package:mac": "bun run build && electron-builder --config electron-builder.yml --mac",
+    "package:mac:arm64": "bun run build && electron-builder --config electron-builder.yml --mac --arm64",
+    "package:mac:x64": "bun run build && electron-builder --config electron-builder.yml --mac --x64",
+    "package:dir": "bun run build && electron-builder --config electron-builder.yml --dir"
   },
   "dependencies": {
     "@llamactl/core": "workspace:*",
@@ -32,6 +38,7 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.2.0",
     "electron": "41.2.1",
+    "electron-builder": "26.8.1",
     "electron-vite": "5.0.0",
     "tailwindcss": "4.2.2",
     "typescript": "5.9.3",

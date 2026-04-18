@@ -10,6 +10,7 @@ node_modules/
 dist/
 build/
 out/
+release/
 *.log
 .npm/
 .pnpm-store/
