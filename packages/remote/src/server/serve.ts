@@ -14,6 +14,7 @@ import {
   statusClass,
 } from './metrics.js';
 import { publishAgentMdns, type PublishedAgent } from './mdns.js';
+import { handleRegister, type RegisterHandlerOptions } from './register.js';
 
 export interface StartAgentOptions {
   bindHost?: string;          // default '127.0.0.1'
@@ -35,6 +36,12 @@ export interface StartAgentOptions {
    * otherwise (hermetic test agents shouldn't pollute the network).
    */
   advertiseMdns?: boolean;
+  /**
+   * Override paths for the /register handler. Production leaves this
+   * unset so the handler uses ~/.llamactl/bootstrap-tokens and
+   * ~/.llamactl/config; tests inject tempdirs.
+   */
+  registerOptions?: RegisterHandlerOptions;
 }
 
 export interface RunningAgent {
@@ -95,6 +102,12 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     opts.onRequest?.(url);
     if (url.pathname === '/healthz') {
       return new Response('ok', { status: 200 });
+    }
+    // Bootstrap registration — unauthenticated by design (nodes have
+    // no bearer yet; that's what this endpoint mints). Consumes a
+    // single-use token from deploy-node, writes to kubeconfig.
+    if (url.pathname === '/register') {
+      return handleRegister(req, opts.registerOptions ?? {});
     }
     // Prometheus scrape endpoint. Bearer-auth'd like everything else;
     // scrapers can set the standard Authorization header.
