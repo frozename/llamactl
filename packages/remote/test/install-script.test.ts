@@ -48,6 +48,35 @@ describe('generateInstallScript', () => {
     expect(script).toContain('"blob"');
   });
 
+  test('includes embedded launchd plist + systemd unit heredocs', () => {
+    const script = generateInstallScript({
+      token: 't',
+      centralUrl: 'https://c.lan',
+      nodeName: 'gpu1',
+    });
+    // Launchd branch for Darwin.
+    expect(script).toContain('Darwin)');
+    expect(script).toContain('com.llamactl.agent.plist');
+    expect(script).toContain('__LLAMACTL_PLIST_EOF__');
+    // The plist body shows up with __BIN__/__DIR__/__LOG__ placeholders
+    // so the script can sed-substitute per-host at install time.
+    expect(script).toContain('<key>Label</key>');
+    expect(script).toContain('__BIN__');
+    expect(script).toContain('__DIR__');
+    expect(script).toContain('__LOG__');
+    expect(script).toContain('launchctl load');
+    // Systemd branch for Linux.
+    expect(script).toContain('Linux)');
+    expect(script).toContain('llamactl-agent.service');
+    expect(script).toContain('__LLAMACTL_UNIT_EOF__');
+    expect(script).toContain('ExecStart=__BIN__ agent serve --dir=__DIR__');
+    expect(script).toContain('Restart=always');
+    expect(script).toContain('systemctl --user enable --now llamactl-agent.service');
+    expect(script).toContain('loginctl enable-linger');
+    // Unsupported OS surfaces a helpful fallback.
+    expect(script).toContain('unsupported OS');
+  });
+
   test('strips trailing slash from centralUrl', () => {
     const script = generateInstallScript({
       token: 't',
