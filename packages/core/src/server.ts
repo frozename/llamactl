@@ -46,6 +46,18 @@ export function endpoint(resolved: ResolvedEnv = resolveEnv()): string {
   return `http://${resolved.LLAMA_CPP_HOST}:${resolved.LLAMA_CPP_PORT}`;
 }
 
+/**
+ * URL external callers should use to reach llama-server. Falls back to
+ * the bind endpoint when LLAMA_CPP_ADVERTISED_HOST is unset, which
+ * preserves the pre-existing single-machine UX. When it's set (e.g.
+ * on a LAN-exposed Mac mini), this is the URL to hand to an
+ * orchestrator so a 0.0.0.0 bind doesn't leak into the status output.
+ */
+export function advertisedEndpoint(resolved: ResolvedEnv = resolveEnv()): string {
+  const host = resolved.LLAMA_CPP_ADVERTISED_HOST || resolved.LLAMA_CPP_HOST;
+  return `http://${host}:${resolved.LLAMA_CPP_PORT}`;
+}
+
 function useTunedArgsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.LLAMA_CPP_USE_TUNED_ARGS ?? 'true';
   switch (raw) {
@@ -134,7 +146,12 @@ export interface ServerState {
 
 export interface ServerStatus {
   state: 'up' | 'down';
+  /** URL the local process uses to poll /health. Always derived from
+   *  the bind host, so it works even when the server is on loopback. */
   endpoint: string;
+  /** URL external callers should use. Same as `endpoint` on a stock
+   *  install; differs when LLAMA_CPP_ADVERTISED_HOST is set. */
+  advertisedEndpoint: string;
   pid: number | null;
   health: {
     httpCode: number | null;
@@ -238,6 +255,7 @@ export async function serverStatus(
   return {
     state,
     endpoint: endpoint(resolved),
+    advertisedEndpoint: advertisedEndpoint(resolved),
     pid,
     health: { httpCode, reachable },
     rel: validSidecar ? sidecar.rel : null,
@@ -273,6 +291,10 @@ export interface StartServerResult {
   ok: boolean;
   pid: number | null;
   endpoint: string;
+  /** See ServerStatus.advertisedEndpoint. Falls back to `endpoint`
+   *  when LLAMA_CPP_ADVERTISED_HOST is unset — existing callers that
+   *  only read `endpoint` continue to work unchanged. */
+  advertisedEndpoint: string;
   tunedProfile: string | null;
   retried: boolean;
   error?: string;
@@ -348,6 +370,7 @@ export async function startServer(
       ok: false,
       pid: null,
       endpoint: endpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile: null,
       retried: false,
       error: `Unknown target: ${opts.target}`,
@@ -359,6 +382,7 @@ export async function startServer(
       ok: false,
       pid: null,
       endpoint: endpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile: null,
       retried: false,
       error: `Model file not found: ${modelPath}`,
@@ -370,6 +394,7 @@ export async function startServer(
       ok: false,
       pid: null,
       endpoint: endpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile: null,
       retried: false,
       error: `llama-server binary not found: ${bin}`,
@@ -448,6 +473,7 @@ export async function startServer(
       ok: false,
       pid: null,
       endpoint: endpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile,
       retried: false,
       error: 'Start aborted by caller',
@@ -460,6 +486,7 @@ export async function startServer(
       ok: true,
       pid,
       endpoint: endpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile,
       retried: false,
     };
@@ -493,6 +520,7 @@ export async function startServer(
         ok: false,
         pid: null,
         endpoint: endpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved),
         tunedProfile,
         retried: true,
         error: 'Start aborted by caller',
@@ -505,6 +533,7 @@ export async function startServer(
         ok: true,
         pid: retryPid,
         endpoint: endpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved),
         tunedProfile,
         retried: true,
       };
@@ -519,6 +548,7 @@ export async function startServer(
       ok: false,
       pid,
       endpoint: endpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile,
       retried,
       error: `llama-server readiness check timed out after ${timeoutSeconds}s`,
@@ -530,6 +560,7 @@ export async function startServer(
     ok: false,
     pid: null,
     endpoint: endpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved),
     tunedProfile,
     retried,
     error: 'llama-server exited before becoming ready',

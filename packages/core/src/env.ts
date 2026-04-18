@@ -91,6 +91,7 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
 
   const host = pick(env.LLAMA_CPP_HOST, '127.0.0.1');
   const port = pick(env.LLAMA_CPP_PORT, '8080');
+  const advertisedHost = pick(env.LLAMA_CPP_ADVERTISED_HOST, '');
 
   const lmStudioHost = pick(env.LOCAL_AI_LMSTUDIO_HOST, '127.0.0.1');
   const lmStudioPort = pick(env.LOCAL_AI_LMSTUDIO_PORT, '1234');
@@ -141,6 +142,7 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
     LLAMA_CPP_LOGS: pick(env.LLAMA_CPP_LOGS, join(devStorage, 'logs/llama.cpp')),
     LLAMA_CPP_HOST: host,
     LLAMA_CPP_PORT: port,
+    LLAMA_CPP_ADVERTISED_HOST: advertisedHost,
     LLAMA_CPP_MACHINE_PROFILE: profile,
     LLAMA_CPP_GEMMA_CTX_SIZE: gemmaCtx,
     LLAMA_CPP_QWEN_CTX_SIZE: qwenCtx,

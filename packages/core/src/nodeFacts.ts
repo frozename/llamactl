@@ -3,6 +3,7 @@ import { hostname } from 'node:os';
 import { resolveEnv } from './env.js';
 import { detectMemoryBytes, resolveProfile } from './profile.js';
 import { resolveBuildId } from './build.js';
+import { advertisedEndpoint } from './server.js';
 import type { MachineProfile } from './types.js';
 
 export type GpuKind = 'metal' | 'cuda' | 'rocm' | 'cpu';
@@ -30,6 +31,13 @@ export interface NodeFacts {
   gpu: GpuInfo | null;
   versions: Versions;
   startedAt: string;                   // ISO-8601
+  /**
+   * URL this node advertises for its llama-server, derived from
+   * LLAMA_CPP_ADVERTISED_HOST / LLAMA_CPP_HOST / LLAMA_CPP_PORT.
+   * Orchestrators use this to reach the node's OpenAI-compatible
+   * endpoint without needing to know how the node is bound.
+   */
+  advertisedEndpoint: string;
 }
 
 // Capture once at module load — the agent's process lifetime matches the
@@ -62,6 +70,7 @@ export function collectNodeFacts(env: NodeJS.ProcessEnv = process.env): NodeFact
     gpu: detectGpu(),
     versions: resolveVersions(env),
     startedAt: STARTED_AT,
+    advertisedEndpoint: resolved ? advertisedEndpoint(resolved) : '',
   };
 }
 

@@ -42,6 +42,14 @@ export interface ResolvedEnv {
   LLAMA_CPP_LOGS: string;
   LLAMA_CPP_HOST: string;
   LLAMA_CPP_PORT: string;
+  /**
+   * Hostname external callers should use to reach llama-server, when
+   * LLAMA_CPP_HOST is a wildcard bind like 0.0.0.0. Empty string means
+   * "same as bind host" — the common local-only case. Populated on a
+   * Mac mini or other LAN-exposed agent so `serverStatus` surfaces a
+   * URL that ember synth (or any external orchestrator) can copy.
+   */
+  LLAMA_CPP_ADVERTISED_HOST: string;
   LLAMA_CPP_MACHINE_PROFILE: MachineProfile;
   LLAMA_CPP_GEMMA_CTX_SIZE: string;
   LLAMA_CPP_QWEN_CTX_SIZE: string;

@@ -203,15 +203,18 @@ async function runStatus(args: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return status.state === 'up' ? 0 : 1;
   }
-  process.stdout.write(
-    [
-      `state=${status.state}`,
-      `endpoint=${status.endpoint}`,
-      `pid=${status.pid ?? 'none'}`,
-      `http=${status.health.httpCode ?? 'unreachable'}`,
-      '',
-    ].join('\n'),
-  );
+  const lines: string[] = [
+    `state=${status.state}`,
+    `endpoint=${status.endpoint}`,
+  ];
+  if (status.advertisedEndpoint && status.advertisedEndpoint !== status.endpoint) {
+    lines.push(`advertised=${status.advertisedEndpoint}`);
+  }
+  lines.push(`pid=${status.pid ?? 'none'}`);
+  lines.push(`http=${status.health.httpCode ?? 'unreachable'}`);
+  if (status.rel) lines.push(`rel=${status.rel}`);
+  lines.push('');
+  process.stdout.write(lines.join('\n'));
   return status.state === 'up' ? 0 : 1;
 }
 
