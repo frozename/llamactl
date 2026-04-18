@@ -1,75 +1,101 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
 
 type Mode = 'file' | 'candidate' | 'test';
 type Profile = 'mac-mini-16g' | 'balanced' | 'macbook-pro-48g';
 
-interface LogLine {
-  kind: 'stdout' | 'stderr' | 'start' | 'exit' | 'done' | 'error';
-  text: string;
-  at: number;
+const PROFILES: readonly Profile[] = ['mac-mini-16g', 'balanced', 'macbook-pro-48g'];
+const MAX_LOG_LINES = 250;
+
+type CardMode = 'file' | 'candidate' | 'test';
+
+interface PullCardSpec {
+  id: string;
+  mode: CardMode;
+  repo: string;
+  file?: string;
+  profile?: Profile;
 }
 
-const PROFILES: readonly Profile[] = ['mac-mini-16g', 'balanced', 'macbook-pro-48g'];
-const MAX_LOG_LINES = 400;
+interface LogLine {
+  kind: 'stdout' | 'stderr' | 'start' | 'exit' | 'done' | 'error' | 'profile';
+  text: string;
+}
 
 function truncate(lines: LogLine[]): LogLine[] {
   return lines.length > MAX_LOG_LINES ? lines.slice(lines.length - MAX_LOG_LINES) : lines;
 }
 
-export default function Pulls(): JSX.Element {
-  const queryClient = useQueryClient();
-  const [mode, setMode] = useState<Mode>('file');
-  const [repo, setRepo] = useState('');
-  const [file, setFile] = useState('');
-  const [profile, setProfile] = useState<Profile | ''>('');
-  const [active, setActive] = useState<
-    | { mode: 'file'; repo: string; file: string }
-    | { mode: 'candidate'; repo: string; file?: string; profile?: Profile }
-    | { mode: 'test'; repo: string; file?: string; profile?: Profile }
-    | null
-  >(null);
+function lineClass(kind: LogLine['kind']): string {
+  switch (kind) {
+    case 'stderr':
+    case 'error':
+      return 'text-[color:var(--color-warn)] whitespace-pre-wrap';
+    case 'done':
+      return 'text-[color:var(--color-accent)] whitespace-pre-wrap';
+    case 'start':
+    case 'profile':
+      return 'text-[color:var(--color-brand)] whitespace-pre-wrap';
+    default:
+      return 'text-[color:var(--color-fg)] whitespace-pre-wrap';
+  }
+}
+
+function PullCard({
+  spec,
+  onDismiss,
+  onDone,
+}: {
+  spec: PullCardSpec;
+  onDismiss: (id: string) => void;
+  onDone: () => void;
+}): JSX.Element {
   const [log, setLog] = useState<LogLine[]>([]);
+  const [state, setState] = useState<'running' | 'done' | 'error'>('running');
   const [summary, setSummary] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
-  const scrollLogToEnd = () => {
+  const appendLog = (line: LogLine) => {
+    setLog((prev) => truncate([...prev, line]));
     requestAnimationFrame(() => {
       if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
     });
   };
 
-  const appendLog = (line: LogLine) => {
-    setLog((prev) => {
-      const next = truncate([...prev, line]);
-      return next;
-    });
-    scrollLogToEnd();
-  };
-
   const handleData = (ev: unknown) => {
-    // The router yields a tagged union — narrow defensively since the
-    // client doesn't enforce `unknown`'s structure at runtime.
     const e = ev as { type: string } & Record<string, unknown>;
-    const now = Date.now();
     switch (e.type) {
       case 'start':
         appendLog({
           kind: 'start',
           text: `$ ${String(e.command)} ${((e.args as string[]) ?? []).join(' ')}`,
-          at: now,
         });
         break;
       case 'stdout':
-        appendLog({ kind: 'stdout', text: String(e.line ?? ''), at: now });
+        appendLog({ kind: 'stdout', text: String(e.line ?? '') });
         break;
       case 'stderr':
-        appendLog({ kind: 'stderr', text: String(e.line ?? ''), at: now });
+        appendLog({ kind: 'stderr', text: String(e.line ?? '') });
         break;
       case 'exit':
-        appendLog({ kind: 'exit', text: `(exit ${e.code})`, at: now });
+        appendLog({ kind: 'exit' as 'stdout', text: `(exit ${e.code})` });
+        break;
+      case 'profile-start':
+        appendLog({ kind: 'profile', text: `-- profile=${String(e.profile)} --` });
+        break;
+      case 'profile-done':
+        appendLog({
+          kind: 'profile',
+          text: `-- profile=${String(e.profile)} gen_ts=${String(e.gen_ts)} prompt_ts=${String(e.prompt_ts)} --`,
+        });
+        break;
+      case 'profile-fail':
+        appendLog({
+          kind: 'error',
+          text: `-- profile=${String(e.profile)} failed (code=${String(e.code)}) --`,
+        });
         break;
       case 'done':
       case 'done-candidate': {
@@ -79,32 +105,12 @@ export default function Pulls(): JSX.Element {
           `wasMissing=${result.wasMissing ? 'yes' : 'no'}`,
         ];
         if (result.mmproj) parts.push(`mmproj=${result.mmproj}`);
-        const text = parts.join(' ');
-        appendLog({ kind: 'done', text, at: now });
-        setSummary(text);
-        setActive(null);
-        void queryClient.invalidateQueries({
-          queryKey: [['catalogList'], { type: 'query' }],
-        });
+        setSummary(parts.join(' '));
+        setState('done');
+        appendLog({ kind: 'done', text: parts.join(' ') });
+        onDone();
         break;
       }
-      case 'profile-start':
-        appendLog({ kind: 'start', text: `-- profile=${String(e.profile)} --`, at: now });
-        break;
-      case 'profile-done':
-        appendLog({
-          kind: 'start',
-          text: `-- profile=${String(e.profile)} gen_ts=${String(e.gen_ts)} prompt_ts=${String(e.prompt_ts)} --`,
-          at: now,
-        });
-        break;
-      case 'profile-fail':
-        appendLog({
-          kind: 'error',
-          text: `-- profile=${String(e.profile)} failed (code=${String(e.code)}) --`,
-          at: now,
-        });
-        break;
       case 'done-candidate-test': {
         const result = e.result as {
           rel?: string;
@@ -112,105 +118,190 @@ export default function Pulls(): JSX.Element {
           preset?: { ran?: boolean; reason?: string };
           vision?: { ran?: boolean; reason?: string };
         };
-        const text = `candidate-test: rel=${result.rel} curated_added=${result.curatedAdded} preset=${result.preset?.ran ? 'ran' : (result.preset?.reason ?? 'skipped')} vision=${result.vision?.ran ? 'ran' : (result.vision?.reason ?? 'skipped')}`;
-        appendLog({ kind: 'done', text, at: now });
-        setSummary(text);
-        setActive(null);
-        void queryClient.invalidateQueries({
-          queryKey: [['catalogList'], { type: 'query' }],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: [['benchHistory'], { type: 'query' }],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: [['benchCompare'], { type: 'query' }],
-        });
+        const parts = [
+          `rel=${result.rel}`,
+          `curated_added=${result.curatedAdded}`,
+          `preset=${result.preset?.ran ? 'ran' : (result.preset?.reason ?? 'skipped')}`,
+          `vision=${result.vision?.ran ? 'ran' : (result.vision?.reason ?? 'skipped')}`,
+        ];
+        setSummary(parts.join(' '));
+        setState('done');
+        appendLog({ kind: 'done', text: parts.join(' ') });
+        onDone();
         break;
       }
       default:
-        appendLog({ kind: 'stdout', text: JSON.stringify(e), at: now });
+        appendLog({ kind: 'stdout', text: JSON.stringify(e) });
     }
   };
 
   const handleError = (err: { message: string }) => {
-    appendLog({ kind: 'error', text: err.message, at: Date.now() });
+    appendLog({ kind: 'error', text: err.message });
     setError(err.message);
-    setActive(null);
+    setState('error');
   };
 
+  const enabled = state === 'running';
   trpc.pullFile.useSubscription(
-    active?.mode === 'file'
-      ? { repo: active.repo, file: active.file }
+    spec.mode === 'file' && spec.file
+      ? { repo: spec.repo, file: spec.file }
       : { repo: '', file: '' },
     {
-      enabled: active?.mode === 'file',
+      enabled: enabled && spec.mode === 'file' && !!spec.file,
       onData: handleData,
       onError: handleError,
     },
   );
-
   trpc.pullCandidate.useSubscription(
-    active?.mode === 'candidate'
-      ? { repo: active.repo, file: active.file, profile: active.profile }
+    spec.mode === 'candidate'
+      ? { repo: spec.repo, file: spec.file, profile: spec.profile }
       : { repo: '' },
     {
-      enabled: active?.mode === 'candidate',
+      enabled: enabled && spec.mode === 'candidate',
       onData: handleData,
       onError: handleError,
     },
   );
-
   trpc.candidateTestRun.useSubscription(
-    active?.mode === 'test'
-      ? { repo: active.repo, file: active.file, profile: active.profile }
+    spec.mode === 'test'
+      ? { repo: spec.repo, file: spec.file, profile: spec.profile }
       : { repo: '' },
     {
-      enabled: active?.mode === 'test',
+      enabled: enabled && spec.mode === 'test',
       onData: handleData,
       onError: handleError,
     },
   );
 
-  const start = (e: React.FormEvent) => {
+  const label =
+    spec.mode === 'file'
+      ? `pull file ${spec.repo} ${spec.file}`
+      : spec.mode === 'candidate'
+        ? `pull candidate ${spec.repo}${spec.profile ? ` (${spec.profile})` : ''}`
+        : `candidate test ${spec.repo}`;
+
+  const stateColor =
+    state === 'done'
+      ? 'text-[color:var(--color-accent)]'
+      : state === 'error'
+        ? 'text-[color:var(--color-danger)]'
+        : 'text-[color:var(--color-brand)]';
+
+  return (
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)]">
+      <div className="flex items-center justify-between px-3 py-2 text-xs">
+        <div className="flex items-center gap-3">
+          <span className={`mono ${stateColor}`}>{state}</span>
+          <span className="mono text-[color:var(--color-fg-muted)] break-all">{label}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {state === 'running' && (
+            <button
+              type="button"
+              onClick={() => {
+                // Flipping state to `error` (and the useSubscription
+                // `enabled` flag with it) unmounts the subscription,
+                // triggering the server-side abort controller.
+                setState('error');
+                setError('Cancelled by user');
+              }}
+              className="rounded border border-[var(--color-danger)] px-2 py-0.5 text-xs text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)]"
+            >
+              Cancel
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onDismiss(spec.id)}
+            disabled={state === 'running'}
+            className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-fg-muted)] hover:border-[var(--color-border)] hover:text-[color:var(--color-fg)] disabled:opacity-40"
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+      {(summary || error) && (
+        <div
+          className={`mono border-t border-[var(--color-border)] px-3 py-1 text-xs ${
+            error ? 'text-[color:var(--color-danger)]' : 'text-[color:var(--color-accent)]'
+          }`}
+        >
+          {error ?? summary}
+        </div>
+      )}
+      <div
+        ref={logRef}
+        className="max-h-[28vh] overflow-auto border-t border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-1.5 mono text-xs"
+      >
+        {log.length === 0 ? (
+          <div className="text-[color:var(--color-fg-muted)]">Waiting for output…</div>
+        ) : (
+          log.map((line, i) => (
+            <div key={i} className={lineClass(line.kind)}>
+              {line.text}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function Pulls(): JSX.Element {
+  const queryClient = useQueryClient();
+  const [mode, setMode] = useState<Mode>('file');
+  const [repo, setRepo] = useState('');
+  const [file, setFile] = useState('');
+  const [profile, setProfile] = useState<Profile | ''>('');
+  const [error, setError] = useState<string | null>(null);
+  const [cards, setCards] = useState<PullCardSpec[]>([]);
+
+  const enqueue = (e: React.FormEvent) => {
     e.preventDefault();
     const r = repo.trim();
     if (!r) {
       setError('Repo is required');
       return;
     }
-    setLog([]);
-    setSummary(null);
-    setError(null);
-    if (mode === 'file') {
-      if (!file.trim()) {
-        setError('File is required for pull-file');
-        return;
-      }
-      setActive({ mode: 'file', repo: r, file: file.trim() });
-    } else if (mode === 'candidate') {
-      setActive({
-        mode: 'candidate',
-        repo: r,
-        file: file.trim() || undefined,
-        profile: profile || undefined,
-      });
-    } else {
-      setActive({
-        mode: 'test',
-        repo: r,
-        file: file.trim() || undefined,
-        profile: profile || undefined,
-      });
+    if (mode === 'file' && !file.trim()) {
+      setError('File is required for pull-file');
+      return;
     }
+    setError(null);
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const spec: PullCardSpec = {
+      id,
+      mode,
+      repo: r,
+      file: mode === 'file' ? file.trim() : file.trim() || undefined,
+      profile: mode === 'file' ? undefined : profile || undefined,
+    };
+    setCards((prev) => [spec, ...prev]);
+    setRepo('');
+    setFile('');
   };
 
-  const busy = active !== null;
-  const cancel = () => {
-    // Tearing down the active subscription triggers the subscription
-    // cleanup in the tRPC router which aborts the child process.
-    setActive(null);
-    setError('Cancelled by user');
+  const onDismiss = (id: string) => {
+    setCards((prev) => prev.filter((c) => c.id !== id));
   };
+
+  const onDone = () => {
+    void queryClient.invalidateQueries({
+      queryKey: [['catalogList'], { type: 'query' }],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: [['benchHistory'], { type: 'query' }],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: [['benchCompare'], { type: 'query' }],
+    });
+  };
+
+  const activeCount = useMemo(
+    () => cards.length,
+    [cards],
+  );
 
   return (
     <div className="h-full overflow-auto p-6">
@@ -222,7 +313,7 @@ export default function Pulls(): JSX.Element {
       </h1>
 
       <form
-        onSubmit={start}
+        onSubmit={enqueue}
         className="mb-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
       >
         <div className="mb-3 flex gap-1 text-xs">
@@ -231,7 +322,6 @@ export default function Pulls(): JSX.Element {
               key={m}
               type="button"
               onClick={() => setMode(m)}
-              disabled={busy}
               className={
                 mode === m
                   ? 'rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-[color:var(--color-fg)]'
@@ -248,7 +338,6 @@ export default function Pulls(): JSX.Element {
             <input
               value={repo}
               onChange={(e) => setRepo(e.target.value)}
-              disabled={busy}
               placeholder="unsloth/gemma-4-E4B-it-GGUF"
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
             />
@@ -260,7 +349,6 @@ export default function Pulls(): JSX.Element {
             <input
               value={file}
               onChange={(e) => setFile(e.target.value)}
-              disabled={busy}
               placeholder={
                 mode === 'file' ? 'gemma-4-E4B-it-Q8_0.gguf' : '(auto-pick via profile)'
               }
@@ -275,7 +363,6 @@ export default function Pulls(): JSX.Element {
               <select
                 value={profile}
                 onChange={(e) => setProfile(e.target.value as Profile | '')}
-                disabled={busy}
                 className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
               >
                 <option value="">(current)</option>
@@ -294,27 +381,15 @@ export default function Pulls(): JSX.Element {
           >
             <button
               type="submit"
-              disabled={busy}
-              className="rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:opacity-50"
+              className="rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90"
             >
-              {busy
-                ? mode === 'test'
-                  ? 'Testing…'
-                  : 'Pulling…'
-                : mode === 'test'
-                  ? 'Run test'
-                  : 'Pull'}
+              {mode === 'test' ? 'Enqueue test' : 'Enqueue pull'}
             </button>
-            {busy && (
-              <button
-                type="button"
-                onClick={cancel}
-                className="ml-2 rounded border border-[var(--color-danger)] px-3 py-1 text-sm text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)]"
-              >
-                Cancel
-              </button>
-            )}
           </div>
+        </div>
+        <div className="mt-2 text-xs text-[color:var(--color-fg-muted)]">
+          Each Enqueue adds a new card below — runs are independent and can be cancelled
+          individually.
         </div>
       </form>
 
@@ -323,48 +398,28 @@ export default function Pulls(): JSX.Element {
           {error}
         </div>
       )}
-      {summary && (
-        <div className="mb-3 rounded-md border border-[var(--color-accent)] bg-[var(--color-surface-1)] px-3 py-2 text-sm">
-          <div className="text-[color:var(--color-accent)]">Pull complete</div>
-          <div className="mono text-xs text-[color:var(--color-fg-muted)]">{summary}</div>
-        </div>
-      )}
 
-      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)]">
-        <div className="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
-          <span>Log</span>
-          <span>
-            {log.length} line{log.length === 1 ? '' : 's'}
-          </span>
-        </div>
-        <div
-          ref={logRef}
-          className="max-h-[50vh] overflow-auto border-t border-[var(--color-border)] px-3 py-2 mono text-xs"
-        >
-          {log.length === 0 ? (
-            <div className="text-[color:var(--color-fg-muted)]">
-              {busy ? 'Waiting for output…' : 'Submit a pull to see streaming output here.'}
-            </div>
-          ) : (
-            log.map((line, i) => (
-              <div
-                key={i}
-                className={
-                  line.kind === 'stderr' || line.kind === 'error'
-                    ? 'text-[color:var(--color-warn)] whitespace-pre-wrap'
-                    : line.kind === 'done'
-                      ? 'text-[color:var(--color-accent)] whitespace-pre-wrap'
-                      : line.kind === 'start'
-                        ? 'text-[color:var(--color-brand)] whitespace-pre-wrap'
-                        : 'text-[color:var(--color-fg)] whitespace-pre-wrap'
-                }
-              >
-                {line.text}
-              </div>
-            ))
-          )}
-        </div>
-      </div>
+      <section>
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+          Queue ({activeCount})
+        </h2>
+        {cards.length === 0 ? (
+          <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-[color:var(--color-fg-muted)]">
+            No pulls yet. Fill out the form above and hit Enqueue.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {cards.map((spec) => (
+              <PullCard
+                key={spec.id}
+                spec={spec}
+                onDismiss={onDismiss}
+                onDone={onDone}
+              />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
