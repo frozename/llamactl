@@ -20,12 +20,32 @@ interface Message {
   content: string;
 }
 
+/**
+ * Capability vocabulary the chat input exposes. Mirrors nova's
+ * `ModelCapability` enum. Tags ride the request via
+ * `providerOptions.capabilities` so embersynth receives them (the
+ * OpenAI-compat adapter merges providerOptions into the wire body;
+ * sirius + direct providers ignore the extra field).
+ */
+const CAPABILITY_TAGS = [
+  'reasoning',
+  'long_context',
+  'tools',
+  'vision',
+  'json_mode',
+  'code',
+] as const;
+type CapabilityTag = (typeof CAPABILITY_TAGS)[number];
+
 interface Conversation {
   id: string;
   title: string;
   node: string;
   model: string;
   messages: Message[];
+  /** Capability hints carried on every turn. Orchestrators like
+   *  embersynth read these to pick the right node. */
+  capabilities?: CapabilityTag[];
 }
 
 interface ChatStore {
@@ -36,6 +56,7 @@ interface ChatStore {
   append: (id: string, message: Message) => void;
   patchLast: (id: string, patch: Partial<Message>) => void;
   updateMeta: (id: string, patch: Partial<Pick<Conversation, 'node' | 'model' | 'title'>>) => void;
+  toggleCapability: (id: string, tag: CapabilityTag) => void;
   remove: (id: string) => void;
 }
 
@@ -91,6 +112,21 @@ const useChatStore = create<ChatStore>()(
             conversations: {
               ...s.conversations,
               [id]: { ...conv, ...patch },
+            },
+          };
+        }),
+      toggleCapability: (id, tag) =>
+        set((s) => {
+          const conv = s.conversations[id];
+          if (!conv) return s;
+          const current = conv.capabilities ?? [];
+          const next = current.includes(tag)
+            ? current.filter((t) => t !== tag)
+            : [...current, tag];
+          return {
+            conversations: {
+              ...s.conversations,
+              [id]: { ...conv, capabilities: next },
             },
           };
         }),
@@ -205,6 +241,7 @@ function ComposePane(props: {
   modelsLoading: boolean;
   onNodeChange: (node: string) => void;
   onModelChange: (model: string) => void;
+  onToggleCapability: (tag: CapabilityTag) => void;
 }): React.JSX.Element {
   const [input, setInput] = useState('');
   const ref = useRef<HTMLDivElement>(null);
@@ -268,6 +305,31 @@ function ComposePane(props: {
         {props.conversation.messages.map((m) => (
           <MessageBubble key={m.id} message={m} />
         ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-1 border-t border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-[10px]">
+        <span className="text-[color:var(--color-fg-muted)]">capabilities:</span>
+        {CAPABILITY_TAGS.map((tag) => {
+          const active = props.conversation.capabilities?.includes(tag) ?? false;
+          return (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => props.onToggleCapability(tag)}
+              className={`rounded-full border px-2 py-0.5 font-mono transition-colors ${
+                active
+                  ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-[color:var(--color-fg-inverted)]'
+                  : 'border-[var(--color-border)] bg-[var(--color-surface-2)] text-[color:var(--color-fg-muted)]'
+              }`}
+              title={
+                active
+                  ? `remove ${tag}`
+                  : `attach ${tag} — orchestrators route by capability tags`
+              }
+            >
+              {tag.replace('_', '-')}
+            </button>
+          );
+        })}
       </div>
       <form
         onSubmit={(e) => {
@@ -396,6 +458,7 @@ export default function Chat(): React.JSX.Element {
     }
     setBusy(true);
     setStreamKey((k) => k + 1);
+    const capabilities = active.capabilities ?? [];
     setStreamInput({
       node: active.node,
       request: {
@@ -404,6 +467,13 @@ export default function Chat(): React.JSX.Element {
           ...active.messages.filter((m) => m.role === 'user' || m.role === 'assistant'),
           { role: 'user', content: text },
         ].map((m) => ({ role: m.role, content: m.content })),
+        // Carry capability hints via providerOptions so orchestrators
+        // (embersynth) see them on the wire. Omit the field entirely
+        // when no tags are active so other gateways don't receive a
+        // stray empty array in the request body.
+        ...(capabilities.length > 0
+          ? { providerOptions: { capabilities } }
+          : {}),
       },
     });
   }
@@ -433,6 +503,7 @@ export default function Chat(): React.JSX.Element {
           modelsLoading={modelList.isLoading}
           onNodeChange={(node) => store.updateMeta(active.id, { node })}
           onModelChange={(model) => store.updateMeta(active.id, { model })}
+          onToggleCapability={(tag) => store.toggleCapability(active.id, tag)}
         />
       ) : (
         <div className="flex h-full flex-1 items-center justify-center text-sm text-[color:var(--color-fg-muted)]">
