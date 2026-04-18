@@ -343,6 +343,106 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
   );
 }
 
+function ReconcilerToolbar(): React.JSX.Element {
+  const qc = useQueryClient();
+  const utils = trpc.useUtils();
+  const status = trpc.reconcilerStatus.useQuery(undefined, {
+    refetchInterval: 5000,
+  });
+  const start = trpc.reconcilerStart.useMutation({
+    onSuccess: () => {
+      void utils.reconcilerStatus.invalidate();
+      void utils.workloadList.invalidate();
+    },
+  });
+  const stop = trpc.reconcilerStop.useMutation({
+    onSuccess: () => {
+      void utils.reconcilerStatus.invalidate();
+    },
+  });
+  const kick = trpc.reconcilerKick.useMutation({
+    onSuccess: () => {
+      void utils.reconcilerStatus.invalidate();
+      void utils.workloadList.invalidate();
+      void qc.invalidateQueries();
+    },
+  });
+
+  const running = status.data?.running ?? false;
+  const intervalSec = status.data ? Math.round(status.data.intervalMs / 1000) : 10;
+  const lastPass = status.data?.lastPassAt
+    ? new Date(status.data.lastPassAt).toLocaleTimeString()
+    : '—';
+  const errors = status.data?.lastResult?.errors ?? 0;
+  const reports = status.data?.lastResult?.reports ?? [];
+  const actionCounts = reports.reduce<Record<string, number>>((acc, r) => {
+    acc[r.action] = (acc[r.action] ?? 0) + 1;
+    return acc;
+  }, {});
+  const summary =
+    reports.length === 0
+      ? 'no workloads reconciled yet'
+      : Object.entries(actionCounts)
+          .map(([k, v]) => `${k}:${v}`)
+          .join(' · ');
+
+  return (
+    <div className="flex items-center justify-between rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs">
+      <div className="flex items-center gap-2">
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${
+            running ? 'bg-[var(--color-success)]' : 'bg-[var(--color-fg-muted)]'
+          }`}
+        />
+        <span className="text-[color:var(--color-fg)]">
+          auto-heal {running ? 'on' : 'off'}
+        </span>
+        <span className="text-[color:var(--color-fg-muted)]">
+          · every {intervalSec}s · last {lastPass}
+          {errors > 0 && (
+            <>
+              {' · '}
+              <span className="text-[color:var(--color-danger)]">{errors} errors</span>
+            </>
+          )}
+          {' · '}
+          <span>{summary}</span>
+        </span>
+      </div>
+      <div className="flex gap-1">
+        <button
+          type="button"
+          onClick={() => kick.mutate()}
+          disabled={kick.isPending}
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)] disabled:opacity-50"
+          title="run one reconcile pass now"
+        >
+          {kick.isPending ? '…' : 'Kick'}
+        </button>
+        {running ? (
+          <button
+            type="button"
+            onClick={() => stop.mutate()}
+            disabled={stop.isPending}
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] disabled:opacity-50"
+          >
+            Stop
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => start.mutate({ intervalSeconds: 10 })}
+            disabled={start.isPending}
+            className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+          >
+            Start
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Workloads(): React.JSX.Element {
   const list = trpc.workloadList.useQuery();
   const [showApply, setShowApply] = useState(false);
@@ -380,6 +480,7 @@ export default function Workloads(): React.JSX.Element {
         </button>
       </div>
       {showApply && <ApplyPanel onDone={() => setShowApply(false)} />}
+      <ReconcilerToolbar />
       <div className="space-y-2">
         {rows.length === 0 && (
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 text-xs text-[color:var(--color-fg-muted)]">

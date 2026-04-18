@@ -1,5 +1,4 @@
-import type { NodeClient } from '../client/node-client.js';
-import { applyOne, type ApplyEvent, type ApplyResult } from './apply.js';
+import { applyOne, type ApplyEvent, type ApplyResult, type WorkloadClient } from './apply.js';
 import { listWorkloads, saveWorkload, defaultWorkloadsDir } from './store.js';
 import type { ModelRun } from './schema.js';
 
@@ -17,8 +16,10 @@ export interface ReconcileResult {
 
 export interface ReconcileOptions {
   workloadsDir?: string;
-  /** Resolve a NodeClient for a given node name (injected for tests). */
-  getClient: (nodeName: string) => NodeClient;
+  /** Resolve a workload client for a given node name. Structural so
+   *  router.ts can satisfy it without importing NodeClient (which
+   *  would re-trigger the AppRouter circular-type alias). */
+  getClient: (nodeName: string) => WorkloadClient;
   /** Bubble up per-workload progress for logging. */
   onEvent?: (e: ApplyEvent & { name: string }) => void;
   /** Optional filter to only reconcile a subset. */

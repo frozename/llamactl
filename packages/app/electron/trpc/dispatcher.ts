@@ -49,6 +49,11 @@ const CONTROL_PLANE_ONLY = new Set<string>([
   'workloadDelete',
   'workloadValidate',
   'workloadTemplate',
+  'reconcilerStatus',
+  'reconcilerEvents',
+  'reconcilerStart',
+  'reconcilerStop',
+  'reconcilerKick',
   // UI-only procedures added by this module never go over the wire.
   'uiSetActiveNode',
   'uiGetActiveNode',

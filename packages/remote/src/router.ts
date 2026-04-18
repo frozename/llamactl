@@ -6,6 +6,7 @@ import { decodeBootstrap } from './config/agent-config.js';
 import type { ClusterNode, Config } from './config/schema.js';
 import * as workloadStoreMod from './workload/store.js';
 import * as workloadApplyMod from './workload/apply.js';
+import * as reconcileLoopMod from './workload/reconcileLoop.js';
 import {
   ModelRunSpecSchema,
   type ModelRun,
@@ -506,6 +507,40 @@ export const router = t.router({
   // from a model + node without re-declaring the whole zod graph.
   // We only return the JSON string of a template here; the real schema
   // is still validated inside workloadApply.
+  // ---- reconciler loop (auto-heal) ------------------------------------
+
+  reconcilerStatus: t.procedure.query(() => reconcileLoopMod.reconcileLoopStatus()),
+
+  reconcilerEvents: t.procedure.query(() => reconcileLoopMod.reconcileLoopEvents()),
+
+  reconcilerStart: t.procedure
+    .input(
+      z.object({
+        intervalSeconds: z.number().int().positive().min(5).max(600).optional(),
+      }).optional(),
+    )
+    .mutation(({ input }) => {
+      const cfg = kubecfg.loadConfig();
+      reconcileLoopMod.startReconcileLoop({
+        intervalMs: (input?.intervalSeconds ?? 10) * 1000,
+        getClient: (nodeName) => clientForNode(cfg, nodeName),
+      });
+      return reconcileLoopMod.reconcileLoopStatus();
+    }),
+
+  reconcilerStop: t.procedure.mutation(() => {
+    reconcileLoopMod.stopReconcileLoop();
+    return reconcileLoopMod.reconcileLoopStatus();
+  }),
+
+  reconcilerKick: t.procedure.mutation(async () => {
+    const cfg = kubecfg.loadConfig();
+    await reconcileLoopMod.kickReconcileLoop((nodeName) =>
+      clientForNode(cfg, nodeName),
+    );
+    return reconcileLoopMod.reconcileLoopStatus();
+  }),
+
   workloadTemplate: t.procedure
     .input(
       z.object({
