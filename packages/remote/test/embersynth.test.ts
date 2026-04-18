@@ -102,14 +102,26 @@ describe('embersynth config bridge', () => {
       'auto',
       'fast',
       'private',
+      'private-first',
       'vision',
     ]);
     expect(cfg.syntheticModels).toEqual({
       'fusion-auto': 'auto',
       'fusion-fast': 'fast',
       'fusion-private': 'private',
+      'fusion-private-first': 'private-first',
       'fusion-vision': 'vision',
     });
+  });
+
+  test('private-first profile has preferred tags and falls back', () => {
+    const cfg = generateEmbersynthConfig({ cfg: makeCfgWithAgent() });
+    const pf = cfg.profiles.find((p) => p.id === 'private-first');
+    expect(pf).toBeTruthy();
+    expect(pf!.preferredTags).toEqual(['private']);
+    expect(pf!.preferLowerPriority).toBe(true);
+    // Soft preference — no requiredTags means cloud nodes stay eligible.
+    expect(pf!.requiredTags).toBeUndefined();
   });
 
   test('sync preserves hand-edited profiles + syntheticModels', () => {

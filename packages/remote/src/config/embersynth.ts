@@ -86,6 +86,13 @@ const EmbersynthProfileSchema = z.object({
   maxStages: z.number().int().optional(),
   preferredCapabilities: z.array(z.string()).optional(),
   requiredTags: z.array(z.string()).optional(),
+  /**
+   * Soft version of `requiredTags` — nodes matching any preferred tag
+   * score higher but non-matching nodes stay eligible. Powers the
+   * `private-first` profile: prefer private agents, fall back to
+   * cloud only when no private node is healthy.
+   */
+  preferredTags: z.array(z.string()).optional(),
   synthesisRequired: z.boolean().optional(),
 });
 
@@ -274,6 +281,14 @@ export const DEFAULT_EMBERSYNTH_PROFILES: EmbersynthProfile[] = [
     label: 'Private',
     description: 'Only use nodes tagged private',
     requiredTags: ['private'],
+  },
+  {
+    id: 'private-first',
+    label: 'Private First',
+    description: 'Prefer private agents; fall back to other nodes only when no private node is healthy',
+    preferLowerPriority: true,
+    allowDegradedNodes: false,
+    preferredTags: ['private'],
   },
   {
     id: 'vision',
