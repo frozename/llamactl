@@ -21,10 +21,12 @@
         "@trpc/react-query": "11.16.0",
         "@trpc/server": "11.16.0",
         "electron-trpc": "1.0.0-alpha.0",
+        "eventsource": "4.1.0",
         "lucide-react": "1.8.0",
         "react": "19.2.5",
         "react-dom": "19.2.5",
         "superjson": "2.2.6",
+        "undici": "7.18.0",
         "yaml": "2.8.3",
         "zod": "4.3.6",
         "zustand": "5.0.12",
@@ -941,6 +943,8 @@
     "type-fest": ["type-fest@0.13.1", "", {}, "sha512-34R7HTnG0XIJcBSn5XhDd7nNFPRcXYRZrBB2O2jdKqYODldSzBAqzsWoZYYvduky73toYS/ESqxPvkDf/F0XMg=="],
 
     "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
+
+    "undici": ["undici@7.18.0", "", {}, "sha512-CfPufgPFHCYu0W4h1NiKW9+tNJ39o3kWm7Cm29ET1enSJx+AERfz7A2wAr26aY0SZbYzZlTBQtcHy15o60VZfQ=="],
 
     "undici-types": ["undici-types@7.19.2", "", {}, "sha512-qYVnV5OEm2AW8cJMCpdV20CDyaN3g0AjDlOGf1OW4iaDEx8MwdtChUp4zu4H0VP3nDRF/8RKWH+IPp9uW0YGZg=="],
 

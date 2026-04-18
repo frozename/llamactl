@@ -19,7 +19,8 @@ import type { ClusterNode } from '../config/schema.js';
  */
 
 type FetchInput = string | URL | Request;
-type PinnedFetch = (input: FetchInput, init?: RequestInit) => Promise<Response>;
+export type PinnedFetch = (input: FetchInput, init?: RequestInit) => Promise<Response>;
+export type PinnedFetchFactory = (node: ClusterNode) => PinnedFetch;
 
 // eventsource@4's FetchLike is a stripped-down RequestInit. We widen to
 // a loose shape that our pinned fetch wrapper can satisfy.
@@ -28,12 +29,16 @@ type EventSourceFetchLike = (
   init?: { headers?: Record<string, string>; signal?: AbortSignal; body?: unknown },
 ) => Promise<Response>;
 
-export function makePinnedFetch(node: ClusterNode): PinnedFetch {
+/**
+ * Verify the supplied PEM's fingerprint matches the stored one. Shared
+ * by every pinned-fetch implementation (Bun on the CLI, undici in the
+ * Electron main) so tampering is caught the same way regardless of
+ * runtime.
+ */
+export function assertFingerprintMatch(node: ClusterNode): void {
   const ca = node.certificate;
   const expectedFp = node.certificateFingerprint ?? null;
   if (expectedFp && ca) {
-    // Defensive: the supplied PEM's fingerprint must match the stored
-    // fingerprint, in case kubeconfig was tampered with between writes.
     const actual = computeFingerprint(ca);
     if (!fingerprintsEqual(actual, expectedFp)) {
       throw new Error(
@@ -42,12 +47,18 @@ export function makePinnedFetch(node: ClusterNode): PinnedFetch {
       );
     }
   }
+}
 
+/**
+ * Bun-native pinned fetch. Uses Bun's `tls.ca` fetch option, which
+ * ignores system roots and trusts only the supplied CA. Node runtimes
+ * (Electron main) must inject a different factory — see
+ * `packages/app/electron/trpc/node-pinned-fetch.ts`.
+ */
+export function makePinnedFetch(node: ClusterNode): PinnedFetch {
+  assertFingerprintMatch(node);
+  const ca = node.certificate;
   return async (input, init) => {
-    // Bun's fetch accepts a `tls` option that ignores system roots and
-    // trusts only the provided CA list. Since the agent's self-signed
-    // cert is also its own CA, this pins the TLS handshake to exactly
-    // that cert.
     const extraInit = ca ? { tls: { ca } } : {};
     return fetch(input as FetchInput, { ...init, ...extraInit } as RequestInit);
   };
@@ -60,10 +71,19 @@ export function makePinnedFetch(node: ClusterNode): PinnedFetch {
  * cast to `any` to avoid leaking an AppRouter dependency into this
  * file — the consumer annotates their `createTRPCClient` call with the
  * concrete router type.
+ *
+ * `fetchFactory` lets runtimes that can't use Bun's `tls.ca` option
+ * (Electron main, browser envs) inject their own pinned-fetch
+ * implementation. Defaults to the Bun-native one.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function buildPinnedLinks(node: ClusterNode, token: string): TRPCLink<any>[] {
-  const pinnedFetch = makePinnedFetch(node);
+export function buildPinnedLinks(
+  node: ClusterNode,
+  token: string,
+  fetchFactory: PinnedFetchFactory = makePinnedFetch,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): TRPCLink<any>[] {
+  const pinnedFetch = fetchFactory(node);
   const trpcUrl = `${node.endpoint}/trpc`;
   const authHeader = `Bearer ${token}`;
   return [

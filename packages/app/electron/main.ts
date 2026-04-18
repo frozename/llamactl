@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { createIPCHandler } from 'electron-trpc/main';
 import { join } from 'node:path';
-import { router } from './trpc/router.js';
+import { buildDispatcherRouter } from './trpc/dispatcher.js';
 
 // `__dirname` is set by Rollup's CJS wrapper, so we don't need the
 // ESM-style `fileURLToPath(import.meta.url)` dance here.
@@ -24,7 +24,11 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  createIPCHandler({ router, windows: [win] });
+  // The dispatcher wraps the base router so its getErrorShape type
+  // erasure flows through; electron-trpc's AnyRouter constraint is
+  // satisfied structurally at runtime.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  createIPCHandler({ router: buildDispatcherRouter() as any, windows: [win] });
 
   const devUrl = process.env['ELECTRON_RENDERER_URL'];
   if (devUrl) {
