@@ -2,6 +2,7 @@
 import { runEnv } from './commands/env.js';
 import { runCatalog } from './commands/catalog.js';
 import { runBench } from './commands/bench.js';
+import { runCandidate } from './commands/candidate.js';
 import { runRecommendations } from './commands/recommendations.js';
 import { runDiscover } from './commands/discover.js';
 import { runPull } from './commands/pull.js';
@@ -40,6 +41,9 @@ Write commands:
                                               profiles and save the fastest
   llamactl bench vision <target>              Run the multimodal bench and
                                               record the timings (--json supported)
+  llamactl candidate test <repo> [file] [profile]
+                                              Discover + pull + tune + compare
+                                              pipeline (--json supported)
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -62,6 +66,8 @@ async function main(argv: string[]): Promise<number> {
       return runUninstall(rest);
     case 'pull':
       return runPull(rest);
+    case 'candidate':
+      return runCandidate(rest);
     case undefined:
     case '--help':
     case '-h':

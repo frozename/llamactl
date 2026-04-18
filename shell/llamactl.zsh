@@ -1883,6 +1883,16 @@ _llama_pull_candidate_legacy() {
 }
 
 llama-candidate-test() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" candidate test "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_candidate_test_legacy() {
   local repo="$1"
   local file="${2:-}"
   local profile="${3:-$LLAMA_CPP_MACHINE_PROFILE}"
@@ -1906,7 +1916,7 @@ llama-candidate-test() {
     llama-curated-add "$repo" "$file" "$label" "" "" "candidate" >/dev/null || return 1
   fi
 
-  llama-pull-candidate "$repo" "$file" "$profile" || return 1
+  _llama_pull_candidate_legacy "$repo" "$file" "$profile" || return 1
 
   if [ -x "$LLAMA_CPP_BIN/llama-bench" ]; then
     local bench_mode bench_ctx bench_build bench_machine existing_profile
@@ -1916,7 +1926,7 @@ llama-candidate-test() {
     bench_machine="$(_llama_bench_context_machine)"
     existing_profile="$(_llama_bench_profile_get "$rel" "$bench_mode" "$bench_ctx" "$bench_machine" "$bench_build")"
     if [ -z "$existing_profile" ]; then
-      llama-bench-preset "$rel" auto || return 1
+      _llama_bench_preset_legacy "$rel" auto || return 1
     else
       echo "Reusing tuned profile for $rel (mode=$bench_mode ctx=$bench_ctx build=$bench_build)"
     fi
@@ -1932,7 +1942,7 @@ llama-candidate-test() {
     vision_existing="$(_llama_bench_vision_latest "$rel" 2>/dev/null || true)"
     if [ -z "$vision_existing" ]; then
       echo
-      llama-bench-vision "$rel" || echo "Vision bench failed for $rel (continuing)"
+      _llama_bench_vision_legacy "$rel" || echo "Vision bench failed for $rel (continuing)"
     else
       echo "Reusing vision bench record for $rel"
     fi
