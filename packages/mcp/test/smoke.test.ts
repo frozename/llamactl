@@ -77,6 +77,8 @@ describe('@llamactl/mcp read surface', () => {
       'llamactl.catalog.promote',
       'llamactl.catalog.promoteDelete',
       'llamactl.embersynth.sync',
+      'llamactl.node.add',
+      'llamactl.node.facts',
       'llamactl.node.ls',
       'llamactl.node.remove',
       'llamactl.promotions.list',

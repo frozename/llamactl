@@ -4,14 +4,17 @@ import {
   bench,
   catalog,
   env as envMod,
+  nodeFacts as nodeFactsMod,
   presets,
   server as serverMod,
 } from '@llamactl/core';
 import {
+  agentConfig,
   config as kubecfg,
   embersynth,
   resolveNodeKind,
   workloadStore,
+  type ClusterNode,
 } from '@llamactl/remote';
 import { appendAudit, toTextContent } from '@nova/mcp-shared';
 
@@ -143,6 +146,99 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         status: m.status ?? null,
       }));
       return toTextContent({ count: rows.length, workloads: rows });
+    },
+  );
+
+  server.registerTool(
+    'llamactl.node.facts',
+    {
+      title: 'Local node hardware facts',
+      description:
+        'Return the control plane\'s own hardware inventory — profile (mac-mini-16g | balanced | macbook-pro-48g), memory bytes, OS/arch, GPU kind, llama.cpp build id, versions. Remote-node facts need the dispatcher; this tool covers the control-plane case.',
+      inputSchema: {},
+    },
+    async () => toTextContent(nodeFactsMod.collectNodeFacts()),
+  );
+
+  server.registerTool(
+    'llamactl.node.add',
+    {
+      title: 'Add a node from a bootstrap blob',
+      description:
+        'Ingest a `llamactl agent init` bootstrap blob and register the new node in the current cluster\'s kubeconfig. `dryRun: true` decodes the blob and previews the resulting node entry without writing. Does NOT probe reachability — chain with nova.ops.healthcheck after a wet-run to confirm.',
+      inputSchema: {
+        name: z.string().min(1),
+        bootstrap: z.string().min(1).describe('base64 blob emitted by `llamactl agent init`'),
+        dryRun: z.boolean().default(false),
+      },
+    },
+    async (input) => {
+      const { name, bootstrap, dryRun } = input;
+      let decoded: ReturnType<typeof agentConfig.decodeBootstrap>;
+      try {
+        decoded = agentConfig.decodeBootstrap(bootstrap);
+      } catch (err) {
+        appendAudit({
+          server: SERVER_SLUG,
+          tool: 'llamactl.node.add',
+          input: { name, dryRun },
+          dryRun,
+          result: { error: (err as Error).message },
+        });
+        return toTextContent({
+          ok: false,
+          error: `invalid bootstrap blob: ${(err as Error).message}`,
+        });
+      }
+      const entry: ClusterNode = {
+        name,
+        endpoint: decoded.url,
+        certificateFingerprint: decoded.fingerprint,
+        ...(decoded.certificate ? { certificate: decoded.certificate } : {}),
+      };
+      if (dryRun) {
+        appendAudit({
+          server: SERVER_SLUG,
+          tool: 'llamactl.node.add',
+          input: { name, dryRun },
+          dryRun: true,
+        });
+        return toTextContent({
+          dryRun: true,
+          node: {
+            name: entry.name,
+            endpoint: entry.endpoint,
+            fingerprint: entry.certificateFingerprint,
+          },
+          message: `would add node ${name} pointing at ${decoded.url}`,
+        });
+      }
+      let cfg = kubecfg.loadConfig();
+      const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
+      if (!ctx) {
+        return toTextContent({ ok: false, error: 'no current context in kubeconfig' });
+      }
+      cfg = {
+        ...cfg,
+        users: cfg.users.map((u) =>
+          u.name === ctx.user ? { ...u, token: decoded.token } : u,
+        ),
+      };
+      cfg = kubecfg.upsertNode(cfg, ctx.cluster, entry);
+      kubecfg.saveConfig(cfg);
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.node.add',
+        input: { name, dryRun },
+        dryRun: false,
+        result: { ok: true, name, endpoint: decoded.url },
+      });
+      return toTextContent({
+        ok: true,
+        name,
+        endpoint: decoded.url,
+        fingerprint: decoded.fingerprint,
+      });
     },
   );
 
