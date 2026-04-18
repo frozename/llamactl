@@ -6,6 +6,7 @@ import {
   buildPinnedLinks,
   config as kubecfg,
   LOCAL_NODE_ENDPOINT,
+  type PinnedFetchFactory,
 } from '@llamactl/remote';
 import { makeNodePinnedFetch } from './node-pinned-fetch.js';
 
@@ -92,8 +93,11 @@ function resolveDispatchTarget(path: string): DispatchTarget {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildRemoteClient(target: DispatchTarget): any {
+function buildRemoteClient(
+  target: DispatchTarget,
+  fetchFactory: PinnedFetchFactory,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): any {
   if (!target.node || !target.token) {
     throw new Error('remote target missing node or token');
   }
@@ -106,7 +110,7 @@ function buildRemoteClient(target: DispatchTarget): any {
         certificateFingerprint: target.node.certificateFingerprint ?? undefined,
       },
       target.token,
-      makeNodePinnedFetch,
+      fetchFactory,
     ),
   });
 }
@@ -114,6 +118,7 @@ function buildRemoteClient(target: DispatchTarget): any {
 function wrapQueryOrMutation(
   path: string,
   type: 'query' | 'mutation',
+  fetchFactory: PinnedFetchFactory,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): any {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -124,7 +129,7 @@ function wrapQueryOrMutation(
       const caller = baseRouter.createCaller({}) as any;
       return caller[path](input);
     }
-    const client = buildRemoteClient(target);
+    const client = buildRemoteClient(target, fetchFactory);
     return type === 'query'
       ? client[path].query(input)
       : client[path].mutate(input);
@@ -137,7 +142,7 @@ function wrapQueryOrMutation(
     : t.procedure.mutation(resolver);
 }
 
-function wrapSubscription(path: string): unknown {
+function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unknown {
   return t.procedure.subscription(async function* (opts) {
     const target = resolveDispatchTarget(path);
     const clientSignal = opts.signal as AbortSignal | undefined;
@@ -153,7 +158,7 @@ function wrapSubscription(path: string): unknown {
     }
     // Remote: bridge tRPC client's callback subscription into an
     // async generator, honoring client disconnects.
-    const client = buildRemoteClient(target);
+    const client = buildRemoteClient(target, fetchFactory);
     const queue: unknown[] = [];
     let done = false;
     let err: unknown = null;
@@ -221,8 +226,15 @@ function wrapSubscription(path: string): unknown {
  * at the end preserves the typed wire shape for the renderer — it still
  * imports `AppRouter` from `@llamactl/remote` and gets full
  * per-procedure inference on `trpc.*` hooks.
+ *
+ * `fetchFactory` defaults to the undici-backed Node factory; tests
+ * running under Bun can inject the Bun-native one (`makePinnedFetch`
+ * from `@llamactl/remote`) so the self-signed cert round-trips
+ * without needing Node's HTTPS agent.
  */
-export function buildDispatcherRouter(): AppRouter {
+export function buildDispatcherRouter(
+  fetchFactory: PinnedFetchFactory = makeNodePinnedFetch,
+): AppRouter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const procs: Record<string, any> = {};
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -230,10 +242,10 @@ export function buildDispatcherRouter(): AppRouter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const source = baseDef.procedures as Record<string, any>;
   for (const [name, orig] of Object.entries(source)) {
-    const def = orig?._def ?? {};
-    if (def.query) procs[name] = wrapQueryOrMutation(name, 'query');
-    else if (def.mutation) procs[name] = wrapQueryOrMutation(name, 'mutation');
-    else if (def.subscription) procs[name] = wrapSubscription(name);
+    const type = orig?._def?.type as 'query' | 'mutation' | 'subscription' | undefined;
+    if (type === 'query') procs[name] = wrapQueryOrMutation(name, 'query', fetchFactory);
+    else if (type === 'mutation') procs[name] = wrapQueryOrMutation(name, 'mutation', fetchFactory);
+    else if (type === 'subscription') procs[name] = wrapSubscription(name, fetchFactory);
   }
   return t.router(procs) as unknown as AppRouter;
 }
