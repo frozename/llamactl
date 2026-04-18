@@ -165,7 +165,7 @@ describe('agent OpenAI proxy', () => {
     expect(body.object).toBe('list');
     expect(body.data).toHaveLength(1);
     expect(body.data[0]!.id).toBe('test-org/test-model/model-Q4.gguf');
-    expect(body.data[0]!.owned_by).toBe('llamactl');
+    expect(body.data[0]!.owned_by).toBe('llamactl-agent');
   });
 
   test('POST /v1/chat/completions forwards the body to llama-server', async () => {

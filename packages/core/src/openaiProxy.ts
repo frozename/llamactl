@@ -1,3 +1,4 @@
+import type { ModelInfo, ModelListResponse } from '@llamactl/nova';
 import { resolveEnv } from './env.js';
 import { endpoint as llamaEndpoint, readServerState, readServerPid } from './server.js';
 import type { ResolvedEnv } from './types.js';
@@ -10,23 +11,14 @@ import type { ResolvedEnv } from './types.js';
  * agent's URL + bearer token and get llama.cpp's built-in OpenAI
  * response shape back unchanged.
  *
+ * `listOpenAIModels` returns `nova.ModelListResponse` — the
+ * canonical shape every AI provider in this family publishes.
+ *
  * Scope today: one workload per node — the proxy targets whichever
  * server is started via `llamactl server start` (or a workload
  * manifest). Multi-workload routing by `model` is a follow-up that
  * needs multi-server orchestration on a single node.
  */
-
-export interface OpenAIModel {
-  id: string;
-  object: 'model';
-  created: number;
-  owned_by: string;
-}
-
-export interface OpenAIModelsResponse {
-  object: 'list';
-  data: OpenAIModel[];
-}
 
 /**
  * List the models this agent currently exposes. For now that's the
@@ -35,16 +27,17 @@ export interface OpenAIModelsResponse {
  */
 export function listOpenAIModels(
   resolved: ResolvedEnv = resolveEnv(),
-): OpenAIModelsResponse {
+): ModelListResponse {
   const state = readServerState(resolved);
   const pid = readServerPid(resolved);
-  const data: OpenAIModel[] = [];
+  const data: ModelInfo[] = [];
   if (state && pid !== null) {
     data.push({
       id: state.rel,
       object: 'model',
       created: Math.floor(new Date(state.startedAt).getTime() / 1000),
-      owned_by: 'llamactl',
+      owned_by: 'llamactl-agent',
+      capabilities: ['chat'],
     });
   }
   return { object: 'list', data };

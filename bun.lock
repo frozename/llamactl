@@ -63,6 +63,18 @@
       "name": "@llamactl/core",
       "version": "0.0.0",
       "dependencies": {
+        "@llamactl/nova": "workspace:*",
+        "zod": "4.3.6",
+      },
+      "devDependencies": {
+        "@types/bun": "1.3.12",
+        "typescript": "5.9.3",
+      },
+    },
+    "packages/nova": {
+      "name": "@llamactl/nova",
+      "version": "0.1.0",
+      "dependencies": {
         "zod": "4.3.6",
       },
       "devDependencies": {
@@ -223,6 +235,8 @@
     "@llamactl/cli": ["@llamactl/cli@workspace:packages/cli"],
 
     "@llamactl/core": ["@llamactl/core@workspace:packages/core"],
+
+    "@llamactl/nova": ["@llamactl/nova@workspace:packages/nova"],
 
     "@llamactl/remote": ["@llamactl/remote@workspace:packages/remote"],
 
