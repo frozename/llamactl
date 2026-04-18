@@ -39,7 +39,8 @@ type CloudProvider =
   | 'together'
   | 'groq'
   | 'mistral'
-  | 'openai-compatible';
+  | 'openai-compatible'
+  | 'sirius';
 
 function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
   const queryClient = useQueryClient();
@@ -74,14 +75,15 @@ function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
       setError('Node name is required.');
       return;
     }
-    if (!apiKeyRef.trim()) {
+    const requiresKey = provider !== 'sirius' && provider !== 'openai-compatible';
+    if (requiresKey && !apiKeyRef.trim()) {
       setError('apiKeyRef is required (e.g. $OPENAI_API_KEY or ~/.llamactl/keys/openai).');
       return;
     }
     add.mutate({
       name: name.trim(),
       provider,
-      apiKeyRef: apiKeyRef.trim(),
+      ...(apiKeyRef.trim() ? { apiKeyRef: apiKeyRef.trim() } : {}),
       ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
       ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
     });
@@ -120,6 +122,7 @@ function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
           <option value="groq">groq</option>
           <option value="mistral">mistral</option>
           <option value="openai-compatible">openai-compatible (custom)</option>
+          <option value="sirius">sirius (gateway)</option>
         </select>
         <input
           type="text"

@@ -38,13 +38,20 @@ export const CloudProviderSchema = z.enum([
   'groq',
   'mistral',
   'openai-compatible',
+  'sirius',
 ]);
 export type CloudProvider = z.infer<typeof CloudProviderSchema>;
 
 export const CloudBindingSchema = z.object({
   provider: CloudProviderSchema,
   baseUrl: z.url(),
-  apiKeyRef: z.string().min(1),
+  /**
+   * API key reference. Required for most providers; optional for
+   * `sirius` and `openai-compatible` (a locally-run sirius-gateway
+   * or a dev llama-server often runs anonymously on loopback).
+   * When absent, the provider adapter omits the Authorization header.
+   */
+  apiKeyRef: z.string().optional(),
   /** Optional display name for UIs when the user wants a friendlier
    *  label than the node's canonical id. */
   displayName: z.string().optional(),
@@ -135,6 +142,12 @@ export const DEFAULT_CLOUD_BASE_URLS: Record<CloudProvider, string> = {
   groq: 'https://api.groq.com/openai/v1',
   mistral: 'https://api.mistral.ai/v1',
   'openai-compatible': '',
+  // sirius-gateway typically runs on localhost for the single-user
+  // case; production deployments will point at a real host. The
+  // OpenAI-compat adapter treats this identically to `openai-compatible`,
+  // we keep the provider name distinct so the UI can render a
+  // gateway badge and the user understands what they're pointing at.
+  sirius: 'http://localhost:3000/v1',
 };
 
 export function freshConfig(): Config {

@@ -25,7 +25,13 @@ export function providerForCloudNode(
   if (!node.cloud) {
     throw new Error(`node '${node.name}' is not a cloud node`);
   }
-  const apiKey = resolveApiKeyRef(node.cloud.apiKeyRef, env);
+  // Anonymous gateway (sirius on localhost, a dev llama-server, etc.)
+  // is allowed when `apiKeyRef` is unset — pass an empty key and the
+  // OpenAI-compat adapter sends a vacuous `Authorization` header that
+  // unauthenticated upstreams ignore.
+  const apiKey = node.cloud.apiKeyRef
+    ? resolveApiKeyRef(node.cloud.apiKeyRef, env)
+    : '';
   return createOpenAICompatProvider({
     name: node.name,
     displayName: node.cloud.displayName ?? node.name,

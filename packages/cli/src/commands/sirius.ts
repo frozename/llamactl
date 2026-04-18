@@ -2,26 +2,36 @@ import { config as kubecfg, LOCAL_NODE_ENDPOINT } from '@llamactl/remote';
 import { resolveNodeKind } from '@llamactl/remote';
 import { stringify as stringifyYaml } from 'yaml';
 
-const USAGE = `llamactl sirius — emit config for the sirius-gateway llamactl provider
+const USAGE = `llamactl sirius — sirius-gateway integration
 
 USAGE:
-  llamactl sirius export [--format json|yaml|env] [--token-inline]
+  llamactl sirius export  [--format json|yaml|env] [--token-inline]
+  llamactl sirius connect <url> [--name <n>] [--api-key-ref <ref>]
 
-Reads the current kubeconfig and emits an entry suitable for the
-sirius gateway's \`LLAMACTL_NODES\` env var (or config file). Agent
-nodes register as sirius providers named \`llamactl-<node>\`; cloud
-nodes are skipped (sirius has its own openai/anthropic/… providers).
+export — read the current kubeconfig and emit an entry suitable for
+  the sirius gateway's \`LLAMACTL_NODES\` env var (or config file).
+  Agent nodes register as sirius providers named \`llamactl-<node>\`;
+  cloud nodes are skipped.
 
-OPTIONS:
   --format <fmt>   json (default), yaml, or env (shell export line).
   --token-inline   include the raw bearer token. By default tokens
                    are placeholders (\`\${LLAMACTL_TOKEN_<NODE>}\`) so
                    the output is safe to paste into git-tracked config.
 
+connect — register a sirius gateway as a cloud node, making every
+  model sirius aggregates (openai, anthropic, ollama, llamactl
+  agents) appear in llamactl's chat UI. Base URL should point at
+  sirius's \`/v1\` root (e.g. \`http://localhost:3000/v1\`).
+
+  --name <n>           Node name for kubeconfig (default: "sirius").
+  --api-key-ref <ref>  Env var reference (\`\$FOO\`) or file path.
+                       Omit for anonymous sirius (localhost dev).
+
 EXAMPLES:
   llamactl sirius export
   llamactl sirius export --format env --token-inline >> .env.sirius
-  llamactl sirius export --format yaml
+  llamactl sirius connect http://localhost:3000/v1
+  llamactl sirius connect https://sirius.corp/v1 --api-key-ref \\$SIRIUS_TOKEN
 `;
 
 interface NodeEntry {
@@ -75,11 +85,63 @@ function renderEnv(entries: NodeEntry[]): string {
   return `export LLAMACTL_NODES='${compact.replace(/'/g, "'\\''")}'`;
 }
 
+async function runConnect(argv: string[]): Promise<number> {
+  const url = argv[0];
+  if (!url || url.startsWith('--')) {
+    process.stderr.write(`sirius connect: base URL is required\n\n${USAGE}`);
+    return 1;
+  }
+  let name = 'sirius';
+  let apiKeyRef: string | undefined;
+  for (let i = 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--name') {
+      name = argv[++i] ?? '';
+      if (!name) {
+        process.stderr.write(`--name requires a value\n`);
+        return 1;
+      }
+    } else if (arg === '--api-key-ref') {
+      apiKeyRef = argv[++i];
+    } else if (arg === '--help' || arg === '-h') {
+      process.stdout.write(USAGE);
+      return 0;
+    } else {
+      process.stderr.write(`unknown flag: ${arg}\n\n${USAGE}`);
+      return 1;
+    }
+  }
+  const normalized = url.endsWith('/') ? url.slice(0, -1) : url;
+  const baseUrl = normalized.endsWith('/v1') ? normalized : `${normalized}/v1`;
+  const cfgPath = kubecfg.defaultConfigPath();
+  let cfg = kubecfg.loadConfig(cfgPath);
+  const ctx = kubecfg.currentContext(cfg);
+  cfg = kubecfg.upsertNode(cfg, ctx.cluster, {
+    name,
+    endpoint: '',
+    kind: 'cloud',
+    cloud: {
+      provider: 'sirius',
+      baseUrl,
+      ...(apiKeyRef ? { apiKeyRef } : {}),
+    },
+  });
+  kubecfg.saveConfig(cfg, cfgPath);
+  process.stdout.write(
+    `registered sirius gateway as node '${name}' → ${baseUrl}\n` +
+      `  switch with: llamactl ctx use ${ctx.name} && llamactl --node ${name} ...\n`,
+  );
+  return 0;
+}
+
 export async function runSirius(argv: string[]): Promise<number> {
   const sub = argv[0];
   if (!sub || sub === '--help' || sub === '-h') {
     process.stdout.write(USAGE);
     return 0;
+  }
+  if (sub === 'connect') {
+    return runConnect(argv.slice(1));
   }
   if (sub !== 'export') {
     process.stderr.write(`unknown sirius subcommand: ${sub}\n\n${USAGE}`);

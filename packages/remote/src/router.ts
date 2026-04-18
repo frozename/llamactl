@@ -357,9 +357,13 @@ export const router = t.router({
           'groq',
           'mistral',
           'openai-compatible',
+          'sirius',
         ]),
         baseUrl: z.url().optional(),
-        apiKeyRef: z.string().min(1),
+        // Optional: sirius-gateway / local dev endpoints may be
+        // unauthenticated. When absent the adapter omits the
+        // Authorization header.
+        apiKeyRef: z.string().optional(),
         displayName: z.string().optional(),
       }),
     )
@@ -370,10 +374,14 @@ export const router = t.router({
       const cfgPath = kubecfg.defaultConfigPath();
       let cfg = kubecfg.loadConfig(cfgPath);
       const ctx = kubecfg.currentContext(cfg);
-      const binding = defaultCloudBinding(input.provider, input.apiKeyRef, {
+      const binding = defaultCloudBinding(input.provider, input.apiKeyRef ?? '', {
         ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
         ...(input.displayName ? { displayName: input.displayName } : {}),
       });
+      // `defaultCloudBinding` persists apiKeyRef as an empty string
+      // when the caller omitted it; drop the field entirely so the
+      // stored node matches the "anonymous" semantics.
+      if (!input.apiKeyRef) delete (binding as { apiKeyRef?: string }).apiKeyRef;
       if (!binding.baseUrl) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
