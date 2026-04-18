@@ -1,4 +1,4 @@
-import { createTRPCProxyClient, httpBatchLink } from '@trpc/client';
+import { createTRPCClient, httpBatchLink } from '@trpc/client';
 import { router as appRouter, type AppRouter } from '../router.js';
 import {
   fingerprintsEqual,
@@ -14,7 +14,7 @@ import {
   type Config,
 } from '../config/schema.js';
 
-export type NodeClient = ReturnType<typeof createTRPCProxyClient<AppRouter>>;
+export type NodeClient = ReturnType<typeof createTRPCClient<AppRouter>>;
 
 export interface NodeClientOptions {
   /** If omitted, uses the current-context's defaultNode. */
@@ -77,7 +77,7 @@ function proxyFromCaller(): NodeClient {
 }
 
 function proxyFromHttp(node: ClusterNode, token: string): NodeClient {
-  return createTRPCProxyClient<AppRouter>({
+  return createTRPCClient<AppRouter>({
     links: [
       httpBatchLink({
         url: `${node.endpoint}/trpc`,

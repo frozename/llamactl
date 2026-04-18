@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { initTRPC, TRPCError } from '@trpc/server';
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
-import { createTRPCProxyClient, httpBatchLink, TRPCClientError } from '@trpc/client';
+import { createTRPCClient, httpBatchLink, TRPCClientError } from '@trpc/client';
 import { z } from 'zod';
 
 /**
@@ -115,14 +115,14 @@ describe('tRPC + Bun.serve + fetchRequestHandler (Phase A.2 spike)', () => {
   });
 
   test('query round-trips', async () => {
-    const client = createTRPCProxyClient<SpikeRouter>({
+    const client = createTRPCClient<SpikeRouter>({
       links: [httpBatchLink({ url: svr.url })],
     });
     expect(await client.ping.query()).toBe('pong');
   });
 
   test('mutation round-trips with input validation', async () => {
-    const client = createTRPCProxyClient<SpikeRouter>({
+    const client = createTRPCClient<SpikeRouter>({
       links: [httpBatchLink({ url: svr.url })],
     });
     const result = await client.echo.mutate('hello');
@@ -130,7 +130,7 @@ describe('tRPC + Bun.serve + fetchRequestHandler (Phase A.2 spike)', () => {
   });
 
   test('bearer auth: valid token → authed procedure returns ctx', async () => {
-    const client = createTRPCProxyClient<SpikeRouter>({
+    const client = createTRPCClient<SpikeRouter>({
       links: [
         httpBatchLink({
           url: svr.url,
@@ -142,7 +142,7 @@ describe('tRPC + Bun.serve + fetchRequestHandler (Phase A.2 spike)', () => {
   });
 
   test('bearer auth: missing token → UNAUTHORIZED', async () => {
-    const client = createTRPCProxyClient<SpikeRouter>({
+    const client = createTRPCClient<SpikeRouter>({
       links: [httpBatchLink({ url: svr.url })],
     });
     await expect(client.whoami.query()).rejects.toBeInstanceOf(TRPCClientError);
@@ -154,7 +154,7 @@ describe('tRPC + Bun.serve + fetchRequestHandler (Phase A.2 spike)', () => {
   });
 
   test('client abort propagates to server', async () => {
-    const client = createTRPCProxyClient<SpikeRouter>({
+    const client = createTRPCClient<SpikeRouter>({
       links: [
         httpBatchLink({
           url: svr.url,
