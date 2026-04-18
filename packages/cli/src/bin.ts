@@ -15,6 +15,7 @@ import { runNode } from './commands/node.js';
 import { runCtx } from './commands/ctx.js';
 import { runApply, runDelete, runDescribe, runGet } from './commands/workload.js';
 import { runController } from './commands/controller.js';
+import { runExpose } from './commands/expose.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
@@ -101,6 +102,9 @@ Declarative workloads (Kubernetes-style):
   llamactl controller serve                   Reconcile every manifest on
       [--interval=<s>] [--once]               a timer; restarts servers
                                               that drift from the spec.
+  llamactl expose <target> [--node <n>]       Deploy a model as a workload
+      [--name <w>] [--extra-args="..."]       and print the OpenAI URL
+      [--timeout=<s>] [--json]                external clients should use.
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -147,6 +151,8 @@ async function main(argv: string[]): Promise<number> {
       return runDelete(rest);
     case 'controller':
       return runController(rest);
+    case 'expose':
+      return runExpose(rest);
     case undefined:
     case '--help':
     case '-h':
