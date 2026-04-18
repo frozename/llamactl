@@ -367,9 +367,81 @@ function NodeRow(props: {
   );
 }
 
+function DiscoverPanel(): React.JSX.Element {
+  const discover = trpc.nodeDiscover.useQuery(
+    { timeoutMs: 3000 },
+    { enabled: false, retry: false, staleTime: 30_000 },
+  );
+
+  function scan(): void {
+    void discover.refetch();
+  }
+
+  const rows = discover.data ?? [];
+  return (
+    <div className="mt-4 space-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium text-[color:var(--color-fg)]">
+          Discover LAN agents
+          <span className="ml-2 text-[10px] text-[color:var(--color-fg-muted)]">(mDNS / Bonjour)</span>
+        </div>
+        <button
+          type="button"
+          onClick={scan}
+          disabled={discover.isFetching}
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-fg)] disabled:opacity-50"
+        >
+          {discover.isFetching ? 'Scanning…' : 'Scan (3s)'}
+        </button>
+      </div>
+      {discover.error && (
+        <div className="text-xs text-[color:var(--color-danger)]">
+          {discover.error.message}
+        </div>
+      )}
+      {discover.data && rows.length === 0 && (
+        <div className="text-xs text-[color:var(--color-fg-muted)]">
+          No agents found. Make sure the remote machine has <span className="font-mono">llamactl agent serve</span> running on the same network.
+        </div>
+      )}
+      {rows.length > 0 && (
+        <ul className="space-y-1">
+          {rows.map((r) => (
+            <li
+              key={`${r.host}:${r.port}`}
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono text-[color:var(--color-fg)]">{r.nodeName}</span>
+                <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+                  {r.alreadyRegistered ? 'registered' : 'new'}
+                  {r.version ? ` · v${r.version}` : ''}
+                </span>
+              </div>
+              <div className="mt-1 font-mono text-[10px] text-[color:var(--color-fg-muted)]">
+                {r.url}
+                {r.fingerprint && (
+                  <>
+                    <span className="mx-1">·</span>
+                    <span title={r.fingerprint}>{r.fingerprint.slice(0, 20)}…</span>
+                  </>
+                )}
+              </div>
+              <div className="mt-1 text-[10px] text-[color:var(--color-fg-muted)]">
+                To register: run <span className="font-mono">llamactl agent init</span> on {r.nodeName}, then paste the bootstrap above.
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function Nodes(): React.JSX.Element {
   const list = trpc.nodeList.useQuery();
   const [showRegister, setShowRegister] = useState(false);
+  const [showDiscover, setShowDiscover] = useState(false);
 
   if (list.isLoading) {
     return (
@@ -395,14 +467,24 @@ export default function Nodes(): React.JSX.Element {
             <span className="font-mono">{data.defaultNode}</span>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowRegister((v) => !v)}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-fg)]"
-        >
-          {showRegister ? 'Cancel' : 'Register node'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setShowDiscover((v) => !v)}
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-fg)]"
+          >
+            {showDiscover ? 'Hide discover' : 'Discover'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowRegister((v) => !v)}
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-fg)]"
+          >
+            {showRegister ? 'Cancel' : 'Register node'}
+          </button>
+        </div>
       </div>
+      {showDiscover && <DiscoverPanel />}
       {showRegister && <RegisterPanel onDone={() => setShowRegister(false)} />}
       <div className="space-y-2">
         {data.nodes.length === 0 && (

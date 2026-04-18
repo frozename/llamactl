@@ -73,6 +73,9 @@ export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
         port: 0,
         tokenHash: token.hash,
         tls: { certPath: cert.certPath, keyPath: cert.keyPath },
+        // Hermetic test clusters stay off the LAN — mDNS would
+        // otherwise make every test run advertise itself.
+        advertiseMdns: false,
       });
       cfg = kubecfg.upsertNode(cfg, 'home', {
         name,

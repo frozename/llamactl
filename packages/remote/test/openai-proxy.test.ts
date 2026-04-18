@@ -126,6 +126,7 @@ beforeAll(async () => {
     port: 0,
     tokenHash: token.hash,
     tls: { certPath: cert.certPath, keyPath: cert.keyPath },
+    advertiseMdns: false,
   });
 });
 

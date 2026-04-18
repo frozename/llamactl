@@ -82,6 +82,7 @@ describe('startAgentServer (TLS, pinned cert)', () => {
     server = startAgentServer({
       tokenHash: hash,
       tls: { certPath, keyPath },
+      advertiseMdns: false,
     });
   });
   afterEach(async () => {
@@ -127,6 +128,7 @@ describe('startAgentServer (TLS, pinned cert)', () => {
     const srv2 = startAgentServer({
       tokenHash: wrongHash,
       tls: { certPath, keyPath },
+      advertiseMdns: false,
     });
     try {
       const client = createRemoteNodeClient({

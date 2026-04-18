@@ -13,6 +13,7 @@ import {
   registry as metricsRegistry,
   statusClass,
 } from './metrics.js';
+import { publishAgentMdns, type PublishedAgent } from './mdns.js';
 
 export interface StartAgentOptions {
   bindHost?: string;          // default '127.0.0.1'
@@ -28,6 +29,12 @@ export interface StartAgentOptions {
    */
   nodeName?: string;
   version?: string;
+  /**
+   * Advertise this agent over mDNS so other LAN nodes can discover
+   * it. Defaults to true on a TLS-enabled agent (production), false
+   * otherwise (hermetic test agents shouldn't pollute the network).
+   */
+  advertiseMdns?: boolean;
 }
 
 export interface RunningAgent {
@@ -149,11 +156,30 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
 
   const scheme = opts.tls ? 'https' : 'http';
   const listenPort = server.port ?? port;
+
+  let mdns: PublishedAgent | null = null;
+  const shouldAdvertise = opts.advertiseMdns ?? Boolean(opts.tls);
+  if (shouldAdvertise) {
+    try {
+      mdns = publishAgentMdns({
+        port: listenPort,
+        nodeName: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? 'agent',
+        fingerprint,
+        version: opts.version ?? '0.0.0',
+      });
+    } catch {
+      // mDNS is best-effort — platforms without a working multicast
+      // interface shouldn't prevent the agent from starting.
+      mdns = null;
+    }
+  }
+
   return {
     url: `${scheme}://${bindHost}:${listenPort}`,
     port: listenPort,
     fingerprint,
     stop: async () => {
+      await mdns?.stop().catch(() => {});
       server.stop(true);
     },
   };

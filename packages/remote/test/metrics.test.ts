@@ -72,6 +72,7 @@ beforeAll(async () => {
     tls: { certPath: cert.certPath, keyPath: cert.keyPath },
     nodeName: 'metrics-test-node',
     version: '1.2.3',
+    advertiseMdns: false,
   });
 });
 

@@ -348,6 +348,42 @@ export const router = t.router({
       };
     }),
 
+  /**
+   * Broadcast-listen for llamactl agents on the local network.
+   * Deduplicates against the current kubeconfig so already-registered
+   * nodes are flagged and new candidates surface cleanly. Pure
+   * discovery — it doesn't reveal or receive any bearer tokens, so
+   * the user still has to paste a bootstrap blob to finish registration.
+   */
+  nodeDiscover: t.procedure
+    .input(z.object({ timeoutMs: z.number().int().positive().max(10000).optional() }).optional())
+    .query(async ({ input }) => {
+      const { discoverAgents } = await import('./server/mdns.js');
+      const found = await discoverAgents(input?.timeoutMs ?? 2500);
+      const cfg = kubecfg.loadConfig();
+      const cluster = cfg.clusters.find(
+        (c) => c.name === kubecfg.currentContext(cfg).cluster,
+      );
+      const existingFingerprints = new Set(
+        (cluster?.nodes ?? [])
+          .map((n) => n.certificateFingerprint)
+          .filter((fp): fp is string => typeof fp === 'string' && fp.length > 0),
+      );
+      return found.map((svc) => ({
+        name: svc.name,
+        nodeName: svc.nodeName,
+        host: svc.host,
+        port: svc.port,
+        addresses: svc.addresses,
+        version: svc.version,
+        fingerprint: svc.fingerprint,
+        url: `https://${svc.host}:${svc.port}`,
+        alreadyRegistered: svc.fingerprint
+          ? existingFingerprints.has(svc.fingerprint)
+          : false,
+      }));
+    }),
+
   // ---- workload management --------------------------------------------
 
   workloadList: t.procedure.query(async () => {

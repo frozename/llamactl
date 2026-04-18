@@ -130,6 +130,7 @@ beforeEach(async () => {
     port: 0,
     tokenHash: tok.hash,
     tls: { certPath: cert.certPath, keyPath: cert.keyPath },
+    advertiseMdns: false,
   });
 });
 
