@@ -36,6 +36,58 @@ export const useNodeSelection = create<NodeSelectionStore>()(
   ),
 );
 
+type SelectorNode = {
+  name: string;
+  effectiveKind?: 'agent' | 'gateway' | 'provider';
+};
+
+interface SelectorGroup {
+  /** Empty string renders ungrouped (flat options); non-empty wraps in
+   *  an `<optgroup label=…>`. */
+  label: string;
+  items: SelectorNode[];
+}
+
+/**
+ * Lay out the flat node list into selector groups that make the
+ * dropdown readable when provider nodes fan out from a gateway.
+ * Everything non-provider goes first as a flat list (agents + gateways
+ * + local); each gateway with provider children gets its own
+ * `<optgroup>` immediately after, labelled with the gateway's name.
+ */
+function groupNodesForSelector(nodes: readonly SelectorNode[]): SelectorGroup[] {
+  const kindOf = (n: SelectorNode): 'agent' | 'gateway' | 'provider' =>
+    n.effectiveKind ?? 'agent';
+
+  const roots = nodes.filter((n) => kindOf(n) !== 'provider');
+  const providerChildrenByGateway = new Map<string, SelectorNode[]>();
+  for (const n of nodes) {
+    if (kindOf(n) !== 'provider') continue;
+    const gatewayName = n.name.split('.')[0] ?? '';
+    if (!gatewayName) continue;
+    const bucket = providerChildrenByGateway.get(gatewayName) ?? [];
+    bucket.push(n);
+    providerChildrenByGateway.set(gatewayName, bucket);
+  }
+
+  const groups: SelectorGroup[] = [{ label: '', items: roots }];
+  // Order provider optgroups by the gateway's position in the top list.
+  for (const root of roots) {
+    const children = providerChildrenByGateway.get(root.name);
+    if (children && children.length > 0) {
+      groups.push({ label: `via ${root.name}`, items: children });
+    }
+  }
+  // Orphan provider nodes (parent gateway was hidden/removed) — put
+  // them in a labelled bucket so they don't vanish.
+  for (const [gw, children] of providerChildrenByGateway.entries()) {
+    if (!roots.some((r) => r.name === gw)) {
+      groups.push({ label: `via ${gw} (missing)`, items: children });
+    }
+  }
+  return groups;
+}
+
 export function NodeSelector(): React.JSX.Element | null {
   const qc = useQueryClient();
   const utils = trpc.useUtils();
@@ -124,11 +176,23 @@ export function NodeSelector(): React.JSX.Element | null {
         onChange={(e) => setSelectedNode(e.target.value)}
         className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)]"
       >
-        {nodes.map((n) => (
-          <option key={n.name} value={n.name}>
-            {n.name}
-          </option>
-        ))}
+        {groupNodesForSelector(nodes).map((group) =>
+          group.label ? (
+            <optgroup key={group.label} label={group.label}>
+              {group.items.map((n) => (
+                <option key={n.name} value={n.name}>
+                  {n.name}
+                </option>
+              ))}
+            </optgroup>
+          ) : (
+            group.items.map((n) => (
+              <option key={n.name} value={n.name}>
+                {n.name}
+              </option>
+            ))
+          ),
+        )}
       </select>
       {healthy === false && !isLocalSelection && (
         <>

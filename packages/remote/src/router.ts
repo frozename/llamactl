@@ -256,8 +256,55 @@ export const router = t.router({
     .query(async ({ input }) => {
       const cfg = kubecfg.loadConfig();
       const resolved = kubecfg.resolveNode(cfg, input.name);
-      const token = kubecfg.resolveToken(resolved.user);
+      const { resolveNodeKind } = await import('./config/schema.js');
+      const kind = resolveNodeKind(resolved.node);
       const node = resolved.node;
+
+      // Gateway + provider kinds don't have nodeFacts (no llamactl
+      // agent behind them). Probe via the OpenAI-compat adapter's
+      // healthCheck — cheap `/v1/models` call that confirms the
+      // upstream answers and, for provider kind, that at least one
+      // model claims `owned_by === providerName`.
+      if (kind === 'gateway' || kind === 'provider') {
+        const { providerForNode } = await import('./providers/factory.js');
+        try {
+          const provider = providerForNode({ node, user: resolved.user, cfg });
+          const health = await provider.healthCheck?.();
+          if (!health) return { ok: true as const, facts: null };
+          if (health.state === 'healthy' || health.state === 'degraded') {
+            // For provider kind, also confirm the upstream actually
+            // carries that provider's models — a gateway reporting
+            // healthy doesn't prove the specific provider is alive.
+            if (kind === 'provider' && provider.listModels) {
+              try {
+                const models = await provider.listModels();
+                const binding = node.provider!;
+                const hit = models.some(
+                  (m) => (m as { owned_by?: string }).owned_by === binding.providerName,
+                );
+                if (!hit) {
+                  return {
+                    ok: false as const,
+                    error: `provider '${binding.providerName}' not present in gateway's model catalog`,
+                  };
+                }
+              } catch {
+                // If listModels fails, fall back to the gateway's
+                // health. Not ideal but not worth failing the probe.
+              }
+            }
+            return { ok: true as const, facts: null };
+          }
+          return {
+            ok: false as const,
+            error: health.error ?? `state=${health.state}`,
+          };
+        } catch (err) {
+          return { ok: false as const, error: (err as Error).message };
+        }
+      }
+
+      const token = kubecfg.resolveToken(resolved.user);
       if (node.endpoint.startsWith('inproc://')) {
         return { ok: true as const, facts: nodeFactsMod.collectNodeFacts() };
       }
