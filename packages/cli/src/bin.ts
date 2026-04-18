@@ -13,6 +13,7 @@ import { runUninstall } from './commands/uninstall.js';
 import { runAgent } from './commands/agent.js';
 import { runNode } from './commands/node.js';
 import { runCtx } from './commands/ctx.js';
+import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
 
@@ -132,5 +133,14 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-const code = await main(process.argv.slice(2));
+let parsedArgv: string[];
+try {
+  const { globals, rest } = extractGlobalFlags(process.argv.slice(2));
+  setGlobals(globals);
+  parsedArgv = rest;
+} catch (err) {
+  process.stderr.write(`${(err as Error).message}\n`);
+  process.exit(1);
+}
+const code = await main(parsedArgv);
 process.exit(code);
