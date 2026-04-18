@@ -409,6 +409,132 @@ export const router = t.router({
       return { ok: true as const, name: input.name, baseUrl: binding.baseUrl };
     }),
 
+  // ---- chat (Nova-typed) ---------------------------------------------
+
+  /**
+   * Non-streaming chat completion against a node's provider (cloud
+   * adapter or the agent's `/v1` gateway). Returns the full
+   * `UnifiedAiResponse` — identical shape whether the node is a
+   * local agent, remote agent, or cloud provider.
+   *
+   * Streaming lives in `chatStream`.
+   */
+  chatComplete: t.procedure
+    .input(
+      z.object({
+        node: z.string().min(1),
+        request: z.object({
+          model: z.string(),
+          messages: z.array(
+            z.object({
+              role: z.string(),
+              content: z.union([z.string(), z.array(z.unknown()), z.null()]),
+            }),
+          ),
+          temperature: z.number().optional(),
+          max_tokens: z.number().int().positive().optional(),
+          providerOptions: z.record(z.string(), z.unknown()).optional(),
+        }).passthrough(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const cfg = kubecfg.loadConfig();
+      const resolved = kubecfg.resolveNode(cfg, input.node);
+      if (resolved.node.endpoint === 'inproc://local') {
+        // Local agent — short-circuit through core's openaiProxy.
+        const { openaiProxy } = await import('@llamactl/core');
+        const req = new Request('http://local/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ...input.request, stream: false }),
+        });
+        const res = await openaiProxy.proxyOpenAI(req);
+        if (!res.ok) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: `local chat ${res.status}`,
+          });
+        }
+        return res.json();
+      }
+      const { providerForNode } = await import('./providers/factory.js');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const provider = providerForNode({ node: resolved.node, user: resolved.user });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return provider.createResponse(input.request as any);
+    }),
+
+  /**
+   * Streaming chat completion. Yields `UnifiedStreamEvent` values from
+   * Nova — chunks, tool calls, errors, and a final `done` event —
+   * bridged back through the dispatcher's subscription transport.
+   */
+  chatStream: t.procedure
+    .input(
+      z.object({
+        node: z.string().min(1),
+        request: z.object({
+          model: z.string(),
+          messages: z.array(
+            z.object({
+              role: z.string(),
+              content: z.union([z.string(), z.array(z.unknown()), z.null()]),
+            }),
+          ),
+          temperature: z.number().optional(),
+          max_tokens: z.number().int().positive().optional(),
+          providerOptions: z.record(z.string(), z.unknown()).optional(),
+        }).passthrough(),
+      }),
+    )
+    .subscription(async function* ({ input, signal }) {
+      const cfg = kubecfg.loadConfig();
+      const resolved = kubecfg.resolveNode(cfg, input.node);
+      const { providerForNode } = await import('./providers/factory.js');
+      // Local-inproc agent: same OpenAI-compat adapter, but pointed at
+      // the in-process llama-server's HTTP endpoint (not the
+      // sentinel). resolveEnv() gives us LLAMA_CPP_HOST/PORT.
+      if (resolved.node.endpoint === 'inproc://local') {
+        const { env: envMod } = await import('@llamactl/core');
+        const { createOpenAICompatProvider } = await import('@llamactl/nova');
+        const rEnv = envMod.resolveEnv();
+        const provider = createOpenAICompatProvider({
+          name: 'local',
+          baseUrl: `http://${rEnv.LLAMA_CPP_HOST}:${rEnv.LLAMA_CPP_PORT}/v1`,
+          apiKey: 'local',
+        });
+        const stream = provider.streamResponse?.(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          input.request as any,
+          signal,
+        );
+        if (!stream) {
+          yield { type: 'done' as const, finish_reason: 'stop' as const };
+          return;
+        }
+        for await (const ev of stream) {
+          if (signal?.aborted) break;
+          yield ev;
+        }
+        return;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const provider = providerForNode({ node: resolved.node, user: resolved.user });
+      const stream = provider.streamResponse?.(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        input.request as any,
+        signal,
+      );
+      if (!stream) {
+        yield { type: 'done' as const, finish_reason: 'stop' as const };
+        return;
+      }
+      for await (const ev of stream) {
+        if (signal?.aborted) break;
+        yield ev;
+      }
+    }),
+
   /**
    * List the models a node exposes — works for both agent and cloud
    * kinds via their respective `AiProvider.listModels()` impl. Used

@@ -5,6 +5,7 @@ import {
   Download,
   LayoutDashboard,
   Layers,
+  MessageSquare,
   Network,
   PackagePlus,
   ScrollText,
@@ -34,6 +35,7 @@ export interface AppModule {
 
 const LazyDashboard = lazy(() => import('./dashboard/index'));
 const LazyNodes = lazy(() => import('./nodes/index'));
+const LazyChat = lazy(() => import('./chat/index'));
 const LazyWorkloads = lazy(() => import('./workloads/index'));
 const LazyModels = lazy(() => import('./models/index'));
 const LazyPulls = lazy(() => import('./pulls/index'));
@@ -59,53 +61,59 @@ export const APP_MODULES: AppModule[] = [
     shortcut: 2,
   },
   {
+    id: 'chat',
+    labelKey: 'Chat',
+    icon: MessageSquare,
+    Component: LazyChat,
+    shortcut: 3,
+  },
+  {
     id: 'workloads',
     labelKey: 'Workloads',
     icon: Layers,
     Component: LazyWorkloads,
-    shortcut: 3,
+    shortcut: 4,
   },
   {
     id: 'models',
     labelKey: 'Models',
     icon: Database,
     Component: LazyModels,
-    shortcut: 4,
+    shortcut: 5,
   },
   {
     id: 'pulls',
     labelKey: 'Pulls',
     icon: Download,
     Component: LazyPulls,
-    shortcut: 5,
+    shortcut: 6,
   },
   {
     id: 'bench',
     labelKey: 'Bench',
     icon: Activity,
     Component: LazyBench,
-    shortcut: 6,
+    shortcut: 7,
   },
   {
     id: 'server',
     labelKey: 'Server',
     icon: ServerIcon,
     Component: LazyServer,
-    shortcut: 7,
+    shortcut: 8,
   },
   {
     id: 'logs',
     labelKey: 'Logs',
     icon: ScrollText,
     Component: LazyLogs,
-    shortcut: 8,
+    shortcut: 9,
   },
   {
     id: 'lmstudio',
     labelKey: 'LM Studio',
     icon: PackagePlus,
     Component: LazyLMStudio,
-    shortcut: 9,
   },
   {
     id: 'settings',

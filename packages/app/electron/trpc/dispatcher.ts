@@ -45,6 +45,8 @@ const CONTROL_PLANE_ONLY = new Set<string>([
   'nodeDiscover',
   'nodeAddCloud',
   'nodeModels',
+  'chatComplete',
+  'chatStream',
   'workloadList',
   'workloadDescribe',
   'workloadApply',
