@@ -68,7 +68,10 @@ describe('llamactl node', () => {
       token: 'll_agt_sampleToken',
       certificate: '-----BEGIN CERTIFICATE-----\nABCD\n-----END CERTIFICATE-----\n',
     });
-    const add = runCli(['node', 'add', 'gpu1', '--bootstrap', blob], env);
+    // --force skips the reachability check; the blob points at no
+    // running agent, which is what the other tests in this file
+    // previously relied on implicitly.
+    const add = runCli(['node', 'add', 'gpu1', '--bootstrap', blob, '--force'], env);
     expect(add.code).toBe(0);
     expect(add.stdout).toContain("added node 'gpu1'");
 
@@ -89,6 +92,7 @@ describe('llamactl node', () => {
       '--server', 'https://gpu2.lan:7843',
       '--fingerprint', 'sha256:' + 'b'.repeat(64),
       '--token', 'll_agt_abc',
+      '--force',
     ], env);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("added node 'gpu2'");
@@ -108,6 +112,7 @@ describe('llamactl node', () => {
       '--server', 'https://gpu3.lan:7843',
       '--fingerprint', 'sha256:' + 'c'.repeat(64),
       '--token', 'ok',
+      '--force',
     ], env);
     const rm = runCli(['node', 'rm', 'gpu3'], env);
     expect(rm.code).toBe(0);

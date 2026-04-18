@@ -4,6 +4,7 @@ import {
   config as kubecfg,
   configSchema,
   createNodeClient,
+  createRemoteNodeClient,
 } from '@llamactl/remote';
 
 const USAGE = `Usage: llamactl node <subcommand>
@@ -11,14 +12,19 @@ const USAGE = `Usage: llamactl node <subcommand>
 Subcommands:
   ls [--json]
       List nodes in the current context.
-  add <name> --bootstrap <blob>
+  add <name> --bootstrap <blob> [--force]
       Decode a bootstrap blob from 'llamactl agent init' and persist it.
-  add <name> --server <url> --fingerprint <sha256:...> [--token <tok>|--token-file <p>]
+  add <name> --server <url> --fingerprint <sha256:...>
+      [--token <tok>|--token-file <p>] [--force]
       Register a node explicitly.
   rm <name>
       Remove a node (refuses to remove 'local').
   test <name>
       Call nodeFacts() against the node and print the result.
+
+By default, 'add' verifies the node is reachable with the supplied
+credentials before persisting. Pass --force to skip the check
+(useful when registering a node that isn't online yet).
 
 Kubeconfig path: \$LLAMACTL_CONFIG, or \$DEV_STORAGE/config, or ~/.llamactl/config.
 `;
@@ -90,15 +96,17 @@ interface AddFlags {
   token?: string;
   tokenFile?: string;
   certificate?: string;        // inline PEM (currently unused; written if bootstrap + fetch succeeds)
+  force: boolean;
 }
 
 function parseAdd(args: string[]): AddFlags | { error: string } {
   if (args.length === 0) return { error: 'node add: missing <name>' };
   const [name, ...rest] = args;
   if (!name || name.startsWith('-')) return { error: 'node add: missing <name>' };
-  const flags: AddFlags = { name };
+  const flags: AddFlags = { name, force: false };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!;
+    if (arg === '--force') { flags.force = true; continue; }
     if (arg === '--bootstrap') { flags.bootstrap = rest[++i]; continue; }
     if (arg === '--server') { flags.server = rest[++i]; continue; }
     if (arg === '--fingerprint') { flags.fingerprint = rest[++i]; continue; }
@@ -119,7 +127,7 @@ function parseAdd(args: string[]): AddFlags | { error: string } {
   return flags;
 }
 
-function runAdd(args: string[]): number {
+async function runAdd(args: string[]): Promise<number> {
   const parsed = parseAdd(args);
   if ('error' in parsed) {
     process.stderr.write(`${parsed.error}\n`);
@@ -148,6 +156,40 @@ function runAdd(args: string[]): number {
     else if (f.tokenFile) token = readFileSync(f.tokenFile, 'utf8').trim();
     else {
       process.stderr.write('node add: --token or --token-file required when not using --bootstrap\n');
+      return 1;
+    }
+  }
+
+  // Probe the node for reachability + credential validity before we
+  // commit anything to the kubeconfig. nodeFacts is the cheapest query
+  // on the router that exercises auth + TLS end-to-end.
+  type ProbeFacts = {
+    nodeName: string;
+    profile: string;
+    platform: string;
+    advertisedEndpoint?: string;
+  };
+  let probeFacts: ProbeFacts | null = null;
+  if (!f.force) {
+    try {
+      const probeClient = createRemoteNodeClient({
+        url,
+        token,
+        ...(certificate ? { certificate } : {}),
+        certificateFingerprint: fingerprint,
+      });
+      probeFacts = await probeClient.nodeFacts.query() as ProbeFacts;
+    } catch (err) {
+      process.stderr.write(
+        [
+          `node add: reachability check failed for ${url}`,
+          `  error: ${(err as Error).message}`,
+          `  hint:  verify the agent is running and \`llamactl agent serve\``,
+          `         started successfully on that host; or pass --force to`,
+          `         persist without the check.`,
+          '',
+        ].join('\n'),
+      );
       return 1;
     }
   }
@@ -192,7 +234,25 @@ function runAdd(args: string[]): number {
   cfg = kubecfg.upsertNode(cfg, ctx.cluster, nodeEntry);
 
   kubecfg.saveConfig(cfg, cfgPath);
-  process.stdout.write(`added node '${f.name}' (${url}) to context '${ctx.name}'\n`);
+  if (probeFacts) {
+    const advertised = probeFacts.advertisedEndpoint && probeFacts.advertisedEndpoint.length > 0
+      ? probeFacts.advertisedEndpoint
+      : '(not set)';
+    process.stdout.write(
+      [
+        `added node '${f.name}' (${url}) to context '${ctx.name}'`,
+        `  profile:    ${probeFacts.profile}`,
+        `  platform:   ${probeFacts.platform}`,
+        `  advertised: ${advertised}`,
+        '',
+      ].join('\n'),
+    );
+  } else {
+    // --force path — unverified persistence
+    process.stdout.write(
+      `added node '${f.name}' (${url}) to context '${ctx.name}' [unverified]\n`,
+    );
+  }
   return 0;
 }
 
