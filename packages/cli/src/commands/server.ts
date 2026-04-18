@@ -1,0 +1,187 @@
+import { env as envMod, server } from '@llamactl/core';
+
+const USAGE = `Usage: llamactl server <subcommand>
+
+Subcommands:
+  start <target> [--timeout=<s>] [--no-tuned] [--json] [-- extra-args]
+      Launch llama-server in the background with the tuned profile
+      args (when available), wait for /health=200 up to <timeout>
+      seconds (default 60), and record the PID. Everything after \`--\`
+      is forwarded to llama-server as-is.
+
+  stop [--grace=<s>] [--json]
+      SIGTERM the tracked llama-server PID and escalate to SIGKILL
+      after <grace> seconds (default 5).
+
+  status [--json]
+      Report whether llama-server is reachable at the configured
+      endpoint and what PID (if any) is tracked.
+`;
+
+function forwardEvent(e: server.ServerEvent): void {
+  switch (e.type) {
+    case 'launch':
+      process.stderr.write(`$ ${e.command} ${e.args.join(' ')}\n`);
+      process.stderr.write(`launched pid=${e.pid}\n`);
+      break;
+    case 'waiting':
+      // Quiet by default — a dot would help but spams stderr. Emit
+      // one line every ~10 attempts so the user sees forward progress
+      // without drowning in httpCode logs.
+      if (e.attempt % 10 === 0) {
+        process.stderr.write(
+          `waiting ... attempt=${e.attempt} http=${e.httpCode ?? 'n/a'}\n`,
+        );
+      }
+      break;
+    case 'retry':
+      process.stderr.write(`retrying: ${e.reason}\n`);
+      break;
+    case 'ready':
+      process.stderr.write(`ready pid=${e.pid} endpoint=${e.endpoint}\n`);
+      break;
+    case 'timeout':
+      process.stderr.write(`timeout pid=${e.pid}\n`);
+      break;
+    case 'exited':
+      process.stderr.write(`exited code=${e.code ?? '?'}\n`);
+      break;
+  }
+}
+
+async function runStart(args: string[]): Promise<number> {
+  const positional: string[] = [];
+  const extra: string[] = [];
+  let json = false;
+  let skipTuned = false;
+  let timeoutSeconds = 60;
+  let sawDashDash = false;
+  for (const arg of args) {
+    if (sawDashDash) {
+      extra.push(arg);
+      continue;
+    }
+    if (arg === '--') {
+      sawDashDash = true;
+    } else if (arg === '--json') {
+      json = true;
+    } else if (arg === '--no-tuned') {
+      skipTuned = true;
+    } else if (arg.startsWith('--timeout=')) {
+      const n = Number.parseInt(arg.slice('--timeout='.length), 10);
+      if (Number.isFinite(n) && n > 0) timeoutSeconds = n;
+    } else if (arg === '-h' || arg === '--help') {
+      process.stdout.write(USAGE);
+      return 0;
+    } else if (arg.startsWith('--')) {
+      process.stderr.write(`Unknown flag: ${arg}\n`);
+      return 1;
+    } else {
+      positional.push(arg);
+    }
+  }
+  const target = positional[0] ?? 'current';
+  if (positional.length > 1) {
+    process.stderr.write(
+      `Extra positional args need to follow \`--\`: ${positional.slice(1).join(' ')}\n`,
+    );
+    return 1;
+  }
+
+  const result = await server.startServer({
+    target,
+    extraArgs: extra,
+    timeoutSeconds,
+    skipTuned,
+    onEvent: forwardEvent,
+  });
+
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else if (!result.ok) {
+    process.stderr.write(`${result.error ?? 'server failed to start'}\n`);
+  } else {
+    process.stdout.write(
+      `llama-server up pid=${result.pid} endpoint=${result.endpoint}${result.tunedProfile ? ` tuned=${result.tunedProfile}` : ''}${result.retried ? ' (retried)' : ''}\n`,
+    );
+  }
+  return result.ok ? 0 : 1;
+}
+
+async function runStop(args: string[]): Promise<number> {
+  let json = false;
+  let graceSeconds = 5;
+  for (const arg of args) {
+    if (arg === '--json') json = true;
+    else if (arg.startsWith('--grace=')) {
+      const n = Number.parseInt(arg.slice('--grace='.length), 10);
+      if (Number.isFinite(n) && n > 0) graceSeconds = n;
+    } else if (arg === '-h' || arg === '--help') {
+      process.stdout.write(USAGE);
+      return 0;
+    } else if (arg.startsWith('--')) {
+      process.stderr.write(`Unknown flag: ${arg}\n`);
+      return 1;
+    }
+  }
+  const result = await server.stopServer({ graceSeconds });
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    process.stdout.write(
+      `stopped pid=${result.pid ?? 'none'}${result.killed ? ' (SIGKILL)' : ''}\n`,
+    );
+  }
+  return 0;
+}
+
+async function runStatus(args: string[]): Promise<number> {
+  let json = false;
+  for (const arg of args) {
+    if (arg === '--json') json = true;
+    else if (arg === '-h' || arg === '--help') {
+      process.stdout.write(USAGE);
+      return 0;
+    } else if (arg.startsWith('--')) {
+      process.stderr.write(`Unknown flag: ${arg}\n`);
+      return 1;
+    }
+  }
+  const resolved = envMod.resolveEnv();
+  const status = await server.serverStatus(resolved);
+  if (json) {
+    process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+    return status.state === 'up' ? 0 : 1;
+  }
+  process.stdout.write(
+    [
+      `state=${status.state}`,
+      `endpoint=${status.endpoint}`,
+      `pid=${status.pid ?? 'none'}`,
+      `http=${status.health.httpCode ?? 'unreachable'}`,
+      '',
+    ].join('\n'),
+  );
+  return status.state === 'up' ? 0 : 1;
+}
+
+export async function runServer(args: string[]): Promise<number> {
+  const [sub, ...rest] = args;
+  switch (sub) {
+    case 'start':
+      return runStart(rest);
+    case 'stop':
+      return runStop(rest);
+    case 'status':
+      return runStatus(rest);
+    case undefined:
+    case '-h':
+    case '--help':
+    case 'help':
+      process.stdout.write(USAGE);
+      return sub ? 0 : 1;
+    default:
+      process.stderr.write(`Unknown server subcommand: ${sub}\n\n${USAGE}`);
+      return 1;
+  }
+}

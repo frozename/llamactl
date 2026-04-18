@@ -3,6 +3,7 @@ import { runEnv } from './commands/env.js';
 import { runCatalog } from './commands/catalog.js';
 import { runBench } from './commands/bench.js';
 import { runCandidate } from './commands/candidate.js';
+import { runServer } from './commands/server.js';
 import { runRecommendations } from './commands/recommendations.js';
 import { runDiscover } from './commands/discover.js';
 import { runPull } from './commands/pull.js';
@@ -44,6 +45,11 @@ Write commands:
   llamactl candidate test <repo> [file] [profile]
                                               Discover + pull + tune + compare
                                               pipeline (--json supported)
+  llamactl server start [target] [--timeout=60] [-- extra llama-server args]
+                                              Start llama-server in the
+                                              background with tuned args
+  llamactl server stop [--grace=5]            Stop the tracked llama-server
+  llamactl server status                      Show state + endpoint + pid
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -68,6 +74,8 @@ async function main(argv: string[]): Promise<number> {
       return runPull(rest);
     case 'candidate':
       return runCandidate(rest);
+    case 'server':
+      return runServer(rest);
     case undefined:
     case '--help':
     case '-h':

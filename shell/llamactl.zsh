@@ -2268,6 +2268,26 @@ llama-bench-local() {
 }
 
 llama-start() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    if [ $# -eq 0 ]; then
+      bun "$cli" server start
+      return $?
+    fi
+    local target="$1"
+    shift
+    if [ $# -gt 0 ]; then
+      bun "$cli" server start "$target" -- "$@"
+    else
+      bun "$cli" server start "$target"
+    fi
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_start_legacy() {
   local model="${1:-$LLAMA_CPP_DEFAULT_MODEL}"
   local health_endpoint="$(_llama_endpoint)/health"
   local model_path
@@ -2293,7 +2313,7 @@ llama-start() {
     return 1
   }
 
-  llama-stop >/dev/null 2>&1 || true
+  _llama_stop_legacy >/dev/null 2>&1 || true
 
   if _llama_tuned_profile_enabled; then
     tuned_mode="$(_llama_bench_mode_for_rel_and_args "$model" "$@")"
@@ -2316,7 +2336,7 @@ llama-start() {
   pid="$(_llama_launch_server_background "$model_path" "${launch_args[@]}")"
 
   if _llama_wait_for_ready "$pid" "$health_endpoint" "$timeout_seconds"; then
-    llama-status
+    _llama_status_legacy
     return 0
   fi
 
@@ -2325,12 +2345,12 @@ llama-start() {
     safe_retry_args_str="$(_llama_safe_retry_args)"
     retry_args=("${launch_args[@]}" ${(z)safe_retry_args_str})
 
-    llama-stop >/dev/null 2>&1 || true
+    _llama_stop_legacy >/dev/null 2>&1 || true
     pid="$(_llama_launch_server_background "$model_path" "${retry_args[@]}")"
 
     if _llama_wait_for_ready "$pid" "$health_endpoint" "$timeout_seconds"; then
       echo "llama.cpp recovered with safe vision flags"
-      llama-status
+      _llama_status_legacy
       return 0
     fi
   fi
@@ -2575,10 +2595,29 @@ llama-keep-alive-status() {
 }
 
 llama-stop() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" server stop "$@"
+    return $?
+  fi
+  pkill -f "(^|/)llama-server($| )" >/dev/null 2>&1 || true
+}
+
+_llama_stop_legacy() {
   pkill -f "(^|/)llama-server($| )" >/dev/null 2>&1 || true
 }
 
 llama-status() {
+  local cli="${LLAMACTL_HOME:-$DEV_STORAGE/repos/personal/llamactl}/packages/cli/src/bin.ts"
+  if command -v bun >/dev/null 2>&1 && [ -f "$cli" ]; then
+    bun "$cli" server status "$@"
+    return $?
+  fi
+  echo "llamactl CLI not available (bun missing or LLAMACTL_HOME unset)" >&2
+  return 1
+}
+
+_llama_status_legacy() {
   local endpoint="$(_llama_endpoint)"
   local health_endpoint="$endpoint/health"
   local http_code=""
