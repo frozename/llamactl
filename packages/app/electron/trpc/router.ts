@@ -9,6 +9,7 @@ import {
   presets,
   pull,
   recommendations,
+  server as serverMod,
   target as targetMod,
   uninstall as uninstallMod,
   type MachineProfile,
@@ -23,6 +24,10 @@ type BenchStreamEvent =
   | bench.BenchEvent
   | { type: 'done-preset'; result: bench.BenchPresetResult }
   | { type: 'done-vision'; result: bench.BenchVisionResult };
+
+type ServerStartEvent =
+  | serverMod.ServerEvent
+  | { type: 'done'; result: serverMod.StartServerResult };
 
 // Plain JSON serialisation — the core read surface returns POJOs only
 // (strings, numbers, arrays, nested objects). We'd swap in superjson if
@@ -138,6 +143,56 @@ export const router = t.router({
       presets.deletePresetOverride(input.profile, input.preset);
       const resolved = envMod.resolveEnv();
       return presets.readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE);
+    }),
+
+  serverStatus: t.procedure.query(async () => serverMod.serverStatus()),
+
+  serverStop: t.procedure
+    .input(z.object({ graceSeconds: z.number().int().positive().max(60).optional() }).optional())
+    .mutation(async ({ input }) =>
+      serverMod.stopServer({ graceSeconds: input?.graceSeconds }),
+    ),
+
+  serverStart: t.procedure
+    .input(
+      z.object({
+        target: z.string().min(1),
+        extraArgs: z.array(z.string()).optional(),
+        timeoutSeconds: z.number().int().positive().max(600).optional(),
+        skipTuned: z.boolean().optional(),
+      }),
+    )
+    .subscription(({ input }) => {
+      return observable<ServerStartEvent>((emit) => {
+        let cancelled = false;
+        void (async () => {
+          try {
+            const result = await serverMod.startServer({
+              target: input.target,
+              extraArgs: input.extraArgs,
+              timeoutSeconds: input.timeoutSeconds,
+              skipTuned: input.skipTuned,
+              onEvent: (e) => {
+                if (!cancelled) emit.next(e);
+              },
+            });
+            if (cancelled) return;
+            emit.next({ type: 'done', result });
+            emit.complete();
+          } catch (err) {
+            if (!cancelled) {
+              emit.error(err instanceof Error ? err : new Error(String(err)));
+            }
+          }
+        })();
+        return () => {
+          // Server start can't be cancelled mid-flight today — the
+          // llama-server subprocess is detached and we can only abort
+          // the readiness polling. For now, teardown just stops
+          // forwarding events; the detached server keeps running.
+          cancelled = true;
+        };
+      });
     }),
 
   uninstall: t.procedure

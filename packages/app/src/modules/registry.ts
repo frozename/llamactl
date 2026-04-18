@@ -4,6 +4,7 @@ import {
   Database,
   Download,
   LayoutDashboard,
+  Server as ServerIcon,
   Settings,
   type LucideIcon,
 } from 'lucide-react';
@@ -31,6 +32,7 @@ const LazyDashboard = lazy(() => import('./dashboard/index'));
 const LazyModels = lazy(() => import('./models/index'));
 const LazyPulls = lazy(() => import('./pulls/index'));
 const LazyBench = lazy(() => import('./bench/index'));
+const LazyServer = lazy(() => import('./server/index'));
 const LazySettings = lazy(() => import('./settings/index'));
 
 export const APP_MODULES: AppModule[] = [
@@ -61,6 +63,13 @@ export const APP_MODULES: AppModule[] = [
     icon: Activity,
     Component: LazyBench,
     shortcut: 4,
+  },
+  {
+    id: 'server',
+    labelKey: 'Server',
+    icon: ServerIcon,
+    Component: LazyServer,
+    shortcut: 5,
   },
   {
     id: 'settings',
