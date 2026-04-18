@@ -1,5 +1,4 @@
 import { initTRPC, TRPCError } from '@trpc/server';
-import { observable } from '@trpc/server/observable';
 import { createTRPCClient } from '@trpc/client';
 import { z } from 'zod';
 import * as kubecfg from './config/kubeconfig.js';
@@ -59,6 +58,64 @@ function localCallerProxy(): WorkloadNodeClient {
     },
   };
   return new Proxy({}, handler) as unknown as WorkloadNodeClient;
+}
+
+/**
+ * Bridge a callback-driven async worker into a tRPC v11 async-generator
+ * subscription. Every `emit(ev)` becomes a yielded value; the generator
+ * completes when `runner` resolves and throws when it rejects. Client
+ * disconnects (`clientSignal.aborted`) propagate into `runner`'s signal
+ * so in-flight work cancels cleanly.
+ */
+async function* bridgeEventStream<T>(
+  clientSignal: AbortSignal,
+  runner: (emit: (evt: T) => void, signal: AbortSignal) => Promise<void>,
+): AsyncGenerator<T, void, unknown> {
+  const controller = new AbortController();
+  const onClientAbort = (): void => controller.abort();
+  clientSignal.addEventListener('abort', onClientAbort);
+
+  const queue: T[] = [];
+  let finished = false;
+  let err: unknown = null;
+  let wake: (() => void) | null = null;
+  const drain = (): void => {
+    const w = wake;
+    wake = null;
+    w?.();
+  };
+
+  const run = (async () => {
+    try {
+      await runner((ev) => {
+        queue.push(ev);
+        drain();
+      }, controller.signal);
+    } catch (e) {
+      err = e;
+    } finally {
+      finished = true;
+      drain();
+    }
+  })();
+
+  try {
+    while (true) {
+      if (queue.length > 0) {
+        yield queue.shift() as T;
+        continue;
+      }
+      if (finished) break;
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+    }
+    if (err) throw err;
+  } finally {
+    clientSignal.removeEventListener('abort', onClientAbort);
+    controller.abort();
+    await run.catch(() => {});
+  }
 }
 
 function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
@@ -542,24 +599,17 @@ export const router = t.router({
         })
         .optional(),
     )
-    .subscription(({ input }) => {
-      return observable<serverLogsMod.LogLineEvent>((emit) => {
-        const controller = new AbortController();
-        void (async () => {
-          try {
-            await serverLogsMod.tailServerLog({
-              lines: input?.lines,
-              follow: input?.follow,
-              signal: controller.signal,
-              onLine: (e) => emit.next(e),
-            });
-            emit.complete();
-          } catch (err) {
-            emit.error(err);
-          }
-        })();
-        return () => controller.abort();
-      });
+    .subscription(async function* ({ input, signal }) {
+      yield* bridgeEventStream<serverLogsMod.LogLineEvent>(
+        signal as AbortSignal,
+        (emit, sig) =>
+          serverLogsMod.tailServerLog({
+            lines: input?.lines,
+            follow: input?.follow,
+            signal: sig,
+            onLine: emit,
+          }),
+      );
     }),
 
   serverStop: t.procedure
@@ -577,36 +627,21 @@ export const router = t.router({
         skipTuned: z.boolean().optional(),
       }),
     )
-    .subscription(({ input }) => {
-      return observable<ServerStartEvent>((emit) => {
-        let cancelled = false;
-        const controller = new AbortController();
-        void (async () => {
-          try {
-            const result = await serverMod.startServer({
-              target: input.target,
-              extraArgs: input.extraArgs,
-              timeoutSeconds: input.timeoutSeconds,
-              skipTuned: input.skipTuned,
-              signal: controller.signal,
-              onEvent: (e) => {
-                if (!cancelled) emit.next(e);
-              },
-            });
-            if (cancelled) return;
-            emit.next({ type: 'done', result });
-            emit.complete();
-          } catch (err) {
-            if (!cancelled) {
-              emit.error(err instanceof Error ? err : new Error(String(err)));
-            }
-          }
-        })();
-        return () => {
-          cancelled = true;
-          controller.abort();
-        };
-      });
+    .subscription(async function* ({ input, signal }) {
+      yield* bridgeEventStream<ServerStartEvent>(
+        signal as AbortSignal,
+        async (emit, sig) => {
+          const result = await serverMod.startServer({
+            target: input.target,
+            extraArgs: input.extraArgs,
+            timeoutSeconds: input.timeoutSeconds,
+            skipTuned: input.skipTuned,
+            signal: sig,
+            onEvent: emit,
+          });
+          emit({ type: 'done', result });
+        },
+      );
     }),
 
   lmstudioScan: t.procedure
@@ -659,32 +694,21 @@ export const router = t.router({
         timeoutSeconds: z.number().int().positive().max(300).optional(),
       }),
     )
-    .subscription(({ input }) => {
-      return observable<
-        rpcServerMod.RpcServerEvent | { type: 'done'; result: rpcServerMod.StartRpcServerResult }
-      >((emit) => {
-        let cancelled = false;
-        const controller = new AbortController();
-        void (async () => {
-          try {
-            const result = await rpcServerMod.startRpcServer({
-              ...input,
-              signal: controller.signal,
-              onEvent: (e) => emit.next(e),
-            });
-            if (!cancelled) {
-              emit.next({ type: 'done', result });
-              emit.complete();
-            }
-          } catch (err) {
-            emit.error(err);
-          }
-        })();
-        return () => {
-          cancelled = true;
-          controller.abort();
-        };
-      });
+    .subscription(async function* ({ input, signal }) {
+      type RpcEvent =
+        | rpcServerMod.RpcServerEvent
+        | { type: 'done'; result: rpcServerMod.StartRpcServerResult };
+      yield* bridgeEventStream<RpcEvent>(
+        signal as AbortSignal,
+        async (emit, sig) => {
+          const result = await rpcServerMod.startRpcServer({
+            ...input,
+            signal: sig,
+            onEvent: emit,
+          });
+          emit({ type: 'done', result });
+        },
+      );
     }),
 
   keepAliveStop: t.procedure
@@ -743,39 +767,21 @@ export const router = t.router({
         profile: z.string().optional(),
       }),
     )
-    .subscription(({ input }) => {
-      return observable<CandidateStreamEvent>((emit) => {
-        let cancelled = false;
-        const controller = new AbortController();
-        void (async () => {
-          try {
-            const result = await candidateMod.candidateTest({
-              repo: input.repo,
-              file: input.file,
-              profile: input.profile,
-              signal: controller.signal,
-              onEvent: (e) => {
-                if (!cancelled) emit.next(e);
-              },
-            });
-            if (cancelled) return;
-            if ('error' in result) {
-              emit.error(new Error(result.error));
-              return;
-            }
-            emit.next({ type: 'done-candidate-test', result });
-            emit.complete();
-          } catch (err) {
-            if (!cancelled) {
-              emit.error(err instanceof Error ? err : new Error(String(err)));
-            }
-          }
-        })();
-        return () => {
-          cancelled = true;
-          controller.abort();
-        };
-      });
+    .subscription(async function* ({ input, signal }) {
+      yield* bridgeEventStream<CandidateStreamEvent>(
+        signal as AbortSignal,
+        async (emit, sig) => {
+          const result = await candidateMod.candidateTest({
+            repo: input.repo,
+            file: input.file,
+            profile: input.profile,
+            signal: sig,
+            onEvent: emit,
+          });
+          if ('error' in result) throw new Error(result.error);
+          emit({ type: 'done-candidate-test', result });
+        },
+      );
     }),
 
   uninstall: t.procedure
@@ -799,33 +805,22 @@ export const router = t.router({
         wasMissing: z.boolean(),
       }),
     )
-    .subscription(({ input }) => {
-      return observable<
-        bench.BenchEvent | { type: 'done-tune'; result: autotuneMod.MaybeTuneAfterPullResult }
-      >((emit) => {
-        let cancelled = false;
-        const controller = new AbortController();
-        void (async () => {
-          try {
-            const result = await autotuneMod.maybeTuneAfterPull({
-              rel: input.rel,
-              wasMissing: input.wasMissing,
-              signal: controller.signal,
-              onEvent: (e) => emit.next(e),
-            });
-            if (!cancelled) {
-              emit.next({ type: 'done-tune', result });
-              emit.complete();
-            }
-          } catch (err) {
-            emit.error(err);
-          }
-        })();
-        return () => {
-          cancelled = true;
-          controller.abort();
-        };
-      });
+    .subscription(async function* ({ input, signal }) {
+      type TuneEvent =
+        | bench.BenchEvent
+        | { type: 'done-tune'; result: autotuneMod.MaybeTuneAfterPullResult };
+      yield* bridgeEventStream<TuneEvent>(
+        signal as AbortSignal,
+        async (emit, sig) => {
+          const result = await autotuneMod.maybeTuneAfterPull({
+            rel: input.rel,
+            wasMissing: input.wasMissing,
+            signal: sig,
+            onEvent: emit,
+          });
+          emit({ type: 'done-tune', result });
+        },
+      );
     }),
 
   pullFile: t.procedure
@@ -835,35 +830,19 @@ export const router = t.router({
         file: z.string().min(1),
       }),
     )
-    .subscription(({ input }) => {
-      return observable<PullStreamEvent>((emit) => {
-        let cancelled = false;
-        const controller = new AbortController();
-        void (async () => {
-          try {
-            const result = await pull.pullRepoFile({
-              repo: input.repo,
-              file: input.file,
-              signal: controller.signal,
-              onEvent: (e) => {
-                if (!cancelled) emit.next(e);
-              },
-            });
-            if (!cancelled) {
-              emit.next({ type: 'done', result });
-              emit.complete();
-            }
-          } catch (err) {
-            if (!cancelled) {
-              emit.error(err instanceof Error ? err : new Error(String(err)));
-            }
-          }
-        })();
-        return () => {
-          cancelled = true;
-          controller.abort();
-        };
-      });
+    .subscription(async function* ({ input, signal }) {
+      yield* bridgeEventStream<PullStreamEvent>(
+        signal as AbortSignal,
+        async (emit, sig) => {
+          const result = await pull.pullRepoFile({
+            repo: input.repo,
+            file: input.file,
+            signal: sig,
+            onEvent: emit,
+          });
+          emit({ type: 'done', result });
+        },
+      );
     }),
 
   benchHistory: t.procedure
@@ -925,73 +904,37 @@ export const router = t.router({
         mode: z.enum(['auto', 'text', 'vision']).optional(),
       }),
     )
-    .subscription(({ input }) => {
-      return observable<BenchStreamEvent>((emit) => {
-        let cancelled = false;
-        const controller = new AbortController();
-        void (async () => {
-          try {
-            const result = await bench.benchPreset({
-              target: input.target,
-              mode: input.mode,
-              signal: controller.signal,
-              onEvent: (e) => {
-                if (!cancelled) emit.next(e);
-              },
-            });
-            if (cancelled) return;
-            if ('error' in result) {
-              emit.error(new Error(result.error));
-              return;
-            }
-            emit.next({ type: 'done-preset', result });
-            emit.complete();
-          } catch (err) {
-            if (!cancelled) {
-              emit.error(err instanceof Error ? err : new Error(String(err)));
-            }
-          }
-        })();
-        return () => {
-          cancelled = true;
-          controller.abort();
-        };
-      });
+    .subscription(async function* ({ input, signal }) {
+      yield* bridgeEventStream<BenchStreamEvent>(
+        signal as AbortSignal,
+        async (emit, sig) => {
+          const result = await bench.benchPreset({
+            target: input.target,
+            mode: input.mode,
+            signal: sig,
+            onEvent: emit,
+          });
+          if ('error' in result) throw new Error(result.error);
+          emit({ type: 'done-preset', result });
+        },
+      );
     }),
 
   benchVisionRun: t.procedure
     .input(z.object({ target: z.string().min(1) }))
-    .subscription(({ input }) => {
-      return observable<BenchStreamEvent>((emit) => {
-        let cancelled = false;
-        const controller = new AbortController();
-        void (async () => {
-          try {
-            const result = await bench.benchVision({
-              target: input.target,
-              signal: controller.signal,
-              onEvent: (e) => {
-                if (!cancelled) emit.next(e);
-              },
-            });
-            if (cancelled) return;
-            if ('error' in result) {
-              emit.error(new Error(result.error));
-              return;
-            }
-            emit.next({ type: 'done-vision', result });
-            emit.complete();
-          } catch (err) {
-            if (!cancelled) {
-              emit.error(err instanceof Error ? err : new Error(String(err)));
-            }
-          }
-        })();
-        return () => {
-          cancelled = true;
-          controller.abort();
-        };
-      });
+    .subscription(async function* ({ input, signal }) {
+      yield* bridgeEventStream<BenchStreamEvent>(
+        signal as AbortSignal,
+        async (emit, sig) => {
+          const result = await bench.benchVision({
+            target: input.target,
+            signal: sig,
+            onEvent: emit,
+          });
+          if ('error' in result) throw new Error(result.error);
+          emit({ type: 'done-vision', result });
+        },
+      );
     }),
 
   pullCandidate: t.procedure
@@ -1002,39 +945,21 @@ export const router = t.router({
         profile: z.string().optional(),
       }),
     )
-    .subscription(({ input }) => {
-      return observable<PullStreamEvent>((emit) => {
-        let cancelled = false;
-        const controller = new AbortController();
-        void (async () => {
-          try {
-            const result = await pull.pullCandidate({
-              repo: input.repo,
-              file: input.file,
-              profile: input.profile,
-              signal: controller.signal,
-              onEvent: (e) => {
-                if (!cancelled) emit.next(e);
-              },
-            });
-            if (cancelled) return;
-            if ('error' in result) {
-              emit.error(new Error(result.error));
-              return;
-            }
-            emit.next({ type: 'done-candidate', result });
-            emit.complete();
-          } catch (err) {
-            if (!cancelled) {
-              emit.error(err instanceof Error ? err : new Error(String(err)));
-            }
-          }
-        })();
-        return () => {
-          cancelled = true;
-          controller.abort();
-        };
-      });
+    .subscription(async function* ({ input, signal }) {
+      yield* bridgeEventStream<PullStreamEvent>(
+        signal as AbortSignal,
+        async (emit, sig) => {
+          const result = await pull.pullCandidate({
+            repo: input.repo,
+            file: input.file,
+            profile: input.profile,
+            signal: sig,
+            onEvent: emit,
+          });
+          if ('error' in result) throw new Error(result.error);
+          emit({ type: 'done-candidate', result });
+        },
+      );
     }),
 
   discover: t.procedure
