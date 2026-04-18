@@ -19,6 +19,7 @@ import { runExpose } from './commands/expose.js';
 import { runSirius } from './commands/sirius.js';
 import { runEmbersynth } from './commands/embersynth.js';
 import { runRunbookCmd } from './commands/runbook.js';
+import { runHeal } from './commands/heal.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
@@ -116,6 +117,8 @@ Agentic operations:
   llamactl runbook list                       Enumerate operator runbooks
   llamactl runbook run <name>                 Chain MCP tools end-to-end
       [--dry-run] [--params <json>]           (see llamactl runbook --help)
+  llamactl heal [--once] [--interval=<s>]     Observe fleet health + journal
+      [--quiet] [--journal=<path>]            state transitions
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -170,6 +173,8 @@ async function main(argv: string[]): Promise<number> {
       return runEmbersynth(rest);
     case 'runbook':
       return runRunbookCmd(rest);
+    case 'heal':
+      return runHeal(rest);
     case undefined:
     case '--help':
     case '-h':
