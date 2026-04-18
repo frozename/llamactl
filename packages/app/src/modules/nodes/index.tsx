@@ -33,6 +33,133 @@ function humanBytes(n: number | null | undefined): string {
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(n / 1024 / 1024)} MB`;
 }
 
+type CloudProvider =
+  | 'openai'
+  | 'anthropic'
+  | 'together'
+  | 'groq'
+  | 'mistral'
+  | 'openai-compatible';
+
+function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
+  const queryClient = useQueryClient();
+  const utils = trpc.useUtils();
+  const [name, setName] = useState('');
+  const [provider, setProvider] = useState<CloudProvider>('openai');
+  const [apiKeyRef, setApiKeyRef] = useState('$OPENAI_API_KEY');
+  const [baseUrl, setBaseUrl] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const add = trpc.nodeAddCloud.useMutation({
+    onSuccess: (result) => {
+      setSuccess(`Registered cloud node ${result.name} → ${result.baseUrl}`);
+      setError(null);
+      setName('');
+      void utils.nodeList.invalidate();
+      void queryClient.invalidateQueries();
+      props.onDone();
+    },
+    onError: (err) => {
+      setError(err.message);
+      setSuccess(null);
+    },
+  });
+
+  function submit(): void {
+    setError(null);
+    setSuccess(null);
+    if (!name.trim()) {
+      setError('Node name is required.');
+      return;
+    }
+    if (!apiKeyRef.trim()) {
+      setError('apiKeyRef is required (e.g. $OPENAI_API_KEY or ~/.llamactl/keys/openai).');
+      return;
+    }
+    add.mutate({
+      name: name.trim(),
+      provider,
+      apiKeyRef: apiKeyRef.trim(),
+      ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
+      ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
+    });
+  }
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        submit();
+      }}
+      className="mt-4 space-y-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
+    >
+      <div className="text-sm font-medium text-[color:var(--color-fg)]">
+        Register a cloud provider
+        <span className="ml-2 text-[10px] text-[color:var(--color-fg-muted)]">
+          (OpenAI / Anthropic / Together / groq / Mistral / any OpenAI-compat)
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-2 text-xs">
+        <input
+          type="text"
+          placeholder="node name (e.g. openai-prod)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+        />
+        <select
+          value={provider}
+          onChange={(e) => setProvider(e.target.value as CloudProvider)}
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+        >
+          <option value="openai">openai</option>
+          <option value="anthropic">anthropic</option>
+          <option value="together">together</option>
+          <option value="groq">groq</option>
+          <option value="mistral">mistral</option>
+          <option value="openai-compatible">openai-compatible (custom)</option>
+        </select>
+        <input
+          type="text"
+          placeholder="baseUrl (blank to use provider default)"
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-fg)]"
+        />
+      </div>
+      <div className="flex flex-wrap gap-2 text-xs">
+        <input
+          type="text"
+          placeholder="apiKeyRef ($ENV_VAR or file path)"
+          value={apiKeyRef}
+          onChange={(e) => setApiKeyRef(e.target.value)}
+          className="w-72 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-fg)]"
+        />
+        <input
+          type="text"
+          placeholder="display name (optional)"
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+        />
+      </div>
+      <div className="flex items-center gap-3 text-sm">
+        <button
+          type="submit"
+          disabled={add.isPending}
+          className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+        >
+          {add.isPending ? 'Probing…' : 'Register cloud node'}
+        </button>
+        {error && <span className="text-xs text-[color:var(--color-danger)]">{error}</span>}
+        {success && <span className="text-xs text-[color:var(--color-success)]">{success}</span>}
+      </div>
+    </form>
+  );
+}
+
 function RegisterPanel(props: { onDone: () => void }): React.JSX.Element {
   const queryClient = useQueryClient();
   const [blob, setBlob] = useState('');
@@ -242,6 +369,12 @@ function NodeRow(props: {
   name: string;
   endpoint: string;
   defaultNode: string;
+  kind: 'agent' | 'cloud';
+  cloud?: {
+    provider: string;
+    baseUrl: string;
+    displayName?: string;
+  } | null;
 }): React.JSX.Element {
   const queryClient = useQueryClient();
   const utils = trpc.useUtils();
@@ -274,6 +407,7 @@ function NodeRow(props: {
 
   const isLocal = props.name === 'local' || props.endpoint.startsWith('inproc://');
   const isDefault = props.name === props.defaultNode;
+  const isCloud = props.kind === 'cloud';
 
   return (
     <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
@@ -288,6 +422,11 @@ function NodeRow(props: {
           {isLocal && (
             <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]">
               local
+            </span>
+          )}
+          {isCloud && (
+            <span className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)]">
+              cloud · {props.cloud?.provider ?? '?'}
             </span>
           )}
         </div>
@@ -333,7 +472,10 @@ function NodeRow(props: {
         </div>
       </div>
       <div className="mt-1 text-xs text-[color:var(--color-fg-muted)]">
-        endpoint: <span className="font-mono">{props.endpoint}</span>
+        {isCloud ? 'baseUrl' : 'endpoint'}:{' '}
+        <span className="font-mono">
+          {isCloud ? props.cloud?.baseUrl ?? '(missing)' : props.endpoint}
+        </span>
       </div>
       {testResult && (
         <div className="mt-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 text-xs">
@@ -442,6 +584,7 @@ export default function Nodes(): React.JSX.Element {
   const list = trpc.nodeList.useQuery();
   const [showRegister, setShowRegister] = useState(false);
   const [showDiscover, setShowDiscover] = useState(false);
+  const [showCloud, setShowCloud] = useState(false);
 
   if (list.isLoading) {
     return (
@@ -477,14 +620,22 @@ export default function Nodes(): React.JSX.Element {
           </button>
           <button
             type="button"
+            onClick={() => setShowCloud((v) => !v)}
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-fg)]"
+          >
+            {showCloud ? 'Cancel cloud' : 'Register cloud'}
+          </button>
+          <button
+            type="button"
             onClick={() => setShowRegister((v) => !v)}
             className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-fg)]"
           >
-            {showRegister ? 'Cancel' : 'Register node'}
+            {showRegister ? 'Cancel' : 'Register agent'}
           </button>
         </div>
       </div>
       {showDiscover && <DiscoverPanel />}
+      {showCloud && <RegisterCloudPanel onDone={() => setShowCloud(false)} />}
       {showRegister && <RegisterPanel onDone={() => setShowRegister(false)} />}
       <div className="space-y-2">
         {data.nodes.length === 0 && (
@@ -492,14 +643,20 @@ export default function Nodes(): React.JSX.Element {
             (no nodes registered)
           </div>
         )}
-        {data.nodes.map((n) => (
-          <NodeRow
-            key={n.name}
-            name={n.name}
-            endpoint={n.endpoint}
-            defaultNode={data.defaultNode}
-          />
-        ))}
+        {data.nodes.map((n) => {
+          const kind = (n as { effectiveKind?: 'agent' | 'cloud' }).effectiveKind
+            ?? (n.cloud ? 'cloud' : 'agent');
+          return (
+            <NodeRow
+              key={n.name}
+              name={n.name}
+              endpoint={n.endpoint}
+              defaultNode={data.defaultNode}
+              kind={kind}
+              cloud={n.cloud ?? null}
+            />
+          );
+        })}
       </div>
     </div>
   );

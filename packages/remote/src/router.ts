@@ -226,15 +226,22 @@ export const router = t.router({
 
   // ---- node management (kubeconfig + reachability) ----------------------
 
-  nodeList: t.procedure.query(() => {
+  nodeList: t.procedure.query(async () => {
     const cfg = kubecfg.loadConfig();
     const ctx = kubecfg.currentContext(cfg);
     const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
+    const { resolveNodeKind } = await import('./config/schema.js');
+    // Decorate each node with its effective kind so the UI can render
+    // agent vs cloud badges without reimplementing the fallback rule.
+    const nodes = (cluster?.nodes ?? []).map((n) => ({
+      ...n,
+      effectiveKind: resolveNodeKind(n),
+    }));
     return {
       context: ctx.name,
       cluster: ctx.cluster,
       defaultNode: ctx.defaultNode,
-      nodes: cluster?.nodes ?? [],
+      nodes,
     };
   }),
 
@@ -330,6 +337,124 @@ export const router = t.router({
       kubecfg.saveConfig(cfg, cfgPath);
       const ctx = kubecfg.currentContext(cfg);
       return { ok: true as const, defaultNode: ctx.defaultNode };
+    }),
+
+  /**
+   * Register a cloud-provider node. Unlike `nodeAdd` (which bootstraps
+   * a remote agent via a bearer-token blob), this stores a pointer to
+   * an external OpenAI-compatible API — the raw key stays out of
+   * kubeconfig by living behind an env var or file path
+   * (`$OPENAI_API_KEY`, `~/.llamactl/keys/openai`, …).
+   */
+  nodeAddCloud: t.procedure
+    .input(
+      z.object({
+        name: z.string().min(1),
+        provider: z.enum([
+          'openai',
+          'anthropic',
+          'together',
+          'groq',
+          'mistral',
+          'openai-compatible',
+        ]),
+        baseUrl: z.url().optional(),
+        apiKeyRef: z.string().min(1),
+        displayName: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { defaultCloudBinding, providerForCloudNode } = await import(
+        './providers/factory.js'
+      );
+      const cfgPath = kubecfg.defaultConfigPath();
+      let cfg = kubecfg.loadConfig(cfgPath);
+      const ctx = kubecfg.currentContext(cfg);
+      const binding = defaultCloudBinding(input.provider, input.apiKeyRef, {
+        ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
+        ...(input.displayName ? { displayName: input.displayName } : {}),
+      });
+      if (!binding.baseUrl) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'baseUrl is required for openai-compatible provider',
+        });
+      }
+      // Probe the binding — empty apiKeyRef or wrong URL fails here
+      // rather than silently later.
+      try {
+        const provider = providerForCloudNode({
+          name: input.name,
+          endpoint: '',
+          kind: 'cloud',
+          cloud: binding,
+        });
+        const health = await provider.healthCheck?.();
+        if (health && health.state === 'unhealthy') {
+          throw new Error(health.error ?? 'cloud node health check failed');
+        }
+      } catch (err) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `cloud node probe failed: ${(err as Error).message}`,
+        });
+      }
+      cfg = kubecfg.upsertNode(cfg, ctx.cluster, {
+        name: input.name,
+        endpoint: '',
+        kind: 'cloud',
+        cloud: binding,
+      });
+      kubecfg.saveConfig(cfg, cfgPath);
+      return { ok: true as const, name: input.name, baseUrl: binding.baseUrl };
+    }),
+
+  /**
+   * List the models a node exposes — works for both agent and cloud
+   * kinds via their respective `AiProvider.listModels()` impl. Used
+   * by the aggregate `/v1/models` surface and the chat UI's model
+   * picker.
+   */
+  nodeModels: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const cfg = kubecfg.loadConfig();
+      const resolved = kubecfg.resolveNode(cfg, input.name);
+      const { resolveNodeKind } = await import('./config/schema.js');
+      const kind = resolveNodeKind(resolved.node);
+      if (kind === 'cloud') {
+        const { providerForCloudNode } = await import('./providers/factory.js');
+        const provider = providerForCloudNode(resolved.node);
+        const models = (await provider.listModels?.()) ?? [];
+        return { node: input.name, kind, models };
+      }
+      // Agent path — tRPC to the agent's nodeModels-via-openaiProxy.
+      // Reuse the existing forwarding shape: local caller or pinned
+      // client via clientForNode, then call openaiProxy's /v1/models
+      // through the agent's /v1 HTTP surface. For simplicity today,
+      // inline a call through the pinned-fetch path when remote,
+      // and use the core listOpenAIModels directly when local.
+      if (resolved.node.endpoint.startsWith('inproc://')) {
+        const { openaiProxy } = await import('@llamactl/core');
+        const res = openaiProxy.listOpenAIModels();
+        return { node: input.name, kind, models: res.data };
+      }
+      // Remote agent: scrape its /v1/models endpoint via pinned fetch.
+      const token = kubecfg.resolveToken(resolved.user);
+      const { makePinnedFetch } = await import('./client/links.js');
+      const pinned = makePinnedFetch(resolved.node);
+      const r = await pinned(`${resolved.node.endpoint}/v1/models`, {
+        method: 'GET',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) {
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: `remote /v1/models ${r.status}`,
+        });
+      }
+      const body = (await r.json()) as { data?: unknown[] };
+      return { node: input.name, kind, models: (body.data ?? []) as unknown[] };
     }),
 
   /**

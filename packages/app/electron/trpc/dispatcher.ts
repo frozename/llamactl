@@ -43,6 +43,8 @@ const CONTROL_PLANE_ONLY = new Set<string>([
   'nodeSetDefault',
   'nodeOpenAIConfig',
   'nodeDiscover',
+  'nodeAddCloud',
+  'nodeModels',
   'workloadList',
   'workloadDescribe',
   'workloadApply',

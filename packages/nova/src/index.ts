@@ -25,3 +25,4 @@ export * from './schemas/models.js';
 export * from './schemas/stream.js';
 export * from './schemas/health.js';
 export * from './provider.js';
+export * from './providers/openai-compat.js';

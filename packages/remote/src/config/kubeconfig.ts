@@ -76,6 +76,35 @@ export function resolveToken(
   return readFileSync(path, 'utf8').trim();
 }
 
+/**
+ * Resolve a cloud node's API key from its `apiKeyRef`. Supports three
+ * forms:
+ *   - `$VAR_NAME`       → read from `env[VAR_NAME]`
+ *   - `~/.path/to/file` → read file contents (home-dir expansion)
+ *   - `/abs/path`       → read file contents as-is
+ *
+ * The control plane calls this at request time — the renderer never
+ * handles cloud keys, and tokens don't live in kubeconfig YAML
+ * alongside non-secret fields.
+ */
+export function resolveApiKeyRef(
+  apiKeyRef: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const trimmed = apiKeyRef.trim();
+  if (trimmed.startsWith('$')) {
+    const varName = trimmed.slice(1);
+    const value = env[varName];
+    if (!value) throw new Error(`env var '${varName}' is not set`);
+    return value.trim();
+  }
+  const path = trimmed.replace(/^~(?=$|\/)/, env.HOME ?? homedir());
+  if (!existsSync(path)) {
+    throw new Error(`apiKeyRef '${apiKeyRef}' resolves to nothing — env var unset or path missing`);
+  }
+  return readFileSync(path, 'utf8').trim();
+}
+
 export function upsertCluster(config: Config, cluster: Config['clusters'][number]): Config {
   const clusters = config.clusters.filter((c) => c.name !== cluster.name);
   clusters.push(cluster);
