@@ -13,7 +13,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@llamactl/core": "workspace:*"
+    "@llamactl/core": "workspace:*",
+    "@llamactl/remote": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",

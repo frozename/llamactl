@@ -10,6 +10,9 @@ import { runRecommendations } from './commands/recommendations.js';
 import { runDiscover } from './commands/discover.js';
 import { runPull } from './commands/pull.js';
 import { runUninstall } from './commands/uninstall.js';
+import { runAgent } from './commands/agent.js';
+import { runNode } from './commands/node.js';
+import { runCtx } from './commands/ctx.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
 
@@ -61,6 +64,27 @@ Write commands:
                                               Plan or apply a custom-catalog
                                               import of LM Studio models
 
+Remote node management (Kubernetes-style):
+  llamactl agent init [--host=<h>] [--port=<n>] [--name=<n>] [--san=...]
+                                              Provision the local node as an
+                                              agent; prints a bootstrap line
+  llamactl agent serve [--bind=<h>] [--port=<n>]
+                                              Run the node agent (long-running)
+  llamactl agent status                       Print the agent's config
+  llamactl node ls [--json]                   List nodes in the current context
+  llamactl node add <name> --bootstrap <blob>
+                                              Register a node from a bootstrap
+                                              blob emitted by 'agent init'
+  llamactl node add <name> --server <url>
+      --fingerprint <sha256:...> --token <tok>
+                                              Register a node explicitly
+  llamactl node rm <name>                     Remove a node (not 'local')
+  llamactl node test <name>                   Call nodeFacts() against a node
+  llamactl ctx current                        Print the current-context name
+  llamactl ctx use <name>                     Switch current-context
+  llamactl ctx get                            Print the kubeconfig YAML
+  llamactl ctx nodes                          Alias for 'node ls'
+
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
 `;
@@ -90,6 +114,12 @@ async function main(argv: string[]): Promise<number> {
       return runKeepAlive(rest);
     case 'lmstudio':
       return runLMStudio(rest);
+    case 'agent':
+      return runAgent(rest);
+    case 'node':
+      return runNode(rest);
+    case 'ctx':
+      return runCtx(rest);
     case undefined:
     case '--help':
     case '-h':
