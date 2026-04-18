@@ -58,7 +58,7 @@ export const CloudBindingSchema = z.object({
 });
 export type CloudBinding = z.infer<typeof CloudBindingSchema>;
 
-export const NodeKindSchema = z.enum(['agent', 'cloud']);
+export const NodeKindSchema = z.enum(['agent', 'cloud', 'gateway']);
 export type NodeKind = z.infer<typeof NodeKindSchema>;
 
 export const ClusterNodeSchema = z.object({
@@ -124,12 +124,21 @@ export const LOCAL_NODE_ENDPOINT = 'inproc://local';
 
 /**
  * Derive the effective kind of a node without requiring every callsite
- * to read both `kind` and `cloud`. A node with a `cloud` block is
- * always cloud; anything else is agent. Preserves backward-compat
- * with kubeconfigs written before the discriminator landed.
+ * to read `kind` / `cloud` / `cloud.provider` in a specific order.
+ *
+ *   * Explicit `kind` wins (forward-compat for new discriminators).
+ *   * Cloud block with a gateway provider (sirius today; openrouter
+ *     and other aggregators later) folds to `'gateway'` even when
+ *     `kind` was never written — older kubeconfigs auto-upgrade.
+ *   * Otherwise any cloud block = `'cloud'`, nothing = `'agent'`.
+ *
+ * The gateway kind matters for UI (distinct badge, "fans out to N
+ * providers" hint) and for overlap guidance — if a gateway node is
+ * registered, direct-to-provider cloud nodes are usually redundant.
  */
 export function resolveNodeKind(node: ClusterNode): NodeKind {
   if (node.kind) return node.kind;
+  if (node.cloud?.provider === 'sirius') return 'gateway';
   return node.cloud ? 'cloud' : 'agent';
 }
 

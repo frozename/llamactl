@@ -119,7 +119,11 @@ async function runConnect(argv: string[]): Promise<number> {
   cfg = kubecfg.upsertNode(cfg, ctx.cluster, {
     name,
     endpoint: '',
-    kind: 'cloud',
+    // Sirius is a gateway (fans out to many providers), not a cloud
+    // provider per se. `kind: 'gateway'` lets the UI render the right
+    // badge and future gateway-specific features (routing insight,
+    // per-provider health) light up only for these nodes.
+    kind: 'gateway',
     cloud: {
       provider: 'sirius',
       baseUrl,

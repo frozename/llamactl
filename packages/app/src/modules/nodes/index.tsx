@@ -372,7 +372,7 @@ function NodeRow(props: {
   name: string;
   endpoint: string;
   defaultNode: string;
-  kind: 'agent' | 'cloud';
+  kind: 'agent' | 'cloud' | 'gateway';
   cloud?: {
     provider: string;
     baseUrl: string;
@@ -411,6 +411,7 @@ function NodeRow(props: {
   const isLocal = props.name === 'local' || props.endpoint.startsWith('inproc://');
   const isDefault = props.name === props.defaultNode;
   const isCloud = props.kind === 'cloud';
+  const isGateway = props.kind === 'gateway';
 
   return (
     <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
@@ -430,6 +431,11 @@ function NodeRow(props: {
           {isCloud && (
             <span className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)]">
               cloud · {props.cloud?.provider ?? '?'}
+            </span>
+          )}
+          {isGateway && (
+            <span className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)]">
+              gateway · {props.cloud?.provider ?? '?'}
             </span>
           )}
         </div>
@@ -475,9 +481,11 @@ function NodeRow(props: {
         </div>
       </div>
       <div className="mt-1 text-xs text-[color:var(--color-fg-muted)]">
-        {isCloud ? 'baseUrl' : 'endpoint'}:{' '}
+        {isCloud || isGateway ? 'baseUrl' : 'endpoint'}:{' '}
         <span className="font-mono">
-          {isCloud ? props.cloud?.baseUrl ?? '(missing)' : props.endpoint}
+          {isCloud || isGateway
+            ? props.cloud?.baseUrl ?? '(missing)'
+            : props.endpoint}
         </span>
       </div>
       {testResult && (
@@ -647,8 +655,15 @@ export default function Nodes(): React.JSX.Element {
           </div>
         )}
         {data.nodes.map((n) => {
-          const kind = (n as { effectiveKind?: 'agent' | 'cloud' }).effectiveKind
-            ?? (n.cloud ? 'cloud' : 'agent');
+          const explicit = (n as { effectiveKind?: 'agent' | 'cloud' | 'gateway' })
+            .effectiveKind;
+          const kind =
+            explicit ??
+            (n.cloud?.provider === 'sirius'
+              ? 'gateway'
+              : n.cloud
+                ? 'cloud'
+                : 'agent');
           return (
             <NodeRow
               key={n.name}
