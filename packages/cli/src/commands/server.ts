@@ -1,4 +1,4 @@
-import { env as envMod, server } from '@llamactl/core';
+import { env as envMod, server, serverLogs as serverLogsMod } from '@llamactl/core';
 import {
   getGlobals,
   getNodeClient,
@@ -23,6 +23,11 @@ Subcommands:
   status [--json]
       Report whether llama-server is reachable at the configured
       endpoint and what PID (if any) is tracked.
+
+  logs [--follow|-f] [--lines=<N>]
+      Print the last N lines (default 50) of the server.log file. With
+      --follow, keep streaming new lines until Ctrl-C. Against
+      --node <remote>, tails the agent's log file over SSE.
 `;
 
 function forwardEvent(e: server.ServerEvent): void {
@@ -210,6 +215,89 @@ async function runStatus(args: string[]): Promise<number> {
   return status.state === 'up' ? 0 : 1;
 }
 
+async function runLogs(args: string[]): Promise<number> {
+  let lines = 50;
+  let follow = false;
+  for (const arg of args) {
+    if (arg === '--follow' || arg === '-f') follow = true;
+    else if (arg === '-h' || arg === '--help') {
+      process.stdout.write(USAGE);
+      return 0;
+    } else if (arg.startsWith('--lines=')) {
+      const n = Number.parseInt(arg.slice('--lines='.length), 10);
+      if (!Number.isFinite(n) || n < 0) {
+        process.stderr.write(`server logs: invalid --lines: ${arg}\n`);
+        return 1;
+      }
+      lines = n;
+    } else if (arg.startsWith('--')) {
+      process.stderr.write(`Unknown flag: ${arg}\n`);
+      return 1;
+    }
+  }
+
+  const onLine = (e: serverLogsMod.LogLineEvent): void => {
+    process.stdout.write(`${e.line}\n`);
+  };
+
+  if (isLocalDispatch()) {
+    const ac = new AbortController();
+    const abort = (): void => ac.abort();
+    process.once('SIGINT', abort);
+    process.once('SIGTERM', abort);
+    try {
+      await serverLogsMod.tailServerLog({
+        lines,
+        follow,
+        signal: ac.signal,
+        onLine,
+      });
+    } finally {
+      process.off('SIGINT', abort);
+      process.off('SIGTERM', abort);
+    }
+    return 0;
+  }
+
+  // Remote path. serverLogs has no terminal `done` event; a normal
+  // completion means the subscription closed cleanly (backfill drained
+  // in non-follow mode, or user-initiated abort in follow mode).
+  await new Promise<void>((resolve, reject) => {
+    const sub = getNodeClient().serverLogs.subscribe(
+      { lines, follow },
+      {
+        onData: (e: unknown) => {
+          const evt = e as serverLogsMod.LogLineEvent;
+          if (evt.type === 'line') onLine(evt);
+        },
+        onError: (err: unknown) => {
+          cleanup();
+          reject(err instanceof Error ? err : new Error(String(err)));
+        },
+        onComplete: () => {
+          cleanup();
+          resolve();
+        },
+      },
+    );
+    const abort = (): void => {
+      sub.unsubscribe();
+      cleanup();
+      resolve();
+    };
+    const cleanup = (): void => {
+      process.off('SIGINT', abort);
+      process.off('SIGTERM', abort);
+    };
+    process.on('SIGINT', abort);
+    process.on('SIGTERM', abort);
+  }).catch((err: Error) => {
+    process.stderr.write(`server logs: remote call to '${getGlobals().nodeName ?? ''}' failed: ${err.message}\n`);
+    return 1;
+  });
+  return 0;
+}
+
 export async function runServer(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
@@ -219,6 +307,8 @@ export async function runServer(args: string[]): Promise<number> {
       return runStop(rest);
     case 'status':
       return runStatus(rest);
+    case 'logs':
+      return runLogs(rest);
     case undefined:
     case '-h':
     case '--help':

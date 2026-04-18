@@ -14,6 +14,7 @@ import {
   pull,
   recommendations,
   server as serverMod,
+  serverLogs as serverLogsMod,
   target as targetMod,
   uninstall as uninstallMod,
   type MachineProfile,
@@ -156,6 +157,35 @@ export const router = t.router({
     }),
 
   serverStatus: t.procedure.query(async () => serverMod.serverStatus()),
+
+  serverLogs: t.procedure
+    .input(
+      z
+        .object({
+          lines: z.number().int().min(0).max(1000).optional(),
+          follow: z.boolean().optional(),
+        })
+        .optional(),
+    )
+    .subscription(({ input }) => {
+      return observable<serverLogsMod.LogLineEvent>((emit) => {
+        const controller = new AbortController();
+        void (async () => {
+          try {
+            await serverLogsMod.tailServerLog({
+              lines: input?.lines,
+              follow: input?.follow,
+              signal: controller.signal,
+              onLine: (e) => emit.next(e),
+            });
+            emit.complete();
+          } catch (err) {
+            emit.error(err);
+          }
+        })();
+        return () => controller.abort();
+      });
+    }),
 
   serverStop: t.procedure
     .input(z.object({ graceSeconds: z.number().int().positive().max(60).optional() }).optional())
