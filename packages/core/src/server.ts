@@ -122,6 +122,16 @@ function isProcessAlive(pid: number): boolean {
 
 // ---- status ------------------------------------------------------------
 
+export interface ServerState {
+  rel: string;
+  extraArgs: string[];
+  host: string;
+  port: string;
+  pid: number;
+  startedAt: string;           // ISO 8601
+  tunedProfile: string | null;
+}
+
 export interface ServerStatus {
   state: 'up' | 'down';
   endpoint: string;
@@ -130,6 +140,62 @@ export interface ServerStatus {
     httpCode: number | null;
     reachable: boolean;
   };
+  /**
+   * Metadata about the currently-tracked llama-server process. Populated
+   * from the `llama-server.state` sidecar written at startServer time so
+   * downstream reconcilers can diff desired vs observed without needing
+   * to parse /proc/<pid>/cmdline. Null when no server is tracked.
+   */
+  rel: string | null;
+  extraArgs: string[];
+  startedAt: string | null;
+  port: number | null;
+  tunedProfile: string | null;
+}
+
+function serverStateFile(resolved: ResolvedEnv): string {
+  return join(resolved.LOCAL_AI_RUNTIME_DIR, 'llama-server.state');
+}
+
+/**
+ * Read the sidecar state file written at startServer time. Returns
+ * null when absent or malformed — callers should treat that as "no
+ * live server metadata available", which is the same user experience
+ * as the pre-D.0 ServerStatus shape.
+ */
+export function readServerState(
+  resolved: ResolvedEnv = resolveEnv(),
+): ServerState | null {
+  const file = serverStateFile(resolved);
+  if (!existsSync(file)) return null;
+  try {
+    const raw = readFileSync(file, 'utf8');
+    const parsed = JSON.parse(raw) as ServerState;
+    if (
+      typeof parsed.rel === 'string'
+      && Array.isArray(parsed.extraArgs)
+      && typeof parsed.pid === 'number'
+      && typeof parsed.startedAt === 'string'
+    ) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function writeServerState(resolved: ResolvedEnv, state: ServerState): void {
+  mkdirSync(resolved.LOCAL_AI_RUNTIME_DIR, { recursive: true });
+  writeFileSync(serverStateFile(resolved), JSON.stringify(state, null, 2));
+}
+
+function removeServerState(resolved: ResolvedEnv): void {
+  try {
+    unlinkSync(serverStateFile(resolved));
+  } catch {
+    // no-op
+  }
 }
 
 /**
@@ -160,11 +226,25 @@ export async function serverStatus(
   const reachable = httpCode === 200;
   const state: ServerStatus['state'] = reachable || pid !== null ? 'up' : 'down';
 
+  const sidecar = readServerState(resolved);
+  // Only trust the sidecar when its PID matches the live one; if the
+  // PIDs diverge, the state file is from a previous launch that
+  // exited uncleanly. Clean up in that case.
+  const validSidecar = sidecar && sidecar.pid === pid;
+  if (sidecar && !validSidecar && state === 'down') {
+    removeServerState(resolved);
+  }
+
   return {
     state,
     endpoint: endpoint(resolved),
     pid,
     health: { httpCode, reachable },
+    rel: validSidecar ? sidecar.rel : null,
+    extraArgs: validSidecar ? sidecar.extraArgs : [],
+    startedAt: validSidecar ? sidecar.startedAt : null,
+    port: validSidecar ? Number.parseInt(sidecar.port, 10) || null : null,
+    tunedProfile: validSidecar ? sidecar.tunedProfile : null,
   };
 }
 
@@ -333,6 +413,15 @@ export async function startServer(
     onEvent: opts.onEvent,
   });
   writeServerPid(resolved, pid);
+  writeServerState(resolved, {
+    rel,
+    extraArgs: extra,
+    host: resolved.LLAMA_CPP_HOST,
+    port: resolved.LLAMA_CPP_PORT,
+    pid,
+    startedAt: new Date().toISOString(),
+    tunedProfile,
+  });
 
   // Wire the caller's abort signal to SIGTERM the detached child so
   // a tRPC unsubscribe or Ctrl-C doesn't leave an orphan server.
@@ -505,6 +594,7 @@ export async function stopServer(
   const pid = readServerPid(resolved);
   if (pid === null || !isProcessAlive(pid)) {
     removeServerPid(resolved);
+    removeServerState(resolved);
     return { stopped: true, pid, killed: false };
   }
 
@@ -512,12 +602,14 @@ export async function stopServer(
     process.kill(pid, 'SIGTERM');
   } catch {
     removeServerPid(resolved);
+    removeServerState(resolved);
     return { stopped: true, pid, killed: false };
   }
 
   for (let i = 0; i < grace; i += 1) {
     if (!isProcessAlive(pid)) {
       removeServerPid(resolved);
+      removeServerState(resolved);
       return { stopped: true, pid, killed: false };
     }
     await new Promise((r) => setTimeout(r, 1000));
@@ -529,5 +621,6 @@ export async function stopServer(
     // process already gone
   }
   removeServerPid(resolved);
+  removeServerState(resolved);
   return { stopped: true, pid, killed: true };
 }
