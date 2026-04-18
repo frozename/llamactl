@@ -1,19 +1,35 @@
 import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import type { MachineProfile } from './types.js';
 
 /** Total physical memory in bytes, detected per platform. */
 export function detectMemoryBytes(): number | null {
-  if (process.platform !== 'darwin') return null;
-  try {
-    const out = execSync('sysctl -n hw.memsize', {
-      stdio: ['ignore', 'pipe', 'ignore'],
-      encoding: 'utf8',
-    }).trim();
-    const n = Number.parseInt(out, 10);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  } catch {
-    return null;
+  if (process.platform === 'darwin') {
+    try {
+      const out = execSync('sysctl -n hw.memsize', {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        encoding: 'utf8',
+      }).trim();
+      const n = Number.parseInt(out, 10);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    } catch {
+      return null;
+    }
   }
+  if (process.platform === 'linux') {
+    try {
+      const meminfo = readFileSync('/proc/meminfo', 'utf8');
+      const m = meminfo.match(/^MemTotal:\s+(\d+)\s+kB/m);
+      if (m?.[1]) {
+        const kb = Number.parseInt(m[1], 10);
+        if (Number.isFinite(kb) && kb > 0) return kb * 1024;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 /**

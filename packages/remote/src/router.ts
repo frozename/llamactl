@@ -9,6 +9,7 @@ import {
   env as envMod,
   keepAlive as keepAliveMod,
   lmstudio as lmstudioMod,
+  nodeFacts as nodeFactsMod,
   presets,
   pull,
   recommendations,
@@ -44,6 +45,8 @@ const t = initTRPC.create();
 
 export const router = t.router({
   env: t.procedure.query(() => envMod.resolveEnv()),
+
+  nodeFacts: t.procedure.query(() => nodeFactsMod.collectNodeFacts()),
 
   catalogList: t.procedure
     .input(z.enum(['all', 'builtin', 'custom']).default('all'))
