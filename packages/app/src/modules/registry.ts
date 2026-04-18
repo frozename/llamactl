@@ -4,6 +4,7 @@ import {
   Database,
   Download,
   LayoutDashboard,
+  Layers,
   Network,
   PackagePlus,
   Server as ServerIcon,
@@ -32,6 +33,7 @@ export interface AppModule {
 
 const LazyDashboard = lazy(() => import('./dashboard/index'));
 const LazyNodes = lazy(() => import('./nodes/index'));
+const LazyWorkloads = lazy(() => import('./workloads/index'));
 const LazyModels = lazy(() => import('./models/index'));
 const LazyPulls = lazy(() => import('./pulls/index'));
 const LazyBench = lazy(() => import('./bench/index'));
@@ -55,39 +57,46 @@ export const APP_MODULES: AppModule[] = [
     shortcut: 2,
   },
   {
+    id: 'workloads',
+    labelKey: 'Workloads',
+    icon: Layers,
+    Component: LazyWorkloads,
+    shortcut: 3,
+  },
+  {
     id: 'models',
     labelKey: 'Models',
     icon: Database,
     Component: LazyModels,
-    shortcut: 3,
+    shortcut: 4,
   },
   {
     id: 'pulls',
     labelKey: 'Pulls',
     icon: Download,
     Component: LazyPulls,
-    shortcut: 4,
+    shortcut: 5,
   },
   {
     id: 'bench',
     labelKey: 'Bench',
     icon: Activity,
     Component: LazyBench,
-    shortcut: 5,
+    shortcut: 6,
   },
   {
     id: 'server',
     labelKey: 'Server',
     icon: ServerIcon,
     Component: LazyServer,
-    shortcut: 6,
+    shortcut: 7,
   },
   {
     id: 'lmstudio',
     labelKey: 'LM Studio',
     icon: PackagePlus,
     Component: LazyLMStudio,
-    shortcut: 7,
+    shortcut: 8,
   },
   {
     id: 'settings',

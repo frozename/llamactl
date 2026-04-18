@@ -1,9 +1,77 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import { observable } from '@trpc/server/observable';
+import { createTRPCClient } from '@trpc/client';
 import { z } from 'zod';
 import * as kubecfg from './config/kubeconfig.js';
 import { decodeBootstrap } from './config/agent-config.js';
-import type { ClusterNode } from './config/schema.js';
+import type { ClusterNode, Config } from './config/schema.js';
+import * as workloadStoreMod from './workload/store.js';
+import * as workloadApplyMod from './workload/apply.js';
+import {
+  ModelRunSpecSchema,
+  type ModelRun,
+} from './workload/schema.js';
+import { buildPinnedLinks } from './client/links.js';
+
+/**
+ * Minimal structural type of a tRPC NodeClient limited to the methods
+ * the workload procedures call. Declared inline here so router.ts does
+ * not import `NodeClient` from `./client/node-client.js`, which would
+ * re-introduce the `AppRouter → NodeClient → AppRouter` circular alias.
+ * `applyOne`'s full `NodeClient` shape is structurally compatible — we
+ * cast with `as unknown as` where applyOne expects the richer type.
+ */
+interface WorkloadNodeClient {
+  serverStatus: { query(): Promise<{
+    state: string;
+    rel: string | null;
+    extraArgs: string[];
+    pid: number | null;
+    endpoint: string;
+    advertisedEndpoint?: string | null;
+  }> };
+  serverStop: { mutate(input?: { graceSeconds?: number }): Promise<unknown> };
+  rpcServerStop: { mutate(input?: { graceSeconds?: number }): Promise<unknown> };
+}
+
+/**
+ * Build a tRPC-client-shaped proxy over `router.createCaller({})` so
+ * local workload ops can reuse the same `.query/.mutate/.subscribe`
+ * surface as the remote tRPC client. Mirrors the proxy wrapper in
+ * `client/node-client.ts` but lives here to avoid the AppRouter cycle.
+ */
+function localCallerProxy(): WorkloadNodeClient {
+  // Deferred reference — at runtime `router` exists by the time the
+  // helper is invoked from within a procedure body, even though at
+  // module-load time the declaration below is still being evaluated.
+  const getCaller = (): Record<string, (...a: unknown[]) => unknown> =>
+    router.createCaller({}) as unknown as Record<string, (...a: unknown[]) => unknown>;
+  const handler: ProxyHandler<object> = {
+    get(_t, prop) {
+      if (typeof prop !== 'string') return undefined;
+      const invoke = (...args: unknown[]): unknown => {
+        const caller = getCaller();
+        const fn = caller[prop];
+        if (typeof fn !== 'function') throw new Error(`unknown procedure '${prop}'`);
+        return fn(...args);
+      };
+      return { query: invoke, mutate: invoke, subscribe: invoke };
+    },
+  };
+  return new Proxy({}, handler) as unknown as WorkloadNodeClient;
+}
+
+function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
+  const resolved = kubecfg.resolveNode(cfg, nodeName);
+  if (resolved.node.endpoint.startsWith('inproc://')) {
+    return localCallerProxy();
+  }
+  const token = kubecfg.resolveToken(resolved.user);
+  const trpc = createTRPCClient({
+    links: buildPinnedLinks(resolved.node, token),
+  });
+  return trpc as unknown as WorkloadNodeClient;
+}
 import {
   autotune as autotuneMod,
   bench,
@@ -188,6 +256,161 @@ export const router = t.router({
       cfg = kubecfg.removeNode(cfg, ctx.cluster, input.name);
       kubecfg.saveConfig(cfg, cfgPath);
       return { ok: true as const };
+    }),
+
+  // ---- workload management --------------------------------------------
+
+  workloadList: t.procedure.query(async () => {
+    const manifests = workloadStoreMod.listWorkloads();
+    const cfg = kubecfg.loadConfig();
+    const rows = await Promise.all(
+      manifests.map(async (manifest) => {
+        const nodeName = manifest.spec.node;
+        let phase: 'Running' | 'Stopped' | 'Mismatch' | 'Unreachable' = 'Stopped';
+        let endpoint: string | null = null;
+        try {
+          const client = clientForNode(cfg, nodeName);
+          const status = await client.serverStatus.query();
+          const desired = manifest.spec.target.value;
+          if (status.state === 'up' && status.rel === desired) phase = 'Running';
+          else if (status.state === 'up' && status.rel !== desired) phase = 'Mismatch';
+          endpoint = status.advertisedEndpoint ?? status.endpoint;
+        } catch {
+          phase = 'Unreachable';
+        }
+        return {
+          name: manifest.metadata.name,
+          node: nodeName,
+          rel: manifest.spec.target.value,
+          phase,
+          endpoint,
+          status: manifest.status ?? null,
+        };
+      }),
+    );
+    return rows;
+  }),
+
+  workloadDescribe: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const manifest = workloadStoreMod.loadWorkloadByName(input.name);
+      const cfg = kubecfg.loadConfig();
+      let liveStatus: unknown;
+      try {
+        const client = clientForNode(cfg, manifest.spec.node);
+        liveStatus = await client.serverStatus.query();
+      } catch (err) {
+        liveStatus = { error: (err as Error).message };
+      }
+      return { manifest, liveStatus };
+    }),
+
+  workloadApply: t.procedure
+    .input(z.object({ yaml: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const manifest: ModelRun = workloadStoreMod.parseWorkload(input.yaml);
+      const cfg = kubecfg.loadConfig();
+      // applyOne's NodeClient type pulls AppRouter → NodeClient → AppRouter
+      // at the type level. clientForNode returns a structurally-compatible
+      // surface (serverStatus/serverStop/rpcServerStop + the subscription
+      // helpers for serverStart/rpcServerStart arrive from the pinned tRPC
+      // client on the remote path; local path wraps core directly). The
+      // double-cast erases the cycle without introducing a runtime gap.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = await workloadApplyMod.applyOne(manifest, (nodeName) =>
+        clientForNode(cfg, nodeName) as unknown as any,
+      );
+      if (result.error) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+      }
+      const persisted: ModelRun = { ...manifest, status: result.statusSection };
+      const savedPath = workloadStoreMod.saveWorkload(persisted);
+      return {
+        action: result.action,
+        path: savedPath,
+        status: result.statusSection,
+        name: manifest.metadata.name,
+        node: manifest.spec.node,
+      };
+    }),
+
+  workloadDelete: t.procedure
+    .input(
+      z.object({
+        name: z.string().min(1),
+        keepRunning: z.boolean().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const manifest = workloadStoreMod.loadWorkloadByName(input.name);
+      const stops: string[] = [];
+      if (!input.keepRunning) {
+        const cfg = kubecfg.loadConfig();
+        try {
+          const client = clientForNode(cfg, manifest.spec.node);
+          const status = await client.serverStatus.query();
+          if (status.state === 'up' && status.rel === manifest.spec.target.value) {
+            await client.serverStop.mutate({ graceSeconds: 5 });
+            stops.push(`stopped llama-server on ${manifest.spec.node}`);
+          }
+        } catch (err) {
+          stops.push(`warning: coordinator ${manifest.spec.node}: ${(err as Error).message}`);
+        }
+        for (const worker of [...manifest.spec.workers].reverse()) {
+          try {
+            const wc = clientForNode(cfg, worker.node);
+            await wc.rpcServerStop.mutate({ graceSeconds: 3 });
+            stops.push(`stopped rpc-server on ${worker.node}`);
+          } catch (err) {
+            stops.push(`warning: worker ${worker.node}: ${(err as Error).message}`);
+          }
+        }
+      }
+      const removed = workloadStoreMod.deleteWorkload(input.name);
+      return { ok: removed, name: input.name, stops };
+    }),
+
+  workloadValidate: t.procedure
+    .input(z.object({ yaml: z.string().min(1) }))
+    .query(({ input }) => {
+      try {
+        const manifest = workloadStoreMod.parseWorkload(input.yaml);
+        return { ok: true as const, manifest };
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message };
+      }
+    }),
+
+  // Export the spec schema shape so the UI can build default manifests
+  // from a model + node without re-declaring the whole zod graph.
+  // We only return the JSON string of a template here; the real schema
+  // is still validated inside workloadApply.
+  workloadTemplate: t.procedure
+    .input(
+      z.object({
+        name: z.string().min(1),
+        node: z.string().min(1),
+        target: z.string().min(1),
+        targetKind: z.enum(['rel', 'alias']).default('rel'),
+        extraArgs: z.array(z.string()).default([]),
+        timeoutSeconds: z.number().int().positive().default(60),
+      }),
+    )
+    .query(({ input }) => {
+      const spec = ModelRunSpecSchema.parse({
+        node: input.node,
+        target: { kind: input.targetKind, value: input.target },
+        extraArgs: input.extraArgs,
+        timeoutSeconds: input.timeoutSeconds,
+      });
+      const manifest: ModelRun = {
+        apiVersion: 'llamactl/v1',
+        kind: 'ModelRun',
+        metadata: { name: input.name, labels: {} },
+        spec,
+      };
+      return manifest;
     }),
 
   catalogList: t.procedure
