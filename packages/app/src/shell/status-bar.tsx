@@ -1,6 +1,7 @@
+import * as React from 'react';
 import { trpc } from '@/lib/trpc';
 
-export function StatusBar(): JSX.Element {
+export function StatusBar(): React.JSX.Element {
   const env = trpc.env.useQuery();
   const e = env.data;
 

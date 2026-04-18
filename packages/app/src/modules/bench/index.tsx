@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
@@ -18,7 +19,7 @@ function truncate(lines: LogLine[]): LogLine[] {
     : lines;
 }
 
-export default function Bench(): JSX.Element {
+export default function Bench(): React.JSX.Element {
   const queryClient = useQueryClient();
   const catalog = trpc.catalogList.useQuery('all');
   const history = trpc.benchHistory.useQuery(undefined);

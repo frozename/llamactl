@@ -57,8 +57,7 @@ function RegisterPanel(props: { onDone: () => void }): React.JSX.Element {
     },
   });
 
-  function submit(e: React.FormEvent): void {
-    e.preventDefault();
+  function submit(): void {
     setError(null);
     setSuccess(null);
     const n = name.trim();
@@ -78,7 +77,10 @@ function RegisterPanel(props: { onDone: () => void }): React.JSX.Element {
 
   return (
     <form
-      onSubmit={submit}
+      onSubmit={(e) => {
+        e.preventDefault();
+        submit();
+      }}
       className="mt-4 space-y-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
     >
       <div className="text-sm font-medium text-[color:var(--color-fg)]">

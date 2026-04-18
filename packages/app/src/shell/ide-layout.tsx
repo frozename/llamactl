@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { Suspense } from 'react';
 import { ActivityBar } from './activity-bar';
 import { TitleBar } from './title-bar';
@@ -5,7 +6,7 @@ import { StatusBar } from './status-bar';
 import { APP_MODULES } from '@/modules/registry';
 import { useUIStore } from '@/stores/ui-store';
 
-export function IDELayout(): JSX.Element {
+export function IDELayout(): React.JSX.Element {
   const activeModule = useUIStore((s) => s.activeModule);
   const current = APP_MODULES.find((m) => m.id === activeModule) ?? APP_MODULES[0];
   const Active = current?.Component;

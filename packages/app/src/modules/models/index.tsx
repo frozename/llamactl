@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { create } from 'zustand';
@@ -25,7 +26,7 @@ export const useModelsStore = create<ModelsStore>()(
   ),
 );
 
-function ScopeTabs(): JSX.Element {
+function ScopeTabs(): React.JSX.Element {
   const { scope, setScope } = useModelsStore();
   const tabs: { id: ScopeFilter; label: string }[] = [
     { id: 'all', label: 'All' },
@@ -59,7 +60,7 @@ interface UninstallReport {
   actions: string[];
 }
 
-export default function Models(): JSX.Element {
+export default function Models(): React.JSX.Element {
   const queryClient = useQueryClient();
   const scope = useModelsStore((s) => s.scope);
   const catalog = trpc.catalogList.useQuery(scope);

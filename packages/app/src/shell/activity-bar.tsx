@@ -1,7 +1,8 @@
+import * as React from 'react';
 import { APP_MODULES, type AppModule } from '@/modules/registry';
 import { useUIStore } from '@/stores/ui-store';
 
-function IconButton({ module }: { module: AppModule }): JSX.Element {
+function IconButton({ module }: { module: AppModule }): React.JSX.Element {
   const activeModule = useUIStore((s) => s.activeModule);
   const setActiveModule = useUIStore((s) => s.setActiveModule);
   const Icon = module.icon;
@@ -21,7 +22,7 @@ function IconButton({ module }: { module: AppModule }): JSX.Element {
   );
 }
 
-export function ActivityBar(): JSX.Element {
+export function ActivityBar(): React.JSX.Element {
   const topModules = APP_MODULES.filter((m) => m.position !== 'bottom');
   const bottomModules = APP_MODULES.filter((m) => m.position === 'bottom');
 

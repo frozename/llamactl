@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
@@ -50,7 +51,7 @@ function PullCard({
   spec: PullCardSpec;
   onDismiss: (id: string) => void;
   onDone: () => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const [log, setLog] = useState<LogLine[]>([]);
   const [state, setState] = useState<'running' | 'done' | 'error'>('running');
   const [summary, setSummary] = useState<string | null>(null);
@@ -248,7 +249,7 @@ function PullCard({
   );
 }
 
-export default function Pulls(): JSX.Element {
+export default function Pulls(): React.JSX.Element {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<Mode>('file');
   const [repo, setRepo] = useState('');
@@ -257,8 +258,7 @@ export default function Pulls(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [cards, setCards] = useState<PullCardSpec[]>([]);
 
-  const enqueue = (e: React.FormEvent) => {
-    e.preventDefault();
+  const enqueue = (): void => {
     const r = repo.trim();
     if (!r) {
       setError('Repo is required');
@@ -313,7 +313,10 @@ export default function Pulls(): JSX.Element {
       </h1>
 
       <form
-        onSubmit={enqueue}
+        onSubmit={(e) => {
+          e.preventDefault();
+          enqueue();
+        }}
         className="mb-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
       >
         <div className="mb-3 flex gap-1 text-xs">

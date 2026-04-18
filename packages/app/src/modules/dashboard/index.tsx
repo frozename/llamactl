@@ -42,8 +42,7 @@ function ExposePanel(): React.JSX.Element {
     onError: (err) => setStatus({ kind: 'error', message: err.message }),
   });
 
-  function onSubmit(e: React.FormEvent<HTMLFormElement>): void {
-    e.preventDefault();
+  function onSubmit(): void {
     setStatus({ kind: 'idle' });
     if (!name.trim() || !rel.trim() || !node.trim()) {
       setStatus({ kind: 'error', message: 'name, node, and rel are required' });
@@ -75,7 +74,10 @@ function ExposePanel(): React.JSX.Element {
 
   return (
     <form
-      onSubmit={onSubmit}
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit();
+      }}
       className="mt-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
     >
       <div className="mb-2 text-sm font-medium text-[color:var(--color-fg)]">Expose a model</div>

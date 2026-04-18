@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
@@ -14,7 +15,7 @@ function formatBytes(n: number): string {
   return i === 0 ? `${Math.trunc(x)} B` : `${x.toFixed(1)} ${units[i]}`;
 }
 
-export default function LMStudio(): JSX.Element {
+export default function LMStudio(): React.JSX.Element {
   const queryClient = useQueryClient();
   const [rootOverride, setRootOverride] = useState('');
   const [link, setLink] = useState(true);

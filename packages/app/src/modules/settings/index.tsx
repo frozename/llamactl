@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { schemas } from '@llamactl/core';
@@ -65,7 +66,7 @@ const GROUPS: { title: string; keys: string[] }[] = [
   },
 ];
 
-function PromotionsEditor(): JSX.Element {
+function PromotionsEditor(): React.JSX.Element {
   const queryClient = useQueryClient();
   const promotions = trpc.promotions.useQuery();
   const catalog = trpc.catalogList.useQuery('all');
@@ -103,8 +104,7 @@ function PromotionsEditor(): JSX.Element {
     [catalog.data],
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (): void => {
     setError(null);
     if (rel.trim().length === 0) {
       setError('Rel is required');
@@ -208,7 +208,10 @@ function PromotionsEditor(): JSX.Element {
       )}
 
       <form
-        onSubmit={handleSubmit}
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleSubmit();
+        }}
         className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
       >
         <div className="mb-3 text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
@@ -280,7 +283,7 @@ function PromotionsEditor(): JSX.Element {
   );
 }
 
-export default function Settings(): JSX.Element {
+export default function Settings(): React.JSX.Element {
   const env = trpc.env.useQuery();
 
   if (env.isLoading) {

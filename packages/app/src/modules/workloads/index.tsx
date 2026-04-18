@@ -114,8 +114,7 @@ function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
     }
   }
 
-  function onSubmit(e: React.FormEvent<HTMLFormElement>): void {
-    e.preventDefault();
+  function onSubmit(): void {
     setError(null);
     setSuccess(null);
     if (!yaml.trim()) {
@@ -129,7 +128,10 @@ function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
 
   return (
     <form
-      onSubmit={onSubmit}
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit();
+      }}
       className="mt-4 space-y-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
     >
       <div className="text-sm font-medium text-[color:var(--color-fg)]">

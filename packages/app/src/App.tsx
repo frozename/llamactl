@@ -1,9 +1,10 @@
+import * as React from 'react';
 import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { trpc, trpcClient } from '@/lib/trpc';
 import { IDELayout } from '@/shell/ide-layout';
 
-export function App(): JSX.Element {
+export function App(): React.JSX.Element {
   const [queryClient] = useState(
     () =>
       new QueryClient({
