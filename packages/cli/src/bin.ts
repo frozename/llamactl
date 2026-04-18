@@ -13,6 +13,7 @@ import { runUninstall } from './commands/uninstall.js';
 import { runAgent } from './commands/agent.js';
 import { runNode } from './commands/node.js';
 import { runCtx } from './commands/ctx.js';
+import { runApply, runDelete, runDescribe, runGet } from './commands/workload.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
@@ -86,6 +87,17 @@ Remote node management (Kubernetes-style):
   llamactl ctx get                            Print the kubeconfig YAML
   llamactl ctx nodes                          Alias for 'node ls'
 
+Declarative workloads (Kubernetes-style):
+  llamactl apply -f <manifest.yaml>           Apply a ModelRun: start the
+                                              server on the target node,
+                                              restart it if config changed,
+                                              leave untouched on match.
+  llamactl get workloads [--json]             List workloads + live phase
+  llamactl describe workload <name>           Show manifest + live status
+  llamactl delete workload <name>             Stop the server and remove
+      [--keep-running]                        the manifest (or just remove
+                                              with --keep-running).
+
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
 `;
@@ -121,6 +133,14 @@ async function main(argv: string[]): Promise<number> {
       return runNode(rest);
     case 'ctx':
       return runCtx(rest);
+    case 'apply':
+      return runApply(rest);
+    case 'get':
+      return runGet(rest);
+    case 'describe':
+      return runDescribe(rest);
+    case 'delete':
+      return runDelete(rest);
     case undefined:
     case '--help':
     case '-h':
