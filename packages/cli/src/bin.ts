@@ -17,6 +17,7 @@ import { runApply, runDelete, runDescribe, runGet } from './commands/workload.js
 import { runController } from './commands/controller.js';
 import { runExpose } from './commands/expose.js';
 import { runSirius } from './commands/sirius.js';
+import { runEmbersynth } from './commands/embersynth.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
@@ -159,6 +160,8 @@ async function main(argv: string[]): Promise<number> {
       return runExpose(rest);
     case 'sirius':
       return runSirius(rest);
+    case 'embersynth':
+      return runEmbersynth(rest);
     case undefined:
     case '--help':
     case '-h':

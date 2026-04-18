@@ -39,6 +39,7 @@ export const CloudProviderSchema = z.enum([
   'mistral',
   'openai-compatible',
   'sirius',
+  'embersynth',
 ]);
 export type CloudProvider = z.infer<typeof CloudProviderSchema>;
 
@@ -204,6 +205,11 @@ export const DEFAULT_CLOUD_BASE_URLS: Record<CloudProvider, string> = {
   // we keep the provider name distinct so the UI can render a
   // gateway badge and the user understands what they're pointing at.
   sirius: 'http://localhost:3000/v1',
+  // embersynth defaults to port 7777 per its example config. Like
+  // sirius it's an OpenAI-compatible gateway — the distinction is
+  // behavioural (capability-based routing via `syntheticModels`
+  // rather than model-name lookup).
+  embersynth: 'http://localhost:7777/v1',
 };
 
 export function freshConfig(): Config {

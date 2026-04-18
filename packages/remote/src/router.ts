@@ -411,6 +411,7 @@ export const router = t.router({
           'mistral',
           'openai-compatible',
           'sirius',
+          'embersynth',
         ]),
         baseUrl: z.url().optional(),
         // Optional: sirius-gateway / local dev endpoints may be

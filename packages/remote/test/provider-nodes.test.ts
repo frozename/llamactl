@@ -5,6 +5,10 @@ import {
   synthesizeProviderNodes,
 } from '../src/config/provider-nodes.js';
 import type { SiriusProvider } from '../src/config/sirius-providers.js';
+import {
+  DEFAULT_EMBERSYNTH_PROFILES,
+  EmbersynthConfigSchema,
+} from '../src/config/embersynth.js';
 
 /**
  * Provider-kind nodes are virtual — synthesized from
@@ -56,7 +60,7 @@ const SAMPLE_PROVIDERS: SiriusProvider[] = [
 describe('provider-nodes', () => {
   test('synthesizeProviderNodes emits one node per (gateway, provider) pair', () => {
     const cfg = cfgWithSiriusGateway();
-    const nodes = synthesizeProviderNodes(cfg, () => SAMPLE_PROVIDERS);
+    const nodes = synthesizeProviderNodes(cfg, { loadSirius: () => SAMPLE_PROVIDERS });
     expect(nodes).toHaveLength(2);
     expect(nodes.map((n) => n.name)).toEqual(['sirius.openai', 'sirius.anthropic']);
     for (const n of nodes) {
@@ -67,20 +71,22 @@ describe('provider-nodes', () => {
 
   test('synthesizeProviderNodes returns empty when there are no sirius gateways', () => {
     const cfg = freshConfig();
-    const nodes = synthesizeProviderNodes(cfg, () => SAMPLE_PROVIDERS);
+    const nodes = synthesizeProviderNodes(cfg, { loadSirius: () => SAMPLE_PROVIDERS });
     expect(nodes).toEqual([]);
   });
 
   test('synthesizeProviderNodes is empty when sirius-providers.yaml is empty', () => {
     const cfg = cfgWithSiriusGateway();
-    const nodes = synthesizeProviderNodes(cfg, () => []);
+    const nodes = synthesizeProviderNodes(cfg, { loadSirius: () => [] });
     expect(nodes).toEqual([]);
   });
 
   test('synthesizeProviderNodes survives a thrown loader (fail-soft)', () => {
     const cfg = cfgWithSiriusGateway();
-    const nodes = synthesizeProviderNodes(cfg, () => {
-      throw new Error('yaml broken');
+    const nodes = synthesizeProviderNodes(cfg, {
+      loadSirius: () => {
+        throw new Error('yaml broken');
+      },
     });
     expect(nodes).toEqual([]);
   });
@@ -93,6 +99,49 @@ describe('provider-nodes', () => {
     expect(parseProviderNodeName('sirius')).toBeNull();
     expect(parseProviderNodeName('.openai')).toBeNull();
     expect(parseProviderNodeName('sirius.')).toBeNull();
+  });
+
+  test('embersynth gateways fan out via syntheticModels', () => {
+    const base = freshConfig();
+    const cfg: Config = {
+      ...base,
+      clusters: base.clusters.map((c) =>
+        c.name === 'home'
+          ? {
+              ...c,
+              nodes: [
+                ...c.nodes,
+                {
+                  name: 'ember',
+                  endpoint: '',
+                  kind: 'gateway',
+                  cloud: {
+                    provider: 'embersynth',
+                    baseUrl: 'http://localhost:7777/v1',
+                  },
+                },
+              ],
+            }
+          : c,
+      ),
+    };
+    const ecfg = EmbersynthConfigSchema.parse({
+      nodes: [],
+      profiles: DEFAULT_EMBERSYNTH_PROFILES,
+      syntheticModels: {
+        'fusion-auto': 'auto',
+        'fusion-vision': 'vision',
+      },
+    });
+    const nodes = synthesizeProviderNodes(cfg, { loadEmbersynth: () => ecfg });
+    expect(nodes.map((n) => n.name).sort()).toEqual([
+      'ember.fusion-auto',
+      'ember.fusion-vision',
+    ]);
+    for (const n of nodes) {
+      expect(n.kind).toBe('provider');
+      expect(n.provider?.gateway).toBe('ember');
+    }
   });
 
   test('fans out across multiple gateways', () => {
@@ -119,7 +168,9 @@ describe('provider-nodes', () => {
           : c,
       ),
     };
-    const nodes = synthesizeProviderNodes(multiGw, () => SAMPLE_PROVIDERS);
+    const nodes = synthesizeProviderNodes(multiGw, {
+      loadSirius: () => SAMPLE_PROVIDERS,
+    });
     expect(nodes.map((n) => n.name).sort()).toEqual([
       'sirius-staging.anthropic',
       'sirius-staging.openai',
