@@ -147,6 +147,57 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
+    'llamactl.node.remove',
+    {
+      title: 'Remove a node from the current cluster',
+      description:
+        'Drop a node from kubeconfig (`~/.llamactl/config`). No-op if absent. Does NOT stop running workloads on that node — chain with workload.delete or drain-node. `dryRun: true` previews without writing.',
+      inputSchema: {
+        name: z.string().min(1),
+        dryRun: z.boolean().default(false),
+      },
+    },
+    async (input) => {
+      const { name, dryRun } = input;
+      const cfg = kubecfg.loadConfig();
+      const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
+      const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
+      const match = cluster?.nodes.find((n) => n.name === name);
+      if (dryRun) {
+        appendAudit({ server: SERVER_SLUG, tool: 'llamactl.node.remove', input, dryRun: true });
+        return toTextContent({
+          dryRun: true,
+          found: !!match,
+          node: match ?? null,
+          message: match
+            ? `would remove node ${name} from cluster ${cluster?.name ?? '?'}`
+            : `no node named ${name} in the current cluster`,
+        });
+      }
+      if (!match || !cluster) {
+        appendAudit({
+          server: SERVER_SLUG,
+          tool: 'llamactl.node.remove',
+          input,
+          dryRun: false,
+          result: { removed: false },
+        });
+        return toTextContent({ ok: true, removed: false, node: null });
+      }
+      const next = kubecfg.removeNode(cfg, cluster.name, name);
+      kubecfg.saveConfig(next);
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.node.remove',
+        input,
+        dryRun: false,
+        result: { removed: true },
+      });
+      return toTextContent({ ok: true, removed: true, node: match });
+    },
+  );
+
+  server.registerTool(
     'llamactl.workload.delete',
     {
       title: 'Remove a ModelRun manifest',
