@@ -110,3 +110,19 @@ export function removeNode(
   });
   return { ...config, clusters };
 }
+
+/** Set the current context's defaultNode. Verifies the node exists. */
+export function setDefaultNode(config: Config, nodeName: string): Config {
+  const ctx = currentContext(config);
+  const cluster = config.clusters.find((c) => c.name === ctx.cluster);
+  if (!cluster) throw new Error(`cluster '${ctx.cluster}' not found`);
+  if (!cluster.nodes.some((n) => n.name === nodeName)) {
+    throw new Error(`node '${nodeName}' not found in cluster '${cluster.name}'`);
+  }
+  return {
+    ...config,
+    contexts: config.contexts.map((c) =>
+      c.name === ctx.name ? { ...c, defaultNode: nodeName } : c,
+    ),
+  };
+}

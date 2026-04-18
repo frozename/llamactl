@@ -258,6 +258,17 @@ export const router = t.router({
       return { ok: true as const };
     }),
 
+  nodeSetDefault: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .mutation(({ input }) => {
+      const cfgPath = kubecfg.defaultConfigPath();
+      let cfg = kubecfg.loadConfig(cfgPath);
+      cfg = kubecfg.setDefaultNode(cfg, input.name);
+      kubecfg.saveConfig(cfg, cfgPath);
+      const ctx = kubecfg.currentContext(cfg);
+      return { ok: true as const, defaultNode: ctx.defaultNode };
+    }),
+
   // ---- workload management --------------------------------------------
 
   workloadList: t.procedure.query(async () => {
