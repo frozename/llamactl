@@ -175,8 +175,27 @@ export default function Server(): JSX.Element {
             Endpoint
           </div>
           <div className="mt-1 mono text-sm break-all text-[color:var(--color-fg)]">
-            {s?.endpoint ?? '—'}
+            {s?.endpoint ? (
+              <a href={s.endpoint} target="_blank" rel="noreferrer" className="underline">
+                {s.endpoint}
+              </a>
+            ) : (
+              '—'
+            )}
           </div>
+          {s?.advertisedEndpoint && s.advertisedEndpoint !== s.endpoint && (
+            <div className="mt-1 text-[10px] text-[color:var(--color-fg-muted)]">
+              LAN:{' '}
+              <a
+                href={s.advertisedEndpoint}
+                target="_blank"
+                rel="noreferrer"
+                className="mono underline"
+              >
+                {s.advertisedEndpoint}
+              </a>
+            </div>
+          )}
         </div>
         <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
           <div className="text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
