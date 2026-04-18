@@ -124,6 +124,120 @@ function RegisterPanel(props: { onDone: () => void }): React.JSX.Element {
   );
 }
 
+function OpenAIConfigPanel(props: { node: string }): React.JSX.Element {
+  const [revealed, setRevealed] = useState(false);
+  const cfg = trpc.nodeOpenAIConfig.useQuery(
+    { name: props.node },
+    { enabled: false, retry: false, staleTime: Infinity },
+  );
+
+  async function load(): Promise<void> {
+    if (!cfg.data) await cfg.refetch();
+    setRevealed((v) => !v);
+  }
+
+  async function copy(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Non-secure contexts silently fail; the textarea is still
+      // selectable by hand in that case.
+    }
+  }
+
+  const pyExample = cfg.data
+    ? `from openai import OpenAI\nclient = OpenAI(\n    base_url="${cfg.data.baseUrl}",\n    api_key="${cfg.data.apiKey}",\n)\n# For a self-signed CA, point NODE_EXTRA_CA_CERTS or\n# httpx verify=... at the PEM below.`
+    : '';
+
+  const curlExample = cfg.data
+    ? `curl --cacert /path/to/ca.pem \\\n  -H "Authorization: Bearer ${cfg.data.apiKey}" \\\n  ${cfg.data.baseUrl}/models`
+    : '';
+
+  return (
+    <div className="mt-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 text-xs">
+      <div className="flex items-center justify-between">
+        <span className="font-medium text-[color:var(--color-fg)]">OpenAI config</span>
+        <button
+          type="button"
+          onClick={() => { void load(); }}
+          disabled={cfg.isFetching}
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)] disabled:opacity-50"
+        >
+          {cfg.isFetching ? 'Loading…' : revealed ? 'Hide' : 'Reveal'}
+        </button>
+      </div>
+      {cfg.error && (
+        <div className="mt-1 text-[color:var(--color-danger)]">{cfg.error.message}</div>
+      )}
+      {revealed && cfg.data && (
+        <div className="mt-2 space-y-2 font-mono text-[11px] text-[color:var(--color-fg)]">
+          <div>
+            <div className="text-[10px] text-[color:var(--color-fg-muted)]">base_url</div>
+            <div className="flex items-center gap-2">
+              <span className="break-all">{cfg.data.baseUrl}</span>
+              <button
+                type="button"
+                onClick={() => { void copy(cfg.data!.baseUrl); }}
+                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1.5 py-0.5 text-[9px] text-[color:var(--color-fg-muted)]"
+              >
+                copy
+              </button>
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] text-[color:var(--color-fg-muted)]">api_key (bearer)</div>
+            <div className="flex items-center gap-2">
+              <span className="break-all">{cfg.data.apiKey}</span>
+              <button
+                type="button"
+                onClick={() => { void copy(cfg.data!.apiKey); }}
+                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1.5 py-0.5 text-[9px] text-[color:var(--color-fg-muted)]"
+              >
+                copy
+              </button>
+            </div>
+          </div>
+          {cfg.data.caCertPem && (
+            <div>
+              <div className="flex items-center justify-between text-[10px] text-[color:var(--color-fg-muted)]">
+                <span>ca_cert.pem (fingerprint {cfg.data.caFingerprint ?? '—'})</span>
+                <button
+                  type="button"
+                  onClick={() => { void copy(cfg.data!.caCertPem ?? ''); }}
+                  className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1.5 py-0.5 text-[9px] text-[color:var(--color-fg-muted)]"
+                >
+                  copy PEM
+                </button>
+              </div>
+              <textarea
+                readOnly
+                value={cfg.data.caCertPem}
+                className="mt-1 h-20 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-0)] px-2 py-1 text-[10px] text-[color:var(--color-fg)]"
+              />
+            </div>
+          )}
+          <details>
+            <summary className="cursor-pointer text-[10px] text-[color:var(--color-fg-muted)]">
+              Python example
+            </summary>
+            <pre className="mt-1 overflow-x-auto whitespace-pre rounded border border-[var(--color-border)] bg-[var(--color-surface-0)] px-2 py-1 text-[10px]">
+              {pyExample}
+            </pre>
+          </details>
+          <details>
+            <summary className="cursor-pointer text-[10px] text-[color:var(--color-fg-muted)]">
+              curl example
+            </summary>
+            <pre className="mt-1 overflow-x-auto whitespace-pre rounded border border-[var(--color-border)] bg-[var(--color-surface-0)] px-2 py-1 text-[10px]">
+              {curlExample}
+            </pre>
+          </details>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NodeRow(props: {
   name: string;
   endpoint: string;
@@ -248,6 +362,7 @@ function NodeRow(props: {
           )}
         </div>
       )}
+      {!isLocal && <OpenAIConfigPanel node={props.name} />}
     </div>
   );
 }

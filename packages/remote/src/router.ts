@@ -326,6 +326,28 @@ export const router = t.router({
       return { ok: true as const, defaultNode: ctx.defaultNode };
     }),
 
+  /**
+   * Bundle everything a user needs to point an external OpenAI client
+   * at a node's built-in gateway: base URL, bearer token, and (for
+   * self-signed setups) the CA PEM + fingerprint. Sensitive — exposes
+   * the raw token — so the renderer calls this on-demand when the user
+   * opens the "OpenAI config" panel, not eagerly with `nodeList`.
+   */
+  nodeOpenAIConfig: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .query(({ input }) => {
+      const cfg = kubecfg.loadConfig();
+      const resolved = kubecfg.resolveNode(cfg, input.name);
+      const token = kubecfg.resolveToken(resolved.user);
+      return {
+        node: input.name,
+        baseUrl: `${resolved.node.endpoint}/v1`,
+        apiKey: token,
+        caCertPem: resolved.node.certificate ?? null,
+        caFingerprint: resolved.node.certificateFingerprint ?? null,
+      };
+    }),
+
   // ---- workload management --------------------------------------------
 
   workloadList: t.procedure.query(async () => {

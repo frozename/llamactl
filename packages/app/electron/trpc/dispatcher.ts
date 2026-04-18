@@ -41,6 +41,7 @@ const CONTROL_PLANE_ONLY = new Set<string>([
   'nodeRemove',
   'nodeTest',
   'nodeSetDefault',
+  'nodeOpenAIConfig',
   'workloadList',
   'workloadDescribe',
   'workloadApply',
