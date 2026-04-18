@@ -183,6 +183,75 @@ export interface FanOutResult<T> {
   error?: string;
 }
 
+/**
+ * Subscribe to a router streaming procedure via the remote NodeClient,
+ * forwarding intermediate events through `onEvent` and returning the
+ * final `done` payload. Wires Ctrl-C (SIGINT / SIGTERM) to abort the
+ * subscription so the agent's underlying subprocess is signaled and
+ * the SSE stream closes cleanly.
+ */
+export function subscribeRemote<Event, Done>(opts: {
+  subscribe: (handlers: {
+    onData: (e: unknown) => void;
+    onError: (err: unknown) => void;
+    onComplete: () => void;
+    onStarted?: () => void;
+  }) => { unsubscribe: () => void };
+  onEvent: (e: Event) => void;
+  extractDone: (e: unknown) => Done | null;
+}): Promise<Done> {
+  return new Promise((resolve, reject) => {
+    let finalDone: Done | null = null;
+    let settled = false;
+    const sub = opts.subscribe({
+      onData: (e) => {
+        const done = opts.extractDone(e);
+        if (done !== null) finalDone = done;
+        else opts.onEvent(e as Event);
+      },
+      onError: (err) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+      onComplete: () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (finalDone !== null) resolve(finalDone);
+        else reject(new Error('remote subscription completed without a done event'));
+      },
+    });
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      sub.unsubscribe();
+      cleanup();
+      reject(new Error('aborted'));
+    };
+    const cleanup = () => {
+      process.off('SIGINT', abort);
+      process.off('SIGTERM', abort);
+    };
+    process.on('SIGINT', abort);
+    process.on('SIGTERM', abort);
+  });
+}
+
+/** Convenience: the tRPC router wraps each streaming procedure's
+ *  result in a distinct `type: 'done' | 'done-candidate' | …` event.
+ *  This helper returns the result payload if the event matches the
+ *  given type, or null otherwise. */
+export function matchDoneEvent<T>(doneType: string) {
+  return (e: unknown): T | null => {
+    if (typeof e !== 'object' || e === null) return null;
+    const type = (e as { type?: string }).type;
+    if (type !== doneType) return null;
+    return (e as unknown as { result: T }).result;
+  };
+}
+
 export async function fanOut<T>(
   perNode: (client: NodeClient, nodeName: string) => Promise<T>,
   globals: Globals = currentGlobals,

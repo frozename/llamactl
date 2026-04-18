@@ -1,5 +1,12 @@
 import { bench, build, ctx, env as envMod, target as targetMod } from '@llamactl/core';
 import type { ModelClass } from '@llamactl/core';
+import {
+  getGlobals,
+  getNodeClient,
+  isLocalDispatch,
+  matchDoneEvent,
+  subscribeRemote,
+} from '../dispatcher.js';
 
 const USAGE = `Usage: llamactl bench <subcommand>
 
@@ -304,11 +311,27 @@ async function runPreset(args: string[]): Promise<number> {
     return 1;
   }
 
-  const result = await bench.benchPreset({
-    target,
-    mode: modeRaw,
-    onEvent: forwardBenchEvent,
-  });
+  let result: Awaited<ReturnType<typeof bench.benchPreset>>;
+  if (isLocalDispatch()) {
+    result = await bench.benchPreset({
+      target,
+      mode: modeRaw,
+      onEvent: forwardBenchEvent,
+    });
+  } else {
+    try {
+      const input: { target: string; mode?: 'auto' | 'text' | 'vision' } = { target };
+      if (modeRaw !== 'auto') input.mode = modeRaw;
+      result = await subscribeRemote<bench.BenchEvent, Awaited<ReturnType<typeof bench.benchPreset>>>({
+        subscribe: (handlers) => getNodeClient().benchPresetRun.subscribe(input, handlers),
+        onEvent: forwardBenchEvent,
+        extractDone: matchDoneEvent<Awaited<ReturnType<typeof bench.benchPreset>>>('done-preset'),
+      });
+    } catch (err) {
+      process.stderr.write(`bench preset: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
   if ('error' in result) {
     if (json) process.stdout.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
     else process.stderr.write(`${result.error}\n`);
@@ -343,7 +366,21 @@ async function runVision(args: string[]): Promise<number> {
   }
   const target = positional[0] ?? 'current';
 
-  const result = await bench.benchVision({ target, onEvent: forwardBenchEvent });
+  let result: Awaited<ReturnType<typeof bench.benchVision>>;
+  if (isLocalDispatch()) {
+    result = await bench.benchVision({ target, onEvent: forwardBenchEvent });
+  } else {
+    try {
+      result = await subscribeRemote<bench.BenchEvent, Awaited<ReturnType<typeof bench.benchVision>>>({
+        subscribe: (handlers) => getNodeClient().benchVisionRun.subscribe({ target }, handlers),
+        onEvent: forwardBenchEvent,
+        extractDone: matchDoneEvent<Awaited<ReturnType<typeof bench.benchVision>>>('done-vision'),
+      });
+    } catch (err) {
+      process.stderr.write(`bench vision: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
   if ('error' in result) {
     if (json) process.stdout.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
     else process.stderr.write(`${result.error}\n`);

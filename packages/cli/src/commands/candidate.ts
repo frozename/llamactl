@@ -1,4 +1,11 @@
 import { bench, candidateTest, pull } from '@llamactl/core';
+import {
+  getGlobals,
+  getNodeClient,
+  isLocalDispatch,
+  matchDoneEvent,
+  subscribeRemote,
+} from '../dispatcher.js';
 
 const USAGE = `Usage: llamactl candidate <subcommand>
 
@@ -64,12 +71,32 @@ async function runTest(args: string[]): Promise<number> {
     return 1;
   }
 
-  const result = await candidateTest.candidateTest({
-    repo,
-    file,
-    profile,
-    onEvent: forwardStream,
-  });
+  let result: Awaited<ReturnType<typeof candidateTest.candidateTest>>;
+  if (isLocalDispatch()) {
+    result = await candidateTest.candidateTest({
+      repo,
+      file,
+      profile,
+      onEvent: forwardStream,
+    });
+  } else {
+    try {
+      const input: { repo: string; file?: string; profile?: string } = { repo };
+      if (file !== undefined) input.file = file;
+      if (profile !== undefined) input.profile = profile;
+      result = await subscribeRemote<
+        pull.PullEvent | bench.BenchEvent,
+        Awaited<ReturnType<typeof candidateTest.candidateTest>>
+      >({
+        subscribe: (handlers) => getNodeClient().candidateTestRun.subscribe(input, handlers),
+        onEvent: forwardStream,
+        extractDone: matchDoneEvent<Awaited<ReturnType<typeof candidateTest.candidateTest>>>('done-candidate-test'),
+      });
+    } catch (err) {
+      process.stderr.write(`candidate test: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
 
   if ('error' in result) {
     if (json) process.stdout.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);

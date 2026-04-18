@@ -1,5 +1,11 @@
 import { env as envMod, server } from '@llamactl/core';
-import { getGlobals, getNodeClient, isLocalDispatch } from '../dispatcher.js';
+import {
+  getGlobals,
+  getNodeClient,
+  isLocalDispatch,
+  matchDoneEvent,
+  subscribeRemote,
+} from '../dispatcher.js';
 
 const USAGE = `Usage: llamactl server <subcommand>
 
@@ -89,13 +95,31 @@ async function runStart(args: string[]): Promise<number> {
     return 1;
   }
 
-  const result = await server.startServer({
-    target,
-    extraArgs: extra,
-    timeoutSeconds,
-    skipTuned,
-    onEvent: forwardEvent,
-  });
+  let result: Awaited<ReturnType<typeof server.startServer>>;
+  if (isLocalDispatch()) {
+    result = await server.startServer({
+      target,
+      extraArgs: extra,
+      timeoutSeconds,
+      skipTuned,
+      onEvent: forwardEvent,
+    });
+  } else {
+    try {
+      const input: { target: string; extraArgs?: string[]; timeoutSeconds?: number; skipTuned?: boolean } = { target };
+      if (extra.length > 0) input.extraArgs = extra;
+      if (timeoutSeconds !== 60) input.timeoutSeconds = timeoutSeconds;
+      if (skipTuned) input.skipTuned = skipTuned;
+      result = await subscribeRemote<server.ServerEvent, Awaited<ReturnType<typeof server.startServer>>>({
+        subscribe: (handlers) => getNodeClient().serverStart.subscribe(input, handlers),
+        onEvent: forwardEvent,
+        extractDone: matchDoneEvent<Awaited<ReturnType<typeof server.startServer>>>('done'),
+      });
+    } catch (err) {
+      process.stderr.write(`server start: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
 
   if (json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
