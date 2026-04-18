@@ -13,8 +13,12 @@ export {
   type PinnedFetch,
   type PinnedFetchFactory,
 } from './client/links.js';
-export type { ClusterNode, Config } from './config/schema.js';
-export { LOCAL_NODE_NAME, LOCAL_NODE_ENDPOINT } from './config/schema.js';
+export type { ClusterNode, Config, NodeKind } from './config/schema.js';
+export {
+  LOCAL_NODE_NAME,
+  LOCAL_NODE_ENDPOINT,
+  resolveNodeKind,
+} from './config/schema.js';
 export * as workloadSchema from './workload/schema.js';
 export * as workloadStore from './workload/store.js';
 export * as workloadApply from './workload/apply.js';

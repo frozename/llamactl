@@ -16,6 +16,7 @@ import { runCtx } from './commands/ctx.js';
 import { runApply, runDelete, runDescribe, runGet } from './commands/workload.js';
 import { runController } from './commands/controller.js';
 import { runExpose } from './commands/expose.js';
+import { runSirius } from './commands/sirius.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
@@ -105,6 +106,9 @@ Declarative workloads (Kubernetes-style):
   llamactl expose <target> [--node <n>]       Deploy a model as a workload
       [--name <w>] [--extra-args="..."]       and print the OpenAI URL
       [--timeout=<s>] [--json]                external clients should use.
+  llamactl sirius export                       Emit LLAMACTL_NODES config for
+      [--format json|yaml|env]                 a sirius-gateway deployment.
+      [--token-inline]
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -153,6 +157,8 @@ async function main(argv: string[]): Promise<number> {
       return runController(rest);
     case 'expose':
       return runExpose(rest);
+    case 'sirius':
+      return runSirius(rest);
     case undefined:
     case '--help':
     case '-h':
