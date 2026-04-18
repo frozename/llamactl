@@ -3,6 +3,8 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { z } from 'zod';
+import { bench, env as envMod, schemas } from '@llamactl/core';
+type BenchHistoryEntry = schemas.BenchHistoryEntry;
 import { loadConfig, resolveToken } from './kubeconfig.js';
 import {
   LOCAL_NODE_ENDPOINT,
@@ -64,6 +66,13 @@ const EmbersynthNodeSchema = z.object({
     .object({
       requestMs: z.number().int().optional(),
       connectMs: z.number().int().optional(),
+    })
+    .optional(),
+  optimization: z
+    .object({
+      quantization: z.string().optional(),
+      contextWindow: z.number().int().positive().optional(),
+      tokensPerSecond: z.number().positive().optional(),
     })
     .optional(),
 });
@@ -146,13 +155,64 @@ const DEFAULT_CAPABILITIES_BY_PROVIDER: Record<string, string[]> = {
   'openai-compatible': ['reasoning'],
 };
 
+/**
+ * Best bench record (highest gen_ts) for a given agent machine. Used
+ * to steer embersynth's priority + optimization metadata toward the
+ * fastest local node.
+ */
+interface BenchSummary {
+  genTps: number;
+  /** Parsed context window from the bench record's ctx field. */
+  contextWindow: number | null;
+  rel: string;
+}
+
+function summarizeBenchForMachine(
+  rows: readonly BenchHistoryEntry[],
+  machine: string,
+): BenchSummary | null {
+  let best: BenchSummary | null = null;
+  for (const r of rows) {
+    if (r.machine !== machine) continue;
+    const gen = Number.parseFloat(r.gen_ts);
+    if (!Number.isFinite(gen) || gen <= 0) continue;
+    if (best && gen <= best.genTps) continue;
+    const ctxNum = Number.parseInt(r.ctx, 10);
+    best = {
+      genTps: gen,
+      contextWindow: Number.isFinite(ctxNum) && ctxNum > 0 ? ctxNum : null,
+      rel: r.rel,
+    };
+  }
+  return best;
+}
+
+/**
+ * Bucket bench gen_ts values into embersynth priority bands. Lower
+ * priority = preferred. Tuned for consumer hardware (macbook → 30-80
+ * tok/s; mac mini M4 → 10-30; older GPUs → 5-15).
+ */
+function priorityFromGenTps(genTps: number): number {
+  if (genTps >= 60) return 1;
+  if (genTps >= 30) return 2;
+  if (genTps >= 15) return 4;
+  if (genTps >= 5) return 6;
+  return 8;
+}
+
 function agentToEmbersynthNode(
   node: ClusterNode,
   token: string,
+  benchSummary: BenchSummary | null,
 ): EmbersynthNode {
   const endpoint = node.endpoint === LOCAL_NODE_ENDPOINT
     ? 'http://127.0.0.1:8080'
     : node.endpoint.replace(/\/$/, '');
+  const priority = benchSummary ? priorityFromGenTps(benchSummary.genTps) : 5;
+  const optimization =
+    benchSummary && benchSummary.contextWindow
+      ? { contextWindow: benchSummary.contextWindow }
+      : undefined;
   return EmbersynthNodeSchema.parse({
     id: `agent-${node.name}`,
     label: `llamactl agent '${node.name}'`,
@@ -162,10 +222,11 @@ function agentToEmbersynthNode(
     capabilities: ['reasoning'],
     tags: ['llamactl', 'agent', 'local', 'private'],
     providerType: 'openai-compatible',
-    modelId: 'default',
-    priority: 1,
+    modelId: benchSummary?.rel ?? 'default',
+    priority,
     auth: { type: 'bearer', token },
     health: { endpoint: '/healthz', intervalMs: 30000 },
+    ...(optimization ? { optimization } : {}),
   });
 }
 
@@ -234,12 +295,36 @@ export function generateEmbersynthConfig(opts?: {
   cfg?: Config;
   existing?: EmbersynthConfig | null;
   env?: NodeJS.ProcessEnv;
+  /**
+   * Optional pre-loaded bench history. When omitted, the generator
+   * reads the control plane's own `llama-bench-history.tsv`. Tests
+   * inject a synthetic history to make bench-driven priority
+   * deterministic.
+   */
+  benchHistory?: readonly BenchHistoryEntry[];
 }): EmbersynthConfig {
   const cfg = opts?.cfg ?? loadConfig();
   const env = opts?.env ?? process.env;
   const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
   const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
   const user = cfg.users.find((u) => u.name === ctx?.user);
+
+  // Bench signal — drives priority + optimization metadata per agent
+  // node. Reads the control plane's own llama-bench-history.tsv when
+  // not overridden. Fetching per-remote-agent bench history via tRPC
+  // is a follow-up; today the control plane's TSV covers benches it
+  // initiated locally or in-proc, plus any records a user copied in.
+  const benchRows: readonly BenchHistoryEntry[] =
+    opts?.benchHistory ??
+    (() => {
+      try {
+        const resolved = envMod.resolveEnv(env);
+        const file = bench.benchHistoryFile(resolved);
+        return bench.readBenchHistory(file).current;
+      } catch {
+        return [] as readonly BenchHistoryEntry[];
+      }
+    })();
 
   const nodes: EmbersynthNode[] = [];
 
@@ -257,7 +342,8 @@ export function generateEmbersynthConfig(opts?: {
     } catch {
       continue;
     }
-    nodes.push(agentToEmbersynthNode(n, token));
+    const summary = summarizeBenchForMachine(benchRows, n.name);
+    nodes.push(agentToEmbersynthNode(n, token, summary));
   }
 
   // Sirius-provider entries

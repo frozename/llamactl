@@ -139,6 +139,64 @@ describe('embersynth config bridge', () => {
     );
   });
 
+  test('bench records drive priority + contextWindow per agent', () => {
+    const cfg = makeCfgWithAgent();
+    const history = [
+      {
+        updated_at: '2026-04-01T00:00:00Z',
+        machine: 'gpu1',
+        rel: 'org/model-Q4.gguf',
+        mode: 'text' as const,
+        ctx: '32768',
+        build: 'b4000',
+        profile: 'long',
+        gen_ts: '72.5',
+        prompt_ts: '850',
+        launch_args: '--flash-attn',
+      },
+    ];
+    const out = generateEmbersynthConfig({ cfg, benchHistory: history });
+    const gpu1 = out.nodes.find((n) => n.id === 'agent-gpu1');
+    expect(gpu1).toBeTruthy();
+    expect(gpu1!.priority).toBe(1);
+    expect(gpu1!.optimization?.contextWindow).toBe(32768);
+    expect(gpu1!.modelId).toBe('org/model-Q4.gguf');
+  });
+
+  test('agent without bench records gets neutral priority 5 + no optimization', () => {
+    const out = generateEmbersynthConfig({
+      cfg: makeCfgWithAgent(),
+      benchHistory: [],
+    });
+    const gpu1 = out.nodes.find((n) => n.id === 'agent-gpu1');
+    expect(gpu1?.priority).toBe(5);
+    expect(gpu1?.optimization).toBeUndefined();
+  });
+
+  test('priority bands span gen_ts ranges deterministically', () => {
+    const base = makeCfgWithAgent();
+    const makeHistory = (genTps: string) => [
+      {
+        updated_at: '2026-04-01T00:00:00Z',
+        machine: 'gpu1',
+        rel: 'x/y.gguf',
+        mode: 'text' as const,
+        ctx: '8192',
+        build: 'b1',
+        profile: 'p',
+        gen_ts: genTps,
+        prompt_ts: '100',
+        launch_args: '',
+      },
+    ];
+    const slow = generateEmbersynthConfig({ cfg: base, benchHistory: makeHistory('3.0') });
+    expect(slow.nodes.find((n) => n.id === 'agent-gpu1')?.priority).toBe(8);
+    const mid = generateEmbersynthConfig({ cfg: base, benchHistory: makeHistory('20.0') });
+    expect(mid.nodes.find((n) => n.id === 'agent-gpu1')?.priority).toBe(4);
+    const fast = generateEmbersynthConfig({ cfg: base, benchHistory: makeHistory('45.0') });
+    expect(fast.nodes.find((n) => n.id === 'agent-gpu1')?.priority).toBe(2);
+  });
+
   test('loadEmbersynthConfig returns null when file absent, round-trips when saved', () => {
     const path = join(tmp, 'embersynth.yaml');
     expect(loadEmbersynthConfig(path)).toBeNull();
