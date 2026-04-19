@@ -79,7 +79,11 @@ describe('dispatchGatewayApply', () => {
     throw new Error('should not be called in dispatch tests');
   };
 
-  test('routes sirius-kind node to siriusHandler, returns Pending with SiriusHandlerNotImplemented', async () => {
+  test('routes sirius-kind node to siriusHandler; no upstream = Pending + SiriusUpstreamMissing', async () => {
+    // `target.value` is `openai/gpt-4o`. With no sirius-providers.yaml
+    // (or an empty one) the handler cannot resolve the `openai`
+    // upstream and returns Pending so the operator can
+    // `llamactl sirius add-provider` first.
     const node = siriusNode();
     const manifest = gatewayManifest(node.name);
     const result = await dispatchGatewayApply({
@@ -90,10 +94,12 @@ describe('dispatchGatewayApply', () => {
     expect(result).not.toBeNull();
     expect(result!.action).toBe('pending');
     expect(result!.statusSection.phase).toBe('Pending');
-    expect(result!.statusSection.conditions[0]?.reason).toBe('SiriusHandlerNotImplemented');
+    expect(result!.statusSection.conditions[0]?.reason).toBe('SiriusUpstreamMissing');
   });
 
-  test('routes embersynth-kind node to embersynthHandler', async () => {
+  test('routes embersynth-kind node to embersynthHandler; missing config = Pending', async () => {
+    // No embersynth.yaml in the test's sandbox, so the handler halts
+    // at the "load config" step with a clear actionable reason.
     const node = embersynthNode();
     const manifest = gatewayManifest(node.name, 'fusion-vision');
     const result = await dispatchGatewayApply({
@@ -101,7 +107,10 @@ describe('dispatchGatewayApply', () => {
       getClient: noopClient,
       resolveNode: () => node,
     });
-    expect(result!.statusSection.conditions[0]?.reason).toBe('EmbersynthHandlerNotImplemented');
+    const reason = result!.statusSection.conditions[0]?.reason;
+    expect(
+      reason === 'EmbersynthConfigMissing' || reason === 'EmbersynthSyntheticMissing',
+    ).toBe(true);
   });
 
   test('agent-kind node returns null — caller must fall through to serverStart', async () => {
