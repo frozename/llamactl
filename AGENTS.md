@@ -39,15 +39,26 @@ packages/
 │               workload reconcilers + infra + tunnel. Shared by
 │               cli + app + the agent.
 ├── app/        Electron. electron-trpc IPC; reads @llamactl/remote
-│               for the router; renders with React 19.
+│               for the router; renders with React 19. Ships the
+│               Operator Console (N.4) which plans *and* executes
+│               MCP tools with tiered approval cards, the N.4.5
+│               Planner chat, A/B compare chat (K.2), Cost dashboard
+│               (N.3.7), and the Pipelines builder + "Save as MCP
+│               tool" exporter (K.6).
 ├── mcp/        @llamactl/mcp. Projects tRPC procedures as MCP tools.
-│               18 tools today across read + mutation (dry-run + wet)
-│               tiers: catalog, node, bench (compare + history), server,
-│               workload, promotions, env, cost.snapshot, embersynth,
-│               operator.plan (multi-turn history, stub + LLM modes).
-└── agents/     Runbooks + self-healing loop. Multi-MCP harness —
-                boots @llamactl/mcp + @nova/mcp in-proc and routes
-                by tool-name prefix.
+│               18 native tools today across read + mutation (dry-run
+│               + wet) tiers: catalog, node, bench (compare + history),
+│               server, workload, promotions, env, cost.snapshot,
+│               embersynth, operator.plan (multi-turn history, stub +
+│               LLM modes). M.1 also auto-registers any
+│               `~/.llamactl/mcp/pipelines/*.json` stub as
+│               `llamactl.pipeline.<slug>` (emitted by the app's
+│               Pipelines module via `pipelineExportMcp`).
+└── agents/     Runbooks + self-healing loop + cost guardian + N.5
+                demos. Multi-MCP harness boots @llamactl/mcp +
+                @nova/mcp in-proc and routes by tool-name prefix.
+                `demos/` holds four scripted narrated runs:
+                demo-audit, demo-onboard, demo-failover, demo-cost-clamp.
 ```
 
 **Hard rule**: `packages/core` stays adapter-free. If you need a new
@@ -130,7 +141,23 @@ the `all` target.
 - Gateway handlers (`packages/remote/src/workload/gateway-handlers/`)
   route `spec.gateway: true` by provider kind. Agent-gateway is a
   sentinel that falls through to regular `serverStart`; sirius +
-  embersynth handlers are stubs pending K.7.2 / K.7.3.
+  embersynth handlers each POST their respective `/reload` endpoint
+  after confirming llamactl-side YAML state is coherent. Response
+  translation: 2xx → Running, non-2xx → Failed with
+  `*ReloadFailed`, upstream absent → Pending with an actionable
+  reason. See handler JSDoc for the wire contract.
+
+## Ops Chat dispatch (N.4)
+
+`packages/remote/src/ops-chat/` maps 16 llamactl.* MCP tools onto
+the matching tRPC procedures. The Operator Console renderer calls
+`trpc.operatorRunTool({name, arguments, dryRun})` and the server
+routes via `createCaller` — no secondary MCP server boot, no
+duplicate surface. Adding a new MCP tool without wiring a dispatch
+handler fails the
+`packages/mcp/test/smoke.test.ts:ops-chat-coverage` assertion. Every
+call (dry + wet, success + failure) appends one line to
+`~/.llamactl/ops-chat/audit.jsonl`.
 
 ## Testing
 
@@ -171,7 +198,7 @@ consumer before their test run.
 
 Test counts we expect as a baseline (bump as features ship):
 
-- nova ≥ 89, llamactl ≥ 717, sirius ≥ 250, embersynth ≥ 129.
+- nova ≥ 89, llamactl ≥ 736, sirius ≥ 250, embersynth ≥ 136.
 
 Four repos green = slice shippable.
 
