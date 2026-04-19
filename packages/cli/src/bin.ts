@@ -22,6 +22,7 @@ import { runRunbookCmd } from './commands/runbook.js';
 import { runHeal } from './commands/heal.js';
 import { runDeployNode } from './commands/deploy.js';
 import { runArtifacts } from './commands/artifacts.js';
+import { runInfra } from './commands/infra.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
@@ -131,6 +132,16 @@ Agentic operations:
   llamactl artifacts list                     Show built agent binaries
   llamactl artifacts show-path                Print the absolute path
       [--target=<platform>]                   where /artifacts expects
+  llamactl infra list                         List installed infra on a node
+      [--node <n>]
+  llamactl infra install <pkg>                Install a pkg version from a
+      --version=<v> --tarball-url=<url>       SHA-verified tarball, flip
+      --sha256=<hex> [--node <n>]             the current symlink on success
+      [--no-activate] [--force]
+  llamactl infra activate <pkg>               Point the current symlink at
+      --version=<v> [--node <n>]              a specific installed version
+  llamactl infra uninstall <pkg>              Remove a version (or the whole
+      [--version=<v>] [--node <n>]            package when --version omitted)
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -191,6 +202,8 @@ async function main(argv: string[]): Promise<number> {
       return runDeployNode(rest);
     case 'artifacts':
       return runArtifacts(rest);
+    case 'infra':
+      return runInfra(rest);
     case undefined:
     case '--help':
     case '-h':

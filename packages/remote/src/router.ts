@@ -3,6 +3,8 @@ import { createTRPCClient } from '@trpc/client';
 import { z } from 'zod';
 import * as kubecfg from './config/kubeconfig.js';
 import { decodeBootstrap } from './config/agent-config.js';
+import * as infraLayoutMod from './infra/layout.js';
+import * as infraInstallMod from './infra/install.js';
 import type { ClusterNode, Config } from './config/schema.js';
 import * as workloadStoreMod from './workload/store.js';
 import * as workloadApplyMod from './workload/apply.js';
@@ -999,6 +1001,63 @@ export const router = t.router({
         spec,
       };
       return manifest;
+    }),
+
+  // ---- infra package management -----------------------------------
+  // Operates on the local agent's infra directory
+  // (<DEV_STORAGE|~/.llamactl>/infra/). Central calls these via the
+  // dispatcher to install/activate/remove llama-cpp / embersynth /
+  // sirius on a specific node.
+
+  infraList: t.procedure.query(() => infraLayoutMod.listInstalledInfra()),
+
+  infraCurrent: t.procedure
+    .input(z.object({ pkg: z.string().min(1) }))
+    .query(({ input }) => infraLayoutMod.resolveCurrentVersion(input.pkg)),
+
+  infraInstall: t.procedure
+    .input(
+      z.object({
+        pkg: z.string().min(1),
+        version: z.string().min(1),
+        tarballUrl: z.string().min(1),
+        sha256: z.string().regex(/^[0-9a-f]{64}$/i),
+        activate: z.boolean().default(true),
+        skipIfPresent: z.boolean().default(true),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      return infraInstallMod.installInfraPackage({
+        pkg: input.pkg,
+        version: input.version,
+        tarballUrl: input.tarballUrl,
+        sha256: input.sha256,
+        activate: input.activate,
+        skipIfPresent: input.skipIfPresent,
+      });
+    }),
+
+  infraActivate: t.procedure
+    .input(z.object({ pkg: z.string().min(1), version: z.string().min(1) }))
+    .mutation(({ input }) => {
+      infraLayoutMod.activateInfraVersion(input.pkg, input.version);
+      return { ok: true as const };
+    }),
+
+  infraUninstall: t.procedure
+    .input(
+      z.object({
+        pkg: z.string().min(1),
+        version: z.string().optional(),
+      }),
+    )
+    .mutation(({ input }) => {
+      if (input.version) {
+        const removed = infraLayoutMod.removeInfraVersion(input.pkg, input.version);
+        return { ok: true as const, mode: 'version' as const, removed };
+      }
+      const removed = infraLayoutMod.removeInfraPackage(input.pkg);
+      return { ok: true as const, mode: 'package' as const, removed };
     }),
 
   catalogList: t.procedure
