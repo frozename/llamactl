@@ -208,6 +208,13 @@ function StatusCard({ title, body }: { title: string; body: string }): React.JSX
   );
 }
 
+function fmtTps(raw: string | undefined | null): string {
+  if (raw == null) return '—';
+  const n = typeof raw === 'number' ? raw : Number.parseFloat(raw);
+  if (!Number.isFinite(n)) return '—';
+  return n.toFixed(1);
+}
+
 function DashboardBody(): React.JSX.Element {
   const envQuery = trpc.env.useQuery();
   const compareQuery = trpc.benchCompare.useQuery();
@@ -281,9 +288,9 @@ function DashboardBody(): React.JSX.Element {
                     <td className="px-3 py-2">{row.label}</td>
                     <td className="px-3 py-2 text-[color:var(--color-fg-muted)]">{row.class}</td>
                     <td className="px-3 py-2 text-right text-[color:var(--color-accent)]">
-                      {row.tuned?.gen_tps ?? '—'}
+                      {fmtTps(row.tuned?.gen_tps)}
                     </td>
-                    <td className="px-3 py-2 text-right">{row.tuned?.prompt_tps ?? '—'}</td>
+                    <td className="px-3 py-2 text-right">{fmtTps(row.tuned?.prompt_tps)}</td>
                     <td className="px-3 py-2 text-[color:var(--color-fg-muted)]">
                       {row.mode} / {row.ctx}
                     </td>

@@ -394,6 +394,37 @@ function NodeRow(props: {
     { enabled: false, retry: false },
   );
 
+  // Passive reachability probe — fires on mount + every 30s for
+  // non-local nodes so each row has an up-to-date green/red dot
+  // without requiring the operator to click Test. Local never
+  // probes (inproc is by definition reachable if the app is alive).
+  const isLocalNode = props.name === 'local' || props.endpoint.startsWith('inproc://');
+  const probe = trpc.nodeTest.useQuery(
+    { name: props.name },
+    {
+      enabled: !isLocalNode,
+      refetchInterval: 30_000,
+      retry: 0,
+      staleTime: 15_000,
+    },
+  );
+  const reachability: 'ok' | 'fail' | 'unknown' = isLocalNode
+    ? 'ok'
+    : probe.data?.ok === true
+      ? 'ok'
+      : probe.data?.ok === false || probe.isError
+        ? 'fail'
+        : 'unknown';
+  const reachabilityTitle = isLocalNode
+    ? 'in-process (always reachable)'
+    : reachability === 'ok'
+      ? 'reachable'
+      : reachability === 'fail'
+        ? (probe.data && 'error' in probe.data ? probe.data.error : undefined) ??
+          probe.error?.message ??
+          'unreachable'
+        : 'probing…';
+
   const remove = trpc.nodeRemove.useMutation({
     onSuccess: () => {
       setConfirmRm(false);
@@ -413,7 +444,7 @@ function NodeRow(props: {
     }
   }
 
-  const isLocal = props.name === 'local' || props.endpoint.startsWith('inproc://');
+  const isLocal = isLocalNode;
   const isDefault = props.name === props.defaultNode;
   const isGateway = props.kind === 'gateway';
   const isProvider = props.kind === 'provider';
@@ -422,6 +453,18 @@ function NodeRow(props: {
     <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
       <div className="flex items-baseline justify-between gap-4">
         <div className="flex items-baseline gap-2">
+          <span
+            data-testid={`node-health-${props.name}`}
+            data-reachability={reachability}
+            title={reachabilityTitle}
+            className={`inline-block h-2 w-2 translate-y-[-1px] rounded-full ${
+              reachability === 'ok'
+                ? 'bg-[var(--color-success,var(--color-accent))]'
+                : reachability === 'fail'
+                  ? 'bg-[var(--color-danger)]'
+                  : 'bg-[var(--color-fg-muted)]'
+            }`}
+          />
           <span className="font-mono text-sm text-[color:var(--color-fg)]">{props.name}</span>
           {isDefault && (
             <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]">

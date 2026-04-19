@@ -76,16 +76,40 @@ function BudgetBar({
   testId: string;
 }): React.JSX.Element {
   const width = Math.min(100, Math.max(0, (fraction ?? 0) * 100));
+  // Three explicit states for the right-hand readout:
+  //   1. Budget undefined or 0 — cost-guardian config has no limit →
+  //      say so directly so the operator doesn't mistake "— — —" for
+  //      missing data.
+  //   2. Budget present, spent undefined/NaN — no usage records yet in
+  //      the window → "$0 / $BUDGET · 0.0%" rather than em-dashes.
+  //   3. Regular case → spent / budget · percent.
+  const hasBudget = budget !== undefined && Number.isFinite(budget) && budget > 0;
+  const hasSpend = spent !== undefined && Number.isFinite(spent);
+  let readout: React.ReactNode;
+  if (!hasBudget) {
+    readout = (
+      <span className="italic">
+        Not configured
+      </span>
+    );
+  } else if (!hasSpend) {
+    readout = (
+      <>
+        {fmtUsd(0)} / {fmtUsd(budget)} · {fmtPercent(0)}
+      </>
+    );
+  } else {
+    readout = (
+      <>
+        {fmtUsd(spent)} / {fmtUsd(budget)} · {fmtPercent(fraction)}
+      </>
+    );
+  }
   return (
     <div data-testid={testId} className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between">
         <span className="text-sm text-[color:var(--color-fg)]">{label}</span>
-        <span className="text-xs text-[color:var(--color-fg-muted)]">
-          {fmtUsd(spent)}
-          {budget !== undefined ? ` / ${fmtUsd(budget)}` : ''}
-          {' — '}
-          {fmtPercent(fraction)}
-        </span>
+        <span className="text-xs text-[color:var(--color-fg-muted)]">{readout}</span>
       </div>
       <div className="h-2 w-full overflow-hidden rounded bg-[var(--color-surface-2)]">
         <div
