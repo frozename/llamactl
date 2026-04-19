@@ -322,6 +322,10 @@ export default function OpsChat(): React.JSX.Element {
   });
 
   const runTool = trpc.operatorRunTool.useMutation();
+  const auditTail = trpc.opsChatAuditTail.useQuery(
+    { limit: 50 },
+    { refetchInterval: 5_000, staleTime: 1_000 },
+  );
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -367,6 +371,10 @@ export default function OpsChat(): React.JSX.Element {
     nextId.current = 1;
   };
 
+  function refreshAudit(): void {
+    void auditTail.refetch();
+  }
+
   async function runStep(turnId: number, stepIndex: number, dryRun: boolean): Promise<void> {
     const turn = turns.find((t) => t.id === turnId);
     if (!turn || turn.role !== 'assistant' || !turn.result.ok) return;
@@ -385,6 +393,7 @@ export default function OpsChat(): React.JSX.Element {
         arguments: (step.args ?? {}) as Record<string, unknown>,
         dryRun,
       })) as ToolCallOutcome;
+      refreshAudit();
       setTurns((prev) =>
         prev.map((t) =>
           t.id === turnId && t.role === 'assistant'
@@ -425,6 +434,7 @@ export default function OpsChat(): React.JSX.Element {
             : t,
         ),
       );
+      refreshAudit();
     }
   }
 
@@ -623,6 +633,60 @@ export default function OpsChat(): React.JSX.Element {
           </div>
         )}
       </div>
+
+      <details
+        className="border-t border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] px-4 py-2 text-xs"
+        data-testid="ops-chat-audit-details"
+      >
+        <summary className="cursor-pointer text-[color:var(--color-fg-muted)]">
+          Audit ({auditTail.data?.entries.length ?? 0})
+        </summary>
+        {auditTail.data?.entries.length ? (
+          <ul
+            className="mt-2 space-y-1 font-mono text-[10px]"
+            data-testid="ops-chat-audit-list"
+          >
+            {auditTail.data.entries.slice(0, 20).map((entry, i) => (
+              <li
+                key={`${entry.ts}-${i}`}
+                data-testid={`ops-chat-audit-entry-${i}`}
+                className="flex items-center gap-2 text-[color:var(--color-fg-muted)]"
+              >
+                <span>{entry.ts.slice(11, 19)}</span>
+                <span
+                  className={
+                    entry.ok
+                      ? 'text-[color:var(--color-success)]'
+                      : 'text-[color:var(--color-danger)]'
+                  }
+                >
+                  {entry.ok ? '✓' : '✗'}
+                </span>
+                <span className="text-[color:var(--color-fg)]">{entry.tool}</span>
+                {entry.dryRun && (
+                  <span className="rounded bg-[color:var(--color-surface-2)] px-1 text-[9px]">
+                    dry
+                  </span>
+                )}
+                <span className="ml-auto">{entry.durationMs}ms</span>
+                {!entry.ok && entry.errorCode && (
+                  <span className="text-[color:var(--color-danger)]">
+                    {entry.errorCode}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-2 text-[color:var(--color-fg-muted)]">
+            No audit entries yet — run a step to start populating{' '}
+            <span className="font-mono">
+              {auditTail.data?.path ?? '~/.llamactl/ops-chat/audit.jsonl'}
+            </span>
+            .
+          </p>
+        )}
+      </details>
 
       <div className="border-t border-[color:var(--color-border)] p-3 space-y-2">
         <textarea
