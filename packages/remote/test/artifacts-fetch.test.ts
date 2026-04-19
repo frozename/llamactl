@@ -4,12 +4,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  agentAssetUrl,
+  agentAssetCertUrl,
   agentAssetShaUrl,
+  agentAssetSigUrl,
+  agentAssetUrl,
+  cosignIdentityRegex,
   fetchAgentRelease,
   isKnownAgentTarget,
   parseShaLine,
   type ArtifactFetcher,
+  type CosignVerifier,
 } from '../src/infra/artifacts-fetch.js';
 
 let dir = '';
@@ -250,5 +254,192 @@ describe('fetchAgentRelease', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe('download-failed');
+  });
+});
+
+describe('cosignIdentityRegex', () => {
+  test('escapes dots + encodes workflow path for the repo', () => {
+    const r = cosignIdentityRegex('frozename/llamactl');
+    expect(r).toBe(
+      '^https://github\\.com/frozename/llamactl/\\.github/workflows/release-agent\\.yml@refs/tags/v.+$',
+    );
+    // Sanity: the regex actually matches a plausible cosign cert identity.
+    const re = new RegExp(r);
+    expect(re.test('https://github.com/frozename/llamactl/.github/workflows/release-agent.yml@refs/tags/v0.4.2')).toBe(true);
+    expect(re.test('https://github.com/other/repo/.github/workflows/release-agent.yml@refs/tags/v0.4.2')).toBe(false);
+    expect(re.test('https://github.com/frozename/llamactl/.github/workflows/release-agent.yml@refs/heads/main')).toBe(false);
+  });
+});
+
+describe('fetchAgentRelease — cosign signature verification (I.5.3)', () => {
+  const REPO = 'frozename/llamactl';
+  const TARGET = 'darwin-arm64';
+  const TAG = 'v0.4.0';
+  const BIN_URL = agentAssetUrl(REPO, TAG, TARGET);
+  const SHA_URL = agentAssetShaUrl(REPO, TAG, TARGET);
+  const SIG_URL = agentAssetSigUrl(REPO, TAG, TARGET);
+  const CERT_URL = agentAssetCertUrl(REPO, TAG, TARGET);
+
+  function baseResponses(): Record<string, { ok: boolean; status: number; body: Uint8Array }> {
+    return {
+      [BIN_URL]: { ok: true, status: 200, body: FAKE_BODY },
+      [SHA_URL]: {
+        ok: true,
+        status: 200,
+        body: new TextEncoder().encode(`${FAKE_SHA}  llamactl-agent-${TARGET}\n`),
+      },
+    };
+  }
+
+  test('default (verifySig omitted) returns signature.verified=null and skips the sig fetch entirely', async () => {
+    const { fetcher, calls } = stubFetcher(baseResponses());
+    let cosignCalls = 0;
+    const result = await fetchAgentRelease({
+      repo: REPO,
+      version: TAG,
+      target: TARGET,
+      artifactsDir: dir,
+      fetcher,
+      cosignVerifier: async () => {
+        cosignCalls++;
+        return { ok: true };
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.signature.verified).toBeNull();
+    expect(result.signature.reason).toMatch(/skipped/);
+    expect(cosignCalls).toBe(0);
+    expect(calls.some((u) => u.endsWith('.sig'))).toBe(false);
+    expect(calls.some((u) => u.endsWith('.cert'))).toBe(false);
+  });
+
+  test('best-effort with missing .sig → verified=null, ok=true (download still succeeds)', async () => {
+    const responses = baseResponses();
+    responses[SIG_URL] = { ok: false, status: 404, body: new Uint8Array() };
+    responses[CERT_URL] = { ok: false, status: 404, body: new Uint8Array() };
+    const { fetcher } = stubFetcher(responses);
+    const result = await fetchAgentRelease({
+      repo: REPO,
+      version: TAG,
+      target: TARGET,
+      artifactsDir: dir,
+      fetcher,
+      verifySig: 'best-effort',
+      cosignVerifier: async () => ({ ok: true }),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.signature.verified).toBeNull();
+    expect(result.signature.reason).toMatch(/signature assets missing/);
+  });
+
+  test('best-effort with cosign success → verified=true, .sig + .cert written alongside', async () => {
+    const responses = baseResponses();
+    responses[SIG_URL] = { ok: true, status: 200, body: new TextEncoder().encode('sig-bytes') };
+    responses[CERT_URL] = { ok: true, status: 200, body: new TextEncoder().encode('cert-bytes') };
+    const cosignCalls: Parameters<CosignVerifier>[0][] = [];
+    const { fetcher } = stubFetcher(responses);
+    const result = await fetchAgentRelease({
+      repo: REPO,
+      version: TAG,
+      target: TARGET,
+      artifactsDir: dir,
+      fetcher,
+      verifySig: 'best-effort',
+      cosignVerifier: async (input) => {
+        cosignCalls.push(input);
+        return { ok: true };
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.signature.verified).toBe(true);
+    expect(cosignCalls).toHaveLength(1);
+    expect(cosignCalls[0]!.repo).toBe(REPO);
+    expect(cosignCalls[0]!.tag).toBe(TAG);
+    // Verifier was handed paths, not bytes — confirm the files exist.
+    expect(existsSync(cosignCalls[0]!.sigPath)).toBe(true);
+    expect(existsSync(cosignCalls[0]!.certPath)).toBe(true);
+    expect(readFileSync(cosignCalls[0]!.sigPath, 'utf8')).toBe('sig-bytes');
+  });
+
+  test('best-effort with cosign failure → verified=false, ok=true (download kept; operator decides)', async () => {
+    const responses = baseResponses();
+    responses[SIG_URL] = { ok: true, status: 200, body: new TextEncoder().encode('sig') };
+    responses[CERT_URL] = { ok: true, status: 200, body: new TextEncoder().encode('cert') };
+    const { fetcher } = stubFetcher(responses);
+    const result = await fetchAgentRelease({
+      repo: REPO,
+      version: TAG,
+      target: TARGET,
+      artifactsDir: dir,
+      fetcher,
+      verifySig: 'best-effort',
+      cosignVerifier: async () => ({ ok: false, message: 'fake cosign mismatch' }),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.signature.verified).toBe(false);
+    expect(result.signature.reason).toBe('fake cosign mismatch');
+  });
+
+  test('require mode + missing sig → sig-verify-failed, fetch fails loudly', async () => {
+    const responses = baseResponses();
+    responses[SIG_URL] = { ok: false, status: 404, body: new Uint8Array() };
+    responses[CERT_URL] = { ok: false, status: 404, body: new Uint8Array() };
+    const { fetcher } = stubFetcher(responses);
+    const result = await fetchAgentRelease({
+      repo: REPO,
+      version: TAG,
+      target: TARGET,
+      artifactsDir: dir,
+      fetcher,
+      verifySig: 'require',
+      cosignVerifier: async () => ({ ok: true }),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('sig-verify-failed');
+    expect(result.message).toMatch(/signature assets missing/);
+  });
+
+  test('require mode + cosign mismatch → sig-verify-failed', async () => {
+    const responses = baseResponses();
+    responses[SIG_URL] = { ok: true, status: 200, body: new TextEncoder().encode('s') };
+    responses[CERT_URL] = { ok: true, status: 200, body: new TextEncoder().encode('c') };
+    const { fetcher } = stubFetcher(responses);
+    const result = await fetchAgentRelease({
+      repo: REPO,
+      version: TAG,
+      target: TARGET,
+      artifactsDir: dir,
+      fetcher,
+      verifySig: 'require',
+      cosignVerifier: async () => ({ ok: false, message: 'bad cert' }),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('sig-verify-failed');
+    expect(result.message).toContain('bad cert');
+  });
+
+  test('require mode + cosign success → ok + verified=true', async () => {
+    const responses = baseResponses();
+    responses[SIG_URL] = { ok: true, status: 200, body: new TextEncoder().encode('s') };
+    responses[CERT_URL] = { ok: true, status: 200, body: new TextEncoder().encode('c') };
+    const { fetcher } = stubFetcher(responses);
+    const result = await fetchAgentRelease({
+      repo: REPO,
+      version: TAG,
+      target: TARGET,
+      artifactsDir: dir,
+      fetcher,
+      verifySig: 'require',
+      cosignVerifier: async () => ({ ok: true }),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.signature.verified).toBe(true);
   });
 });

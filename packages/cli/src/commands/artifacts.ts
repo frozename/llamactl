@@ -8,7 +8,7 @@ const USAGE = `llamactl artifacts — manage pre-built llamactl-agent binaries
 USAGE:
   llamactl artifacts list
   llamactl artifacts build-agent [--target=<platform>] [--src=<path>] [--dir=<path>]
-  llamactl artifacts fetch [--version=<v>] [--target=<p>] [--repo=<owner/repo>] [--dir=<path>]
+  llamactl artifacts fetch [--version=<v>] [--target=<p>] [--repo=<owner/repo>] [--dir=<path>] [--verify-sig[=mode]]
   llamactl artifacts show-path [--target=<platform>] [--dir=<path>]
 
 Pre-built binaries live under <LLAMACTL_ARTIFACTS_DIR or
@@ -26,6 +26,13 @@ FLAGS:
                         linux-arm64. Default: the current host.
   --src=<path>          Path to packages/cli/src/bin.ts. Default: auto.
   --dir=<path>          Override the artifacts directory.
+  --verify-sig[=mode]   fetch only. Cosign-keyless signature check:
+                          best-effort (default when flag is bare) —
+                            verify when .sig + .cert + cosign are
+                            all present; skip silently otherwise.
+                          require — fail if verification cannot be
+                            completed.
+                          skip (default) — never touch signatures.
 
 EXAMPLES:
   llamactl artifacts list
@@ -237,16 +244,28 @@ function runShowPath(argv: string[]): number {
 }
 
 async function runFetch(argv: string[]): Promise<number> {
-  const flags = {
+  const flags: {
+    version: string;
+    target: string | undefined;
+    repo: string;
+    dir: string;
+    verifySig: 'skip' | 'best-effort' | 'require';
+  } = {
     version: 'latest',
     target: (currentPlatform() as string | null) ?? undefined,
     repo: 'frozename/llamactl',
     dir: defaultArtifactsDir(),
+    verifySig: 'skip',
   };
   for (const arg of argv) {
     if (arg === '--help' || arg === '-h') {
       process.stdout.write(USAGE);
       return 0;
+    }
+    // --verify-sig without a value means best-effort.
+    if (arg === '--verify-sig') {
+      flags.verifySig = 'best-effort';
+      continue;
     }
     const eq = arg.indexOf('=');
     if (!arg.startsWith('--') || eq < 0) {
@@ -268,6 +287,15 @@ async function runFetch(argv: string[]): Promise<number> {
       case 'dir':
         flags.dir = value;
         break;
+      case 'verify-sig':
+        if (value !== 'skip' && value !== 'best-effort' && value !== 'require') {
+          process.stderr.write(
+            `artifacts fetch: --verify-sig must be skip|best-effort|require (got ${value})\n`,
+          );
+          return 1;
+        }
+        flags.verifySig = value;
+        break;
       default:
         process.stderr.write(`artifacts fetch: unknown flag --${key}\n`);
         return 1;
@@ -287,17 +315,26 @@ async function runFetch(argv: string[]): Promise<number> {
     version: flags.version,
     target: flags.target,
     artifactsDir: flags.dir,
+    verifySig: flags.verifySig,
   });
   if (!result.ok) {
     process.stderr.write(`artifacts fetch: ${result.reason} — ${result.message}\n`);
     return 1;
   }
+  const sig = result.signature;
+  const sigLine =
+    sig.verified === true
+      ? `cosign:  verified (${sig.reason})`
+      : sig.verified === false
+        ? `cosign:  FAILED — ${sig.reason}`
+        : `cosign:  skipped (${sig.reason})`;
   process.stdout.write(
     `${result.path}\n` +
       `  version: ${result.version}\n` +
       `  target:  ${result.target}\n` +
       `  size:    ${(result.bytes / (1024 * 1024)).toFixed(1)} MB\n` +
-      `  sha256:  ${result.sha256}\n`,
+      `  sha256:  ${result.sha256}\n` +
+      `  ${sigLine}\n`,
   );
   return 0;
 }

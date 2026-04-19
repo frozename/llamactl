@@ -13,7 +13,14 @@ name: release-agent
 #   * Tag-driven only — no binaries on every push to main.
 #   * `bun build --compile` with cross-compilation from ubuntu
 #     (linux-* targets) and macos (darwin-* targets).
-#   * SHA-256 alongside each binary. Cosign signing lands in I.5.3.
+#   * SHA-256 alongside each binary.
+#   * Cosign keyless signing (I.5.3): sigstore issues an ephemeral
+#     cert keyed to the workflow's GitHub OIDC token; the resulting
+#     .sig + .cert files sit alongside each binary on the release.
+#     Verifiers run `cosign verify-blob --certificate-identity-regexp
+#     '^https://github.com/<owner>/<repo>/.github/workflows/release-agent.yml@refs/tags/.+$'
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com`
+#     to confirm provenance. No long-lived keys.
 #   * Environment scrubbed before the build step so no repo secret
 #     leaks into a compiled binary.
 
@@ -39,6 +46,11 @@ jobs:
           - target: bun-linux-arm64
             os: ubuntu-latest
     runs-on: ${{ matrix.os }}
+    permissions:
+      # contents:read — default, sufficient since `release` job handles upload.
+      # id-token:write — required for cosign keyless signing via GitHub OIDC.
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,6 +62,11 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
 
       - name: Build llamactl-agent binary
         # Scrub repo-level env so the compiled binary can't embed
@@ -74,6 +91,25 @@ jobs:
           ( cd dist && shasum -a 256 "$(basename "${OUT}")" > "$(basename "${OUT}").sha256" )
 
           ls -lh "${OUT}" "${OUT}.sha256"
+
+      - name: Cosign sign-blob (keyless)
+        # --yes auto-accepts the sigstore/fulcio/rekor usage prompts
+        # that cosign otherwise shows interactively.
+        # COSIGN_EXPERIMENTAL is no-op on v2 but defended-in-depth.
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -eu
+          PLATFORM="${{ matrix.target }}"
+          PLATFORM_SLUG="${PLATFORM#bun-}"
+          OUT="dist/llamactl-agent-${PLATFORM_SLUG}"
+
+          cosign sign-blob --yes \
+            --output-signature "${OUT}.sig" \
+            --output-certificate "${OUT}.cert" \
+            "${OUT}"
+
+          ls -lh "${OUT}.sig" "${OUT}.cert"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
