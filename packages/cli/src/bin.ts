@@ -23,6 +23,7 @@ import { runHeal } from './commands/heal.js';
 import { runDeployNode } from './commands/deploy.js';
 import { runArtifacts } from './commands/artifacts.js';
 import { runCostGuardian } from './commands/cost-guardian.js';
+import { runPlan } from './commands/plan.js';
 import { runInfra } from './commands/infra.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
@@ -125,6 +126,9 @@ Agentic operations:
       [--quiet] [--journal=<path>]            state transitions
   llamactl cost-guardian tick                 Evaluate spend vs budget +
       [--config=<path>] [--skip-journal]       emit tiered intent
+  llamactl plan run "<goal>" [--stub]         LLM-backed planner — emit a
+      [--auto] [--json] [--model=<id>]         validated MCP-tool plan
+      [--base-url=<url>] [--api-key-env=<v>]
   llamactl deploy-node <name>                 Mint a bootstrap token for a
       [--central-url=<url>] [--ttl=<m>]       new node + print the
                                               curl-pipe-sh one-liner
@@ -206,6 +210,8 @@ async function main(argv: string[]): Promise<number> {
       return runHeal(rest);
     case 'cost-guardian':
       return runCostGuardian(rest);
+    case 'plan':
+      return runPlan(rest);
     case 'deploy-node':
       return runDeployNode(rest);
     case 'artifacts':

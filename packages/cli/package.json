@@ -16,6 +16,8 @@
     "@llamactl/agents": "workspace:*",
     "@llamactl/core": "workspace:*",
     "@llamactl/remote": "workspace:*",
+    "@nova/contracts": "file:../../../nova/packages/contracts",
+    "@nova/mcp": "file:../../../nova/packages/mcp",
     "yaml": "2.8.3"
   },
   "devDependencies": {

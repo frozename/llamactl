@@ -1,6 +1,8 @@
 export {
   runRunbook,
   createDefaultToolClient,
+  type DefaultToolClientHandle,
+  type HarnessToolDescriptor,
   type RunRunbookOptions,
 } from './harness.js';
 export { RUNBOOKS, listRunbooks } from './runbooks/index.js';
