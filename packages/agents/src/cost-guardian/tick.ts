@@ -136,5 +136,33 @@ export async function runCostGuardianTick(
       appendCostJournal(action, opts.journalPath);
     }
   }
+  // Tier-3 deregister-dry-run intent. We never call the sirius MCP
+  // tool from here today — sirius-gateway's MCP surface doesn't yet
+  // expose a deregister verb. Until it does, the guardian documents
+  // the *intent* as a journal action entry so the operator sees
+  // "here's the provider you should consider manually deregistering"
+  // without any side effect. When @sirius/mcp gains the verb a
+  // follow-up slice will dispatch it with dryRun:true and gate wet
+  // execution behind `auto_deregister`.
+  if (
+    !opts.skipJournal &&
+    decision.tier === 'deregister' &&
+    decision.deregisterTarget
+  ) {
+    const action: CostJournalActionEntry = {
+      kind: 'action',
+      ts: decision.ts,
+      action: 'deregister-dry-run',
+      ok: true,
+      detail: {
+        provider: decision.deregisterTarget,
+        autoDeregisterEnabled: opts.config.auto_deregister === true,
+        note: opts.config.auto_deregister
+          ? 'auto_deregister is set but the sirius MCP deregister verb ships in a follow-up slice — no upstream mutation performed'
+          : 'manual operator action required — review journal + run the deregister verb yourself',
+      },
+    };
+    appendCostJournal(action, opts.journalPath);
+  }
   return decision;
 }

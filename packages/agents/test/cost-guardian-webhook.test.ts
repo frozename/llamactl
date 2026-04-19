@@ -236,3 +236,115 @@ describe('runCostGuardianTick — webhook dispatch', () => {
     expect(calls).toBe(0);
   });
 });
+
+describe('runCostGuardianTick — tier-3 deregister dry-run intent', () => {
+  let dir = '';
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'guardian-d3-')); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  function readJournal(path: string): Array<Record<string, unknown>> {
+    const body = readFileSync(path, 'utf8').trim();
+    return body.split('\n').map((line) => JSON.parse(line));
+  }
+
+  test('deregister tier with a top-provider target → deregister-dry-run action journaled', async () => {
+    const tools = makeClient({
+      'nova.ops.cost.snapshot': {
+        totalEstimatedCostUsd: 9.8,
+        windowSince: 'x',
+        windowUntil: 'y',
+        byProvider: [
+          { key: 'openai', estimatedCostUsd: 9.7 },
+          { key: 'anthropic', estimatedCostUsd: 0.1 },
+        ],
+      },
+    });
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig(),
+      journalPath,
+      disableWebhook: true,
+    });
+    const entries = readJournal(journalPath);
+    expect(entries).toHaveLength(2); // tick + deregister-dry-run
+    const action = entries.find((e) => e.action === 'deregister-dry-run')!;
+    expect(action.ok).toBe(true);
+    const detail = action.detail as {
+      provider: string;
+      autoDeregisterEnabled: boolean;
+      note: string;
+    };
+    expect(detail.provider).toBe('openai');
+    expect(detail.autoDeregisterEnabled).toBe(false);
+    expect(detail.note).toContain('manual operator action required');
+  });
+
+  test('auto_deregister=true flags the intent but still does not call sirius', async () => {
+    const tools = makeClient({
+      'nova.ops.cost.snapshot': {
+        totalEstimatedCostUsd: 9.8,
+        windowSince: 'x',
+        windowUntil: 'y',
+        byProvider: [{ key: 'openai', estimatedCostUsd: 9.7 }],
+      },
+    });
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig({ auto_deregister: true }),
+      journalPath,
+      disableWebhook: true,
+    });
+    const entries = readJournal(journalPath);
+    const action = entries.find((e) => e.action === 'deregister-dry-run')!;
+    const detail = action.detail as {
+      autoDeregisterEnabled: boolean;
+      note: string;
+    };
+    expect(detail.autoDeregisterEnabled).toBe(true);
+    expect(detail.note).toContain('follow-up slice');
+  });
+
+  test('deregister tier with no byProvider → no dry-run action (nothing to deregister)', async () => {
+    const tools = makeClient({
+      'nova.ops.cost.snapshot': {
+        totalEstimatedCostUsd: 9.8,
+        windowSince: 'x',
+        windowUntil: 'y',
+        // no byProvider → decision.deregisterTarget stays null
+      },
+    });
+    const journalPath = join(dir, 'cg.jsonl');
+    const decision = await runCostGuardianTick({
+      tools,
+      config: makeConfig(),
+      journalPath,
+      disableWebhook: true,
+    });
+    expect(decision.tier).toBe('deregister');
+    expect(decision.deregisterTarget).toBeNull();
+    const entries = readJournal(journalPath);
+    expect(entries.some((e) => e.action === 'deregister-dry-run')).toBe(false);
+  });
+
+  test('warn + force_private tiers never emit a deregister-dry-run entry', async () => {
+    const tools = makeClient({
+      'nova.ops.cost.snapshot': {
+        totalEstimatedCostUsd: 6, // 60% of 10 → warn
+        windowSince: 'x',
+        windowUntil: 'y',
+        byProvider: [{ key: 'openai', estimatedCostUsd: 6 }],
+      },
+    });
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig(),
+      journalPath,
+      disableWebhook: true,
+    });
+    const entries = readJournal(journalPath);
+    expect(entries.some((e) => e.action === 'deregister-dry-run')).toBe(false);
+  });
+});
