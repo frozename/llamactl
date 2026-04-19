@@ -66,6 +66,7 @@ function SchedulerPanel(): React.JSX.Element {
   const lastTick = status.data?.lastTickAt
     ? new Date(status.data.lastTickAt).toLocaleTimeString()
     : '—';
+  const canAddSchedule = id.trim().length > 0 && rel.trim().length > 0;
 
   function onAdd(): void {
     setError(null);
@@ -136,11 +137,13 @@ function SchedulerPanel(): React.JSX.Element {
           placeholder="id (e.g. gemma-daily)"
           value={id}
           onChange={(e) => setId(e.target.value)}
+          data-testid="bench-schedule-id"
           className="w-40 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
         />
         <select
           value={node}
           onChange={(e) => setNode(e.target.value)}
+          data-testid="bench-schedule-node"
           className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
         >
           {(nodes.data?.nodes ?? [{ name: 'local' }]).map((n) => (
@@ -154,6 +157,7 @@ function SchedulerPanel(): React.JSX.Element {
           placeholder="rel path"
           value={rel}
           onChange={(e) => setRel(e.target.value)}
+          data-testid="bench-schedule-rel"
           className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-fg)]"
         />
         <label className="flex items-center gap-1 text-[color:var(--color-fg-muted)]">
@@ -171,8 +175,14 @@ function SchedulerPanel(): React.JSX.Element {
         <button
           type="button"
           onClick={onAdd}
-          disabled={add.isPending}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+          disabled={add.isPending || !canAddSchedule}
+          data-testid="bench-schedule-add"
+          title={
+            !canAddSchedule
+              ? 'Fill id and rel before adding a schedule.'
+              : `Run bench for ${rel.trim()} on ${node.trim() || 'local'} every ${hours}h.`
+          }
+          className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 font-medium text-[color:var(--color-fg-inverted)] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {add.isPending ? 'Adding…' : 'Add schedule'}
         </button>
@@ -376,6 +386,7 @@ export default function Bench(): React.JSX.Element {
 
   const busy = active !== null;
   const recentHistory = history.data ?? [];
+  const canRun = target.trim().length > 0;
   const cancel = () => {
     setActive(null);
     setError('Cancelled by user');
@@ -406,6 +417,7 @@ export default function Bench(): React.JSX.Element {
               value={target}
               onChange={(e) => setTarget(e.target.value)}
               disabled={busy}
+              data-testid="bench-target"
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
               placeholder="current | best | <rel>"
             />
@@ -436,6 +448,7 @@ export default function Bench(): React.JSX.Element {
               <button
                 type="button"
                 onClick={cancel}
+                data-testid="bench-cancel"
                 className="flex-1 rounded border border-[var(--color-danger)] px-3 py-1 text-sm text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)]"
               >
                 Cancel
@@ -445,14 +458,20 @@ export default function Bench(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => start('preset')}
-                  className="flex-1 rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90"
+                  disabled={!canRun}
+                  data-testid="bench-run-preset"
+                  title={canRun ? 'Run text preset bench.' : 'Enter a target first.'}
+                  className="flex-1 rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Run preset
                 </button>
                 <button
                   type="button"
                   onClick={() => start('vision')}
-                  className="flex-1 rounded border border-[var(--color-accent)] px-3 py-1 text-sm font-medium text-[color:var(--color-accent)] hover:bg-[var(--color-surface-2)]"
+                  disabled={!canRun}
+                  data-testid="bench-run-vision"
+                  title={canRun ? 'Run vision bench.' : 'Enter a target first.'}
+                  className="flex-1 rounded border border-[var(--color-accent)] px-3 py-1 text-sm font-medium text-[color:var(--color-accent)] hover:bg-[var(--color-surface-2)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Run vision
                 </button>
