@@ -54,3 +54,9 @@ export {
   runCostGuardianTick,
   type RunCostGuardianTickOptions,
 } from './cost-guardian/tick.js';
+export {
+  postGuardianWebhook,
+  type PostGuardianWebhookOptions,
+  type WebhookFetcher,
+  type WebhookOutcome,
+} from './cost-guardian/webhook.js';
