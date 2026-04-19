@@ -21,6 +21,7 @@ import { runEmbersynth } from './commands/embersynth.js';
 import { runRunbookCmd } from './commands/runbook.js';
 import { runHeal } from './commands/heal.js';
 import { runDeployNode } from './commands/deploy.js';
+import { runArtifacts } from './commands/artifacts.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
@@ -124,6 +125,12 @@ Agentic operations:
       [--central-url=<url>] [--ttl=<m>]       new node + print the
                                               curl-pipe-sh one-liner
       [--list | --prune]                      List or prune outstanding
+  llamactl artifacts build-agent              Build a llamactl-agent
+      [--target=<platform>]                   binary for central to
+      [--src=<path>] [--dir=<path>]           serve from /artifacts
+  llamactl artifacts list                     Show built agent binaries
+  llamactl artifacts show-path                Print the absolute path
+      [--target=<platform>]                   where /artifacts expects
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -182,6 +189,8 @@ async function main(argv: string[]): Promise<number> {
       return runHeal(rest);
     case 'deploy-node':
       return runDeployNode(rest);
+    case 'artifacts':
+      return runArtifacts(rest);
     case undefined:
     case '--help':
     case '-h':
