@@ -127,6 +127,9 @@ export default function Server(): React.JSX.Element {
   const s = status.data;
   const envData = env.data as Record<string, string> | undefined;
   const busy = starting !== null;
+  const isUp = s?.state === 'up';
+  const httpLabel = s?.health.httpCode ?? 'unreachable';
+  const httpOk = typeof s?.health.httpCode === 'number' && s.health.httpCode < 400;
 
   const keepAliveStatus = trpc.keepAliveStatus.useQuery(undefined, { refetchInterval: 5000 });
   const keepAliveStartMutation = trpc.keepAliveStart.useMutation({
@@ -157,15 +160,22 @@ export default function Server(): React.JSX.Element {
       </h1>
 
       <div className="mb-4 grid grid-cols-4 gap-3">
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
+        <div
+          className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
+          data-testid="server-state-card"
+        >
           <div className="text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
             State
           </div>
           <div
+            data-testid="server-state"
+            data-state={s?.state ?? 'unknown'}
             className={`mt-1 text-lg font-semibold ${
-              s?.state === 'up'
+              isUp
                 ? 'text-[color:var(--color-accent)]'
-                : 'text-[color:var(--color-fg-muted)]'
+                : s?.state === 'down'
+                  ? 'text-[color:var(--color-danger)]'
+                  : 'text-[color:var(--color-fg-muted)]'
             }`}
           >
             {s?.state ?? '—'}
@@ -206,12 +216,23 @@ export default function Server(): React.JSX.Element {
             {s?.pid ?? 'none'}
           </div>
         </div>
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
+        <div
+          className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
+          data-testid="server-http-card"
+        >
           <div className="text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
             HTTP
           </div>
-          <div className="mt-1 mono text-sm text-[color:var(--color-fg)]">
-            {s?.health.httpCode ?? 'unreachable'}
+          <div
+            className={`mt-1 mono text-sm ${
+              httpOk
+                ? 'text-[color:var(--color-accent)]'
+                : s?.health.httpCode == null
+                  ? 'text-[color:var(--color-fg-muted)]'
+                  : 'text-[color:var(--color-danger)]'
+            }`}
+          >
+            {httpLabel}
           </div>
         </div>
       </div>
@@ -275,15 +296,18 @@ export default function Server(): React.JSX.Element {
             <button
               type="submit"
               disabled={busy}
-              className="flex-1 rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:opacity-50"
+              data-testid="server-start"
+              className="flex-1 rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {starting ? 'Starting…' : 'Start'}
             </button>
             <button
               type="button"
               onClick={() => stopMutation.mutate({ graceSeconds: 5 })}
-              disabled={busy || stopMutation.isPending}
-              className="flex-1 rounded border border-[var(--color-danger)] px-3 py-1 text-sm text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+              disabled={busy || stopMutation.isPending || !isUp}
+              data-testid="server-stop"
+              title={!isUp ? 'Server is not running.' : 'Send SIGTERM, then SIGKILL after a 5s grace.'}
+              className="flex-1 rounded border border-[var(--color-danger)] px-3 py-1 text-sm text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               {stopMutation.isPending ? 'Stopping…' : 'Stop'}
             </button>
