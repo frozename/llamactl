@@ -103,6 +103,7 @@
         "@llamactl/remote": "workspace:*",
         "@modelcontextprotocol/sdk": "1.29.0",
         "@nova/contracts": "file:../../../nova/packages/contracts",
+        "@nova/mcp": "file:../../../nova/packages/mcp",
         "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
         "zod": "4.3.6",
       },
@@ -1219,6 +1220,8 @@
 
     "@llamactl/mcp/@nova/contracts": ["@nova/contracts@file:../nova/packages/contracts", { "dependencies": { "zod": "^4.3.6" }, "devDependencies": { "@types/bun": "^1.3.12", "typescript": "^5.9.3" } }],
 
+    "@llamactl/mcp/@nova/mcp": ["@nova/mcp@file:../nova/packages/mcp", { "dependencies": { "@modelcontextprotocol/sdk": "1.29.0", "@nova/contracts": "file:../contracts", "@nova/mcp-shared": "file:../mcp-shared", "yaml": "^2.7.0", "zod": "^4.3.6" }, "devDependencies": { "@types/bun": "^1.3.12", "@types/node": "^25.6.0", "typescript": "^5.9.3" }, "bin": { "nova-mcp": "./bin/nova-mcp.ts" } }],
+
     "@llamactl/mcp/@nova/mcp-shared": ["@nova/mcp-shared@file:../nova/packages/mcp-shared", { "dependencies": { "@nova/contracts": "file:../contracts", "yaml": "^2.7.0" }, "devDependencies": { "@types/bun": "^1.3.12", "typescript": "^5.9.3" } }],
 
     "@llamactl/remote/@nova/contracts": ["@nova/contracts@file:../nova/packages/contracts", { "dependencies": { "zod": "^4.3.6" }, "devDependencies": { "@types/bun": "^1.3.12", "typescript": "^5.9.3" } }],
@@ -1348,6 +1351,10 @@
     "@llamactl/cli/@nova/mcp/@nova/contracts": ["@nova/contracts@file:../nova/packages/contracts", {}],
 
     "@llamactl/cli/@nova/mcp/@nova/mcp-shared": ["@nova/mcp-shared@file:../nova/packages/mcp-shared", {}],
+
+    "@llamactl/mcp/@nova/mcp/@nova/contracts": ["@nova/contracts@file:../nova/packages/contracts", {}],
+
+    "@llamactl/mcp/@nova/mcp/@nova/mcp-shared": ["@nova/mcp-shared@file:../nova/packages/mcp-shared", {}],
 
     "@llamactl/mcp/@nova/mcp-shared/@nova/contracts": ["@nova/contracts@file:../nova/packages/contracts", {}],
 

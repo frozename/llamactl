@@ -73,20 +73,104 @@ describe('@llamactl/mcp read surface', () => {
     const names = list.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'llamactl.bench.compare',
+      'llamactl.bench.history',
       'llamactl.catalog.list',
       'llamactl.catalog.promote',
       'llamactl.catalog.promoteDelete',
+      'llamactl.cost.snapshot',
       'llamactl.embersynth.set-default-profile',
       'llamactl.embersynth.sync',
+      'llamactl.env',
       'llamactl.node.add',
       'llamactl.node.facts',
       'llamactl.node.ls',
       'llamactl.node.remove',
+      'llamactl.operator.plan',
       'llamactl.promotions.list',
       'llamactl.server.status',
       'llamactl.workload.delete',
       'llamactl.workload.list',
     ]);
+  });
+
+  test('llamactl.env returns a resolved environment snapshot', async () => {
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: 'llamactl.env',
+      arguments: {},
+    });
+    const parsed = JSON.parse(textOf(result)) as Record<string, unknown>;
+    expect(parsed.LOCAL_AI_RUNTIME_DIR).toBe(runtimeDir);
+  });
+
+  test('llamactl.bench.history returns an empty history in a fresh runtime', async () => {
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: 'llamactl.bench.history',
+      arguments: { limit: 10 },
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      count: number;
+      total: number;
+      legacyCount: number;
+      rows: unknown[];
+    };
+    expect(parsed.count).toBe(0);
+    expect(parsed.rows).toEqual([]);
+  });
+
+  test('llamactl.cost.snapshot returns zero totals with no usage corpus', async () => {
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: 'llamactl.cost.snapshot',
+      arguments: { days: 7 },
+    });
+    const parsed = JSON.parse(textOf(result)) as { totals?: { requestCount?: number } };
+    expect(parsed.totals?.requestCount ?? 0).toBe(0);
+  });
+
+  test('llamactl.operator.plan stub mode returns a plan', async () => {
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: 'llamactl.operator.plan',
+      arguments: {
+        goal: 'promote the fastest vision model on macbook-pro-48g',
+        mode: 'stub',
+        // Stub refuses to emit a plan whose tools aren't in the catalog.
+        // Supply the one the stub happens to use.
+        tools: [
+          {
+            name: 'nova.ops.overview',
+            description: 'fleet overview',
+            tier: 'read' as const,
+          },
+        ],
+      },
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      ok: boolean;
+      plan?: { steps: unknown[] };
+      executor?: string;
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.executor).toBe('stub');
+    expect(Array.isArray(parsed.plan?.steps)).toBe(true);
+  });
+
+  test('llamactl.operator.plan llm mode reports config error without API key', async () => {
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: 'llamactl.operator.plan',
+      arguments: {
+        goal: 'list catalog',
+        mode: 'llm',
+        model: 'gpt-4o-mini',
+        apiKeyEnv: '__DEFINITELY_NOT_SET__',
+      },
+    });
+    const parsed = JSON.parse(textOf(result)) as { ok: boolean; reason?: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.reason).toBe('config');
   });
 
   test('llamactl.catalog.list returns curated entries', async () => {
