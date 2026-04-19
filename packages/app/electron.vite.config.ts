@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { defineConfig } from 'electron-vite';
+import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
@@ -14,8 +14,17 @@ import tailwindcss from '@tailwindcss/vite';
 // main-process Node 20.18 ESM loader chokes on several CJS→ESM interop
 // edges, so we emit the main + preload bundles as CommonJS (.cjs) which
 // gives us decades of stable Electron packaging behaviour.
+// Workspace + @nova/* deps are TS-source packages (no pre-build). If
+// electron-vite's default externalizeDepsPlugin externalizes them,
+// Electron's ESM loader at runtime fails to resolve their internal
+// `.js` imports against `.ts` files. Keep them *bundled* by excluding
+// them from the externalize list; everything else (native modules,
+// heavy libs like @trpc, undici) still externalizes via the plugin.
+const WORKSPACE_BUNDLE = ['@llamactl/core', '@llamactl/remote', '@nova/contracts', '@nova/mcp', '@nova/mcp-shared'];
+
 export default defineConfig({
   main: {
+    plugins: [externalizeDepsPlugin({ exclude: WORKSPACE_BUNDLE })],
     build: {
       rollupOptions: {
         input: { index: resolve('electron/main.ts') },
@@ -29,6 +38,7 @@ export default defineConfig({
     },
   },
   preload: {
+    plugins: [externalizeDepsPlugin({ exclude: WORKSPACE_BUNDLE })],
     build: {
       rollupOptions: {
         input: { index: resolve('electron/preload.ts') },

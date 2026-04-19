@@ -1,4 +1,5 @@
-import { initTRPC } from '@trpc/server';
+import { initTRPC, TRPCError } from '@trpc/server';
+import { getErrorShape } from '@trpc/server/unstable-core-do-not-import';
 import { createTRPCClient } from '@trpc/client';
 import { z } from 'zod';
 import {
@@ -244,12 +245,18 @@ function wrapQueryOrMutation(
       ? client[path].query(input)
       : client[path].mutate(input);
   };
-  // Input shape is inferred from the underlying procedure at call time;
-  // we don't re-validate here because the destination (local caller or
-  // remote agent) will re-validate against its own zod schema.
-  return type === 'query'
-    ? t.procedure.query(resolver)
-    : t.procedure.mutation(resolver);
+  // Input shape is inferred from the underlying procedure at call
+  // time; we don't re-validate here because the destination (local
+  // caller or remote agent) will re-validate against its own zod
+  // schema. Declaring `.input(z.unknown())` on the wrapper is
+  // load-bearing though: without it, electron-trpc v1.0.0-alpha's
+  // IPC serializer throws "Cannot read properties of undefined
+  // (reading 'serialize')" when the renderer invokes any wrapped
+  // procedure whose base version has a Zod `.input()`. Pinning
+  // `z.unknown()` keeps the transformer-lookup path happy while
+  // preserving our pass-through semantics.
+  const base = t.procedure.input(z.unknown());
+  return type === 'query' ? base.query(resolver) : base.mutation(resolver);
 }
 
 function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unknown {
@@ -351,7 +358,20 @@ export function buildDispatcherRouter(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const source = baseDef.procedures as Record<string, any>;
   for (const [name, orig] of Object.entries(source)) {
-    const type = orig?._def?.type as 'query' | 'mutation' | 'subscription' | undefined;
+    // tRPC v11 exposes the procedure kind on `_def.type`. Older paths
+    // used `_def.query`/`_def.mutation`/`_def.subscription` booleans
+    // — check both to stay robust across tRPC point releases.
+    const def = orig?._def ?? {};
+    let type: 'query' | 'mutation' | 'subscription' | undefined;
+    if (def.type === 'query' || def.type === 'mutation' || def.type === 'subscription') {
+      type = def.type;
+    } else if (def.query) {
+      type = 'query';
+    } else if (def.mutation) {
+      type = 'mutation';
+    } else if (def.subscription) {
+      type = 'subscription';
+    }
     if (type === 'query') procs[name] = wrapQueryOrMutation(name, 'query', fetchFactory);
     else if (type === 'mutation') procs[name] = wrapQueryOrMutation(name, 'mutation', fetchFactory);
     else if (type === 'subscription') procs[name] = wrapSubscription(name, fetchFactory);
@@ -361,7 +381,75 @@ export function buildDispatcherRouter(
   // forwarded procedure AND the two UI procedures to the renderer.
   const wrappedBase = t.router(procs) as unknown as BaseAppRouter;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return t.mergeRouters(wrappedBase, uiRouter) as any;
+  const merged = t.mergeRouters(wrappedBase, uiRouter) as any;
+  // electron-trpc v1.0.0-alpha.0's main-side `callProcedure` wires
+  // procedures in two v10-shaped ways that tRPC v11 no longer supports:
+  //
+  //   1. It checks `procedures[path]._def[type]` as a boolean (v10)
+  //      rather than `_def.type === 'mutation'` (v11). Without the
+  //      v10-style booleans, every mutation call throws
+  //      `No "mutation"-procedure on path "<name>"`.
+  //
+  //   2. It invokes the procedure with `{ctx, path, procedures,
+  //      rawInput, type}` — no `getRawInput` field. tRPC v11's
+  //      procedure caller checks `if (!("getRawInput" in opts)) throw`,
+  //      so we synthesize the missing field by returning a constant
+  //      from a wrapped caller.
+  //
+  // Backfilling both shapes in place makes the alpha routes work
+  // without forking electron-trpc.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const procsDef = (merged._def?.procedures ?? {}) as Record<string, any>;
+  for (const [path, origProc] of Object.entries(procsDef)) {
+    const d = origProc?._def;
+    if (!d) continue;
+    if (d.type === 'query') d.query = true;
+    else if (d.type === 'mutation') d.mutation = true;
+    else if (d.type === 'subscription') d.subscription = true;
+    // Wrap with a v10-compat shim. The shim is callable both ways:
+    // when invoked with v11's `ProcedureCallOptions` (from
+    // createCaller) it passes through; when invoked with v10's
+    // `{ctx, path, rawInput, type, procedures}` it back-fills
+    // `getRawInput: () => rawInput`.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const shim: any = async (opts: any) => {
+      if (opts && typeof opts.getRawInput !== 'function') {
+        const rawInput = opts.rawInput;
+        opts = { ...opts, getRawInput: () => Promise.resolve(rawInput) };
+      }
+      return origProc(opts);
+    };
+    shim._def = origProc._def;
+    shim.procedure = origProc.procedure;
+    shim.meta = origProc.meta;
+    procsDef[path] = shim;
+  }
+  // electron-trpc v1.0.0-alpha.0's main-side IPC handler calls
+  // `router.getErrorShape(...)` — a v10 API that tRPC v11 removed in
+  // favor of the standalone `getErrorShape()` helper. Shim it here so
+  // errors raised inside any procedure propagate to the renderer
+  // instead of crashing the main process with "n.getErrorShape is not
+  // a function".
+  if (typeof merged.getErrorShape !== 'function') {
+    merged.getErrorShape = (opts: {
+      error: unknown;
+      type: 'query' | 'mutation' | 'subscription' | 'unknown';
+      path: string | undefined;
+      input: unknown;
+      ctx: unknown;
+    }) =>
+      getErrorShape({
+        config: merged._def._config,
+        error: opts.error instanceof TRPCError
+          ? opts.error
+          : new TRPCError({ code: 'INTERNAL_SERVER_ERROR', cause: opts.error as Error }),
+        type: opts.type,
+        path: opts.path,
+        input: opts.input,
+        ctx: opts.ctx,
+      });
+  }
+  return merged;
 }
 
 /**

@@ -1,13 +1,13 @@
 import { createTRPCReact } from '@trpc/react-query';
 import { createTRPCClient } from '@trpc/client';
-import { ipcLink } from 'electron-trpc/renderer';
+import { ipcLink } from './ipc-link';
 import type { AppRouter, UIRouter } from '../../electron/trpc/router';
 
 export const trpc: ReturnType<typeof createTRPCReact<AppRouter>> =
   createTRPCReact<AppRouter>();
 
 export const trpcClient: ReturnType<typeof trpc.createClient> = trpc.createClient({
-  links: [ipcLink()],
+  links: [ipcLink<AppRouter>()],
 });
 
 /**
@@ -20,5 +20,5 @@ export const trpcClient: ReturnType<typeof trpc.createClient> = trpc.createClien
  */
 export const trpcUIClient: ReturnType<typeof createTRPCClient<UIRouter>> =
   createTRPCClient<UIRouter>({
-    links: [ipcLink()],
+    links: [ipcLink<UIRouter>()],
   });
