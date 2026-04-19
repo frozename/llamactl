@@ -241,7 +241,8 @@ export default function Plan(): React.JSX.Element {
               type="button"
               onClick={onSubmit}
               disabled={disabled}
-              className="rounded border border-[color:var(--color-border)] bg-[var(--color-accent)] text-[color:var(--color-fg-inverted)] px-3 py-1 text-sm disabled:opacity-50"
+              className="rounded border border-[color:var(--color-border)] bg-[var(--color-accent)] text-[color:var(--color-fg-inverted)] px-3 py-1 text-sm font-medium shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+              title={disabled && goal.trim().length === 0 ? 'Enter a goal above' : undefined}
               data-testid="plan-submit"
             >
               {plan.isPending ? 'Planning…' : 'Generate plan'}
