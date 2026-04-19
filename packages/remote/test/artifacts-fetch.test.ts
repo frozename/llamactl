@@ -8,13 +8,18 @@ import {
   agentAssetShaUrl,
   agentAssetSigUrl,
   agentAssetUrl,
+  agentVersionDir,
   cosignIdentityRegex,
   fetchAgentRelease,
   isKnownAgentTarget,
+  listAgentVersions,
   parseShaLine,
+  pruneAgentArtifacts,
   type ArtifactFetcher,
   type CosignVerifier,
 } from '../src/infra/artifacts-fetch.js';
+import { lstatSync, mkdirSync, utimesSync, writeFileSync as writeFileSyncNode } from 'node:fs';
+import { agentBinaryPath } from '../src/server/artifacts.js';
 
 let dir = '';
 
@@ -441,5 +446,235 @@ describe('fetchAgentRelease — cosign signature verification (I.5.3)', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.signature.verified).toBe(true);
+  });
+});
+
+describe('fetchAgentRelease — versioned layout (I.5.4)', () => {
+  const REPO = 'frozename/llamactl';
+  const TARGET = 'darwin-arm64';
+  const TAG = 'v0.4.0';
+  const BIN_URL = agentAssetUrl(REPO, TAG, TARGET);
+  const SHA_URL = agentAssetShaUrl(REPO, TAG, TARGET);
+
+  test('writes binary into versions/<tag>/ and symlinks the top-level path', async () => {
+    const { fetcher } = stubFetcher({
+      [BIN_URL]: { ok: true, status: 200, body: FAKE_BODY },
+      [SHA_URL]: {
+        ok: true,
+        status: 200,
+        body: new TextEncoder().encode(`${FAKE_SHA}\n`),
+      },
+    });
+    const result = await fetchAgentRelease({
+      repo: REPO,
+      version: TAG,
+      target: TARGET,
+      artifactsDir: dir,
+      fetcher,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const versionedBin = join(agentVersionDir(TARGET, TAG, dir), 'llamactl-agent');
+    expect(result.path).toBe(versionedBin);
+    expect(existsSync(versionedBin)).toBe(true);
+    expect(existsSync(`${versionedBin}.sha256`)).toBe(true);
+
+    const topLevel = join(dir, 'agent', TARGET, 'llamactl-agent');
+    expect(existsSync(topLevel)).toBe(true);
+    const stat = lstatSync(topLevel);
+    expect(stat.isSymbolicLink()).toBe(true);
+  });
+
+  test('sanitizes unsafe characters in the version tag', async () => {
+    const weirdTag = 'v0.4.0/../escape';
+    const { fetcher } = stubFetcher({
+      [agentAssetUrl(REPO, weirdTag, TARGET)]: {
+        ok: true,
+        status: 200,
+        body: FAKE_BODY,
+      },
+      [agentAssetShaUrl(REPO, weirdTag, TARGET)]: {
+        ok: true,
+        status: 200,
+        body: new TextEncoder().encode(FAKE_SHA),
+      },
+    });
+    const result = await fetchAgentRelease({
+      repo: REPO,
+      version: weirdTag,
+      target: TARGET,
+      artifactsDir: dir,
+      fetcher,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const versionedDir = agentVersionDir(TARGET, weirdTag, dir);
+    expect(versionedDir).toContain('v0.4.0_.._escape');
+    expect(existsSync(result.path)).toBe(true);
+    // No file landed two levels up.
+    expect(existsSync(join(dir, 'agent', 'llamactl-agent'))).toBe(false);
+  });
+
+  test('second fetch at a new tag moves the symlink without deleting the old version', async () => {
+    const TAG2 = 'v0.5.0';
+    const SHA2 = createHash('sha256').update(FAKE_BODY).digest('hex');
+    const { fetcher } = stubFetcher({
+      [agentAssetUrl(REPO, TAG, TARGET)]: { ok: true, status: 200, body: FAKE_BODY },
+      [agentAssetShaUrl(REPO, TAG, TARGET)]: {
+        ok: true, status: 200,
+        body: new TextEncoder().encode(FAKE_SHA),
+      },
+      [agentAssetUrl(REPO, TAG2, TARGET)]: { ok: true, status: 200, body: FAKE_BODY },
+      [agentAssetShaUrl(REPO, TAG2, TARGET)]: {
+        ok: true, status: 200,
+        body: new TextEncoder().encode(SHA2),
+      },
+    });
+    await fetchAgentRelease({ repo: REPO, version: TAG, target: TARGET, artifactsDir: dir, fetcher });
+    await fetchAgentRelease({ repo: REPO, version: TAG2, target: TARGET, artifactsDir: dir, fetcher });
+    const oldVersioned = join(agentVersionDir(TARGET, TAG, dir), 'llamactl-agent');
+    const newVersioned = join(agentVersionDir(TARGET, TAG2, dir), 'llamactl-agent');
+    expect(existsSync(oldVersioned)).toBe(true);
+    expect(existsSync(newVersioned)).toBe(true);
+  });
+});
+
+describe('listAgentVersions + pruneAgentArtifacts (I.5.4)', () => {
+  const TARGET = 'darwin-arm64';
+
+  function seedVersion(tag: string, mtimeMs?: number): string {
+    const vdir = agentVersionDir(TARGET, tag, dir);
+    mkdirSync(vdir, { recursive: true });
+    const bin = join(vdir, 'llamactl-agent');
+    writeFileSyncNode(bin, new Uint8Array([0x7f, 0x45, 0x4c, 0x46]));
+    if (mtimeMs !== undefined) {
+      const s = mtimeMs / 1000;
+      utimesSync(bin, s, s);
+    }
+    return bin;
+  }
+
+  test('listAgentVersions returns zero entries on an empty dir', () => {
+    expect(listAgentVersions({ artifactsDir: dir })).toEqual([]);
+  });
+
+  test('listAgentVersions enumerates each versioned binary + flags the active symlink', () => {
+    const a = seedVersion('v0.4.0', Date.now() - 3 * 86400_000);
+    const b = seedVersion('v0.5.0', Date.now() - 2 * 86400_000);
+    seedVersion('v0.6.0', Date.now() - 1 * 86400_000);
+    // Link v0.5.0 as active.
+    const topLevel = agentBinaryPath(TARGET, dir);
+    mkdirSync(join(dir, 'agent', TARGET), { recursive: true });
+    void a;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('node:fs').symlinkSync(b, topLevel);
+
+    const versions = listAgentVersions({ artifactsDir: dir });
+    expect(versions.map((v) => v.tag).sort()).toEqual(['v0.4.0', 'v0.5.0', 'v0.6.0']);
+    const active = versions.find((v) => v.active);
+    expect(active?.tag).toBe('v0.5.0');
+  });
+
+  test('prune keeps the newest N by mtime and flags the rest', () => {
+    seedVersion('v0.1.0', Date.now() - 5 * 86400_000);
+    seedVersion('v0.2.0', Date.now() - 4 * 86400_000);
+    seedVersion('v0.3.0', Date.now() - 3 * 86400_000);
+    seedVersion('v0.4.0', Date.now() - 2 * 86400_000);
+    seedVersion('v0.5.0', Date.now() - 1 * 86400_000);
+
+    const plan = pruneAgentArtifacts({
+      artifactsDir: dir,
+      target: TARGET,
+      keep: 3,
+    });
+    expect(plan.executed).toBe(false);
+    expect(plan.candidates.map((c) => c.tag).sort()).toEqual(['v0.1.0', 'v0.2.0']);
+    // Dry-run: files still present.
+    expect(existsSync(agentVersionDir(TARGET, 'v0.1.0', dir))).toBe(true);
+  });
+
+  test('--execute removes the flagged versions from disk', () => {
+    seedVersion('v0.1.0', Date.now() - 4 * 86400_000);
+    seedVersion('v0.2.0', Date.now() - 3 * 86400_000);
+    seedVersion('v0.3.0', Date.now() - 2 * 86400_000);
+
+    const result = pruneAgentArtifacts({
+      artifactsDir: dir,
+      target: TARGET,
+      keep: 1,
+      execute: true,
+    });
+    expect(result.executed).toBe(true);
+    expect(result.removed.map((r) => r.tag).sort()).toEqual(['v0.1.0', 'v0.2.0']);
+    expect(existsSync(agentVersionDir(TARGET, 'v0.1.0', dir))).toBe(false);
+    expect(existsSync(agentVersionDir(TARGET, 'v0.2.0', dir))).toBe(false);
+    expect(existsSync(agentVersionDir(TARGET, 'v0.3.0', dir))).toBe(true);
+  });
+
+  test('prune never removes the active version even when it falls outside the keep window', () => {
+    // Seed three versions, with the OLDEST being the active one.
+    const oldest = seedVersion('v0.1.0', Date.now() - 5 * 86400_000);
+    seedVersion('v0.2.0', Date.now() - 3 * 86400_000);
+    seedVersion('v0.3.0', Date.now() - 1 * 86400_000);
+    const topLevel = agentBinaryPath(TARGET, dir);
+    mkdirSync(join(dir, 'agent', TARGET), { recursive: true });
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('node:fs').symlinkSync(oldest, topLevel);
+
+    const result = pruneAgentArtifacts({
+      artifactsDir: dir,
+      target: TARGET,
+      keep: 1,
+      execute: true,
+    });
+    // keep=1 → v0.3.0 stays (newest). v0.1.0 active, must survive.
+    // So only v0.2.0 gets removed.
+    expect(result.removed.map((r) => r.tag)).toEqual(['v0.2.0']);
+    expect(existsSync(agentVersionDir(TARGET, 'v0.1.0', dir))).toBe(true);
+    expect(existsSync(agentVersionDir(TARGET, 'v0.3.0', dir))).toBe(true);
+  });
+
+  test('target filter restricts prune to one platform', () => {
+    seedVersion('v0.1.0', Date.now() - 4 * 86400_000);
+    seedVersion('v0.2.0', Date.now() - 3 * 86400_000);
+    // Seed a second platform too.
+    const other = 'linux-x64';
+    const ovdir = agentVersionDir(other, 'v0.1.0', dir);
+    mkdirSync(ovdir, { recursive: true });
+    writeFileSyncNode(join(ovdir, 'llamactl-agent'), new Uint8Array([1]));
+
+    const result = pruneAgentArtifacts({
+      artifactsDir: dir,
+      target: TARGET,
+      keep: 1,
+      execute: true,
+    });
+    expect(result.removed.every((r) => r.target === TARGET)).toBe(true);
+    expect(existsSync(join(ovdir, 'llamactl-agent'))).toBe(true);
+  });
+
+  test('keep=0 removes every non-active version', () => {
+    const a = seedVersion('v0.1.0');
+    seedVersion('v0.2.0');
+    // Link v0.1.0 as active.
+    const topLevel = agentBinaryPath(TARGET, dir);
+    mkdirSync(join(dir, 'agent', TARGET), { recursive: true });
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('node:fs').symlinkSync(a, topLevel);
+
+    const result = pruneAgentArtifacts({
+      artifactsDir: dir,
+      target: TARGET,
+      keep: 0,
+      execute: true,
+    });
+    expect(result.removed.map((r) => r.tag)).toEqual(['v0.2.0']);
+    expect(existsSync(agentVersionDir(TARGET, 'v0.1.0', dir))).toBe(true);
+  });
+
+  test('rejects negative keep', () => {
+    expect(() =>
+      pruneAgentArtifacts({ artifactsDir: dir, keep: -1 }),
+    ).toThrow(/non-negative/);
   });
 });

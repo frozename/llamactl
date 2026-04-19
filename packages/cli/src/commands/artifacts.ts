@@ -9,6 +9,7 @@ USAGE:
   llamactl artifacts list
   llamactl artifacts build-agent [--target=<platform>] [--src=<path>] [--dir=<path>]
   llamactl artifacts fetch [--version=<v>] [--target=<p>] [--repo=<owner/repo>] [--dir=<path>] [--verify-sig[=mode]]
+  llamactl artifacts prune [--target=<p>] [--keep=<N>] [--dir=<path>] [--execute]
   llamactl artifacts show-path [--target=<platform>] [--dir=<path>]
 
 Pre-built binaries live under <LLAMACTL_ARTIFACTS_DIR or
@@ -34,12 +35,19 @@ FLAGS:
                             completed.
                           skip (default) — never touch signatures.
 
+  --keep=<N>            prune only. Versions to keep per platform.
+                        Default 3. Active version never pruned.
+  --execute             prune only. Without it, prune prints the
+                        dry-run plan and exits 0.
+
 EXAMPLES:
   llamactl artifacts list
   llamactl artifacts build-agent                       # current platform
   llamactl artifacts build-agent --target=linux-x64    # cross-compile
   llamactl artifacts fetch --version=v0.4.0            # download from GitHub
   llamactl artifacts fetch --version=latest --target=linux-arm64
+  llamactl artifacts prune                             # dry-run
+  llamactl artifacts prune --keep=5 --execute          # actually delete
   llamactl artifacts show-path --target=linux-arm64
 `;
 
@@ -339,11 +347,104 @@ async function runFetch(argv: string[]): Promise<number> {
   return 0;
 }
 
+function runPrune(argv: string[]): number {
+  const flags: {
+    target: string | undefined;
+    keep: number;
+    dir: string;
+    execute: boolean;
+  } = {
+    target: undefined,
+    keep: 3,
+    dir: defaultArtifactsDir(),
+    execute: false,
+  };
+  for (const arg of argv) {
+    if (arg === '--help' || arg === '-h') {
+      process.stdout.write(USAGE);
+      return 0;
+    }
+    if (arg === '--execute') {
+      flags.execute = true;
+      continue;
+    }
+    const eq = arg.indexOf('=');
+    if (!arg.startsWith('--') || eq < 0) {
+      process.stderr.write(`artifacts prune: flags must be --key=value (${arg})\n`);
+      return 1;
+    }
+    const key = arg.slice(2, eq);
+    const value = arg.slice(eq + 1);
+    switch (key) {
+      case 'target':
+        if (!ALLOWED_PLATFORMS.includes(value as Platform)) {
+          process.stderr.write(
+            `artifacts prune: unsupported --target ${value} (allowed: ${ALLOWED_PLATFORMS.join(', ')})\n`,
+          );
+          return 1;
+        }
+        flags.target = value;
+        break;
+      case 'keep':
+        {
+          const n = Number.parseInt(value, 10);
+          if (!Number.isFinite(n) || n < 0) {
+            process.stderr.write(`artifacts prune: --keep must be a non-negative integer (got ${value})\n`);
+            return 1;
+          }
+          flags.keep = n;
+        }
+        break;
+      case 'dir':
+        flags.dir = value;
+        break;
+      default:
+        process.stderr.write(`artifacts prune: unknown flag --${key}\n`);
+        return 1;
+    }
+  }
+  const result = infraArtifactsFetch.pruneAgentArtifacts({
+    artifactsDir: flags.dir,
+    ...(flags.target !== undefined ? { target: flags.target } : {}),
+    keep: flags.keep,
+    execute: flags.execute,
+  });
+  if (result.inspected.length === 0) {
+    process.stdout.write(`no versioned agent artifacts under ${flags.dir}\n`);
+    return 0;
+  }
+  process.stdout.write(
+    `artifacts prune: ${result.inspected.length} installed, keep=${flags.keep}, ` +
+      `${result.candidates.length} candidate(s)${flags.execute ? '' : ' (dry-run — pass --execute to remove)'}\n`,
+  );
+  for (const c of result.candidates) {
+    const age = Math.max(0, Math.floor((Date.now() - c.mtimeMs) / 86400_000));
+    const sizeMb = (c.bytes / (1024 * 1024)).toFixed(1);
+    const mark = flags.execute
+      ? result.removed.some((r) => r.path === c.path)
+        ? 'REMOVED'
+        : 'FAILED '
+      : 'WOULD  ';
+    process.stdout.write(
+      `  ${mark}\t${c.target}\t${c.tag}\t${sizeMb} MB\t${age}d old\t${c.path}\n`,
+    );
+  }
+  if (flags.execute && result.removed.length !== result.candidates.length) {
+    process.stderr.write(
+      `artifacts prune: ${result.candidates.length - result.removed.length} candidate(s) could not be removed — inspect manually\n`,
+    );
+    return 1;
+  }
+  return 0;
+}
+
 export async function runArtifacts(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
     case 'list':
       return runList(rest);
+    case 'prune':
+      return runPrune(rest);
     case 'build-agent':
       return runBuildAgent(rest);
     case 'fetch':

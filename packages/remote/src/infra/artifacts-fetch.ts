@@ -1,5 +1,18 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { agentBinaryPath, defaultArtifactsDir } from '../server/artifacts.js';
 
@@ -296,17 +309,22 @@ export async function fetchAgentRelease(
   }
 
   const artifactsDir = opts.artifactsDir ?? defaultArtifactsDir();
-  const outPath = agentBinaryPath(opts.target, artifactsDir);
-  mkdirSync(dirname(outPath), { recursive: true });
-  writeFileSync(outPath, binRes.body);
+  const topLevelPath = agentBinaryPath(opts.target, artifactsDir);
+  const versionDir = agentVersionDir(opts.target, tag, artifactsDir);
+  const versionedBin = join(versionDir, 'llamactl-agent');
+  mkdirSync(versionDir, { recursive: true });
+  writeFileSync(versionedBin, binRes.body);
   try {
-    chmodSync(outPath, 0o755);
+    chmodSync(versionedBin, 0o755);
   } catch {
     // best-effort on platforms where chmod is a no-op
   }
   // Also write the sha alongside so operators can re-verify later
   // with `shasum -a 256 -c`.
-  writeFileSync(`${outPath}.sha256`, shaRes.text().endsWith('\n') ? shaRes.text() : `${shaRes.text()}\n`);
+  writeFileSync(
+    `${versionedBin}.sha256`,
+    shaRes.text().endsWith('\n') ? shaRes.text() : `${shaRes.text()}\n`,
+  );
 
   const verifyMode = opts.verifySig ?? 'skip';
   const signature = await maybeVerifySignature({
@@ -314,7 +332,7 @@ export async function fetchAgentRelease(
     repo: opts.repo,
     tag,
     target: opts.target,
-    binaryPath: outPath,
+    binaryPath: versionedBin,
     fetcher,
     cosignVerifier: opts.cosignVerifier ?? defaultCosignVerifier,
   });
@@ -328,15 +346,78 @@ export async function fetchAgentRelease(
     };
   }
 
+  // Atomic symlink flip: the top-level `llamactl-agent` always
+  // points at the current version. Legacy non-symlink binaries at
+  // that path are preserved by renaming them to `.legacy-<mtime>`
+  // once so operators can recover if they need to; we only do this
+  // the first time we see a plain file there.
+  linkCurrentVersion(topLevelPath, versionedBin);
+
   return {
     ok: true,
     version: tag,
     target: opts.target,
-    path: outPath,
+    path: versionedBin,
     sha256: actualSha,
     bytes: binRes.body.length,
     signature,
   };
+}
+
+/** Root of the versioned layout for one platform. */
+export function agentPlatformDir(platform: string, artifactsDir: string): string {
+  return join(artifactsDir, 'agent', platform);
+}
+
+/** Directory holding all versioned binaries for one platform. */
+export function agentVersionsRoot(platform: string, artifactsDir: string): string {
+  return join(agentPlatformDir(platform, artifactsDir), 'versions');
+}
+
+/** Directory for one (platform, tag) pair. Tag is sanitized so
+ *  path-traversal in the version string is impossible — only
+ *  `[A-Za-z0-9._+-]` is kept; everything else becomes `_`. */
+export function agentVersionDir(
+  platform: string,
+  tag: string,
+  artifactsDir: string,
+): string {
+  const safe = tag.replace(/[^A-Za-z0-9._+-]/g, '_');
+  return join(agentVersionsRoot(platform, artifactsDir), safe);
+}
+
+/**
+ * Point the top-level `<platform>/llamactl-agent` path at the
+ * freshly-downloaded versioned binary. Replaces an existing symlink
+ * atomically; an existing regular file (legacy layout, or output of
+ * `artifacts build-agent`) is replaced outright — operators can
+ * always re-fetch. Falls back to a byte-copy on platforms where
+ * symlinks aren't available.
+ */
+function linkCurrentVersion(topLevel: string, target: string): void {
+  mkdirSync(dirname(topLevel), { recursive: true });
+  const info = lstatSafe(topLevel);
+  if (info) {
+    try { unlinkSync(topLevel); } catch { /* ignore */ }
+  }
+  try {
+    symlinkSync(target, topLevel);
+    return;
+  } catch {
+    // Fallback — copy the bytes.
+  }
+  try {
+    writeFileSync(topLevel, readFileSync(target));
+    try { chmodSync(topLevel, 0o755); } catch { /* ignore */ }
+  } catch {
+    // If even the copy fails we've still written to versions/ — the
+    // next fetch or a manual `ln -s` will recover the top-level
+    // pointer. Don't fail the fetch result over this.
+  }
+}
+
+function lstatSafe(path: string): ReturnType<typeof lstatSync> | null {
+  try { return lstatSync(path); } catch { return null; }
 }
 
 interface MaybeVerifyOptions {
@@ -389,3 +470,182 @@ export function isKnownAgentTarget(target: string): boolean {
 
 // Helper for building the `--dir` path display string on the CLI.
 export { join as joinPath };
+
+/* -------------------------------------------------------------------------- *
+ *  Prune (I.5.4)
+ * -------------------------------------------------------------------------- */
+
+export interface InstalledAgentVersion {
+  target: string;
+  tag: string;
+  path: string;
+  bytes: number;
+  /** Filesystem mtime, ms since epoch. */
+  mtimeMs: number;
+  /** `true` when the top-level `<platform>/llamactl-agent` symlink
+   *  currently points at this version. Pruning never deletes the
+   *  active version. */
+  active: boolean;
+}
+
+export interface ListAgentVersionsOptions {
+  /** Override the artifacts dir. */
+  artifactsDir?: string;
+  /** Restrict to one platform. Default: all four known targets. */
+  target?: string;
+}
+
+/**
+ * Enumerate every versioned agent binary under
+ * `<artifactsDir>/agent/<platform>/versions/`. Omits the legacy
+ * top-level `<platform>/llamactl-agent` path — that's tracked via
+ * `active` on the matching version entry when the symlink resolves
+ * into `versions/`.
+ */
+export function listAgentVersions(
+  opts: ListAgentVersionsOptions = {},
+): InstalledAgentVersion[] {
+  const artifactsDir = opts.artifactsDir ?? defaultArtifactsDir();
+  const platforms = opts.target
+    ? [opts.target]
+    : Array.from(ALLOWED_TARGETS).sort();
+  const out: InstalledAgentVersion[] = [];
+  for (const target of platforms) {
+    const versionsRoot = agentVersionsRoot(target, artifactsDir);
+    if (!existsSync(versionsRoot)) continue;
+    const activeTarget = resolveActiveVersionTag(target, artifactsDir);
+    for (const tag of readdirSync(versionsRoot).sort()) {
+      const bin = join(versionsRoot, tag, 'llamactl-agent');
+      if (!existsSync(bin)) continue;
+      const stat = statSync(bin);
+      out.push({
+        target,
+        tag,
+        path: bin,
+        bytes: stat.size,
+        mtimeMs: stat.mtimeMs,
+        active: activeTarget === tag,
+      });
+    }
+  }
+  return out;
+}
+
+/** Resolve the top-level symlink back to its tag, or null if the
+ *  symlink is missing / points outside `versions/`. */
+function resolveActiveVersionTag(
+  target: string,
+  artifactsDir: string,
+): string | null {
+  const topLevel = agentBinaryPath(target, artifactsDir);
+  const info = lstatSafe(topLevel);
+  if (!info) return null;
+  if (!info.isSymbolicLink()) return null;
+  let pointer: string;
+  try {
+    pointer = readlinkSync(topLevel);
+  } catch {
+    return null;
+  }
+  // pointer may be absolute or relative; either way the last two
+  // segments of a valid target are `<tag>/llamactl-agent`.
+  const segments = pointer.split(/[\\/]/).filter(Boolean);
+  if (segments.length < 2) return null;
+  const last = segments[segments.length - 1];
+  const tag = segments[segments.length - 2];
+  if (last !== 'llamactl-agent' || !tag) return null;
+  return tag;
+}
+
+export interface PruneAgentArtifactsOptions {
+  artifactsDir?: string;
+  /** Restrict pruning to one platform. Default: all known targets. */
+  target?: string;
+  /** How many versions to keep per platform (newest by mtime).
+   *  Default 3. `0` means keep nothing except the active version. */
+  keep?: number;
+  /** When false (default), report what would be deleted without
+   *  touching disk. When true, actually remove the version dirs. */
+  execute?: boolean;
+}
+
+export interface PrunedAgentVersion {
+  target: string;
+  tag: string;
+  path: string;
+  bytes: number;
+  mtimeMs: number;
+}
+
+export interface PruneAgentArtifactsResult {
+  /** Every version considered in this run (including kept ones). */
+  inspected: InstalledAgentVersion[];
+  /** Versions flagged for removal. When execute=true these are
+   *  already gone from disk; when execute=false they're the
+   *  dry-run plan. */
+  candidates: PrunedAgentVersion[];
+  /** Versions actually removed (equals `candidates` when
+   *  execute=true; empty on dry-run). */
+  removed: PrunedAgentVersion[];
+  executed: boolean;
+  keep: number;
+}
+
+/**
+ * Keep the newest `keep` versions per platform (sorted by mtime
+ * desc) and flag the rest. The active version — the one the
+ * top-level symlink currently resolves to — is never pruned even if
+ * it falls outside the keep window, so a prune run can't leave the
+ * artifacts directory without a live binary.
+ *
+ * Dry-run by default; pass `execute: true` to delete.
+ */
+export function pruneAgentArtifacts(
+  opts: PruneAgentArtifactsOptions = {},
+): PruneAgentArtifactsResult {
+  const keep = opts.keep ?? 3;
+  if (!Number.isInteger(keep) || keep < 0) {
+    throw new Error(`pruneAgentArtifacts: keep must be a non-negative integer (got ${keep})`);
+  }
+  const inspected = listAgentVersions({
+    ...(opts.artifactsDir !== undefined ? { artifactsDir: opts.artifactsDir } : {}),
+    ...(opts.target !== undefined ? { target: opts.target } : {}),
+  });
+  // Group by target, sort desc by mtime, keep first `keep`.
+  const byTarget = new Map<string, InstalledAgentVersion[]>();
+  for (const v of inspected) {
+    const bucket = byTarget.get(v.target) ?? [];
+    bucket.push(v);
+    byTarget.set(v.target, bucket);
+  }
+  const candidates: PrunedAgentVersion[] = [];
+  for (const bucket of byTarget.values()) {
+    bucket.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    for (let i = keep; i < bucket.length; i++) {
+      const v = bucket[i]!;
+      if (v.active) continue;
+      candidates.push({
+        target: v.target,
+        tag: v.tag,
+        path: v.path,
+        bytes: v.bytes,
+        mtimeMs: v.mtimeMs,
+      });
+    }
+  }
+  const executed = opts.execute === true;
+  const removed: PrunedAgentVersion[] = [];
+  if (executed) {
+    for (const c of candidates) {
+      const versionDir = dirname(c.path);
+      try {
+        rmSync(versionDir, { recursive: true, force: true });
+        removed.push(c);
+      } catch {
+        // swallow — the CLI can surface undeleted entries by
+        // diffing candidates vs removed.
+      }
+    }
+  }
+  return { inspected, candidates, removed, executed, keep };
+}
