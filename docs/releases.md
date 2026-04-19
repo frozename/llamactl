@@ -70,7 +70,11 @@ Central then serves that exact file from
 curl-pipe-sh flow picks it up automatically.
 
 `llamactl artifacts fetch --version=v0.4.0 --target=darwin-arm64`
-(landing in I.5.2) automates the download + drop.
+automates the download + sha-verify + drop-into-artifacts-dir.
+Default `--version=latest` hits the GitHub API to resolve the most
+recent tag. Set `GITHUB_TOKEN` / `GH_TOKEN` to avoid unauth'd API
+rate limiting. `--repo` defaults to `frozename/llamactl`; forks
+pass their own.
 
 ## Rehearsing a build without cutting a release
 
@@ -93,8 +97,6 @@ anyone else might have downloaded.
 
 ## What's not yet automated
 
-- **`llamactl artifacts fetch`** — downloads the release + writes it
-  to the artifacts dir. (Plan I.5.2.)
 - **Cosign keyless signing** — verifiable "this binary came from a
   GitHub Actions run on this repo." (Plan I.5.3.)
 - **`artifacts prune`** — retains last N versions locally. (Plan

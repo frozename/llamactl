@@ -36,3 +36,4 @@ export * as infraLayout from './infra/layout.js';
 export * as infraInstall from './infra/install.js';
 export * as infraSpec from './infra/spec.js';
 export * as infraServices from './infra/services.js';
+export * as infraArtifactsFetch from './infra/artifacts-fetch.js';

@@ -1,12 +1,14 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { platform as nodePlatform, arch as nodeArch } from 'node:os';
+import { infraArtifactsFetch } from '@llamactl/remote';
 
 const USAGE = `llamactl artifacts — manage pre-built llamactl-agent binaries
 
 USAGE:
   llamactl artifacts list
   llamactl artifacts build-agent [--target=<platform>] [--src=<path>] [--dir=<path>]
+  llamactl artifacts fetch [--version=<v>] [--target=<p>] [--repo=<owner/repo>] [--dir=<path>]
   llamactl artifacts show-path [--target=<platform>] [--dir=<path>]
 
 Pre-built binaries live under <LLAMACTL_ARTIFACTS_DIR or
@@ -29,6 +31,8 @@ EXAMPLES:
   llamactl artifacts list
   llamactl artifacts build-agent                       # current platform
   llamactl artifacts build-agent --target=linux-x64    # cross-compile
+  llamactl artifacts fetch --version=v0.4.0            # download from GitHub
+  llamactl artifacts fetch --version=latest --target=linux-arm64
   llamactl artifacts show-path --target=linux-arm64
 `;
 
@@ -232,6 +236,72 @@ function runShowPath(argv: string[]): number {
   return 0;
 }
 
+async function runFetch(argv: string[]): Promise<number> {
+  const flags = {
+    version: 'latest',
+    target: (currentPlatform() as string | null) ?? undefined,
+    repo: 'frozename/llamactl',
+    dir: defaultArtifactsDir(),
+  };
+  for (const arg of argv) {
+    if (arg === '--help' || arg === '-h') {
+      process.stdout.write(USAGE);
+      return 0;
+    }
+    const eq = arg.indexOf('=');
+    if (!arg.startsWith('--') || eq < 0) {
+      process.stderr.write(`artifacts fetch: flags must be --key=value (${arg})\n`);
+      return 1;
+    }
+    const key = arg.slice(2, eq);
+    const value = arg.slice(eq + 1);
+    switch (key) {
+      case 'version':
+        flags.version = value;
+        break;
+      case 'target':
+        flags.target = value;
+        break;
+      case 'repo':
+        flags.repo = value;
+        break;
+      case 'dir':
+        flags.dir = value;
+        break;
+      default:
+        process.stderr.write(`artifacts fetch: unknown flag --${key}\n`);
+        return 1;
+    }
+  }
+  if (!flags.target) {
+    process.stderr.write(
+      `artifacts fetch: could not detect current platform (${nodePlatform()}/${nodeArch()}); pass --target=<p>.\n`,
+    );
+    return 1;
+  }
+  process.stderr.write(
+    `artifacts fetch: ${flags.repo} ${flags.version} → ${flags.target}\n`,
+  );
+  const result = await infraArtifactsFetch.fetchAgentRelease({
+    repo: flags.repo,
+    version: flags.version,
+    target: flags.target,
+    artifactsDir: flags.dir,
+  });
+  if (!result.ok) {
+    process.stderr.write(`artifacts fetch: ${result.reason} — ${result.message}\n`);
+    return 1;
+  }
+  process.stdout.write(
+    `${result.path}\n` +
+      `  version: ${result.version}\n` +
+      `  target:  ${result.target}\n` +
+      `  size:    ${(result.bytes / (1024 * 1024)).toFixed(1)} MB\n` +
+      `  sha256:  ${result.sha256}\n`,
+  );
+  return 0;
+}
+
 export async function runArtifacts(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
@@ -239,6 +309,8 @@ export async function runArtifacts(argv: string[]): Promise<number> {
       return runList(rest);
     case 'build-agent':
       return runBuildAgent(rest);
+    case 'fetch':
+      return runFetch(rest);
     case 'show-path':
       return runShowPath(rest);
     case undefined:

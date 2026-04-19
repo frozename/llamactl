@@ -129,6 +129,9 @@ Agentic operations:
   llamactl artifacts build-agent              Build a llamactl-agent
       [--target=<platform>]                   binary for central to
       [--src=<path>] [--dir=<path>]           serve from /artifacts
+  llamactl artifacts fetch                    Download a published release
+      [--version=<v>] [--target=<p>]          from GitHub (sha-verified)
+      [--repo=<owner/repo>] [--dir=<path>]
   llamactl artifacts list                     Show built agent binaries
   llamactl artifacts show-path                Print the absolute path
       [--target=<platform>]                   where /artifacts expects
