@@ -319,21 +319,28 @@ export default function Pulls(): React.JSX.Element {
         }}
         className="mb-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
       >
-        <div className="mb-3 flex gap-1 text-xs">
-          {(['file', 'candidate', 'test'] as Mode[]).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              className={
-                mode === m
-                  ? 'rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-[color:var(--color-fg)]'
-                  : 'rounded border border-transparent px-3 py-1 text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)]'
-              }
-            >
-              {m === 'file' ? 'Pull file' : m === 'candidate' ? 'Pull candidate' : 'Candidate test'}
-            </button>
-          ))}
+        <div className="mb-3 flex gap-1 text-xs" role="tablist">
+          {(['file', 'candidate', 'test'] as Mode[]).map((m) => {
+            const isActive = mode === m;
+            return (
+              <button
+                key={m}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                data-testid={`pulls-mode-${m}`}
+                data-active={isActive ? 'true' : 'false'}
+                onClick={() => setMode(m)}
+                className={
+                  isActive
+                    ? 'rounded border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-1 font-medium text-[color:var(--color-fg)]'
+                    : 'rounded border border-transparent px-3 py-1 text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)] hover:text-[color:var(--color-fg)]'
+                }
+              >
+                {m === 'file' ? 'Pull file' : m === 'candidate' ? 'Pull candidate' : 'Candidate test'}
+              </button>
+            );
+          })}
         </div>
         <div className="grid grid-cols-12 gap-3">
           <label className="col-span-5 text-sm">

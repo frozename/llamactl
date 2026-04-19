@@ -34,21 +34,28 @@ function ScopeTabs(): React.JSX.Element {
     { id: 'custom', label: 'Custom' },
   ];
   return (
-    <div className="mb-4 flex gap-1 text-sm">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          onClick={() => setScope(tab.id)}
-          className={
-            tab.id === scope
-              ? 'rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-[color:var(--color-fg)]'
-              : 'rounded border border-transparent px-3 py-1 text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-1)]'
-          }
-        >
-          {tab.label}
-        </button>
-      ))}
+    <div className="mb-4 flex gap-1 text-sm" role="tablist">
+      {tabs.map((tab) => {
+        const isActive = tab.id === scope;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={isActive}
+            data-testid={`models-scope-${tab.id}`}
+            data-active={isActive ? 'true' : 'false'}
+            onClick={() => setScope(tab.id)}
+            className={
+              isActive
+                ? 'rounded border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-1 font-medium text-[color:var(--color-fg)]'
+                : 'rounded border border-transparent px-3 py-1 text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-1)] hover:text-[color:var(--color-fg)]'
+            }
+          >
+            {tab.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
