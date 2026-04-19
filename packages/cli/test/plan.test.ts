@@ -90,13 +90,12 @@ describe('llamactl plan', () => {
         };
       };
       expect(parsed.executor).toBe('stub');
-      // Stub always emits nova.ops.overview regardless of tools.
       expect(parsed.plan.steps).toHaveLength(1);
-      expect(parsed.plan.steps[0]!.tool).toBe('nova.ops.overview');
-      // The harness enumerates tools across llamactl-mcp + nova-mcp, so
-      // toolsAvailable should be non-empty post-allowlist (modulo
-      // destructive ones we filter out).
+      // Harness enumerates tools from llamactl-mcp + nova-mcp; stub
+      // picks the first allowlisted tool — whichever alphabetical
+      // entry that is — and the post-validation gate is satisfied.
       expect(parsed.toolsAvailable.length).toBeGreaterThan(0);
+      expect(parsed.toolsAvailable).toContain(parsed.plan.steps[0]!.tool);
     } finally {
       stdout.restore();
       stderr.restore();
@@ -112,7 +111,7 @@ describe('llamactl plan', () => {
       const err = stderr.output();
       expect(err).toContain('executor: stub');
       expect(err).toContain('steps (1)');
-      expect(err).toContain('nova.ops.overview');
+      expect(err).toContain('reasoning:');
     } finally {
       stdout.restore();
       stderr.restore();
