@@ -136,33 +136,70 @@ export async function runCostGuardianTick(
       appendCostJournal(action, opts.journalPath);
     }
   }
-  // Tier-3 deregister-dry-run intent. We never call the sirius MCP
-  // tool from here today — sirius-gateway's MCP surface doesn't yet
-  // expose a deregister verb. Until it does, the guardian documents
-  // the *intent* as a journal action entry so the operator sees
-  // "here's the provider you should consider manually deregistering"
-  // without any side effect. When @sirius/mcp gains the verb a
-  // follow-up slice will dispatch it with dryRun:true and gate wet
-  // execution behind `auto_deregister`.
+  // Tier-3 deregister-dry-run: call sirius.providers.deregister
+  // with dryRun:true when the harness has the tool mounted. When
+  // the tool isn't in the client's catalog (or the call fails) we
+  // still journal the intent with the failure reason, so an
+  // operator sees every tier-3 tick. Wet execution stays
+  // deliberately gated — even `auto_deregister: true` sends
+  // dryRun:true here. The wet path lights up when sirius-mcp's
+  // K.7.2 slice wires up /providers/reload + atomic
+  // sirius-providers.yaml writes.
   if (
     !opts.skipJournal &&
     decision.tier === 'deregister' &&
     decision.deregisterTarget
   ) {
-    const action: CostJournalActionEntry = {
+    let detail: Record<string, unknown> = {
+      provider: decision.deregisterTarget,
+      autoDeregisterEnabled: opts.config.auto_deregister === true,
+    };
+    let ok = true;
+    let error: string | undefined;
+    try {
+      const raw = await opts.tools.callTool({
+        name: 'sirius.providers.deregister',
+        arguments: { name: decision.deregisterTarget, dryRun: true },
+      });
+      const parsed = parseToolJson<{
+        ok?: boolean;
+        mode?: string;
+        wasPresent?: boolean;
+        remainingCount?: number;
+        reason?: string;
+        message?: string;
+      }>(raw);
+      detail = {
+        ...detail,
+        toolInvoked: true,
+        mode: parsed.mode ?? null,
+        wasPresent: parsed.wasPresent ?? null,
+        remainingCount: parsed.remainingCount ?? null,
+      };
+      if (parsed.ok === false) {
+        ok = false;
+        error = `${parsed.reason ?? 'unknown'}: ${parsed.message ?? 'no message'}`;
+      }
+    } catch (err) {
+      ok = false;
+      error = `sirius.providers.deregister not available — ${(err as Error).message}`;
+      detail = {
+        ...detail,
+        toolInvoked: false,
+        note: opts.config.auto_deregister
+          ? 'auto_deregister set but the harness has no sirius MCP client — no upstream mutation performed'
+          : 'manual operator action required — review journal + run the deregister verb yourself',
+      };
+    }
+    const entry: CostJournalActionEntry = {
       kind: 'action',
       ts: decision.ts,
       action: 'deregister-dry-run',
-      ok: true,
-      detail: {
-        provider: decision.deregisterTarget,
-        autoDeregisterEnabled: opts.config.auto_deregister === true,
-        note: opts.config.auto_deregister
-          ? 'auto_deregister is set but the sirius MCP deregister verb ships in a follow-up slice — no upstream mutation performed'
-          : 'manual operator action required — review journal + run the deregister verb yourself',
-      },
+      ok,
+      detail,
+      ...(error ? { error } : {}),
     };
-    appendCostJournal(action, opts.journalPath);
+    appendCostJournal(entry, opts.journalPath);
   }
   return decision;
 }

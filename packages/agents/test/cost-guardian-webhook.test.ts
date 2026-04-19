@@ -247,7 +247,10 @@ describe('runCostGuardianTick — tier-3 deregister dry-run intent', () => {
     return body.split('\n').map((line) => JSON.parse(line));
   }
 
-  test('deregister tier with a top-provider target → deregister-dry-run action journaled', async () => {
+  test('sirius tool unavailable → intent journaled with tool-not-available error', async () => {
+    // makeClient only registers nova.ops.cost.snapshot — the sirius
+    // tool throws on lookup. Guardian should journal the intent
+    // with ok:false + toolInvoked:false.
     const tools = makeClient({
       'nova.ops.cost.snapshot': {
         totalEstimatedCostUsd: 9.8,
@@ -269,18 +272,20 @@ describe('runCostGuardianTick — tier-3 deregister dry-run intent', () => {
     const entries = readJournal(journalPath);
     expect(entries).toHaveLength(2); // tick + deregister-dry-run
     const action = entries.find((e) => e.action === 'deregister-dry-run')!;
-    expect(action.ok).toBe(true);
+    expect(action.ok).toBe(false);
     const detail = action.detail as {
       provider: string;
       autoDeregisterEnabled: boolean;
+      toolInvoked: boolean;
       note: string;
     };
     expect(detail.provider).toBe('openai');
-    expect(detail.autoDeregisterEnabled).toBe(false);
+    expect(detail.toolInvoked).toBe(false);
     expect(detail.note).toContain('manual operator action required');
+    expect(action.error).toContain('sirius.providers.deregister not available');
   });
 
-  test('auto_deregister=true flags the intent but still does not call sirius', async () => {
+  test('auto_deregister=true without sirius still flags toolInvoked:false', async () => {
     const tools = makeClient({
       'nova.ops.cost.snapshot': {
         totalEstimatedCostUsd: 9.8,
@@ -300,10 +305,121 @@ describe('runCostGuardianTick — tier-3 deregister dry-run intent', () => {
     const action = entries.find((e) => e.action === 'deregister-dry-run')!;
     const detail = action.detail as {
       autoDeregisterEnabled: boolean;
+      toolInvoked: boolean;
       note: string;
     };
     expect(detail.autoDeregisterEnabled).toBe(true);
-    expect(detail.note).toContain('follow-up slice');
+    expect(detail.toolInvoked).toBe(false);
+  });
+
+  test('sirius tool mounted → real call, dryRun:true passed, outcome journaled', async () => {
+    let captured: ToolCallInput | null = null;
+    const tools: RunbookToolClient = {
+      async callTool(input) {
+        if (input.name === 'nova.ops.cost.snapshot') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  totalEstimatedCostUsd: 9.8,
+                  windowSince: 'x',
+                  windowUntil: 'y',
+                  byProvider: [{ key: 'openai', estimatedCostUsd: 9.7 }],
+                }),
+              },
+            ],
+          };
+        }
+        if (input.name === 'sirius.providers.deregister') {
+          captured = input;
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  ok: true,
+                  mode: 'dry-run',
+                  wasPresent: true,
+                  remainingCount: 2,
+                }),
+              },
+            ],
+          };
+        }
+        throw new Error(`unexpected: ${input.name}`);
+      },
+    };
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig(),
+      journalPath,
+      disableWebhook: true,
+    });
+    expect(captured).not.toBeNull();
+    expect(captured!.arguments).toEqual({ name: 'openai', dryRun: true });
+    const entries = readJournal(journalPath);
+    const action = entries.find((e) => e.action === 'deregister-dry-run')!;
+    expect(action.ok).toBe(true);
+    const detail = action.detail as {
+      provider: string;
+      toolInvoked: boolean;
+      mode: string;
+      wasPresent: boolean;
+      remainingCount: number;
+    };
+    expect(detail.toolInvoked).toBe(true);
+    expect(detail.mode).toBe('dry-run');
+    expect(detail.wasPresent).toBe(true);
+    expect(detail.remainingCount).toBe(2);
+    // Even with auto_deregister defaulted to false, the dry-run call
+    // went through — wet semantics stay server-side.
+  });
+
+  test('sirius tool returns ok:false → journaled with reason + message', async () => {
+    const tools: RunbookToolClient = {
+      async callTool(input) {
+        if (input.name === 'nova.ops.cost.snapshot') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  totalEstimatedCostUsd: 9.8,
+                  windowSince: 'x',
+                  windowUntil: 'y',
+                  byProvider: [{ key: 'openai', estimatedCostUsd: 9.7 }],
+                }),
+              },
+            ],
+          };
+        }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                ok: false,
+                reason: 'wet-mode-not-implemented',
+                message: 'ships in K.7.2',
+              }),
+            },
+          ],
+        };
+      },
+    };
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig(),
+      journalPath,
+      disableWebhook: true,
+    });
+    const entries = readJournal(journalPath);
+    const action = entries.find((e) => e.action === 'deregister-dry-run')!;
+    expect(action.ok).toBe(false);
+    expect(action.error).toContain('wet-mode-not-implemented');
   });
 
   test('deregister tier with no byProvider → no dry-run action (nothing to deregister)', async () => {
