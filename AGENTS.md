@@ -198,9 +198,33 @@ consumer before their test run.
 
 Test counts we expect as a baseline (bump as features ship):
 
-- nova ≥ 89, llamactl ≥ 736, sirius ≥ 250, embersynth ≥ 136.
+- nova ≥ 157, llamactl ≥ 736, sirius ≥ 262, embersynth ≥ 152.
 
 Four repos green = slice shippable.
+
+## Phase M status (MCP surface across the fleet)
+
+- **M.1 `@llamactl/mcp`** — shipped. 18 tools + M.1 pipeline pickup
+  (`~/.llamactl/mcp/pipelines/*.json` → `llamactl.pipeline.<slug>`).
+- **M.2 `@sirius/mcp`** — shipped. `sirius.providers.list`,
+  `.models.list`, `.providers.deregister` (dry-run), `.health.all`.
+- **M.3 `@embersynth/mcp`** — shipped. 10 tools: `config.show`,
+  `nodes.list`, `nodes.inspect`, `profiles.list`, `profiles.inspect`,
+  `synthetic.list`, `route.simulate`, `health.all`, `evidence.tail`,
+  `reload` (dry-run previews a diff; wet-run appends one audit
+  entry). Source: `embersynth/src/mcp/server.ts`.
+- **M.4 `@nova/mcp` facade** — shipped. The facade loads
+  `~/.llamactl/nova-mcp.yaml` (override via `NOVA_MCP_CONFIG`), boots
+  an MCP `Client` per downstream (stdio or HTTP), and re-exposes the
+  flat union of every downstream tool under its original namespace
+  (`llamactl.*` / `sirius.*` / `embersynth.*`). On top of that, five
+  native tools live on the facade: `nova.ops.overview`,
+  `nova.ops.healthcheck`, `nova.ops.cost.snapshot`,
+  `nova.operator.plan`, and `nova.models.list` (merged catalog across
+  the three downstreams, first-wins dedupe with
+  `alsoAvailableIn`/`provenance`). Boot-time snapshot only — a
+  downstream restart needs a facade restart. Full config shape and
+  facade patterns live in `/Volumes/WorkSSD/repos/personal/nova/AGENTS.md`.
 
 ## Commit discipline
 
