@@ -1,7 +1,6 @@
 {
   "name": "@llamactl/mcp",
   "version": "0.0.0",
-  "private": true,
   "description": "Model Context Protocol server exposing llamactl's operator surface as tools — catalog, bench, node inventory.",
   "type": "module",
   "main": "./src/index.ts",

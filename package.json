@@ -1,7 +1,6 @@
 {
   "name": "llamactl",
   "version": "0.0.0",
-  "private": true,
   "description": "Local-first toolkit for running llama.cpp: discovery, benchmarks, candidate evaluation, shell + Electron control surfaces.",
   "repository": "https://github.com/frozename/llamactl",
   "license": "MIT",

@@ -1,7 +1,6 @@
 {
   "name": "@llamactl/core",
   "version": "0.0.0",
-  "private": true,
   "description": "Core library for llamactl. Node-compat TypeScript.",
   "type": "module",
   "main": "./src/index.ts",

@@ -1,7 +1,6 @@
 {
   "name": "@llamactl/remote",
   "version": "0.0.0",
-  "private": true,
   "description": "Wire-protocol (tRPC router) shared between Electron app, CLI, and node agent.",
   "type": "module",
   "main": "./src/index.ts",

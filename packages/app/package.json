@@ -1,7 +1,6 @@
 {
   "name": "@llamactl/app",
   "version": "0.0.0",
-  "private": true,
   "description": "Electron dashboard for llamactl.",
   "author": "Alexandre Cordeiro <alexandre.s.b.cordeiro@gmail.com>",
   "type": "module",
