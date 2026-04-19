@@ -1,11 +1,16 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
+import { parse as parseYaml } from 'yaml';
 import {
+  noderunApply,
+  noderunSchema,
+  noderunStore,
   workloadApply,
   workloadSchema,
   workloadStore,
 } from '@llamactl/remote';
 import { getNodeClientByName } from '../dispatcher.js';
+import { makeSpecArtifactResolver } from './noderun-helpers.js';
 
 const APPLY_USAGE = `Usage: llamactl apply -f <manifest.yaml>
 
@@ -81,6 +86,22 @@ export async function runApply(args: string[]): Promise<number> {
     return 1;
   }
   const raw = readFileSync(manifestPath, 'utf8');
+  // Peek at `kind` to route — ModelRun and NodeRun have different
+  // schemas + different applier semantics but share the apply CLI.
+  let kind: string | undefined;
+  try {
+    kind = (parseYaml(raw) as { kind?: string } | null)?.kind;
+  } catch {
+    process.stderr.write(`apply: manifest YAML is not parseable\n`);
+    return 1;
+  }
+  if (kind === 'NodeRun') {
+    return applyNodeRunFromRaw(raw, parsed.json);
+  }
+  return applyModelRunFromRaw(raw, parsed.json);
+}
+
+async function applyModelRunFromRaw(raw: string, json: boolean): Promise<number> {
   let manifest: workloadSchema.ModelRun;
   try {
     manifest = workloadStore.parseWorkload(raw);
@@ -107,7 +128,7 @@ export async function runApply(args: string[]): Promise<number> {
   };
   const savedPath = workloadStore.saveWorkload(persisted);
 
-  if (parsed.json) {
+  if (json) {
     process.stdout.write(
       `${JSON.stringify({ action: result.action, path: savedPath, status: result.statusSection }, null, 2)}\n`,
     );
@@ -124,6 +145,58 @@ export async function runApply(args: string[]): Promise<number> {
     }
   }
   return 0;
+}
+
+async function applyNodeRunFromRaw(raw: string, json: boolean): Promise<number> {
+  let manifest: noderunSchema.NodeRun;
+  try {
+    manifest = noderunStore.parseNodeRun(raw);
+  } catch (err) {
+    process.stderr.write(`apply: NodeRun manifest rejected: ${(err as Error).message}\n`);
+    return 1;
+  }
+  const client = getNodeClientByName(manifest.spec.node);
+  const resolveArtifact = makeSpecArtifactResolver({ client });
+  let result: noderunApply.NodeRunApplyResult;
+  try {
+    result = await noderunApply.applyNodeRun(manifest, {
+      client,
+      resolveArtifact,
+    });
+  } catch (err) {
+    process.stderr.write(`apply: ${(err as Error).message}\n`);
+    return 1;
+  }
+  const persisted: noderunSchema.NodeRun = { ...manifest, status: result.status };
+  const savedPath = noderunStore.saveNodeRun(persisted);
+  if (json) {
+    process.stdout.write(
+      `${JSON.stringify({ actions: result.actions, outcomes: result.outcomes, status: result.status, path: savedPath }, null, 2)}\n`,
+    );
+  } else {
+    process.stdout.write(
+      `${result.status.phase.toLowerCase()} noderun/${manifest.metadata.name} on node ${manifest.spec.node}\n`,
+    );
+    process.stdout.write(`  manifest: ${savedPath}\n`);
+    const nonSkip = result.actions.filter((a) => a.type !== 'skip');
+    if (nonSkip.length === 0) {
+      process.stdout.write(`  no changes — every infra entry already at desired version\n`);
+    } else {
+      process.stdout.write(`  actions:\n`);
+      for (const outcome of result.outcomes) {
+        const a = outcome.action;
+        const tail = outcome.ok ? '' : `  ERROR: ${outcome.error ?? '(unknown)'}`;
+        const label =
+          a.type === 'install' ? `install ${a.pkg}@${a.version} (${a.reason})`
+          : a.type === 'activate' ? `activate ${a.pkg}@${a.version}`
+          : a.type === 'uninstall-version' ? `uninstall ${a.pkg}@${a.version} (${a.reason})`
+          : a.type === 'uninstall-pkg' ? `uninstall ${a.pkg} (${a.reason})`
+          : `skip ${a.pkg}@${a.version} (${a.reason})`;
+        process.stdout.write(`    * ${label}${tail}\n`);
+      }
+    }
+  }
+  return result.error ? 1 : 0;
 }
 
 type WorkloadRow = {
@@ -176,6 +249,9 @@ export async function runGet(args: string[]): Promise<number> {
       return 1;
     }
   }
+  if (sub === 'noderuns' || sub === 'noderun') {
+    return runGetNodeRuns(json);
+  }
   if (sub !== 'workloads' && sub !== 'workload') {
     process.stderr.write(GET_USAGE);
     return 1;
@@ -219,6 +295,9 @@ export async function runDescribe(args: string[]): Promise<number> {
       process.stderr.write(`describe: unknown argument ${arg}\n`);
       return 1;
     }
+  }
+  if ((kind === 'noderun' || kind === 'noderuns') && name) {
+    return runDescribeNodeRun(name, json);
   }
   if (kind !== 'workload' && kind !== 'workloads') {
     process.stderr.write(DESCRIBE_USAGE);
@@ -272,6 +351,15 @@ export async function runDelete(args: string[]): Promise<number> {
       process.stderr.write(`delete: unknown argument ${arg}\n`);
       return 1;
     }
+  }
+  if ((kind === 'noderun' || kind === 'noderuns') && name) {
+    const removed = noderunStore.deleteNodeRun(name);
+    if (!removed) {
+      process.stderr.write(`delete: noderun ${name} not found\n`);
+      return 1;
+    }
+    process.stdout.write(`deleted noderun/${name}\n`);
+    return 0;
   }
   if (kind !== 'workload' && kind !== 'workloads') {
     process.stderr.write(DELETE_USAGE);
@@ -329,5 +417,81 @@ export async function runDelete(args: string[]): Promise<number> {
     return 1;
   }
   process.stdout.write(`deleted modelrun/${name}\n`);
+  return 0;
+}
+
+// ---- NodeRun handlers --------------------------------------------
+
+async function runGetNodeRuns(json: boolean): Promise<number> {
+  const manifests = noderunStore.listNodeRuns();
+  if (json) {
+    process.stdout.write(`${JSON.stringify(manifests, null, 2)}\n`);
+    return 0;
+  }
+  if (manifests.length === 0) {
+    process.stdout.write('No NodeRuns registered.\n');
+    return 0;
+  }
+  const pad = (s: string, w: number): string =>
+    s.length >= w ? s : s + ' '.repeat(w - s.length);
+  const rows = manifests.map((m) => ({
+    name: m.metadata.name,
+    node: m.spec.node,
+    phase: m.status?.phase ?? 'Pending',
+    infra: m.spec.infra.map((i) => `${i.pkg}@${i.version}`).join(','),
+  }));
+  const nameW = Math.max(4, ...rows.map((r) => r.name.length));
+  const nodeW = Math.max(4, ...rows.map((r) => r.node.length));
+  const phaseW = Math.max(5, ...rows.map((r) => r.phase.length));
+  process.stdout.write(
+    `${pad('NAME', nameW)}  ${pad('NODE', nodeW)}  ${pad('PHASE', phaseW)}  INFRA\n`,
+  );
+  for (const r of rows) {
+    process.stdout.write(
+      `${pad(r.name, nameW)}  ${pad(r.node, nodeW)}  ${pad(r.phase, phaseW)}  ${r.infra}\n`,
+    );
+  }
+  return 0;
+}
+
+async function runDescribeNodeRun(name: string, json: boolean): Promise<number> {
+  let manifest: noderunSchema.NodeRun;
+  try {
+    manifest = noderunStore.loadNodeRunByName(name);
+  } catch (err) {
+    process.stderr.write(`describe: ${(err as Error).message}\n`);
+    return 1;
+  }
+  let liveInfra: unknown = null;
+  try {
+    const client = getNodeClientByName(manifest.spec.node);
+    liveInfra = await client.infraList.query();
+  } catch (err) {
+    liveInfra = { error: (err as Error).message };
+  }
+  if (json) {
+    process.stdout.write(
+      `${JSON.stringify({ manifest, liveInfra }, null, 2)}\n`,
+    );
+    return 0;
+  }
+  process.stdout.write(`Name:       ${manifest.metadata.name}\n`);
+  process.stdout.write(`Node:       ${manifest.spec.node}\n`);
+  process.stdout.write(`Infra:\n`);
+  for (const item of manifest.spec.infra) {
+    const flags = [
+      item.service ? 'service' : 'binary',
+      ...(item.tarballUrl ? ['ad-hoc-artifact'] : []),
+    ].join(',');
+    process.stdout.write(`  * ${item.pkg}@${item.version}  (${flags})\n`);
+  }
+  if (manifest.status) {
+    process.stdout.write(
+      `Status:     phase=${manifest.status.phase} since=${manifest.status.lastTransitionTime}\n`,
+    );
+  }
+  process.stdout.write(
+    `LiveInfra:  ${JSON.stringify(liveInfra, null, 2).replace(/\n/g, '\n            ')}\n`,
+  );
   return 0;
 }
