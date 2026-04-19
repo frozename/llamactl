@@ -30,6 +30,8 @@ export default function Presets(): React.JSX.Element {
   const queryClient = useQueryClient();
   const promotions = trpc.promotions.useQuery();
   const [classFilter, setClassFilter] = useState<ClassFilter>('all');
+  const [minTps, setMinTps] = useState(0);
+  const [installedOnly, setInstalledOnly] = useState(false);
   const bench = trpc.benchCompare.useQuery({ classFilter, scopeFilter: 'all' });
 
   // Inline promote controls — one row can be pending at a time.
@@ -37,6 +39,7 @@ export default function Presets(): React.JSX.Element {
   const [pickProfile, setPickProfile] = useState<Profile>('macbook-pro-48g');
   const [pickPreset, setPickPreset] = useState<Preset>('best');
   const [error, setError] = useState<string | null>(null);
+  const [copiedRel, setCopiedRel] = useState<string | null>(null);
 
   const promoteMutation = trpc.promote.useMutation({
     onSuccess: async () => {
@@ -71,7 +74,7 @@ export default function Presets(): React.JSX.Element {
 
   // Candidate list — bench rows sorted by gen_tps desc, with installed
   // rels first (within same tps bucket) so operators see what's already
-  // on-disk at the top.
+  // on-disk at the top. Filtered by minTps + optional installedOnly.
   const candidates = useMemo(() => {
     const rows = [...(bench.data ?? [])];
     rows.sort((a, b) => {
@@ -81,8 +84,28 @@ export default function Presets(): React.JSX.Element {
       if (a.installed !== b.installed) return a.installed ? -1 : 1;
       return a.rel.localeCompare(b.rel);
     });
-    return rows;
-  }, [bench.data]);
+    return rows.filter((row) => {
+      if (installedOnly && !row.installed) return false;
+      if (minTps > 0) {
+        const t = row.tuned?.gen_tps ? Number.parseFloat(row.tuned.gen_tps) : 0;
+        if (!Number.isFinite(t) || t < minTps) return false;
+      }
+      return true;
+    });
+  }, [bench.data, minTps, installedOnly]);
+
+  async function copyStartCommand(rel: string): Promise<void> {
+    const cmd = `llamactl server start '${rel}'`;
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopiedRel(rel);
+      setTimeout(() => {
+        setCopiedRel((cur) => (cur === rel ? null : cur));
+      }, 2000);
+    } catch {
+      /* clipboard disallowed — operator can still copy manually */
+    }
+  }
 
   return (
     <div className="h-full overflow-auto p-6" data-testid="presets-root">
@@ -165,13 +188,34 @@ export default function Presets(): React.JSX.Element {
         </div>
       </section>
 
-      {/* Class filter — drives the candidate query below. */}
+      {/* Filters — all drive the candidate table below. */}
       <section>
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm uppercase tracking-widest text-[color:var(--color-fg-muted)]">
             Candidates ({candidates.length})
           </h2>
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <label className="flex items-center gap-1 text-[color:var(--color-fg-muted)]">
+              min tok/s
+              <input
+                type="number"
+                min={0}
+                step={5}
+                value={minTps}
+                onChange={(e) => setMinTps(Math.max(0, Number.parseFloat(e.target.value) || 0))}
+                data-testid="presets-min-tps"
+                className="w-16 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-0.5 text-right font-mono text-[color:var(--color-fg)]"
+              />
+            </label>
+            <label className="flex items-center gap-1 text-[color:var(--color-fg-muted)]">
+              <input
+                type="checkbox"
+                checked={installedOnly}
+                onChange={(e) => setInstalledOnly(e.target.checked)}
+                data-testid="presets-installed-only"
+              />
+              installed only
+            </label>
             <span className="text-[color:var(--color-fg-muted)]">class</span>
             <select
               value={classFilter}
@@ -196,6 +240,7 @@ export default function Presets(): React.JSX.Element {
                 <th className="px-3 py-2 font-medium">Installed</th>
                 <th className="px-3 py-2 font-medium text-right">gen tok/s</th>
                 <th className="px-3 py-2 font-medium text-right">prompt tok/s</th>
+                <th className="w-20 px-3 py-2 font-medium text-right">Start</th>
                 <th className="w-72 px-3 py-2 font-medium text-right">Promote</th>
               </tr>
             </thead>
@@ -216,6 +261,19 @@ export default function Presets(): React.JSX.Element {
                     </td>
                     <td className="px-3 py-2 text-right">{gen}</td>
                     <td className="px-3 py-2 text-right text-[color:var(--color-fg-muted)]">{pt}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void copyStartCommand(row.rel);
+                        }}
+                        data-testid={`presets-start-${row.rel}`}
+                        title={`Copy: llamactl server start '${row.rel}'`}
+                        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+                      >
+                        {copiedRel === row.rel ? 'copied' : 'start'}
+                      </button>
+                    </td>
                     <td className="px-3 py-2 text-right">
                       {isPending ? (
                         <span className="inline-flex items-center gap-1 text-[11px]">
