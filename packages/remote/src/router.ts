@@ -35,7 +35,9 @@ import {
   defaultCostJournalPath,
   type CostJournalEntry,
 } from '@llamactl/agents';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 /**
  * Router↔client circular-type escape hatch — the `AppRouter → NodeClient
@@ -1813,6 +1815,92 @@ export const router = t.router({
         }
       }
       return { entries, path };
+    }),
+
+  /**
+   * K.6 — Save a pipeline as an MCP tool stub.
+   *
+   * Writes a JSON file to `~/.llamactl/mcp/pipelines/<slug>.json`
+   * (override via `LLAMACTL_MCP_PIPELINES_DIR`). The stub records the
+   * pipeline's stages verbatim; `@llamactl/mcp` picks these up at
+   * boot and mounts them as pre-registered tools named
+   * `llamactl.pipeline.<slug>` that take a single `input` string.
+   *
+   * Purely declarative — the mcp server interprets the file, llamactl
+   * here only persists it.
+   */
+  pipelineExportMcp: t.procedure
+    .input(
+      z.object({
+        name: z
+          .string()
+          .min(1)
+          .max(80)
+          .describe('Human-friendly pipeline name; slugified for the file basename.'),
+        description: z
+          .string()
+          .max(500)
+          .optional()
+          .describe('Short description surfaced to MCP clients.'),
+        stages: z
+          .array(
+            z.object({
+              node: z.string().min(1),
+              model: z.string().min(1),
+              systemPrompt: z.string().default(''),
+              capabilities: z.array(z.string()).default([]),
+            }),
+          )
+          .min(1, 'pipeline must have at least one stage'),
+        overwrite: z.boolean().default(false),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const slug =
+        input.name
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '') || `pipeline-${Date.now().toString(36)}`;
+      const baseDir =
+        process.env.LLAMACTL_MCP_PIPELINES_DIR ??
+        join(homedir(), '.llamactl', 'mcp', 'pipelines');
+      const outPath = join(baseDir, `${slug}.json`);
+      if (!input.overwrite && existsSync(outPath)) {
+        return {
+          ok: false as const,
+          path: outPath,
+          slug,
+          reason: 'exists',
+          message: `${outPath} already exists. Pass overwrite:true to replace.`,
+        };
+      }
+      const stub = {
+        apiVersion: 'llamactl/v1' as const,
+        kind: 'PipelineTool' as const,
+        name: `llamactl.pipeline.${slug}`,
+        title: input.name,
+        description:
+          input.description ??
+          `Multi-stage pipeline with ${input.stages.length} stage${input.stages.length === 1 ? '' : 's'}.`,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            input: { type: 'string', description: 'Initial user content' },
+          },
+          required: ['input'],
+        },
+        stages: input.stages,
+      };
+      mkdirSync(dirname(outPath), { recursive: true });
+      writeFileSync(outPath, JSON.stringify(stub, null, 2) + '\n', 'utf8');
+      return {
+        ok: true as const,
+        path: outPath,
+        slug,
+        toolName: stub.name,
+        stageCount: input.stages.length,
+      };
     }),
 });
 

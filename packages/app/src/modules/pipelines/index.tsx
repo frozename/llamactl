@@ -334,7 +334,44 @@ export default function Pipelines(): React.JSX.Element {
   const [currentIdx, setCurrentIdx] = useState(0);
   const [outputs, setOutputs] = useState<string[]>([]);
   const [runError, setRunError] = useState<string | null>(null);
+  const [exportInfo, setExportInfo] = useState<
+    | { kind: 'ok'; path: string; toolName: string }
+    | { kind: 'error'; message: string }
+    | null
+  >(null);
   const [streamKey, setStreamKey] = useState(0);
+  const exportMcp = trpc.pipelineExportMcp.useMutation({
+    onSuccess: (res) => {
+      if (res.ok) {
+        setExportInfo({ kind: 'ok', path: res.path, toolName: res.toolName });
+      } else {
+        setExportInfo({ kind: 'error', message: res.message });
+      }
+    },
+    onError: (err) => setExportInfo({ kind: 'error', message: err.message }),
+  });
+
+  function exportActiveAsMcp(overwrite: boolean): void {
+    if (!active) return;
+    if (active.stages.length === 0) {
+      setExportInfo({
+        kind: 'error',
+        message: 'Pipeline has no stages — add at least one before saving as a tool.',
+      });
+      return;
+    }
+    setExportInfo(null);
+    exportMcp.mutate({
+      name: active.name,
+      stages: active.stages.map((s) => ({
+        node: s.node,
+        model: s.model,
+        systemPrompt: s.systemPrompt,
+        capabilities: s.capabilities,
+      })),
+      overwrite,
+    });
+  }
   type StreamInput = {
     node: string;
     request: { model: string; messages: Array<{ role: string; content: string }> };
@@ -479,11 +516,63 @@ export default function Pipelines(): React.JSX.Element {
             <button
               type="button"
               onClick={addStage}
+              data-testid="pipelines-add-stage"
               className="ml-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)]"
             >
               + Add stage
             </button>
+            <button
+              type="button"
+              onClick={() => exportActiveAsMcp(false)}
+              disabled={exportMcp.isPending || active.stages.length === 0}
+              data-testid="pipelines-save-mcp"
+              title={
+                active.stages.length === 0
+                  ? 'Add a stage first'
+                  : 'Emit ~/.llamactl/mcp/pipelines/<slug>.json so @llamactl/mcp mounts this as a tool.'
+              }
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {exportMcp.isPending ? 'Saving…' : '⇪ Save as MCP tool'}
+            </button>
           </header>
+          {exportInfo && (
+            <div
+              data-testid="pipelines-save-mcp-result"
+              className={
+                exportInfo.kind === 'ok'
+                  ? 'flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-1 text-[11px] text-[color:var(--color-accent)]'
+                  : 'flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-1 text-[11px] text-[color:var(--color-danger)]'
+              }
+            >
+              {exportInfo.kind === 'ok' ? (
+                <span>
+                  Saved <span className="font-mono">{exportInfo.toolName}</span>{' '}
+                  → <span className="font-mono">{exportInfo.path}</span>
+                </span>
+              ) : (
+                <span>{exportInfo.message}</span>
+              )}
+              {exportInfo.kind === 'error' &&
+              /already exists/i.test(exportInfo.message) ? (
+                <button
+                  type="button"
+                  onClick={() => exportActiveAsMcp(true)}
+                  className="rounded border border-[var(--color-border)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]"
+                >
+                  Overwrite
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setExportInfo(null)}
+                  className="text-[color:var(--color-fg-muted)]"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          )}
           <div className="flex flex-1 flex-col gap-3 overflow-auto bg-[var(--color-surface-0)] p-6">
             {runError && (
               <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
