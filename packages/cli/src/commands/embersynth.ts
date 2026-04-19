@@ -1,15 +1,17 @@
 import {
   config as kubecfg,
   embersynth as embersynthMod,
+  resolveNodeKind,
 } from '@llamactl/remote';
 
 const USAGE = `llamactl embersynth — embersynth orchestrator integration
 
 USAGE:
-  llamactl embersynth init     [--path <file>]
-  llamactl embersynth sync     [--path <file>]
-  llamactl embersynth connect  <url> [--name <n>] [--api-key-ref <ref>]
-  llamactl embersynth show     [--path <file>]
+  llamactl embersynth init            [--path <file>]
+  llamactl embersynth sync            [--path <file>]
+  llamactl embersynth connect         <url> [--name <n>] [--api-key-ref <ref>]
+  llamactl embersynth show            [--path <file>]
+  llamactl embersynth promote-private <rel> [--path <file>]
 
 init — generate a fresh \`embersynth.yaml\` from the current kubeconfig
   + sirius-providers. Nodes derive from llamactl agents and each sirius
@@ -28,6 +30,13 @@ connect — register a running embersynth as a gateway node. Its
   \`<name>.fusion-<profile>\` nodes in llamactl's selector.
 
 show — print the current \`embersynth.yaml\` contents.
+
+promote-private — confirm that a model rel is routable under the
+  \`fusion-private-first\` synthetic model: verifies the embersynth
+  YAML exists, that the \`private-first\` profile is present with a
+  \`private\` preferred tag, and that at least one agent node in the
+  current cluster carries the \`private\` tag. Prints the resolved
+  routing — read-only, does not mutate.
 
 OPTIONS:
   --path <file>   Override the default path
@@ -170,6 +179,72 @@ async function runConnect(argv: string[]): Promise<number> {
   return 0;
 }
 
+async function runPromotePrivate(argv: string[]): Promise<number> {
+  const rel = argv[0];
+  if (!rel || rel.startsWith('--')) {
+    process.stderr.write(`embersynth promote-private: <rel> is required\n\n${USAGE}`);
+    return 1;
+  }
+  const parsed = parseCommonOpts(argv.slice(1));
+  if (!parsed) return 0;
+  const { path } = parsed.opts;
+
+  const existing = embersynthMod.loadEmbersynthConfig(path);
+  if (!existing) {
+    process.stderr.write(
+      `${path} does not exist. Run \`llamactl embersynth init\` first.\n`,
+    );
+    return 1;
+  }
+
+  const profile = existing.profiles.find((p) => p.id === 'private-first');
+  if (!profile) {
+    process.stderr.write(
+      `private-first profile not found in ${path}. Run \`llamactl embersynth sync\` to seed defaults.\n`,
+    );
+    return 1;
+  }
+  const preferred = profile.preferredTags ?? [];
+  if (!preferred.includes('private')) {
+    process.stderr.write(
+      `private-first profile is missing the "private" preferred tag. Edit ${path} or re-seed with \`sync\`.\n`,
+    );
+    return 1;
+  }
+
+  const cfg = kubecfg.loadConfig();
+  const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
+  const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
+  const agentNodes = (cluster?.nodes ?? []).filter((n) => resolveNodeKind(n) === 'agent');
+  if (agentNodes.length === 0) {
+    process.stderr.write(
+      `no agent nodes registered. Run \`llamactl agent init\` on a host, then \`llamactl node add\` to register.\n`,
+    );
+    return 1;
+  }
+
+  // Cross-reference embersynth.yaml nodes with kubeconfig agents — we
+  // care about the `private` tag on the embersynth side, which is what
+  // the profile matches against at routing time.
+  const privateAgents = existing.nodes.filter((n) => n.tags.includes('private'));
+  if (privateAgents.length === 0) {
+    process.stderr.write(
+      `no nodes in ${path} carry the "private" tag. Re-run \`llamactl embersynth sync\` — agent nodes are tagged private by default.\n`,
+    );
+    return 1;
+  }
+
+  process.stdout.write(
+    `model '${rel}' is routable under fusion-private-first.\n` +
+      `  private-first profile: ${profile.label ?? profile.id} (${(profile.preferredTags ?? []).join(',')})\n` +
+      `  eligible private-tagged nodes (${privateAgents.length}):\n` +
+      privateAgents.map((n) => `    - ${n.id} → ${n.endpoint}`).join('\n') +
+      `\n  request the model via: POST /v1/chat/completions { "model": "fusion-private-first", ... }\n` +
+      `  embersynth routes to a private-tagged node first; falls back to others only when no private node is healthy.\n`,
+  );
+  return 0;
+}
+
 export async function runEmbersynth(argv: string[]): Promise<number> {
   const sub = argv[0];
   if (!sub || sub === '--help' || sub === '-h') {
@@ -180,6 +255,7 @@ export async function runEmbersynth(argv: string[]): Promise<number> {
   if (sub === 'sync') return runSync(argv.slice(1));
   if (sub === 'show') return runShow(argv.slice(1));
   if (sub === 'connect') return runConnect(argv.slice(1));
+  if (sub === 'promote-private') return runPromotePrivate(argv.slice(1));
   process.stderr.write(`unknown embersynth subcommand: ${sub}\n\n${USAGE}`);
   return 1;
 }
