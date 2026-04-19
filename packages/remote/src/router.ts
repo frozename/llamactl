@@ -17,6 +17,25 @@ import {
   type ModelRun,
 } from './workload/schema.js';
 import { buildPinnedLinks } from './client/links.js';
+import {
+  createLlmExecutor,
+  runPlanner,
+  stubPlannerExecutor,
+  DEFAULT_ALLOWLIST,
+  computeCostSnapshot,
+  type PlannerExecutor,
+  type PlannerToolDescriptor,
+} from '@nova/mcp';
+import { createOpenAICompatProvider } from '@nova/contracts';
+import {
+  decideGuardianAction,
+  emptyCostGuardianConfig,
+  loadCostGuardianConfig,
+  defaultCostGuardianConfigPath,
+  defaultCostJournalPath,
+  type CostJournalEntry,
+} from '@llamactl/agents';
+import { existsSync, readFileSync } from 'node:fs';
 
 /**
  * Router↔client circular-type escape hatch — the `AppRouter → NodeClient
@@ -1610,6 +1629,162 @@ export const router = t.router({
   resolveTarget: t.procedure
     .input(z.string())
     .query(({ input }) => targetMod.resolveTarget(input)),
+
+  /**
+   * LLM-backed operator planner. Translates a natural-language goal
+   * into a validated PlanSchema-shaped sequence of MCP tool calls.
+   * Defaults to the canned stub executor so the Electron view renders
+   * something useful out of the box; `mode: 'llm'` + a model + an
+   * API key env name drives a real OpenAI-compat call. The renderer
+   * seeds the tool catalog because the planner is deliberately
+   * harness-agnostic.
+   */
+  operatorPlan: t.procedure
+    .input(
+      z.object({
+        goal: z.string().min(1),
+        context: z.string().optional(),
+        mode: z.enum(['stub', 'llm']).optional(),
+        model: z.string().optional(),
+        baseUrl: z.string().optional(),
+        apiKeyEnv: z.string().optional(),
+        tools: z
+          .array(
+            z.object({
+              name: z.string().min(1),
+              description: z.string(),
+              tier: z.enum(['read', 'mutation-dry-run-safe', 'mutation-destructive']),
+            }),
+          )
+          .optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const mode = input.mode ?? 'stub';
+      let executor: PlannerExecutor = stubPlannerExecutor;
+      if (mode === 'llm') {
+        if (!input.model) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'model is required when mode=llm',
+          });
+        }
+        const env = input.apiKeyEnv ?? 'OPENAI_API_KEY';
+        const apiKey = process.env[env];
+        if (!apiKey) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `env var ${env} is empty — set it or switch to mode=stub`,
+          });
+        }
+        const provider = createOpenAICompatProvider({
+          name: 'planner-llm',
+          baseUrl: input.baseUrl ?? 'https://api.openai.com/v1',
+          apiKey,
+        });
+        executor = createLlmExecutor({ provider, model: input.model });
+      }
+      const plannerTools: PlannerToolDescriptor[] = (input.tools ?? []).map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: { type: 'object' },
+        tier: t.tier,
+      }));
+      const result = await runPlanner({
+        goal: input.goal,
+        context: input.context ?? '',
+        tools: plannerTools,
+        executor,
+        allowlist: DEFAULT_ALLOWLIST,
+      });
+      return result;
+    }),
+
+  /**
+   * Cost dashboard — snapshot.
+   *
+   * Aggregates the local `~/.llamactl/usage/*.jsonl` corpus into the
+   * same per-provider / per-model rollup the `nova.ops.cost.snapshot`
+   * MCP tool produces, but over direct function call — no MCP hop.
+   * The Electron dashboard polls this on a user-selected window.
+   */
+  costSnapshot: t.procedure
+    .input(
+      z
+        .object({
+          days: z.number().int().positive().max(90).default(7),
+        })
+        .default({ days: 7 }),
+    )
+    .query(async ({ input }) => {
+      return computeCostSnapshot({ days: input.days });
+    }),
+
+  /**
+   * Cost dashboard — guardian status.
+   *
+   * Loads the cost-guardian YAML config (defaults if absent), runs one
+   * snapshot for daily (1-day) + weekly (7-day) windows, and asks the
+   * pure decision function what tier the current spend crosses. Never
+   * mutates — the dashboard reads this to show the gauge + tier badge.
+   */
+  costGuardianStatus: t.procedure.query(async () => {
+    const configPath = defaultCostGuardianConfigPath();
+    const config = existsSync(configPath)
+      ? loadCostGuardianConfig(configPath)
+      : emptyCostGuardianConfig();
+    const daily = computeCostSnapshot({ days: 1 });
+    const weekly = computeCostSnapshot({ days: 7 });
+    const decision = decideGuardianAction({
+      config,
+      daily: { snapshot: daily },
+      weekly: { snapshot: weekly },
+    });
+    return {
+      config: {
+        budget: config.budget,
+        thresholds: config.thresholds,
+        hasWebhook: Boolean(config.webhook_url),
+        autoForcePrivate: config.auto_force_private,
+        autoDeregister: config.auto_deregister,
+      },
+      decision,
+      daily,
+      weekly,
+    };
+  }),
+
+  /**
+   * Cost dashboard — journal tail.
+   *
+   * Reads the cost-guardian JSONL journal and returns the last `limit`
+   * entries (newest first). Empty array when the journal file doesn't
+   * exist yet — the dashboard shows a "no ticks recorded" empty state
+   * rather than erroring.
+   */
+  costJournalTail: t.procedure
+    .input(
+      z
+        .object({
+          limit: z.number().int().positive().max(500).default(50),
+        })
+        .default({ limit: 50 }),
+    )
+    .query(async ({ input }) => {
+      const path = defaultCostJournalPath();
+      if (!existsSync(path)) return { entries: [] as CostJournalEntry[], path };
+      const body = readFileSync(path, 'utf8');
+      const lines = body.split('\n').filter((l) => l.trim().length > 0);
+      const entries: CostJournalEntry[] = [];
+      for (const l of lines.slice(-input.limit).reverse()) {
+        try {
+          entries.push(JSON.parse(l) as CostJournalEntry);
+        } catch {
+          // skip malformed
+        }
+      }
+      return { entries, path };
+    }),
 });
 
 export type AppRouter = typeof router;
