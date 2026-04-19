@@ -14,6 +14,7 @@ import {
   Server as ServerIcon,
   Settings,
   Star,
+  Terminal,
   Workflow,
   type LucideIcon,
 } from 'lucide-react';
@@ -50,6 +51,7 @@ const LazyServer = lazy(() => import('./server/index'));
 const LazyLogs = lazy(() => import('./logs/index'));
 const LazyLMStudio = lazy(() => import('./lmstudio/index'));
 const LazyPlan = lazy(() => import('./plan/index'));
+const LazyOpsChat = lazy(() => import('./ops-chat/index'));
 const LazyCost = lazy(() => import('./cost/index'));
 const LazySettings = lazy(() => import('./settings/index'));
 
@@ -80,6 +82,12 @@ export const APP_MODULES: AppModule[] = [
     labelKey: 'Plan',
     icon: BrainCircuit,
     Component: LazyPlan,
+  },
+  {
+    id: 'ops-chat',
+    labelKey: 'Operator Console',
+    icon: Terminal,
+    Component: LazyOpsChat,
   },
   {
     id: 'cost',
