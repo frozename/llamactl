@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildMcpServer } from '@llamactl/mcp';
+import { buildNovaMcpServer } from '@nova/mcp';
 import type {
   Runbook,
   RunbookContext,
@@ -13,26 +14,55 @@ import { RUNBOOKS } from './runbooks/index.js';
 export interface RunRunbookOptions {
   dryRun?: boolean;
   log?: (message: string) => void;
-  /** Override the tool client. Defaults to building @llamactl/mcp
-   *  in-process and wiring it over InMemoryTransport — the same
-   *  MCP surface a real client would see, without any subprocess. */
+  /** Override the tool client. Defaults to booting both @llamactl/mcp
+   *  and @nova/mcp in-process and routing calls by tool-name prefix
+   *  — `nova.*` goes to nova-mcp, everything else to llamactl-mcp.
+   *  Same MCP surface a real client would see, without any
+   *  subprocess. */
   toolClient?: RunbookToolClient;
 }
 
-async function defaultToolClient(): Promise<{ client: RunbookToolClient; dispose: () => Promise<void> }> {
-  const server = buildMcpServer({ name: 'llamactl-runbook-harness' });
+interface MountedServer {
+  client: Client;
+  close: () => Promise<void>;
+}
+
+async function mountInProcess(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  server: any,
+  clientName: string,
+): Promise<MountedServer> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const mcpClient = new Client({ name: 'llamactl-runbook-harness', version: '0.0.0' });
-  await mcpClient.connect(clientTransport);
+  const client = new Client({ name: clientName, version: '0.0.0' });
+  await client.connect(clientTransport);
+  return {
+    client,
+    close: async () => {
+      try { await client.close(); } catch { /* ignore */ }
+      try { await server.close(); } catch { /* ignore */ }
+    },
+  };
+}
+
+async function defaultToolClient(): Promise<{ client: RunbookToolClient; dispose: () => Promise<void> }> {
+  const llamactl = await mountInProcess(
+    buildMcpServer({ name: 'llamactl-runbook-harness' }),
+    'llamactl-runbook-harness',
+  );
+  const nova = await mountInProcess(
+    buildNovaMcpServer({ name: 'nova-runbook-harness' }),
+    'nova-runbook-harness',
+  );
   const client: RunbookToolClient = {
     async callTool(input: ToolCallInput) {
-      return mcpClient.callTool({ name: input.name, arguments: input.arguments });
+      const target = input.name.startsWith('nova.') ? nova.client : llamactl.client;
+      return target.callTool({ name: input.name, arguments: input.arguments });
     },
   };
   const dispose = async (): Promise<void> => {
-    try { await mcpClient.close(); } catch { /* ignore */ }
-    try { await server.close(); } catch { /* ignore */ }
+    await llamactl.close();
+    await nova.close();
   };
   return { client, dispose };
 }
