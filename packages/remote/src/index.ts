@@ -27,6 +27,7 @@ export * as workloadSchema from './workload/schema.js';
 export * as workloadStore from './workload/store.js';
 export * as workloadApply from './workload/apply.js';
 export * as workloadGatewayHandlers from './workload/gateway-handlers/index.js';
+export * as tunnel from './tunnel/index.js';
 export * as workloadLock from './workload/lock.js';
 export * as workloadReconciler from './workload/reconciler.js';
 export * as noderunSchema from './workload/noderun-schema.js';
