@@ -2,10 +2,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import {
+  config as kubecfg,
   noderunApply,
   noderunSchema,
   noderunStore,
   workloadApply,
+  workloadGatewayHandlers,
   workloadSchema,
   workloadStore,
 } from '@llamactl/remote';
@@ -112,7 +114,27 @@ async function applyModelRunFromRaw(raw: string, json: boolean): Promise<number>
 
   let result: workloadApply.ApplyResult;
   try {
-    result = await workloadApply.applyOne(manifest, (name) => getNodeClientByName(name));
+    // Resolve the target node against the current kubeconfig so the
+    // gateway dispatcher can route sirius/embersynth manifests to the
+    // right handler. Non-gateway manifests never touch this path.
+    const cfg = kubecfg.loadConfig();
+    const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
+    const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
+    const lookupNode = (name: string) =>
+      (cluster?.nodes ?? []).find((n) => n.name === name);
+    const gatewayDispatch = (opts: Parameters<NonNullable<Parameters<typeof workloadApply.applyOne>[3]>>[0]) =>
+      workloadGatewayHandlers.dispatchGatewayApply({
+        manifest: opts.manifest,
+        getClient: opts.getClient,
+        resolveNode: lookupNode,
+        ...(opts.onEvent ? { onEvent: opts.onEvent } : {}),
+      });
+    result = await workloadApply.applyOne(
+      manifest,
+      (name) => getNodeClientByName(name),
+      undefined,
+      gatewayDispatch,
+    );
   } catch (err) {
     process.stderr.write(`apply: ${(err as Error).message}\n`);
     return 1;
@@ -128,6 +150,16 @@ async function applyModelRunFromRaw(raw: string, json: boolean): Promise<number>
   };
   const savedPath = workloadStore.saveWorkload(persisted);
 
+  // Gateway manifests land as Pending (upstream missing) or Failed
+  // (reload call didn't succeed). Surface both as a non-zero exit —
+  // the manifest is persisted either way so the operator can inspect
+  // it with `llamactl describe workload` but the run itself is
+  // incomplete. Agent manifests that reach 'started' always produce
+  // phase=Running here, so the check only fires on gateway paths.
+  const phase = result.statusSection.phase;
+  const conditionMessage = result.statusSection.conditions[0]?.message ?? '';
+  const conditionReason = result.statusSection.conditions[0]?.reason ?? '';
+  const gatewayIncomplete = manifest.spec.gateway && phase !== 'Running';
   if (json) {
     process.stdout.write(
       `${JSON.stringify({ action: result.action, path: savedPath, status: result.statusSection }, null, 2)}\n`,
@@ -137,14 +169,20 @@ async function applyModelRunFromRaw(raw: string, json: boolean): Promise<number>
       `${result.action} modelrun/${manifest.metadata.name} on node ${manifest.spec.node}\n`,
     );
     process.stdout.write(`  manifest: ${savedPath}\n`);
+    process.stdout.write(`  phase:    ${phase}\n`);
     if (result.statusSection.endpoint) {
       process.stdout.write(`  endpoint: ${result.statusSection.endpoint}\n`);
     }
     if (result.statusSection.serverPid) {
       process.stdout.write(`  pid:      ${result.statusSection.serverPid}\n`);
     }
+    if (gatewayIncomplete) {
+      process.stderr.write(
+        `apply: gateway workload did not reach Running (phase=${phase}, reason=${conditionReason}): ${conditionMessage}\n`,
+      );
+    }
   }
-  return 0;
+  return gatewayIncomplete ? 1 : 0;
 }
 
 async function applyNodeRunFromRaw(raw: string, json: boolean): Promise<number> {
@@ -202,14 +240,32 @@ async function applyNodeRunFromRaw(raw: string, json: boolean): Promise<number> 
 type WorkloadRow = {
   name: string;
   node: string;
-  phase: 'Running' | 'Stopped' | 'Mismatch' | 'Unreachable';
+  phase: 'Running' | 'Stopped' | 'Mismatch' | 'Unreachable' | 'Pending' | 'Failed';
   rel: string;
   endpoint: string | null;
+  gateway: boolean;
 };
 
 async function inspect(
   manifest: workloadSchema.ModelRun,
 ): Promise<WorkloadRow> {
+  // Gateway manifests never run a local server on a reachable agent
+  // — their phase lives in the persisted status the handler wrote.
+  // Probing serverStatus would always return Unreachable because the
+  // target node is a gateway (cloud kind, no agent tRPC endpoint).
+  if (manifest.spec.gateway) {
+    const status = manifest.status;
+    const phase = (status?.phase ?? 'Pending') as WorkloadRow['phase'];
+    return {
+      name: manifest.metadata.name,
+      node: manifest.spec.node,
+      phase,
+      rel: manifest.spec.target.value,
+      endpoint: status?.endpoint ?? null,
+      gateway: true,
+    };
+  }
+
   try {
     const client = getNodeClientByName(manifest.spec.node);
     const status = await client.serverStatus.query();
@@ -224,6 +280,7 @@ async function inspect(
       phase,
       rel: desired,
       endpoint: status.endpoint ?? null,
+      gateway: false,
     };
   } catch {
     return {
@@ -232,6 +289,7 @@ async function inspect(
       phase: 'Unreachable',
       rel: manifest.spec.target.value,
       endpoint: null,
+      gateway: false,
     };
   }
 }
@@ -272,12 +330,13 @@ export async function runGet(args: string[]): Promise<number> {
   const nameW = Math.max(4, ...rows.map((r) => r.name.length));
   const nodeW = Math.max(4, ...rows.map((r) => r.node.length));
   const phaseW = Math.max(5, ...rows.map((r) => r.phase.length));
+  const kindW = 4; // 'agent' or 'gway' — always four chars
   process.stdout.write(
-    `${pad('NAME', nameW)}  ${pad('NODE', nodeW)}  ${pad('PHASE', phaseW)}  REL\n`,
+    `${pad('NAME', nameW)}  ${pad('NODE', nodeW)}  ${pad('KIND', kindW)}  ${pad('PHASE', phaseW)}  REL\n`,
   );
   for (const r of rows) {
     process.stdout.write(
-      `${pad(r.name, nameW)}  ${pad(r.node, nodeW)}  ${pad(r.phase, phaseW)}  ${r.rel}\n`,
+      `${pad(r.name, nameW)}  ${pad(r.node, nodeW)}  ${pad(r.gateway ? 'gway' : 'agnt', kindW)}  ${pad(r.phase, phaseW)}  ${r.rel}\n`,
     );
   }
   return 0;
