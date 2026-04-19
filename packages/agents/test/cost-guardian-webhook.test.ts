@@ -496,18 +496,22 @@ describe('runCostGuardianTick — tier-2 force-private intent', () => {
     expect(decision.tier).toBe('force_private');
     const entries = readJournal(journalPath);
     const action = entries.find((e) => e.action === 'force-private')!;
-    expect(action.ok).toBe(true);
+    // Tool not available in this harness (no llamactl.* routed) →
+    // ok:false + toolInvoked:false + manual-action note.
+    expect(action.ok).toBe(false);
     const detail = action.detail as {
       autoForcePrivateEnabled: boolean;
       targetProfile: string;
+      toolInvoked: boolean;
       note: string;
     };
     expect(detail.autoForcePrivateEnabled).toBe(false);
     expect(detail.targetProfile).toBe('private-first');
+    expect(detail.toolInvoked).toBe(false);
     expect(detail.note).toContain('manual operator action required');
   });
 
-  test('auto_force_private=true flips the note but still journals (no tool verb yet)', async () => {
+  test('auto_force_private=true still flags toolInvoked:false without llamactl mounted', async () => {
     const tools = makeClient({
       'nova.ops.cost.snapshot': {
         totalEstimatedCostUsd: 8.5,
@@ -523,9 +527,124 @@ describe('runCostGuardianTick — tier-2 force-private intent', () => {
     });
     const entries = readJournal(journalPath);
     const action = entries.find((e) => e.action === 'force-private')!;
-    const detail = action.detail as { autoForcePrivateEnabled: boolean; note: string };
+    const detail = action.detail as { autoForcePrivateEnabled: boolean; toolInvoked: boolean };
     expect(detail.autoForcePrivateEnabled).toBe(true);
-    expect(detail.note).toContain('follow-up slice');
+    expect(detail.toolInvoked).toBe(false);
+  });
+
+  test('llamactl tool mounted → real call, dryRun:true passed, outcome journaled', async () => {
+    let captured: ToolCallInput | null = null;
+    const tools: RunbookToolClient = {
+      async callTool(input) {
+        if (input.name === 'nova.ops.cost.snapshot') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  totalEstimatedCostUsd: 8.5,
+                  windowSince: 'x',
+                  windowUntil: 'y',
+                }),
+              },
+            ],
+          };
+        }
+        if (input.name === 'llamactl.embersynth.set-default-profile') {
+          captured = input;
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  ok: true,
+                  mode: 'dry-run',
+                  previous: 'auto',
+                  next: 'private-first',
+                  unchanged: false,
+                }),
+              },
+            ],
+          };
+        }
+        throw new Error(`unexpected: ${input.name}`);
+      },
+    };
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig(),
+      journalPath,
+      disableWebhook: true,
+    });
+    expect(captured).not.toBeNull();
+    expect(captured!.arguments).toEqual({
+      profile: 'private-first',
+      syntheticModel: 'fusion-auto',
+      dryRun: true,
+    });
+    const entries = readJournal(journalPath);
+    const action = entries.find((e) => e.action === 'force-private')!;
+    expect(action.ok).toBe(true);
+    const detail = action.detail as {
+      toolInvoked: boolean;
+      mode: string;
+      previous: string;
+      next: string;
+      unchanged: boolean;
+    };
+    expect(detail.toolInvoked).toBe(true);
+    expect(detail.mode).toBe('dry-run');
+    expect(detail.previous).toBe('auto');
+    expect(detail.next).toBe('private-first');
+    expect(detail.unchanged).toBe(false);
+  });
+
+  test('llamactl tool returns unknown-profile → error surfaces with availableProfiles', async () => {
+    const tools: RunbookToolClient = {
+      async callTool(input) {
+        if (input.name === 'nova.ops.cost.snapshot') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  totalEstimatedCostUsd: 8.5,
+                  windowSince: 'x',
+                  windowUntil: 'y',
+                }),
+              },
+            ],
+          };
+        }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                ok: false,
+                reason: 'unknown-profile',
+                message: "profile 'private-first' not found",
+                availableProfiles: ['auto', 'fast'],
+              }),
+            },
+          ],
+        };
+      },
+    };
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig(),
+      journalPath,
+      disableWebhook: true,
+    });
+    const entries = readJournal(journalPath);
+    const action = entries.find((e) => e.action === 'force-private')!;
+    expect(action.ok).toBe(false);
+    expect(action.error).toContain('unknown-profile');
+    const detail = action.detail as { availableProfiles: string[] };
+    expect(detail.availableProfiles).toEqual(['auto', 'fast']);
   });
 
   test('deregister tier (implies force-private) journals BOTH entries', async () => {

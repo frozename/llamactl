@@ -136,30 +136,75 @@ export async function runCostGuardianTick(
       appendCostJournal(action, opts.journalPath);
     }
   }
-  // Tier-2 force-private intent. Journal-only today: the operator
-  // intent is "flip embersynth's default profile to `private-first`
-  // for the next N minutes." That needs a dedicated MCP verb
-  // (llamactl.embersynth.set-default-profile) which doesn't exist
-  // yet — the existing llamactl.embersynth.sync regenerates the
-  // whole file and isn't the right tool for this scoped flip. Until
-  // that verb lands, surface the intent + a clear operator note so
-  // tail'ing the journal shows every budget-pressured tick.
+  // Tier-2 force-private: call llamactl.embersynth.set-default-profile
+  // with dryRun:true when the harness has @llamactl/mcp mounted
+  // (which the default harness does). Wet execution stays server-
+  // side — the tool itself has dryRun:true as the default gate;
+  // even with auto_force_private the guardian calls it dry. The
+  // llamactl operator flips wet via the CLI once they approve.
   if (
     !opts.skipJournal &&
     (decision.tier === 'force_private' || decision.tier === 'deregister')
   ) {
+    let detail: Record<string, unknown> = {
+      autoForcePrivateEnabled: opts.config.auto_force_private === true,
+      targetProfile: 'private-first',
+      syntheticModel: 'fusion-auto',
+    };
+    let ok = true;
+    let error: string | undefined;
+    try {
+      const raw = await opts.tools.callTool({
+        name: 'llamactl.embersynth.set-default-profile',
+        arguments: {
+          profile: 'private-first',
+          syntheticModel: 'fusion-auto',
+          dryRun: true,
+        },
+      });
+      const parsed = parseToolJson<{
+        ok?: boolean;
+        mode?: string;
+        previous?: string | null;
+        next?: string;
+        unchanged?: boolean;
+        reason?: string;
+        message?: string;
+        availableProfiles?: string[];
+      }>(raw);
+      detail = {
+        ...detail,
+        toolInvoked: true,
+        mode: parsed.mode ?? null,
+        previous: parsed.previous ?? null,
+        next: parsed.next ?? null,
+        unchanged: parsed.unchanged ?? null,
+      };
+      if (parsed.ok === false) {
+        ok = false;
+        error = `${parsed.reason ?? 'unknown'}: ${parsed.message ?? 'no message'}`;
+        if (parsed.availableProfiles) {
+          detail.availableProfiles = parsed.availableProfiles;
+        }
+      }
+    } catch (err) {
+      ok = false;
+      error = `llamactl.embersynth.set-default-profile not available — ${(err as Error).message}`;
+      detail = {
+        ...detail,
+        toolInvoked: false,
+        note: opts.config.auto_force_private
+          ? 'auto_force_private set but harness has no llamactl MCP client — no upstream mutation performed'
+          : 'manual operator action required — flip embersynth.yaml fusion-auto to private-first and re-sync',
+      };
+    }
     const entry: CostJournalActionEntry = {
       kind: 'action',
       ts: decision.ts,
       action: 'force-private',
-      ok: true,
-      detail: {
-        autoForcePrivateEnabled: opts.config.auto_force_private === true,
-        targetProfile: 'private-first',
-        note: opts.config.auto_force_private
-          ? 'auto_force_private is set; the embersynth.set-default-profile MCP verb ships in a follow-up slice — no upstream mutation performed'
-          : 'manual operator action required — flip embersynth.yaml defaultProfile to private-first and re-sync',
-      },
+      ok,
+      detail,
+      ...(error ? { error } : {}),
     };
     appendCostJournal(entry, opts.journalPath);
   }

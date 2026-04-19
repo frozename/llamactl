@@ -289,7 +289,12 @@ describe('runCostGuardianTick', () => {
       config,
       journalPath: join(dir, 'cg.jsonl'),
     });
-    expect(calls.map((c) => c.args)).toEqual([{ days: 1 }, { days: 7 }]);
+    // Filter to the snapshot calls — the tier-2 action also fires
+    // llamactl.embersynth.set-default-profile which throws against
+    // this stub client; that's fine, it just means the guardian
+    // journals the tool-unavailable fallback.
+    const snapshotCalls = calls.filter((c) => c.name === 'nova.ops.cost.snapshot');
+    expect(snapshotCalls.map((c) => c.args)).toEqual([{ days: 1 }, { days: 7 }]);
     // Weekly at 90% wins over daily 10% → force_private.
     expect(decision.tier).toBe('force_private');
   });
