@@ -45,6 +45,17 @@ async function mountInProcess(
   };
 }
 
+/**
+ * Boot a composite MCP client over @llamactl/mcp + @nova/mcp (both
+ * in-process via InMemoryTransport) and route `callTool` by
+ * tool-name prefix. Exposed so other CLI entrypoints (cost-guardian
+ * tick, the future planner executor) can reuse the harness without
+ * running a full runbook.
+ */
+export async function createDefaultToolClient(): Promise<{ client: RunbookToolClient; dispose: () => Promise<void> }> {
+  return defaultToolClient();
+}
+
 async function defaultToolClient(): Promise<{ client: RunbookToolClient; dispose: () => Promise<void> }> {
   const llamactl = await mountInProcess(
     buildMcpServer({ name: 'llamactl-runbook-harness' }),

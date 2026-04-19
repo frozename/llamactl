@@ -22,6 +22,7 @@ import { runRunbookCmd } from './commands/runbook.js';
 import { runHeal } from './commands/heal.js';
 import { runDeployNode } from './commands/deploy.js';
 import { runArtifacts } from './commands/artifacts.js';
+import { runCostGuardian } from './commands/cost-guardian.js';
 import { runInfra } from './commands/infra.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
@@ -122,6 +123,8 @@ Agentic operations:
       [--dry-run] [--params <json>]           (see llamactl runbook --help)
   llamactl heal [--once] [--interval=<s>]     Observe fleet health + journal
       [--quiet] [--journal=<path>]            state transitions
+  llamactl cost-guardian tick                 Evaluate spend vs budget +
+      [--config=<path>] [--skip-journal]       emit tiered intent
   llamactl deploy-node <name>                 Mint a bootstrap token for a
       [--central-url=<url>] [--ttl=<m>]       new node + print the
                                               curl-pipe-sh one-liner
@@ -201,6 +204,8 @@ async function main(argv: string[]): Promise<number> {
       return runRunbookCmd(rest);
     case 'heal':
       return runHeal(rest);
+    case 'cost-guardian':
+      return runCostGuardian(rest);
     case 'deploy-node':
       return runDeployNode(rest);
     case 'artifacts':
