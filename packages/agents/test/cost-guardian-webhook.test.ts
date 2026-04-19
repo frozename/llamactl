@@ -201,7 +201,7 @@ describe('runCostGuardianTick — webhook dispatch', () => {
     expect(entries[1]!.error).toContain('boom');
   });
 
-  test('no webhook_url in config → webhook skipped even on warn tier', async () => {
+  test('no webhook_url in config → webhook skipped even on force_private tier', async () => {
     let calls = 0;
     const fetcher: WebhookFetcher = async () => { calls++; return { ok: true, status: 200 }; };
     const tools = makeClient({
@@ -214,7 +214,10 @@ describe('runCostGuardianTick — webhook dispatch', () => {
     await runCostGuardianTick({ tools, config, journalPath, webhookFetcher: fetcher });
     expect(calls).toBe(0);
     const entries = readJournal(journalPath);
-    expect(entries.every((e) => e.kind === 'tick')).toBe(true);
+    // No webhook action entry ever gets journaled when webhook_url
+    // is absent — but the tier-2 force-private intent is still
+    // journaled since that's a separate action surface.
+    expect(entries.some((e) => e.action === 'webhook')).toBe(false);
   });
 
   test('disableWebhook=true short-circuits the action regardless of config', async () => {
@@ -270,7 +273,8 @@ describe('runCostGuardianTick — tier-3 deregister dry-run intent', () => {
       disableWebhook: true,
     });
     const entries = readJournal(journalPath);
-    expect(entries).toHaveLength(2); // tick + deregister-dry-run
+    // tick + force-private intent + deregister-dry-run
+    expect(entries).toHaveLength(3);
     const action = entries.find((e) => e.action === 'deregister-dry-run')!;
     expect(action.ok).toBe(false);
     const detail = action.detail as {
@@ -444,7 +448,7 @@ describe('runCostGuardianTick — tier-3 deregister dry-run intent', () => {
     expect(entries.some((e) => e.action === 'deregister-dry-run')).toBe(false);
   });
 
-  test('warn + force_private tiers never emit a deregister-dry-run entry', async () => {
+  test('warn tier never emits a deregister-dry-run entry', async () => {
     const tools = makeClient({
       'nova.ops.cost.snapshot': {
         totalEstimatedCostUsd: 6, // 60% of 10 → warn
@@ -462,5 +466,103 @@ describe('runCostGuardianTick — tier-3 deregister dry-run intent', () => {
     });
     const entries = readJournal(journalPath);
     expect(entries.some((e) => e.action === 'deregister-dry-run')).toBe(false);
+  });
+});
+
+describe('runCostGuardianTick — tier-2 force-private intent', () => {
+  let dir = '';
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'guardian-d2-')); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  function readJournal(path: string): Array<Record<string, unknown>> {
+    const body = readFileSync(path, 'utf8').trim();
+    return body.split('\n').map((line) => JSON.parse(line));
+  }
+
+  test('force_private tier → force-private action entry with manual-action note', async () => {
+    const tools = makeClient({
+      'nova.ops.cost.snapshot': {
+        totalEstimatedCostUsd: 8.5, // 85% → force_private
+        windowSince: 'x', windowUntil: 'y',
+      },
+    });
+    const journalPath = join(dir, 'cg.jsonl');
+    const decision = await runCostGuardianTick({
+      tools,
+      config: makeConfig(),
+      journalPath,
+      disableWebhook: true,
+    });
+    expect(decision.tier).toBe('force_private');
+    const entries = readJournal(journalPath);
+    const action = entries.find((e) => e.action === 'force-private')!;
+    expect(action.ok).toBe(true);
+    const detail = action.detail as {
+      autoForcePrivateEnabled: boolean;
+      targetProfile: string;
+      note: string;
+    };
+    expect(detail.autoForcePrivateEnabled).toBe(false);
+    expect(detail.targetProfile).toBe('private-first');
+    expect(detail.note).toContain('manual operator action required');
+  });
+
+  test('auto_force_private=true flips the note but still journals (no tool verb yet)', async () => {
+    const tools = makeClient({
+      'nova.ops.cost.snapshot': {
+        totalEstimatedCostUsd: 8.5,
+        windowSince: 'x', windowUntil: 'y',
+      },
+    });
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig({ auto_force_private: true }),
+      journalPath,
+      disableWebhook: true,
+    });
+    const entries = readJournal(journalPath);
+    const action = entries.find((e) => e.action === 'force-private')!;
+    const detail = action.detail as { autoForcePrivateEnabled: boolean; note: string };
+    expect(detail.autoForcePrivateEnabled).toBe(true);
+    expect(detail.note).toContain('follow-up slice');
+  });
+
+  test('deregister tier (implies force-private) journals BOTH entries', async () => {
+    const tools = makeClient({
+      'nova.ops.cost.snapshot': {
+        totalEstimatedCostUsd: 9.8, // 98% → deregister
+        windowSince: 'x', windowUntil: 'y',
+        byProvider: [{ key: 'openai', estimatedCostUsd: 9.7 }],
+      },
+    });
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig(),
+      journalPath,
+      disableWebhook: true,
+    });
+    const entries = readJournal(journalPath);
+    expect(entries.some((e) => e.action === 'force-private')).toBe(true);
+    expect(entries.some((e) => e.action === 'deregister-dry-run')).toBe(true);
+  });
+
+  test('warn + noop never emit a force-private entry', async () => {
+    const tools = makeClient({
+      'nova.ops.cost.snapshot': {
+        totalEstimatedCostUsd: 6, // 60% → warn
+        windowSince: 'x', windowUntil: 'y',
+      },
+    });
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig(),
+      journalPath,
+      disableWebhook: true,
+    });
+    const entries = readJournal(journalPath);
+    expect(entries.some((e) => e.action === 'force-private')).toBe(false);
   });
 });

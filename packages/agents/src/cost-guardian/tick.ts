@@ -136,6 +136,33 @@ export async function runCostGuardianTick(
       appendCostJournal(action, opts.journalPath);
     }
   }
+  // Tier-2 force-private intent. Journal-only today: the operator
+  // intent is "flip embersynth's default profile to `private-first`
+  // for the next N minutes." That needs a dedicated MCP verb
+  // (llamactl.embersynth.set-default-profile) which doesn't exist
+  // yet — the existing llamactl.embersynth.sync regenerates the
+  // whole file and isn't the right tool for this scoped flip. Until
+  // that verb lands, surface the intent + a clear operator note so
+  // tail'ing the journal shows every budget-pressured tick.
+  if (
+    !opts.skipJournal &&
+    (decision.tier === 'force_private' || decision.tier === 'deregister')
+  ) {
+    const entry: CostJournalActionEntry = {
+      kind: 'action',
+      ts: decision.ts,
+      action: 'force-private',
+      ok: true,
+      detail: {
+        autoForcePrivateEnabled: opts.config.auto_force_private === true,
+        targetProfile: 'private-first',
+        note: opts.config.auto_force_private
+          ? 'auto_force_private is set; the embersynth.set-default-profile MCP verb ships in a follow-up slice — no upstream mutation performed'
+          : 'manual operator action required — flip embersynth.yaml defaultProfile to private-first and re-sync',
+      },
+    };
+    appendCostJournal(entry, opts.journalPath);
+  }
   // Tier-3 deregister-dry-run: call sirius.providers.deregister
   // with dryRun:true when the harness has the tool mounted. When
   // the tool isn't in the client's catalog (or the call fails) we
