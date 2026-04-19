@@ -15,6 +15,7 @@
   "dependencies": {
     "@llamactl/mcp": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@nova/contracts": "file:../../../nova/packages/contracts",
     "@nova/mcp": "file:../../../nova/packages/mcp",
     "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
     "yaml": "2.8.3",

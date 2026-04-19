@@ -19,6 +19,7 @@
     "@llamactl/core": "workspace:*",
     "@llamactl/remote": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@nova/contracts": "file:../../../nova/packages/contracts",
     "@nova/mcp-shared": "file:../../../nova/packages/mcp-shared",
     "zod": "4.3.6"
   },
