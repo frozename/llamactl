@@ -63,7 +63,7 @@ export default function Logs(): React.JSX.Element {
   }
 
   return (
-    <div className="flex h-full flex-col p-6">
+    <div className="flex h-full flex-col p-6" data-testid="logs-root">
       <div className="mb-3 flex items-baseline justify-between">
         <div>
           <h1 className="text-lg font-semibold text-[color:var(--color-fg)]">Logs</h1>

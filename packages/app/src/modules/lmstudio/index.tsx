@@ -58,7 +58,7 @@ export default function LMStudio(): React.JSX.Element {
   ).length;
 
   return (
-    <div className="h-full overflow-auto p-6">
+    <div className="h-full overflow-auto p-6" data-testid="lmstudio-root">
       <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
         LM Studio
       </div>

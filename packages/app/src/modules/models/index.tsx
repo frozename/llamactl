@@ -96,7 +96,7 @@ export default function Models(): React.JSX.Element {
   });
 
   return (
-    <div className="h-full overflow-auto p-6">
+    <div className="h-full overflow-auto p-6" data-testid="models-root">
       <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
         Models
       </div>

@@ -304,7 +304,7 @@ export default function Pulls(): React.JSX.Element {
   );
 
   return (
-    <div className="h-full overflow-auto p-6">
+    <div className="h-full overflow-auto p-6" data-testid="pulls-root">
       <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
         Pulls
       </div>

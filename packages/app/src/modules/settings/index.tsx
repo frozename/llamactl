@@ -292,7 +292,7 @@ export default function Settings(): React.JSX.Element {
   const values = (env.data ?? {}) as Record<string, string>;
 
   return (
-    <div className="h-full overflow-auto p-6">
+    <div className="h-full overflow-auto p-6" data-testid="settings-root">
       <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
         Settings
       </div>

@@ -456,7 +456,8 @@ export default function Pipelines(): React.JSX.Element {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full" data-testid="pipelines-root">
+      <h1 className="sr-only">Pipelines</h1>
       <Sidebar
         activeId={store.activeId}
         pipelines={pipelineList}
@@ -526,14 +527,28 @@ export default function Pipelines(): React.JSX.Element {
           </form>
         </div>
       ) : (
-        <div className="flex h-full flex-1 items-center justify-center text-sm text-[color:var(--color-fg-muted)]">
-          <button
-            type="button"
-            onClick={newPipeline}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-4 py-2 text-[color:var(--color-fg-inverted)]"
-          >
-            New pipeline
-          </button>
+        <div
+          className="flex h-full flex-1 items-center justify-center p-8"
+          data-testid="pipelines-empty"
+        >
+          <div className="max-w-md space-y-3 text-center">
+            <h2 className="text-lg font-semibold text-[color:var(--color-fg)]">
+              Chain model calls into a pipeline
+            </h2>
+            <p className="text-sm text-[color:var(--color-fg-muted)]">
+              Each stage consumes the previous stage's final assistant
+              message. Useful for summarise → review → rewrite, vision-caption
+              → reasoning, cheap-draft → cloud-polish.
+            </p>
+            <button
+              type="button"
+              onClick={newPipeline}
+              data-testid="pipelines-new"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-4 py-2 text-sm text-[color:var(--color-fg-inverted)]"
+            >
+              New pipeline
+            </button>
+          </div>
         </div>
       )}
     </div>

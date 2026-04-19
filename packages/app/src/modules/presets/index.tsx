@@ -78,7 +78,7 @@ export default function Presets(): React.JSX.Element {
   }, [bench.data]);
 
   return (
-    <div className="h-full overflow-auto p-6">
+    <div className="h-full overflow-auto p-6" data-testid="presets-root">
       <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
         Presets
       </div>

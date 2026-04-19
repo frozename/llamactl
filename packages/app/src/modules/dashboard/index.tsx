@@ -229,7 +229,7 @@ function DashboardBody(): React.JSX.Element {
     .slice(0, 5);
 
   return (
-    <div className="h-full overflow-auto p-6">
+    <div className="h-full overflow-auto p-6" data-testid="dashboard-root">
       <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
         Dashboard
       </div>

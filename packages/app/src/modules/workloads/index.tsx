@@ -463,7 +463,7 @@ export default function Workloads(): React.JSX.Element {
   const rows = (list.data ?? []) as WorkloadRow[];
 
   return (
-    <div className="flex flex-col gap-4 p-6">
+    <div className="flex flex-col gap-4 p-6" data-testid="workloads-root">
       <div className="flex items-baseline justify-between">
         <div>
           <h1 className="text-lg font-semibold text-[color:var(--color-fg)]">Workloads</h1>

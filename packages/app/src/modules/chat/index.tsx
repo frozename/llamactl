@@ -671,7 +671,8 @@ export default function Chat(): React.JSX.Element {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full" data-testid="chat-root">
+      <h1 className="sr-only">Chat</h1>
       <Sidebar
         activeId={store.activeId}
         conversations={conversationList}
@@ -742,14 +743,28 @@ export default function Chat(): React.JSX.Element {
           <ComposerBar busy={busyA || busyB} onSend={send} />
         </div>
       ) : (
-        <div className="flex h-full flex-1 items-center justify-center text-sm text-[color:var(--color-fg-muted)]">
-          <button
-            type="button"
-            onClick={newChat}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-4 py-2 text-[color:var(--color-fg-inverted)]"
-          >
-            New chat
-          </button>
+        <div
+          className="flex h-full flex-1 items-center justify-center p-8"
+          data-testid="chat-empty"
+        >
+          <div className="max-w-md space-y-3 text-center">
+            <h2 className="text-lg font-semibold text-[color:var(--color-fg)]">
+              Start a conversation
+            </h2>
+            <p className="text-sm text-[color:var(--color-fg-muted)]">
+              Chat scopes a conversation to a node + model. Attach capability
+              tags (reasoning, vision, tools…) and orchestrators like
+              embersynth will route by them. History stays on this laptop.
+            </p>
+            <button
+              type="button"
+              onClick={newChat}
+              data-testid="chat-new"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-4 py-2 text-sm text-[color:var(--color-fg-inverted)]"
+            >
+              New chat
+            </button>
+          </div>
         </div>
       )}
     </div>
