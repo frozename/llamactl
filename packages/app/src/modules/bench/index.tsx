@@ -19,6 +19,13 @@ function truncate(lines: LogLine[]): LogLine[] {
     : lines;
 }
 
+function fmtTps(raw: string | number | undefined | null): string {
+  if (raw == null || raw === '') return '—';
+  const n = typeof raw === 'number' ? raw : Number.parseFloat(raw);
+  if (!Number.isFinite(n)) return '—';
+  return n.toFixed(1);
+}
+
 function SchedulerPanel(): React.JSX.Element {
   const utils = trpc.useUtils();
   const list = trpc.benchScheduleList.useQuery();
@@ -539,9 +546,9 @@ export default function Bench(): React.JSX.Element {
                     <td className="px-3 py-1.5">{row.mode}</td>
                     <td className="px-3 py-1.5">{row.profile}</td>
                     <td className="px-3 py-1.5 text-right text-[color:var(--color-accent)]">
-                      {row.gen_ts}
+                      {fmtTps(row.gen_ts)}
                     </td>
-                    <td className="px-3 py-1.5 text-right">{row.prompt_ts}</td>
+                    <td className="px-3 py-1.5 text-right">{fmtTps(row.prompt_ts)}</td>
                     <td className="px-3 py-1.5 text-[color:var(--color-fg-muted)]">
                       {row.build}
                     </td>
