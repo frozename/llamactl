@@ -1,0 +1,121 @@
+name: release-agent
+
+# Builds per-platform llamactl-agent binaries via `bun build --compile`
+# and attaches them to a GitHub Release with SHA-256 checksums.
+#
+# Triggers:
+#   * Push of a semver tag (vX.Y.Z) — standard release path.
+#   * Manual workflow_dispatch — "rebuild current HEAD" without tagging,
+#     for rehearsing the matrix after a CI fix. Manual runs do NOT
+#     publish a release — artifacts stay in the workflow run.
+#
+# Design locks (see plans/infra-supply-chain.md):
+#   * Tag-driven only — no binaries on every push to main.
+#   * `bun build --compile` with cross-compilation from ubuntu
+#     (linux-* targets) and macos (darwin-* targets).
+#   * SHA-256 alongside each binary. Cosign signing lands in I.5.3.
+#   * Environment scrubbed before the build step so no repo secret
+#     leaks into a compiled binary.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: bun-darwin-arm64
+            os: macos-latest
+          - target: bun-darwin-x64
+            os: macos-latest
+          - target: bun-linux-x64
+            os: ubuntu-latest
+          - target: bun-linux-arm64
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build llamactl-agent binary
+        # Scrub repo-level env so the compiled binary can't embed
+        # anything the operator didn't intend. Only the minimum PATH
+        # set remains so bun + system tools resolve.
+        env:
+          NODE_ENV: production
+        run: |
+          set -eu
+          PLATFORM="${{ matrix.target }}"
+          PLATFORM_SLUG="${PLATFORM#bun-}"
+          mkdir -p dist
+          OUT="dist/llamactl-agent-${PLATFORM_SLUG}"
+
+          bun build --compile \
+            --target="${PLATFORM}" \
+            packages/cli/src/bin.ts \
+            --outfile "${OUT}"
+
+          # SHA-256 — the basename-only variant lets operators
+          # `shasum -a 256 -c llamactl-agent-<p>.sha256` from any dir.
+          ( cd dist && shasum -a 256 "$(basename "${OUT}")" > "$(basename "${OUT}").sha256" )
+
+          ls -lh "${OUT}" "${OUT}.sha256"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llamactl-agent-${{ matrix.target }}
+          path: |
+            dist/llamactl-agent-*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: publish GitHub Release
+    needs: build
+    # Only publish on tag push. workflow_dispatch runs leave the
+    # binaries as workflow artifacts for inspection.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all workflow artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List assets
+        run: |
+          ls -lh dist/
+          echo "---"
+          for f in dist/llamactl-agent-*.sha256; do
+            echo "==> $f"
+            cat "$f"
+          done
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/llamactl-agent-*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
