@@ -76,6 +76,7 @@ describe('@llamactl/mcp read surface', () => {
       'llamactl.catalog.list',
       'llamactl.catalog.promote',
       'llamactl.catalog.promoteDelete',
+      'llamactl.embersynth.set-default-profile',
       'llamactl.embersynth.sync',
       'llamactl.node.add',
       'llamactl.node.facts',
@@ -236,5 +237,138 @@ describe('@llamactl/mcp mutations', () => {
     expect(existsSync(yamlPath)).toBe(true);
     const body = readFileSync(yamlPath, 'utf8');
     expect(body).toContain('private-first');
+  });
+
+  test('embersynth.set-default-profile missing config → config-missing', async () => {
+    const yamlPath = join(runtimeDir, 'does-not-exist.yaml');
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: 'llamactl.embersynth.set-default-profile',
+      arguments: { profile: 'private-first', path: yamlPath },
+    });
+    const parsed = JSON.parse(textOf(result)) as { ok: boolean; reason?: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.reason).toBe('config-missing');
+  });
+
+  test('embersynth.set-default-profile unknown profile → rejected with availableProfiles', async () => {
+    const yamlPath = join(runtimeDir, 'embersynth.yaml');
+    const { client } = await connected();
+    // Seed a real config first via sync.
+    await client.callTool({
+      name: 'llamactl.embersynth.sync',
+      arguments: { path: yamlPath, dryRun: false },
+    });
+    const result = await client.callTool({
+      name: 'llamactl.embersynth.set-default-profile',
+      arguments: { profile: 'does-not-exist', path: yamlPath },
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      ok: boolean;
+      reason?: string;
+      availableProfiles?: string[];
+    };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.reason).toBe('unknown-profile');
+    expect(parsed.availableProfiles?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  test('embersynth.set-default-profile dry-run reports diff without writing', async () => {
+    const yamlPath = join(runtimeDir, 'embersynth.yaml');
+    const { client } = await connected();
+    await client.callTool({
+      name: 'llamactl.embersynth.sync',
+      arguments: { path: yamlPath, dryRun: false },
+    });
+    const before = readFileSync(yamlPath, 'utf8');
+    const result = await client.callTool({
+      name: 'llamactl.embersynth.set-default-profile',
+      arguments: { profile: 'private-first', path: yamlPath }, // dryRun defaults true
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      ok: boolean;
+      mode: string;
+      syntheticModel: string;
+      previous: string | null;
+      next: string;
+      unchanged: boolean;
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.mode).toBe('dry-run');
+    expect(parsed.syntheticModel).toBe('fusion-auto');
+    expect(parsed.next).toBe('private-first');
+    expect(readFileSync(yamlPath, 'utf8')).toBe(before);
+  });
+
+  test('embersynth.set-default-profile wet-run rewrites syntheticModels mapping', async () => {
+    const yamlPath = join(runtimeDir, 'embersynth.yaml');
+    const { client } = await connected();
+    await client.callTool({
+      name: 'llamactl.embersynth.sync',
+      arguments: { path: yamlPath, dryRun: false },
+    });
+    const result = await client.callTool({
+      name: 'llamactl.embersynth.set-default-profile',
+      arguments: {
+        profile: 'private-first',
+        path: yamlPath,
+        dryRun: false,
+      },
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      ok: boolean;
+      mode: string;
+      previous: string | null;
+      next: string;
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.mode).toBe('wet');
+    expect(parsed.next).toBe('private-first');
+    const body = readFileSync(yamlPath, 'utf8');
+    // fusion-auto now maps to private-first in the rewritten file.
+    expect(body).toMatch(/fusion-auto:\s*private-first/);
+  });
+
+  test('embersynth.set-default-profile wet-run is idempotent (unchanged flag set)', async () => {
+    const yamlPath = join(runtimeDir, 'embersynth.yaml');
+    const { client } = await connected();
+    await client.callTool({
+      name: 'llamactl.embersynth.sync',
+      arguments: { path: yamlPath, dryRun: false },
+    });
+    await client.callTool({
+      name: 'llamactl.embersynth.set-default-profile',
+      arguments: { profile: 'private-first', path: yamlPath, dryRun: false },
+    });
+    const result = await client.callTool({
+      name: 'llamactl.embersynth.set-default-profile',
+      arguments: { profile: 'private-first', path: yamlPath, dryRun: false },
+    });
+    const parsed = JSON.parse(textOf(result)) as { ok: boolean; unchanged: boolean };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.unchanged).toBe(true);
+  });
+
+  test('embersynth.set-default-profile remaps a non-default synthetic model', async () => {
+    const yamlPath = join(runtimeDir, 'embersynth.yaml');
+    const { client } = await connected();
+    await client.callTool({
+      name: 'llamactl.embersynth.sync',
+      arguments: { path: yamlPath, dryRun: false },
+    });
+    const result = await client.callTool({
+      name: 'llamactl.embersynth.set-default-profile',
+      arguments: {
+        profile: 'private-first',
+        syntheticModel: 'fusion-fast',
+        path: yamlPath,
+        dryRun: false,
+      },
+    });
+    const parsed = JSON.parse(textOf(result)) as { ok: boolean; syntheticModel: string };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.syntheticModel).toBe('fusion-fast');
+    const body = readFileSync(yamlPath, 'utf8');
+    expect(body).toMatch(/fusion-fast:\s*private-first/);
   });
 });
