@@ -296,7 +296,13 @@ export default function Settings(): React.JSX.Element {
       <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
         Settings
       </div>
-      <h1 className="mb-6 text-2xl font-semibold text-[color:var(--color-fg)]">Environment</h1>
+      <h1 className="mb-2 text-2xl font-semibold text-[color:var(--color-fg)]">Environment</h1>
+      <p className="mb-6 text-xs text-[color:var(--color-fg-muted)]">
+        Read-only snapshot of the shell environment llamactl is running under. Values
+        come from your shell (e.g. <span className="mono">LLAMA_CPP_MODELS</span>) and
+        <span className="mono"> ~/.llamactl/env</span>; rows marked
+        <span className="italic text-[color:var(--color-fg-muted)]"> unset</span> fall back to defaults.
+      </p>
 
       <div className="space-y-6">
         {GROUPS.map((group) => (
@@ -307,19 +313,31 @@ export default function Settings(): React.JSX.Element {
             <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
               <table className="w-full mono text-sm">
                 <tbody>
-                  {group.keys.map((key) => (
-                    <tr
-                      key={key}
-                      className="border-b border-[var(--color-border)] last:border-b-0 bg-[var(--color-surface-1)]"
-                    >
-                      <td className="w-72 px-3 py-1.5 text-[color:var(--color-fg-muted)]">
-                        {key}
-                      </td>
-                      <td className="px-3 py-1.5 text-[color:var(--color-fg)] break-all">
-                        {values[key] ?? ''}
-                      </td>
-                    </tr>
-                  ))}
+                  {group.keys.map((key) => {
+                    const raw = values[key];
+                    const isSet = raw !== undefined && raw !== '';
+                    return (
+                      <tr
+                        key={key}
+                        data-testid={`env-${key}`}
+                        data-set={isSet ? 'true' : 'false'}
+                        className="border-b border-[var(--color-border)] last:border-b-0 bg-[var(--color-surface-1)]"
+                      >
+                        <td className="w-72 px-3 py-1.5 text-[color:var(--color-fg-muted)]">
+                          {key}
+                        </td>
+                        <td
+                          className={
+                            isSet
+                              ? 'px-3 py-1.5 text-[color:var(--color-fg)] break-all'
+                              : 'px-3 py-1.5 italic text-[color:var(--color-fg-muted)]'
+                          }
+                        >
+                          {isSet ? raw : 'unset'}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

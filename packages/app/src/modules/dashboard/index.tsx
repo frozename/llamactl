@@ -71,6 +71,10 @@ function ExposePanel(): React.JSX.Element {
       .map((r) => r.rel)
       .filter((s): s is string => typeof s === 'string' && s.length > 0);
   }, [catalog.data]);
+  const canSubmit = name.trim().length > 0 && rel.trim().length > 0 && node.trim().length > 0;
+  const submitTitle = !canSubmit
+    ? 'Fill in name and rel before exposing.'
+    : `Apply ModelRun "${name.trim()}" on node ${node.trim()}.`;
 
   return (
     <form
@@ -78,6 +82,7 @@ function ExposePanel(): React.JSX.Element {
         e.preventDefault();
         onSubmit();
       }}
+      data-testid="dashboard-expose"
       className="mt-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
     >
       <div className="mb-2 text-sm font-medium text-[color:var(--color-fg)]">Expose a model</div>
@@ -89,6 +94,7 @@ function ExposePanel(): React.JSX.Element {
             placeholder="gemma-qa"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            data-testid="dashboard-expose-name"
             className="w-40 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
           />
         </div>
@@ -124,8 +130,10 @@ function ExposePanel(): React.JSX.Element {
         </div>
         <button
           type="submit"
-          disabled={apply.isPending}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+          disabled={apply.isPending || !canSubmit}
+          data-testid="dashboard-expose-submit"
+          title={submitTitle}
+          className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 font-medium text-[color:var(--color-fg-inverted)] shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
         >
           {apply.isPending ? 'Exposing…' : 'Expose'}
         </button>
