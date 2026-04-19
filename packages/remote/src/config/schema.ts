@@ -105,6 +105,15 @@ export const ClusterNodeSchema = z.object({
   cloud: CloudBindingSchema.optional(),
   /** Provider-kind only — pointer into a gateway's upstream catalog. */
   provider: ProviderBindingSchema.optional(),
+  /**
+   * Reverse-tunnel preference (I.3.3). When `true`, the dispatcher
+   * tries the WebSocket tunnel before falling back to direct HTTPS.
+   * Set for NAT'd / no-port-forward agents that dial central; leave
+   * `false` (default) for LAN / Tailscale nodes that accept inbound.
+   * Irrelevant for gateway + provider nodes — they're never reached
+   * through the tunnel.
+   */
+  tunnelPreferred: z.boolean().optional(),
 }).refine(
   (n) => {
     // Legacy kubeconfigs may carry `kind: 'cloud'`. Treat that as

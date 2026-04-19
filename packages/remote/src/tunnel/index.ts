@@ -27,3 +27,7 @@ export {
   type TunnelReconnectConfig,
   type TunnelHeartbeatConfig,
 } from './tunnel-client.js';
+export {
+  createTunnelRouterHandler,
+  type TunnelRouterParams,
+} from './router-bridge.js';

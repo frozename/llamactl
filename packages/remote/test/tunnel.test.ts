@@ -226,6 +226,67 @@ describe('ping/pong', () => {
   });
 });
 
+describe('end-to-end I.3.3: router bridge + tunneled client over real ws', () => {
+  // Build a fake "caller" that looks like tRPC's createCaller() shape.
+  const fakeCaller = {
+    catalog: {
+      async list(input?: { classFilter?: string }) {
+        if (input?.classFilter === 'vision') return [{ rel: 'v1' }];
+        return [{ rel: 'a' }];
+      },
+    },
+  };
+
+  test('tunneled client.catalog.list.query round-trips through the ws', async () => {
+    const { createTunnelRouterHandler } = await import('../src/tunnel/router-bridge.js');
+    const { createNodeClient } = await import('../src/client/node-client.js');
+
+    srv = startServer('tok');
+    const handle = createTunnelRouterHandler(fakeCaller);
+    const client = createTunnelClient({
+      url: srv.url,
+      bearer: 'tok',
+      nodeName: 'gpu-routed',
+      handleRequest: handle,
+      heartbeat: { intervalMs: 0, timeoutMs: 0 },
+    });
+    await client.start();
+
+    // Central-side NodeClient that routes via the tunnel server's send.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tunnelSend: any = (req: { id: string; method: string; params: unknown }) =>
+      srv!.server.send('gpu-routed', req);
+    const nodeClient = createNodeClient(
+      {
+        apiVersion: 'llamactl/v1',
+        kind: 'Config',
+        currentContext: 'default',
+        contexts: [{ name: 'default', cluster: 'home', user: 'me', defaultNode: 'gpu-routed' }],
+        clusters: [
+          {
+            name: 'home',
+            nodes: [
+              {
+                name: 'gpu-routed',
+                endpoint: 'https://fake.example:443',
+                kind: 'agent',
+                tunnelPreferred: true,
+              },
+            ],
+          },
+        ],
+        users: [{ name: 'me', token: 't' }],
+      },
+      { nodeName: 'gpu-routed', tunnelSend },
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await (nodeClient as any).catalog.list.query({ classFilter: 'vision' });
+    expect(result).toEqual([{ rel: 'v1' }]);
+    client.stop();
+  });
+});
+
 describe('disconnect semantics', () => {
   test('client close removes node from registry + fires onNodeDisconnect', async () => {
     srv = startServer('tok');
