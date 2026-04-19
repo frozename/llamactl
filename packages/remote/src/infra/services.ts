@@ -231,16 +231,107 @@ export function readServiceUnit(
   return { path, body: readFileSync(path, 'utf8') };
 }
 
-// Helpers intentionally not exported until the tRPC layer needs them:
-//   * unitBaseName(path) — strips platform-specific suffixes.
-//   * The launchctl/systemctl subprocess invocations live next to
-//     infraServiceStart/Stop tRPC handlers so this module stays
-//     pure (no child-process dependencies → fully deterministic in
-//     bun test without shell mocking).
 export function unitBaseName(path: string): string {
   const base = basename(path);
   if (base.endsWith('.plist')) return base.replace(/\.plist$/, '');
   return base.replace(/\.service$/, '');
+}
+
+// ---- Lifecycle subprocess wiring --------------------------------
+//
+// Shell out to launchctl / systemctl to drive the services. Kept in
+// this file so callers have one place to look for "everything about
+// a service unit", but marked async + taking an injectable runner
+// so tests can stub the subprocess.
+
+export type ServiceLifecycleAction = 'start' | 'stop' | 'reload' | 'status';
+
+export type SubprocessRunner = (cmd: string[]) => Promise<{
+  code: number;
+  stdout: string;
+  stderr: string;
+}>;
+
+async function defaultRunner(cmd: string[]): Promise<{
+  code: number;
+  stdout: string;
+  stderr: string;
+}> {
+  const proc = Bun.spawn({ cmd, stdout: 'pipe', stderr: 'pipe' });
+  const [code, stdout, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  return { code, stdout, stderr };
+}
+
+function launchctlArgs(action: ServiceLifecycleAction, label: string, plistPath: string): string[] {
+  switch (action) {
+    case 'start': return ['launchctl', 'load', plistPath];
+    case 'stop': return ['launchctl', 'unload', plistPath];
+    case 'reload': return ['launchctl', 'kickstart', '-k', `gui/${process.getuid?.() ?? 501}/${label}`];
+    case 'status': return ['launchctl', 'list', label];
+  }
+}
+
+function systemctlArgs(action: ServiceLifecycleAction, unitName: string): string[] {
+  switch (action) {
+    case 'start': return ['systemctl', '--user', 'start', unitName];
+    case 'stop': return ['systemctl', '--user', 'stop', unitName];
+    case 'reload': return ['systemctl', '--user', 'restart', unitName];
+    case 'status': return ['systemctl', '--user', 'is-active', unitName];
+  }
+}
+
+export interface ServiceLifecycleOptions {
+  pkg: string;
+  action: ServiceLifecycleAction;
+  host?: ServiceHost;
+  env?: NodeJS.ProcessEnv;
+  runner?: SubprocessRunner;
+}
+
+export interface ServiceLifecycleResult {
+  host: ServiceHost;
+  label: string;
+  cmd: string[];
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * Drive a service unit through its lifecycle. Returns the subprocess
+ * outcome so callers can surface exit codes + stderr to operators.
+ * Validates the unit file exists before start/reload to avoid
+ * launchctl/systemctl's opaque "could not find service" errors.
+ */
+export async function runServiceLifecycle(
+  opts: ServiceLifecycleOptions,
+): Promise<ServiceLifecycleResult> {
+  const host = opts.host ?? currentServiceHost();
+  if (!host) {
+    throw new Error(`runServiceLifecycle: unsupported host ${nodePlatform()}`);
+  }
+  const runner = opts.runner ?? defaultRunner;
+  const label = infraServiceLabel(opts.pkg);
+  const unitPath = infraServiceUnitPath(opts.pkg, host, opts.env);
+
+  // Start / reload should fail loudly if the unit file is missing —
+  // most likely cause is "operator ran install but forgot to wire
+  // service:true in the spec".
+  if ((opts.action === 'start' || opts.action === 'reload') && !existsSync(unitPath)) {
+    throw new Error(
+      `runServiceLifecycle: no unit file at ${unitPath} — is this pkg marked service:true in its spec?`,
+    );
+  }
+
+  const cmd = host === 'darwin'
+    ? launchctlArgs(opts.action, label, unitPath)
+    : systemctlArgs(opts.action, `llamactl-infra-${opts.pkg}.service`);
+  const { code, stdout, stderr } = await runner(cmd);
+  return { host, label, cmd, code, stdout, stderr };
 }
 
 // Re-export dirname for the tRPC handler that wants to ensure the

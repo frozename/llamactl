@@ -12,8 +12,10 @@ import {
   renderLaunchdPlist,
   renderServiceUnit,
   renderSystemdUnit,
+  runServiceLifecycle,
   unitBaseName,
   writeServiceUnit,
+  type SubprocessRunner,
 } from '../src/infra/services.js';
 
 let dir = '';
@@ -176,6 +178,100 @@ describe('writeServiceUnit / readServiceUnit / removeServiceUnit', () => {
     // above via the path returned by writeServiceUnit.
     expect(read).toBeNull();
     expect(existsSync(path)).toBe(true);
+  });
+
+  test('runServiceLifecycle(darwin) invokes launchctl load for start', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'llamactl-lifecycle-'));
+    const written = writeServiceUnit({
+      pkg: 'embersynth',
+      infraBase: '/base/infra',
+      logDir: '/base/logs',
+      env: {},
+      host: 'darwin',
+      env_proc: { HOME: home },
+    });
+    const captured: string[][] = [];
+    const runner: SubprocessRunner = async (cmd) => {
+      captured.push(cmd);
+      return { code: 0, stdout: 'ok', stderr: '' };
+    };
+    const result = await runServiceLifecycle({
+      pkg: 'embersynth',
+      action: 'start',
+      host: 'darwin',
+      env: { HOME: home },
+      runner,
+    });
+    expect(result.code).toBe(0);
+    expect(captured[0]).toEqual(['launchctl', 'load', written.path]);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test('runServiceLifecycle(linux) invokes systemctl --user with the unit name', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'llamactl-lifecycle-'));
+    writeServiceUnit({
+      pkg: 'sirius',
+      infraBase: '/base/infra',
+      logDir: '/base/logs',
+      env: {},
+      host: 'linux',
+      env_proc: { HOME: home },
+    });
+    const captured: string[][] = [];
+    const runner: SubprocessRunner = async (cmd) => {
+      captured.push(cmd);
+      return { code: 0, stdout: 'active', stderr: '' };
+    };
+    await runServiceLifecycle({
+      pkg: 'sirius',
+      action: 'status',
+      host: 'linux',
+      env: { HOME: home },
+      runner,
+    });
+    expect(captured[0]).toEqual([
+      'systemctl',
+      '--user',
+      'is-active',
+      'llamactl-infra-sirius.service',
+    ]);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test('runServiceLifecycle rejects start when unit file is missing', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'llamactl-lifecycle-'));
+    await expect(
+      runServiceLifecycle({
+        pkg: 'nope',
+        action: 'start',
+        host: 'darwin',
+        env: { HOME: home },
+        runner: async () => ({ code: 0, stdout: '', stderr: '' }),
+      }),
+    ).rejects.toThrow(/no unit file/);
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test('runServiceLifecycle surfaces non-zero exit as ok:false equivalent via code', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'llamactl-lifecycle-'));
+    writeServiceUnit({
+      pkg: 'embersynth',
+      infraBase: '/base/infra',
+      logDir: '/base/logs',
+      env: {},
+      host: 'darwin',
+      env_proc: { HOME: home },
+    });
+    const result = await runServiceLifecycle({
+      pkg: 'embersynth',
+      action: 'start',
+      host: 'darwin',
+      env: { HOME: home },
+      runner: async () => ({ code: 1, stdout: '', stderr: 'already loaded' }),
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('already loaded');
+    rmSync(home, { recursive: true, force: true });
   });
 
   test('removeServiceUnit returns false when absent, true when it removes', () => {

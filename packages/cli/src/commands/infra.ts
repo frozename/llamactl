@@ -37,6 +37,8 @@ USAGE:
   llamactl infra uninstall <pkg> [--version=<v>]         [--node <n>]
   llamactl infra current <pkg>                           [--node <n>]
   llamactl infra list-specs [--packages-dir=<path>]
+  llamactl infra service write-unit <pkg>  [--env=<K=V>] [--node <n>]
+  llamactl infra service <start|stop|reload|status> <pkg> [--node <n>]
 
 When --tarball-url + --sha256 are omitted, central looks up the pkg
 spec under <LLAMACTL_INFRA_PACKAGES_DIR or DEV_STORAGE/packages or
@@ -220,6 +222,42 @@ async function runUninstall(argv: string[]): Promise<number> {
   return 0;
 }
 
+async function runService(argv: string[]): Promise<number> {
+  const [action, pkg, ...rest] = argv;
+  if (!action || !pkg) {
+    process.stderr.write(
+      'infra service: usage: llamactl infra service <start|stop|reload|status|write-unit> <pkg> [--node <n>]\n',
+    );
+    return 1;
+  }
+  if (action === 'write-unit') {
+    const kv = parseKv(rest);
+    // --env=KEY=VALUE can be repeated; parseKv collapses to one. Use
+    // positional repetition if operators need multiple — deferred.
+    const envEntries: Record<string, string> = {};
+    if (kv.has('env')) {
+      const val = kv.get('env') ?? '';
+      const eq = val.indexOf('=');
+      if (eq > 0) envEntries[val.slice(0, eq)] = val.slice(eq + 1);
+    }
+    const client = getNodeClient();
+    const result = await client.infraServiceWriteUnit.mutate({ pkg, env: envEntries });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
+  }
+  if (action !== 'start' && action !== 'stop' && action !== 'reload' && action !== 'status') {
+    process.stderr.write(`infra service: unknown action ${action}\n`);
+    return 1;
+  }
+  const client = getNodeClient();
+  const result = await client.infraServiceLifecycle.mutate({
+    pkg,
+    action,
+  });
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  return result.ok ? 0 : 1;
+}
+
 function runListSpecs(argv: string[]): number {
   const kv = parseKv(argv);
   const dir = kv.get('packages-dir');
@@ -272,6 +310,8 @@ export async function runInfra(argv: string[]): Promise<number> {
       return runCurrent(rest);
     case 'list-specs':
       return runListSpecs(rest);
+    case 'service':
+      return runService(rest);
     default:
       process.stderr.write(`infra: unknown subcommand ${sub}\n\n${USAGE}`);
       return 1;

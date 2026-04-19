@@ -5,6 +5,7 @@ import * as kubecfg from './config/kubeconfig.js';
 import { decodeBootstrap } from './config/agent-config.js';
 import * as infraLayoutMod from './infra/layout.js';
 import * as infraInstallMod from './infra/install.js';
+import * as infraServicesMod from './infra/services.js';
 import type { ClusterNode, Config } from './config/schema.js';
 import * as workloadStoreMod from './workload/store.js';
 import * as workloadApplyMod from './workload/apply.js';
@@ -1058,6 +1059,53 @@ export const router = t.router({
       }
       const removed = infraLayoutMod.removeInfraPackage(input.pkg);
       return { ok: true as const, mode: 'package' as const, removed };
+    }),
+
+  // Service lifecycle — drives launchd/systemd for supervised pkgs
+  // (embersynth, sirius). llama-cpp is a binary, not a service, so
+  // these procs return a clear error when called on a pkg without a
+  // unit file on disk.
+  infraServiceWriteUnit: t.procedure
+    .input(
+      z.object({
+        pkg: z.string().min(1),
+        env: z.record(z.string(), z.string()).default({}),
+        args: z.array(z.string()).default([]),
+      }),
+    )
+    .mutation(({ input }) => {
+      const base = infraLayoutMod.defaultInfraDir();
+      const logDir = infraServicesMod.defaultInfraLogsDir();
+      const written = infraServicesMod.writeServiceUnit({
+        pkg: input.pkg,
+        infraBase: base,
+        logDir,
+        env: input.env,
+        args: input.args,
+      });
+      return { ok: true as const, ...written };
+    }),
+
+  infraServiceLifecycle: t.procedure
+    .input(
+      z.object({
+        pkg: z.string().min(1),
+        action: z.enum(['start', 'stop', 'reload', 'status']),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const result = await infraServicesMod.runServiceLifecycle({
+        pkg: input.pkg,
+        action: input.action,
+      });
+      return {
+        ok: result.code === 0,
+        code: result.code,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        host: result.host,
+        label: result.label,
+      };
     }),
 
   catalogList: t.procedure
