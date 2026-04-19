@@ -162,25 +162,39 @@ export default function Plan(): React.JSX.Element {
           drives a real OpenAI-compatible model. Approving a plan here
           records your intent — execution stays CLI-side.
         </p>
-        <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1 text-xs">
-            <input
-              type="radio"
-              checked={mode === 'stub'}
-              onChange={() => setMode('stub')}
-              data-testid="plan-mode-stub"
-            />
+        <div className="flex items-center gap-2" role="radiogroup" aria-label="Plan mode">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={mode === 'stub'}
+            data-testid="plan-mode-stub"
+            data-active={mode === 'stub' ? 'true' : 'false'}
+            onClick={() => setMode('stub')}
+            title="Canned plan, no LLM call."
+            className={
+              mode === 'stub'
+                ? 'rounded border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg)]'
+                : 'rounded border border-transparent px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)] hover:text-[color:var(--color-fg)]'
+            }
+          >
             Stub
-          </label>
-          <label className="flex items-center gap-1 text-xs">
-            <input
-              type="radio"
-              checked={mode === 'llm'}
-              onChange={() => setMode('llm')}
-              data-testid="plan-mode-llm"
-            />
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={mode === 'llm'}
+            data-testid="plan-mode-llm"
+            data-active={mode === 'llm' ? 'true' : 'false'}
+            onClick={() => setMode('llm')}
+            title="Drives a real OpenAI-compatible model."
+            className={
+              mode === 'llm'
+                ? 'rounded border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg)]'
+                : 'rounded border border-transparent px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)] hover:text-[color:var(--color-fg)]'
+            }
+          >
             LLM
-          </label>
+          </button>
           {mode === 'llm' && (
             <>
               <input
