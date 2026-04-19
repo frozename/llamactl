@@ -1,5 +1,6 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import { getErrorShape } from '@trpc/server/unstable-core-do-not-import';
+import { observable } from '@trpc/server/observable';
 import { createTRPCClient } from '@trpc/client';
 import { z } from 'zod';
 import {
@@ -29,6 +30,51 @@ import { makeNodePinnedFetch } from './node-pinned-fetch.js';
  */
 
 const t = initTRPC.create();
+
+/**
+ * Adapt a tRPC v11 async-generator subscription result into a v10
+ * `@trpc/server/observable` Observable so electron-trpc v1.0.0-alpha.0
+ * (which still consumes subscriptions via `isObservable(result)` +
+ * `result.subscribe({next,error,complete})`) can drive the stream.
+ *
+ * The returned observable:
+ *  - iterates the async iterable on subscribe, emitting each yielded
+ *    value via `emit.next`.
+ *  - calls `emit.complete()` when the iterable ends normally.
+ *  - calls `emit.error(err)` with whatever the iterable threw.
+ *  - invokes `iter.return?.()` on unsubscribe to release generator
+ *    resources (closes server-side watchers held inside the generator
+ *    body — e.g. llama-server log tail fds).
+ */
+function asyncIterableToObservable<T>(iter: AsyncIterable<T>) {
+  return observable<T>((emit) => {
+    let cancelled = false;
+    const iterator = iter[Symbol.asyncIterator]();
+    (async () => {
+      try {
+        while (true) {
+          const { value, done } = await iterator.next();
+          if (cancelled) return;
+          if (done) {
+            emit.complete();
+            return;
+          }
+          emit.next(value as T);
+        }
+      } catch (err) {
+        if (!cancelled) emit.error(err as TRPCError);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      try {
+        void iterator.return?.(undefined);
+      } catch {
+        // best effort
+      }
+    };
+  });
+}
 
 /**
  * Procedures that MUST always run on the control plane, even when a
@@ -264,10 +310,33 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
     const target = resolveDispatchTarget(path);
     const clientSignal = opts.signal as AbortSignal | undefined;
     if (target.kind === 'local') {
-      const iterable = (await baseCaller[path](opts.input)) as AsyncIterable<unknown>;
-      for await (const ev of iterable) {
-        if (clientSignal?.aborted) break;
-        yield ev;
+      // The base subscription resolver needs a real AbortSignal
+      // (`bridgeEventStream` in @llamactl/remote calls
+      // `signal.addEventListener('abort', ...)` unconditionally).
+      // electron-trpc's v10 `callProcedure` path doesn't forward a
+      // signal through `opts`, so we construct our own controller
+      // and build a fresh caller bound to it. When the renderer
+      // unsubscribes, our outer Observable teardown invokes
+      // `iterator.return()` on this generator, which lands in the
+      // `finally` and aborts the controller — letting the inner
+      // subscription's cleanup fire.
+      const controller = new AbortController();
+      if (clientSignal?.aborted) controller.abort();
+      const onOuterAbort = (): void => controller.abort();
+      clientSignal?.addEventListener('abort', onOuterAbort);
+      try {
+        const localCaller = baseRouter.createCaller(
+          {},
+          { signal: controller.signal },
+        ) as unknown as ProxyClient;
+        const iterable = (await localCaller[path](opts.input)) as AsyncIterable<unknown>;
+        for await (const ev of iterable) {
+          if (controller.signal.aborted) break;
+          yield ev;
+        }
+      } finally {
+        clientSignal?.removeEventListener('abort', onOuterAbort);
+        controller.abort();
       }
       return;
     }
@@ -411,13 +480,25 @@ export function buildDispatcherRouter(
     // createCaller) it passes through; when invoked with v10's
     // `{ctx, path, rawInput, type, procedures}` it back-fills
     // `getRawInput: () => rawInput`.
+    //
+    // For subscription procedures, v11 async-generator resolvers
+    // return an AsyncIterable; electron-trpc alpha's IPC handler
+    // still expects a v10 Observable (it calls `isObservable(result)`).
+    // We convert AsyncIterable → Observable, but only when the call
+    // is the v10-shape one — detected by the missing `getRawInput`
+    // field. v11 createCaller paths (tests, future callers) keep the
+    // AsyncIterable so they stay native.
+    const isSubscription = d.type === 'subscription';
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const shim: any = async (opts: any) => {
-      if (opts && typeof opts.getRawInput !== 'function') {
+      const isV10ShapeCall = opts && typeof opts.getRawInput !== 'function';
+      if (isV10ShapeCall) {
         const rawInput = opts.rawInput;
         opts = { ...opts, getRawInput: () => Promise.resolve(rawInput) };
       }
-      return origProc(opts);
+      const result = await origProc(opts);
+      if (!isSubscription || !isV10ShapeCall) return result;
+      return asyncIterableToObservable(result as AsyncIterable<unknown>);
     };
     shim._def = origProc._def;
     shim.procedure = origProc.procedure;
