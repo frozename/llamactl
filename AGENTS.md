@@ -41,6 +41,10 @@ packages/
 ├── app/        Electron. electron-trpc IPC; reads @llamactl/remote
 │               for the router; renders with React 19.
 ├── mcp/        @llamactl/mcp. Projects tRPC procedures as MCP tools.
+│               18 tools today across read + mutation (dry-run + wet)
+│               tiers: catalog, node, bench (compare + history), server,
+│               workload, promotions, env, cost.snapshot, embersynth,
+│               operator.plan (multi-turn history, stub + LLM modes).
 └── agents/     Runbooks + self-healing loop. Multi-MCP harness —
                 boots @llamactl/mcp + @nova/mcp in-proc and routes
                 by tool-name prefix.
@@ -167,7 +171,7 @@ consumer before their test run.
 
 Test counts we expect as a baseline (bump as features ship):
 
-- nova ≥ 89, llamactl ≥ 638, sirius ≥ 250, embersynth ≥ 129.
+- nova ≥ 89, llamactl ≥ 717, sirius ≥ 250, embersynth ≥ 129.
 
 Four repos green = slice shippable.
 

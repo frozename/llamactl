@@ -97,10 +97,17 @@ packages/
 │                kubeconfig + infra + workload reconcilers + tunnel.
 │                Consumed by cli, app, and the agent.
 ├── app/         Electron dashboard — models, pulls, servers,
-│                benchmarks, settings, candidate-test UI.
-├── mcp/         `@llamactl/mcp` — stdio MCP server projecting
-│                the tRPC surface as tools (catalog, pull, bench,
-│                server, keepalive, promote, …).
+│                benchmarks, settings, candidate-test, Cost guardian
+│                dashboard, multi-turn Operator Plan chat (stub + LLM),
+│                A/B compare mode in Chat (two panes, independent
+│                node/model/capabilities).
+├── mcp/         `@llamactl/mcp` — stdio MCP server projecting the tRPC
+│                surface as 18 tools across: catalog (list, promote,
+│                promoteDelete), node (ls, facts, add, remove),
+│                bench (compare, history), server (status), workload
+│                (list, delete), promotions (list), env, cost.snapshot,
+│                embersynth (sync, set-default-profile), and
+│                operator.plan (multi-turn history, stub + LLM).
 └── agents/      Self-healing harness (probe loop + journal) +
                  runbooks + tool-call harness.
 ```
