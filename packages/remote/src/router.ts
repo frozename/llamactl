@@ -1657,6 +1657,22 @@ export const router = t.router({
             }),
           )
           .optional(),
+        /**
+         * Optional multi-turn history. Each entry captures a prior
+         * operator-plan exchange: the user's goal/refinement, and a
+         * short summary of the plan the assistant returned. The router
+         * folds these into the `context` string before handing off to
+         * `runPlanner`, so the underlying planner stays history-unaware
+         * and continues to accept a single flat string.
+         */
+        history: z
+          .array(
+            z.object({
+              role: z.enum(['user', 'assistant']),
+              text: z.string(),
+            }),
+          )
+          .optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -1690,9 +1706,22 @@ export const router = t.router({
         inputSchema: { type: 'object' },
         tier: t.tier,
       }));
+
+      // Fold history into the context string so the planner sees the
+      // ongoing conversation. Keep the formatting deterministic — one
+      // line per role, trimmed — so stub mode still produces stable
+      // plans and the LLM executor gets a clean chat transcript.
+      const history = input.history ?? [];
+      const transcript = history
+        .map((turn) => `${turn.role}: ${turn.text.trim()}`)
+        .filter((line) => line.length > `user:`.length)
+        .join('\n');
+      const userContext = input.context?.trim() ?? '';
+      const mergedContext = [transcript, userContext].filter((s) => s.length > 0).join('\n\n');
+
       const result = await runPlanner({
         goal: input.goal,
-        context: input.context ?? '',
+        context: mergedContext,
         tools: plannerTools,
         executor,
         allowlist: DEFAULT_ALLOWLIST,
