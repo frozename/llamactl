@@ -27,6 +27,7 @@ import {
 } from '@nova/mcp';
 import { createOpenAICompatProvider } from '@nova/contracts';
 import { appendAudit, toTextContent } from '@nova/mcp-shared';
+import { registerPipelineTools } from './pipelines.js';
 
 /**
  * `@llamactl/mcp` — Model Context Protocol server exposing llamactl's
@@ -761,6 +762,12 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       return toTextContent(result);
     },
   );
+
+  // M.1 — mount every PipelineTool emitted by the Electron
+  // Pipelines module. Reads ~/.llamactl/mcp/pipelines/*.json unless
+  // `LLAMACTL_MCP_PIPELINES_DIR` overrides the scan path (tests use
+  // this to avoid touching the real home directory).
+  registerPipelineTools(server);
 
   return server;
 }

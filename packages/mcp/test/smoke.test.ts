@@ -29,6 +29,10 @@ beforeEach(() => {
     LLAMACTL_MCP_AUDIT_DIR: auditDir,
     LLAMACTL_EMBERSYNTH_CONFIG: join(runtimeDir, 'embersynth.yaml'),
     LLAMACTL_CONFIG: join(runtimeDir, 'config'),
+    // Scope pipeline-tool pickup into the sandbox runtime dir — any
+    // individual test that wants to populate it writes files into
+    // `${runtimeDir}/mcp-pipelines/` before calling `connected()`.
+    LLAMACTL_MCP_PIPELINES_DIR: join(runtimeDir, 'mcp-pipelines'),
   });
 });
 
@@ -465,5 +469,94 @@ describe('@llamactl/mcp mutations', () => {
     expect(parsed.syntheticModel).toBe('fusion-fast');
     const body = readFileSync(yamlPath, 'utf8');
     expect(body).toMatch(/fusion-fast:\s*private-first/);
+  });
+});
+
+describe('@llamactl/mcp M.1 pipeline-tool pickup', () => {
+  test('registers a PipelineTool stub from the pipelines dir', async () => {
+    // Write the stub the K.6 exporter produces directly into the
+    // sandbox pipelines dir, then boot the MCP server and list tools.
+    const { writeFileSync, mkdirSync: mk } = await import('node:fs');
+    const dir = join(runtimeDir, 'mcp-pipelines');
+    mk(dir, { recursive: true });
+    const stub = {
+      apiVersion: 'llamactl/v1',
+      kind: 'PipelineTool',
+      name: 'llamactl.pipeline.demo-pickup',
+      title: 'Demo pickup',
+      description: 'Pipeline for pickup test',
+      inputSchema: {
+        type: 'object',
+        properties: { input: { type: 'string' } },
+        required: ['input'],
+      },
+      stages: [
+        { node: 'local', model: 'm1', systemPrompt: '', capabilities: [] },
+        { node: 'local', model: 'm2', systemPrompt: 'You are a reviewer.', capabilities: ['reasoning'] },
+      ],
+    };
+    writeFileSync(
+      join(dir, 'demo-pickup.json'),
+      JSON.stringify(stub, null, 2) + '\n',
+      'utf8',
+    );
+
+    const { client } = await connected();
+    const list = await client.listTools();
+    const names = list.tools.map((t) => t.name);
+    expect(names).toContain('llamactl.pipeline.demo-pickup');
+    const picked = list.tools.find((t) => t.name === 'llamactl.pipeline.demo-pickup')!;
+    expect(picked.description).toBe('Pipeline for pickup test');
+    // The registered input schema carries the single `input` field.
+    const schema = picked.inputSchema as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+    expect(schema.properties).toHaveProperty('input');
+    expect(schema.required).toContain('input');
+  });
+
+  test('malformed pipeline files are skipped silently', async () => {
+    const { writeFileSync, mkdirSync: mk } = await import('node:fs');
+    const dir = join(runtimeDir, 'mcp-pipelines');
+    mk(dir, { recursive: true });
+    // One valid + one malformed.
+    const good = {
+      apiVersion: 'llamactl/v1',
+      kind: 'PipelineTool',
+      name: 'llamactl.pipeline.good',
+      title: 'Good',
+      description: 'valid pipeline',
+      inputSchema: {
+        type: 'object',
+        properties: { input: { type: 'string' } },
+        required: ['input'],
+      },
+      stages: [{ node: 'local', model: 'm1', systemPrompt: '', capabilities: [] }],
+    };
+    writeFileSync(join(dir, 'good.json'), JSON.stringify(good), 'utf8');
+    writeFileSync(join(dir, 'bad.json'), '{not valid json', 'utf8');
+    writeFileSync(
+      join(dir, 'missing-kind.json'),
+      JSON.stringify({ apiVersion: 'llamactl/v1', name: 'x' }),
+      'utf8',
+    );
+
+    const { client } = await connected();
+    const list = await client.listTools();
+    const names = list.tools.map((t) => t.name);
+    expect(names).toContain('llamactl.pipeline.good');
+    expect(names).not.toContain('llamactl.pipeline.x');
+  });
+
+  test('empty pipelines dir does not break tool registration', async () => {
+    // No LLAMACTL_MCP_PIPELINES_DIR content; MCP server boots cleanly
+    // and the baseline 18 llamactl.* tools remain advertised.
+    const { client } = await connected();
+    const list = await client.listTools();
+    const llamactlTools = list.tools
+      .map((t) => t.name)
+      .filter((n) => n.startsWith('llamactl.') && !n.startsWith('llamactl.pipeline.'));
+    expect(llamactlTools.length).toBe(18);
   });
 });
