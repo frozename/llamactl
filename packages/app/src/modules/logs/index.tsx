@@ -11,6 +11,8 @@ import { trpc } from '@/lib/trpc';
 
 const MAX_BUFFER_LINES = 2000;
 
+type ConnState = 'connecting' | 'live' | 'error' | 'idle';
+
 export default function Logs(): React.JSX.Element {
   const [lines, setLines] = useState<string[]>([]);
   const [follow, setFollow] = useState(true);
@@ -18,12 +20,17 @@ export default function Logs(): React.JSX.Element {
   const [subKey, setSubKey] = useState(0);
   const [autoscroll, setAutoscroll] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [conn, setConn] = useState<ConnState>('connecting');
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   trpc.serverLogs.useSubscription(
     { lines: historyLines, follow },
     {
       enabled: true,
+      onStarted: () => {
+        setConn(follow ? 'live' : 'idle');
+        setError(null);
+      },
       onData: (evt) => {
         const e = evt as { type?: string; line?: string };
         if (e.type === 'line' && typeof e.line === 'string') {
@@ -36,7 +43,10 @@ export default function Logs(): React.JSX.Element {
           });
         }
       },
-      onError: (err) => setError(err.message),
+      onError: (err) => {
+        setError(err.message);
+        setConn('error');
+      },
       // The sub key forces the hook to tear down and recreate the
       // subscription when the user toggles follow or changes the
       // history window — tRPC v11 only re-subscribes when the input
@@ -59,8 +69,26 @@ export default function Logs(): React.JSX.Element {
   function restart(): void {
     setLines([]);
     setError(null);
+    setConn('connecting');
     setSubKey((k) => k + 1);
   }
+
+  const connDotClass =
+    conn === 'live'
+      ? 'bg-[var(--color-success)]'
+      : conn === 'error'
+        ? 'bg-[var(--color-danger)]'
+        : conn === 'connecting'
+          ? 'bg-[var(--color-accent)]'
+          : 'bg-[var(--color-fg-muted)]';
+  const connLabel =
+    conn === 'live'
+      ? 'streaming'
+      : conn === 'error'
+        ? 'error'
+        : conn === 'connecting'
+          ? 'connecting'
+          : 'idle';
 
   return (
     <div className="flex h-full flex-col p-6" data-testid="logs-root">
@@ -75,12 +103,22 @@ export default function Logs(): React.JSX.Element {
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs">
+          <span
+            data-testid="logs-conn"
+            data-state={conn}
+            className="flex items-center gap-1 text-[color:var(--color-fg-muted)]"
+            title={error ?? `subscription ${connLabel}`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${connDotClass}`} />
+            {connLabel}
+          </span>
           <label className="flex items-center gap-1 text-[color:var(--color-fg-muted)]">
             <input
               type="checkbox"
               checked={follow}
               onChange={(e) => {
                 setFollow(e.target.checked);
+                setConn('connecting');
                 setSubKey((k) => k + 1);
               }}
             />

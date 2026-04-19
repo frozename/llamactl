@@ -105,9 +105,19 @@ export default function LMStudio(): React.JSX.Element {
                 })
               }
               disabled={busy || actionableCount === 0}
-              className="w-full rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:opacity-50"
+              data-testid="lmstudio-import"
+              className="w-full rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              title={
+                actionableCount === 0
+                  ? 'No candidates ready to import — scan a root with .gguf files first.'
+                  : `Import ${actionableCount} candidate${actionableCount === 1 ? '' : 's'} into $LLAMA_CPP_MODELS.`
+              }
             >
-              {busy ? 'Importing…' : `Import ${actionableCount}`}
+              {busy
+                ? 'Importing…'
+                : actionableCount === 0
+                  ? 'Nothing to import'
+                  : `Import ${actionableCount}`}
             </button>
           </div>
         </div>

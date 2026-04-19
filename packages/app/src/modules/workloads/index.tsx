@@ -483,8 +483,28 @@ export default function Workloads(): React.JSX.Element {
       <ReconcilerToolbar />
       <div className="space-y-2">
         {rows.length === 0 && (
-          <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 text-xs text-[color:var(--color-fg-muted)]">
-            (no workloads registered — click Apply workload to add one)
+          <div
+            data-testid="workloads-empty"
+            className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6"
+          >
+            <h2 className="text-sm font-semibold text-[color:var(--color-fg)]">
+              Declare a workload to self-heal
+            </h2>
+            <p className="mt-1 text-xs text-[color:var(--color-fg-muted)]">
+              A <span className="font-mono">ModelRun</span> manifest pins a model
+              to a node. The reconciler keeps it running, restarts it on crash,
+              and corrects drift when extra args change. Use it for long-lived
+              endpoints that shouldn't depend on someone typing{' '}
+              <span className="font-mono">llamactl server start</span>.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowApply(true)}
+              data-testid="workloads-apply"
+              className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg-inverted)]"
+            >
+              Apply workload
+            </button>
           </div>
         )}
         {rows.map((row) => (
