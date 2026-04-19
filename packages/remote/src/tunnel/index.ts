@@ -23,4 +23,7 @@ export {
   createTunnelClient,
   type TunnelClient,
   type TunnelClientOptions,
+  type TunnelState,
+  type TunnelReconnectConfig,
+  type TunnelHeartbeatConfig,
 } from './tunnel-client.js';
