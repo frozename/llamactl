@@ -19,6 +19,13 @@ type Preset = (typeof PRESETS)[number];
 
 type ClassFilter = 'all' | 'reasoning' | 'multimodal' | 'general' | 'custom';
 
+function fmtTps(raw: string | undefined | null): string {
+  if (raw == null || raw === '') return '—';
+  const n = Number.parseFloat(raw);
+  if (!Number.isFinite(n)) return '—';
+  return n.toFixed(1);
+}
+
 export default function Presets(): React.JSX.Element {
   const queryClient = useQueryClient();
   const promotions = trpc.promotions.useQuery();
@@ -195,8 +202,8 @@ export default function Presets(): React.JSX.Element {
             <tbody>
               {candidates.map((row) => {
                 const isPending = pendingRel === row.rel;
-                const gen = row.tuned?.gen_tps ?? '';
-                const pt = row.tuned?.prompt_tps ?? '';
+                const gen = fmtTps(row.tuned?.gen_tps);
+                const pt = fmtTps(row.tuned?.prompt_tps);
                 return (
                   <tr
                     key={row.rel}
@@ -207,8 +214,8 @@ export default function Presets(): React.JSX.Element {
                     <td className="px-3 py-2 text-[color:var(--color-fg-muted)]">
                       {row.installed ? 'yes' : 'no'}
                     </td>
-                    <td className="px-3 py-2 text-right">{gen || '—'}</td>
-                    <td className="px-3 py-2 text-right text-[color:var(--color-fg-muted)]">{pt || '—'}</td>
+                    <td className="px-3 py-2 text-right">{gen}</td>
+                    <td className="px-3 py-2 text-right text-[color:var(--color-fg-muted)]">{pt}</td>
                     <td className="px-3 py-2 text-right">
                       {isPending ? (
                         <span className="inline-flex items-center gap-1 text-[11px]">
