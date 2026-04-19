@@ -28,3 +28,5 @@ export * as workloadStore from './workload/store.js';
 export * as workloadApply from './workload/apply.js';
 export * as workloadLock from './workload/lock.js';
 export * as workloadReconciler from './workload/reconciler.js';
+export * as infraLayout from './infra/layout.js';
+export * as infraInstall from './infra/install.js';
