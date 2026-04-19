@@ -1,4 +1,5 @@
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
+import type { GatewayDispatch } from './gateway-handlers/types.js';
 
 /**
  * Structural subset of `NodeClient` that `applyOne` actually touches.
@@ -151,31 +152,40 @@ export async function applyOne(
   manifest: ModelRun,
   getClient: (nodeName: string) => WorkloadClient,
   onEvent?: (e: ApplyEvent) => void,
+  gatewayDispatch?: GatewayDispatch,
 ): Promise<ApplyResult> {
   if (manifest.spec.gateway) {
-    const now = new Date().toISOString();
-    const msg =
-      `gateway workload targeting '${manifest.spec.node}': ` +
-      `registry wiring lands in a follow-up — manifest is validated and tracked but no upstream mutation yet`;
-    onEvent?.({ type: 'gateway-pending', message: `${manifest.metadata.name}: ${msg}` });
-    return {
-      action: 'pending',
-      statusSection: {
-        phase: 'Pending',
-        serverPid: null,
-        endpoint: null,
-        lastTransitionTime: now,
-        conditions: [
-          {
-            type: 'Applied',
-            status: 'False',
-            reason: 'GatewayRegistrationPending',
-            message: msg,
-            lastTransitionTime: now,
-          },
-        ],
-      },
-    };
+    if (gatewayDispatch) {
+      const dispatched = await gatewayDispatch({ manifest, getClient, onEvent });
+      // `null` from the dispatcher is the agent-gateway fallthrough
+      // sentinel — spec.gateway:true pointed at an agent-kind node
+      // runs through the regular serverStart path below.
+      if (dispatched !== null) return dispatched;
+    } else {
+      const now = new Date().toISOString();
+      const msg =
+        `gateway workload targeting '${manifest.spec.node}': ` +
+        `no gateway dispatcher provided — manifest validated but no upstream mutation performed`;
+      onEvent?.({ type: 'gateway-pending', message: `${manifest.metadata.name}: ${msg}` });
+      return {
+        action: 'pending',
+        statusSection: {
+          phase: 'Pending',
+          serverPid: null,
+          endpoint: null,
+          lastTransitionTime: now,
+          conditions: [
+            {
+              type: 'Applied',
+              status: 'False',
+              reason: 'GatewayRegistrationPending',
+              message: msg,
+              lastTransitionTime: now,
+            },
+          ],
+        },
+      };
+    }
   }
   const client = getClient(manifest.spec.node);
   const status = await client.serverStatus.query();
