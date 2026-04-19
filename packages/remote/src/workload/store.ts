@@ -75,7 +75,25 @@ export function listWorkloadNames(
 export function listWorkloads(
   dir: string = defaultWorkloadsDir(),
 ): ModelRun[] {
-  return listWorkloadNames(dir).map((name) => loadWorkloadByName(name, dir));
+  // Kind-filter: NodeRun manifests also live in this directory
+  // (Phase I.4). Skip anything that isn't `kind: ModelRun`
+  // rather than letting Zod throw on a NodeRun-shaped file.
+  if (!existsSync(dir)) return [];
+  const out: ModelRun[] = [];
+  for (const entry of readdirSync(dir)) {
+    if (!entry.endsWith('.yaml')) continue;
+    const path = join(dir, entry);
+    try {
+      const raw = readFileSync(path, 'utf8');
+      const parsed = parseYaml(raw) as { kind?: string } | null;
+      if (parsed?.kind !== 'ModelRun') continue;
+      out.push(ModelRunSchema.parse(parsed));
+    } catch {
+      // Malformed files surface via `llamactl describe workload <n>`
+      // where the operator gets a real error message.
+    }
+  }
+  return out.sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 }
 
 export function deleteWorkload(

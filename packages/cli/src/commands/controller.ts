@@ -1,8 +1,10 @@
 import {
+  noderunReconciler,
   workloadLock,
   workloadReconciler,
 } from '@llamactl/remote';
 import { getNodeClientByName } from '../dispatcher.js';
+import { makeSpecArtifactResolver } from './noderun-helpers.js';
 
 const USAGE = `Usage: llamactl controller serve [--interval=<s>] [--once]
 
@@ -91,24 +93,39 @@ export async function runController(args: string[]): Promise<number> {
   process.on('SIGTERM', onSignal);
 
   const runOnePass = async (): Promise<void> => {
-    const result = await workloadReconciler.reconcileOnce({
+    // ModelRun pass — converges llama-server lifecycle per manifest.
+    const modelrunResult = await workloadReconciler.reconcileOnce({
       workloadsDir,
       getClient: (nodeName) => getNodeClientByName(nodeName),
       onEvent: (e) => {
         process.stdout.write(`[${new Date().toISOString()}] ${e.name}: ${e.message}\n`);
       },
     });
-    if (result.reports.length === 0) {
+    // NodeRun pass — converges infra inventory per manifest.
+    const noderunResult = await noderunReconciler.reconcileNodeRunsOnce({
+      workloadsDir,
+      getClient: (nodeName) => getNodeClientByName(nodeName),
+      getArtifactResolver: (_node, client) =>
+        makeSpecArtifactResolver({ client: client as unknown as Parameters<typeof makeSpecArtifactResolver>[0]['client'] }),
+      onReport: (r) => {
+        const tail = r.error ? ` error=${r.error}` : '';
+        const actions = r.actions > 0 ? ` actions=${r.actions}` : '';
+        process.stdout.write(
+          `[${new Date().toISOString()}] noderun/${r.name} on ${r.node}: ${r.phase}${actions}${tail}\n`,
+        );
+      },
+    });
+    if (modelrunResult.reports.length === 0 && noderunResult.reports.length === 0) {
       process.stdout.write(
         `[${new Date().toISOString()}] idle (no manifests in ${workloadsDir})\n`,
       );
-    } else {
-      for (const r of result.reports) {
-        const tail = r.error ? ` error=${r.error}` : '';
-        process.stdout.write(
-          `[${new Date().toISOString()}] ${r.name} on ${r.node}: ${r.action}${tail}\n`,
-        );
-      }
+      return;
+    }
+    for (const r of modelrunResult.reports) {
+      const tail = r.error ? ` error=${r.error}` : '';
+      process.stdout.write(
+        `[${new Date().toISOString()}] modelrun/${r.name} on ${r.node}: ${r.action}${tail}\n`,
+      );
     }
   };
 

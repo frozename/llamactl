@@ -31,6 +31,8 @@ export * as workloadReconciler from './workload/reconciler.js';
 export * as noderunSchema from './workload/noderun-schema.js';
 export * as noderunStore from './workload/noderun-store.js';
 export * as noderunApply from './workload/noderun-apply.js';
+export * as noderunReconciler from './workload/noderun-reconciler.js';
 export * as infraLayout from './infra/layout.js';
 export * as infraInstall from './infra/install.js';
 export * as infraSpec from './infra/spec.js';
+export * as infraServices from './infra/services.js';
