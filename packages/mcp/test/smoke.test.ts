@@ -71,6 +71,17 @@ describe('@llamactl/mcp read surface', () => {
     const { client } = await connected();
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name).sort();
+    // Also assert that every llamactl.* tool (minus the two we
+    // intentionally skip today) is wired into the Ops Chat dispatch.
+    // Drift here = N.4 UI 404s on a tool the MCP server advertises.
+    const { KNOWN_OPS_CHAT_TOOLS } = await import('@llamactl/remote');
+    const INTENTIONALLY_EXCLUDED = new Set([
+      'llamactl.embersynth.sync',
+      'llamactl.embersynth.set-default-profile',
+    ]);
+    const mcpEligible = names.filter((n) => !INTENTIONALLY_EXCLUDED.has(n)).sort();
+    expect(mcpEligible).toEqual([...KNOWN_OPS_CHAT_TOOLS].sort());
+
     expect(names).toEqual([
       'llamactl.bench.compare',
       'llamactl.bench.history',

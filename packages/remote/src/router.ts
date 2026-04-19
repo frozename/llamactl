@@ -38,6 +38,16 @@ import {
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import {
+  KNOWN_OPS_CHAT_TOOLS,
+  dispatchOpsChatTool,
+} from './ops-chat/dispatch.js';
+import {
+  appendOpsChatAudit,
+  hashArguments,
+  readOpsChatAudit,
+  type OpsChatAuditEntry,
+} from './ops-chat/audit.js';
 
 /**
  * Router↔client circular-type escape hatch — the `AppRouter → NodeClient
@@ -1902,6 +1912,63 @@ export const router = t.router({
         stageCount: input.stages.length,
       };
     }),
+
+  /**
+   * N.4 — Ops Chat tool dispatch.
+   *
+   * Takes an MCP-style tool name + arguments and runs the equivalent
+   * tRPC procedure via `createCaller` (in-proc, no HTTP). Every call
+   * appends one audit entry to `~/.llamactl/ops-chat/audit.jsonl`
+   * (override via `LLAMACTL_OPS_CHAT_AUDIT`). Supported tools are
+   * enumerated in `KNOWN_OPS_CHAT_TOOLS`; anything else returns a
+   * structured `unknown_tool` error without throwing.
+   */
+  opsChatTools: t.procedure.query(() => ({
+    tools: KNOWN_OPS_CHAT_TOOLS,
+  })),
+
+  operatorRunTool: t.procedure
+    .input(
+      z.object({
+        name: z.string().min(1),
+        arguments: z.record(z.string(), z.unknown()).default({}),
+        dryRun: z.boolean().default(false),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const caller = router.createCaller({});
+      const dispatched = await dispatchOpsChatTool(caller, {
+        name: input.name,
+        arguments: input.arguments,
+        dryRun: input.dryRun,
+      });
+      const entry: OpsChatAuditEntry = {
+        ts: new Date().toISOString(),
+        tool: input.name,
+        dryRun: input.dryRun,
+        argumentsHash: hashArguments(input.arguments),
+        ok: dispatched.ok,
+        durationMs: dispatched.durationMs,
+        ...(dispatched.ok
+          ? {}
+          : {
+              errorCode: dispatched.error?.code ?? 'dispatch_error',
+              errorMessage: dispatched.error?.message ?? '(no message)',
+            }),
+      };
+      appendOpsChatAudit(entry);
+      return dispatched;
+    }),
+
+  opsChatAuditTail: t.procedure
+    .input(
+      z
+        .object({
+          limit: z.number().int().positive().max(500).default(100),
+        })
+        .default({ limit: 100 }),
+    )
+    .query(({ input }) => readOpsChatAudit({ limit: input.limit })),
 });
 
 export type AppRouter = typeof router;

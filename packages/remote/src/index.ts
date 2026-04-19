@@ -39,3 +39,15 @@ export * as infraInstall from './infra/install.js';
 export * as infraSpec from './infra/spec.js';
 export * as infraServices from './infra/services.js';
 export * as infraArtifactsFetch from './infra/artifacts-fetch.js';
+export {
+  KNOWN_OPS_CHAT_TOOLS,
+  toolTier as opsChatToolTier,
+  dispatchOpsChatTool,
+  type OpsChatToolName,
+  type ToolTier as OpsChatTier,
+} from './ops-chat/dispatch.js';
+export {
+  appendOpsChatAudit,
+  readOpsChatAudit,
+  type OpsChatAuditEntry,
+} from './ops-chat/audit.js';
