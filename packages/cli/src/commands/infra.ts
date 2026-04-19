@@ -1,37 +1,64 @@
+import { infraSpec } from '@llamactl/remote';
 import { getNodeClient } from '../dispatcher.js';
+
+type InfraPlatformKind = infraSpec.InfraPlatformKind;
+const ALLOWED_PLATFORMS: InfraPlatformKind[] = [
+  'darwin-arm64',
+  'darwin-x64',
+  'linux-x64',
+  'linux-arm64',
+];
+
+function platformFromNodeFacts(facts: {
+  os?: string;
+  arch?: string;
+}): InfraPlatformKind | null {
+  const os = facts.os;
+  const arch = facts.arch;
+  if (os === 'darwin' && arch === 'arm64') return 'darwin-arm64';
+  if (os === 'darwin' && arch === 'x64') return 'darwin-x64';
+  if (os === 'linux' && arch === 'x64') return 'linux-x64';
+  if (os === 'linux' && arch === 'arm64') return 'linux-arm64';
+  return null;
+}
 
 const USAGE = `llamactl infra — install + manage infra packages on nodes
 
 USAGE:
   llamactl infra list                                    [--node <n>]
+  llamactl infra install <pkg> --version=<v>             [--node <n>]
+                                                         [--target-platform=<p>]
+                                                         [--packages-dir=<path>]
+                                                         [--no-activate] [--force]
   llamactl infra install <pkg> --version=<v>             --tarball-url=<url> --sha256=<hex>
                                                          [--node <n>] [--no-activate]
                                                          [--force]
   llamactl infra activate <pkg> --version=<v>            [--node <n>]
   llamactl infra uninstall <pkg> [--version=<v>]         [--node <n>]
   llamactl infra current <pkg>                           [--node <n>]
+  llamactl infra list-specs [--packages-dir=<path>]
 
-All subcommands route through the global --node flag — the operation
+When --tarball-url + --sha256 are omitted, central looks up the pkg
+spec under <LLAMACTL_INFRA_PACKAGES_DIR or DEV_STORAGE/packages or
+~/.llamactl/packages>/<pkg>.yaml and derives the artifact for the
+target node's os/arch (or --target-platform override). All
+subcommands route through the global --node flag — the operation
 executes on that node's agent. Default node is the current context's
-default (usually \`local\`).
+default (usually 'local').
 
 EXAMPLES:
-  llamactl infra list --node gpu1
+  # Spec-driven (recommended)
+  llamactl infra install llama-cpp --version=b4500 --node=gpu1
+
+  # Ad-hoc override
   llamactl infra install llama-cpp --version=b4500 \\
       --tarball-url=https://.../llama-cpp-b4500-darwin-arm64.tar.gz \\
       --sha256=abcd... --node=gpu1
+
+  llamactl infra list-specs
   llamactl infra activate llama-cpp --version=b4500 --node=gpu1
   llamactl infra uninstall llama-cpp --version=b4500 --node=gpu1
 `;
-
-interface InstallArgs {
-  pkg: string;
-  version: string;
-  tarballUrl: string;
-  sha256: string;
-  activate: boolean;
-  skipIfPresent: boolean;
-}
 
 function parseKv(argv: string[]): Map<string, string> {
   const out = new Map<string, string>();
@@ -67,6 +94,40 @@ async function runList(): Promise<number> {
   return 0;
 }
 
+async function resolveFromSpec(
+  pkg: string,
+  version: string,
+  platformOverride: InfraPlatformKind | null,
+  packagesDir: string | undefined,
+  client: ReturnType<typeof getNodeClient>,
+): Promise<{ tarballUrl: string; sha256: string } | { error: string }> {
+  let spec;
+  try {
+    spec = infraSpec.loadInfraPackageSpec(pkg, packagesDir);
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+  let platform = platformOverride;
+  if (!platform) {
+    // Ask the node for its os/arch; derive the platform key.
+    const facts = await client.nodeFacts.query();
+    platform = platformFromNodeFacts(facts);
+    if (!platform) {
+      return {
+        error: `infra install: could not derive target platform from node facts (os=${facts.os}, arch=${facts.arch}). Pass --target-platform=<p>.`,
+      };
+    }
+  }
+  const resolved = infraSpec.resolveInfraArtifact(spec, version, platform);
+  if (!resolved.ok) {
+    return { error: `infra install: ${resolved.message}` };
+  }
+  return {
+    tarballUrl: resolved.artifact.url,
+    sha256: resolved.artifact.sha256,
+  };
+}
+
 async function runInstall(argv: string[]): Promise<number> {
   const [pkg] = positionalArgs(argv);
   if (!pkg) {
@@ -74,29 +135,52 @@ async function runInstall(argv: string[]): Promise<number> {
     return 1;
   }
   const kv = parseKv(argv);
-  const required: Array<keyof InstallArgs> = ['version', 'tarballUrl', 'sha256'];
-  const args: Partial<InstallArgs> = {
-    pkg,
-    version: kv.get('version'),
-    tarballUrl: kv.get('tarball-url'),
-    sha256: kv.get('sha256'),
-    activate: !kv.has('no-activate'),
-    skipIfPresent: !kv.has('force'),
-  };
-  for (const field of required) {
-    if (!args[field]) {
-      process.stderr.write(`infra install: --${field === 'tarballUrl' ? 'tarball-url' : field} is required\n`);
-      return 1;
-    }
+  const version = kv.get('version');
+  if (!version) {
+    process.stderr.write('infra install: --version is required\n');
+    return 1;
   }
   const client = getNodeClient();
+
+  // Two paths:
+  //   (a) explicit --tarball-url + --sha256 — legacy/ad-hoc path.
+  //   (b) otherwise, resolve from ~/.llamactl/packages/<pkg>.yaml
+  //       against the node's os/arch (or a --target-platform override).
+  let tarballUrl = kv.get('tarball-url');
+  let sha256 = kv.get('sha256');
+  if (!tarballUrl || !sha256) {
+    const platformArg = kv.get('target-platform');
+    if (platformArg && !ALLOWED_PLATFORMS.includes(platformArg as InfraPlatformKind)) {
+      process.stderr.write(
+        `infra install: --target-platform must be one of ${ALLOWED_PLATFORMS.join(', ')}\n`,
+      );
+      return 1;
+    }
+    const packagesDir = kv.get('packages-dir');
+    const resolved = await resolveFromSpec(
+      pkg,
+      version,
+      (platformArg as InfraPlatformKind | undefined) ?? null,
+      packagesDir,
+      client,
+    );
+    if ('error' in resolved) {
+      process.stderr.write(`${resolved.error}\n`);
+      return 1;
+    }
+    tarballUrl = resolved.tarballUrl;
+    sha256 = resolved.sha256;
+  }
+
+  const activate = !kv.has('no-activate');
+  const skipIfPresent = !kv.has('force');
   const result = await client.infraInstall.mutate({
     pkg,
-    version: args.version!,
-    tarballUrl: args.tarballUrl!,
-    sha256: args.sha256!,
-    activate: args.activate!,
-    skipIfPresent: args.skipIfPresent!,
+    version,
+    tarballUrl,
+    sha256,
+    activate,
+    skipIfPresent,
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   return result.ok ? 0 : 1;
@@ -136,6 +220,23 @@ async function runUninstall(argv: string[]): Promise<number> {
   return 0;
 }
 
+function runListSpecs(argv: string[]): number {
+  const kv = parseKv(argv);
+  const dir = kv.get('packages-dir');
+  const specs = infraSpec.listInfraPackageSpecs(dir);
+  if (specs.length === 0) {
+    const resolved = dir ?? infraSpec.defaultInfraPackagesDir();
+    process.stdout.write(`no specs under ${resolved}\n`);
+    return 0;
+  }
+  for (const s of specs) {
+    const versions = s.versions.join(',');
+    const def = s.default ? `default=${s.default}` : 'default=(unset)';
+    process.stdout.write(`${s.name}\tversions=${versions}\t${def}\t${s.path}\n`);
+  }
+  return 0;
+}
+
 async function runCurrent(argv: string[]): Promise<number> {
   const [pkg] = positionalArgs(argv);
   if (!pkg) {
@@ -169,6 +270,8 @@ export async function runInfra(argv: string[]): Promise<number> {
       return runUninstall(rest);
     case 'current':
       return runCurrent(rest);
+    case 'list-specs':
+      return runListSpecs(rest);
     default:
       process.stderr.write(`infra: unknown subcommand ${sub}\n\n${USAGE}`);
       return 1;

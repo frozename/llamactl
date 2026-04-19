@@ -30,3 +30,4 @@ export * as workloadLock from './workload/lock.js';
 export * as workloadReconciler from './workload/reconciler.js';
 export * as infraLayout from './infra/layout.js';
 export * as infraInstall from './infra/install.js';
+export * as infraSpec from './infra/spec.js';
