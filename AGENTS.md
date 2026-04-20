@@ -213,6 +213,47 @@ The journal at `~/.llamactl/healer/journal.jsonl` (override with
 `--journal` or `LLAMACTL_HEALER_JOURNAL`) is the audit trail. Keep
 it rotated; the loop appends, never truncates.
 
+## Cost guardian (`llamactl cost-guardian`, N.3)
+
+Base usage:
+
+```bash
+llamactl cost-guardian tick [--config=<path>] [--journal=<path>] [--skip-journal]
+```
+
+Each tick calls `nova.ops.cost.snapshot`, runs the pure tier state
+machine (noop / warn / force_private / deregister), journals the
+decision, and prints it. Config is read from
+`~/.llamactl/cost-guardian.yaml` (override: `--config` or
+`LLAMACTL_COST_GUARDIAN_CONFIG`).
+
+Auto-execution flags:
+
+- `--auto` — equivalent to `--auto-tier-2 --auto-tier-3`. Enables
+  both mutation-tier wet-runs.
+- `--auto-tier-2` — overrides `config.auto_force_private` to true.
+  When on, a successful tier-2 dry-run preview is followed in the
+  same tick by a wet-run call to
+  `llamactl.embersynth.set-default-profile` (profile
+  `private-first`).
+- `--auto-tier-3` — overrides `config.auto_deregister` to true.
+  When on, a successful tier-3 dry-run preview is followed in the
+  same tick by a wet-run call to `sirius.providers.deregister`,
+  unless the target provider's name appears in
+  `config.protectedProviders` (default `['fleet-internal']`).
+
+Behavior: every tick journals a dry-run preview before anything
+irreversible happens. The auto flags gate whether the matching
+wet-run follows. The tier-3 denylist always refuses regardless of
+flag state — matching names journal a
+`deregister-refused` entry with `reason: 'provider-protected'`.
+A failed tier-2 wet-run stops the same tick — no tier-3 escalation
+follows a tier-2 failure in a single tick.
+
+The cost journal at `~/.llamactl/healer/cost-journal.jsonl`
+(override with `--journal` or `LLAMACTL_COST_JOURNAL`) captures
+every decision, preview, wet-run outcome, refusal, and failure.
+
 ## Testing
 
 - `bun:test` everywhere.
