@@ -20,6 +20,8 @@ import {
   type InstallScriptHandlerOptions,
 } from './install-script.js';
 import { handleArtifact, type ArtifactsHandlerOptions } from './artifacts.js';
+import { handleTunnelRelay } from './tunnel-relay.js';
+import { createTunnelServer, type TunnelServer } from '../tunnel/index.js';
 
 export interface StartAgentOptions {
   bindHost?: string;          // default '127.0.0.1'
@@ -51,6 +53,20 @@ export interface StartAgentOptions {
   installScriptOptions?: InstallScriptHandlerOptions;
   /** Tempdir injection for /artifacts/* in tests. */
   artifactsOptions?: ArtifactsHandlerOptions;
+  /**
+   * When set, agent mounts the reverse-tunnel upgrade handler at
+   * `/tunnel` and the HTTP relay at `/tunnel-relay/<nodeName>`.
+   * Agents that dial in use this agent as their central.
+   * See packages/remote/src/tunnel/README or radiant-converging-knuth.md §I.3.
+   */
+  tunnelCentral?: {
+    /** SHA-256 hex of the bearer tunnel clients present in their
+     *  first hello frame. Distinct from tokenHash — tunnel bearers
+     *  are a separate credential. */
+    expectedBearerHash: string;
+    onNodeConnect?: (nodeName: string) => void;
+    onNodeDisconnect?: (nodeName: string, reason: string) => void;
+  };
 }
 
 export interface RunningAgent {
@@ -58,6 +74,8 @@ export interface RunningAgent {
   port: number;
   fingerprint: string | null;
   stop: () => Promise<void>;
+  /** Present only when StartAgentOptions.tunnelCentral was set. */
+  tunnelServer?: TunnelServer;
 }
 
 /**
@@ -78,6 +96,14 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     },
     1,
   );
+
+  const tunnelServer: TunnelServer | null = opts.tunnelCentral
+    ? createTunnelServer({
+        expectedBearerHash: opts.tunnelCentral.expectedBearerHash,
+        onNodeConnect: opts.tunnelCentral.onNodeConnect,
+        onNodeDisconnect: opts.tunnelCentral.onNodeDisconnect,
+      })
+    : null;
 
   async function handleOpenAI(req: Request, url: URL): Promise<Response> {
     if (!verifyBearer(req, opts.tokenHash)) {
@@ -106,11 +132,29 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     }
   }
 
-  const fetchHandler = (req: Request): Response | Promise<Response> => {
+  const fetchHandler = (
+    req: Request,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    server: any,
+  ): Response | Promise<Response> => {
     const url = new URL(req.url);
     opts.onRequest?.(url);
     if (url.pathname === '/healthz') {
       return new Response('ok', { status: 200 });
+    }
+    // Reverse-tunnel endpoints — gated on opts.tunnelCentral. Both
+    // are no-ops when tunnelServer is null (falls through to 404).
+    // handleUpgrade returns undefined on a successful upgrade (Bun
+    // owns the response) and a 400 Response on upgrade failure. The
+    // 101 placeholder is unreachable when the upgrade succeeded
+    // (Bun has already taken over the socket); it satisfies the
+    // typed Response return shape for the fetch handler.
+    if (url.pathname === '/tunnel' && tunnelServer) {
+      const upgradeRes = tunnelServer.handleUpgrade(req, server);
+      return upgradeRes ?? new Response(null, { status: 101 });
+    }
+    if (url.pathname.startsWith('/tunnel-relay/') && tunnelServer) {
+      return handleTunnelRelay(req, url, tunnelServer, opts.tokenHash);
     }
     // Bootstrap registration — unauthenticated by design (nodes have
     // no bearer yet; that's what this endpoint mints). Consumes a
@@ -173,22 +217,38 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     });
   };
 
-  const baseOptions = {
-    port,
-    hostname: bindHost,
-    fetch: fetchHandler,
-  };
   let fingerprint: string | null = null;
+  // Bun.serve's option type discriminates on whether `websocket` is
+  // present, so we can't share a single literal with `websocket?:`
+  // optional — the ws-and-no-ws branches construct separately.
+  const wsConfig = tunnelServer ? tunnelServer.websocket : null;
   const server = opts.tls
     ? (() => {
         const loaded = loadCert(opts.tls);
         fingerprint = loaded.fingerprint;
-        return Bun.serve({
-          ...baseOptions,
-          tls: { cert: loaded.certPem, key: loaded.keyPem },
-        });
+        return wsConfig
+          ? Bun.serve({
+              port,
+              hostname: bindHost,
+              fetch: fetchHandler,
+              websocket: wsConfig,
+              tls: { cert: loaded.certPem, key: loaded.keyPem },
+            })
+          : Bun.serve({
+              port,
+              hostname: bindHost,
+              fetch: fetchHandler,
+              tls: { cert: loaded.certPem, key: loaded.keyPem },
+            });
       })()
-    : Bun.serve(baseOptions);
+    : wsConfig
+      ? Bun.serve({
+          port,
+          hostname: bindHost,
+          fetch: fetchHandler,
+          websocket: wsConfig,
+        })
+      : Bun.serve({ port, hostname: bindHost, fetch: fetchHandler });
 
   const scheme = opts.tls ? 'https' : 'http';
   const listenPort = server.port ?? port;
@@ -218,5 +278,6 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       await mdns?.stop().catch(() => {});
       server.stop(true);
     },
+    ...(tunnelServer ? { tunnelServer } : {}),
   };
 }
