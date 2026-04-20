@@ -52,6 +52,7 @@ export default function LMStudio(): React.JSX.Element {
 
   const items = plan.data?.items ?? [];
   const root = plan.data?.root;
+  const defaultRoot = plan.data?.defaultRoot;
   const busy = importMutation.isPending;
   const actionableCount = items.filter(
     (i) => i.action === 'link-and-add' || i.action === 'add',
@@ -78,7 +79,7 @@ export default function LMStudio(): React.JSX.Element {
             <input
               value={rootOverride}
               onChange={(e) => setRootOverride(e.target.value)}
-              placeholder={root ?? '~/.lmstudio/models'}
+              placeholder={root ?? defaultRoot ?? ''}
               disabled={busy}
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
             />

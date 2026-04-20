@@ -51,6 +51,20 @@ export function detectLMStudioRoot(
   return null;
 }
 
+/**
+ * First candidate root the resolver would probe. Used by the UI as a
+ * placeholder so hermetic audits surface the profile-scoped path
+ * instead of the hardcoded `~/.lmstudio/models` literal. Always returns
+ * a non-empty string — under `$LLAMACTL_TEST_PROFILE` it's the
+ * profile-scoped dir; otherwise it's the production default.
+ */
+export function defaultLMStudioRoot(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const [first] = defaultRoots(env);
+  return first ?? join(homedir(), '.lmstudio', 'models');
+}
+
 export interface LMStudioModel {
   /** Absolute path to the .gguf file. */
   path: string;

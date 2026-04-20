@@ -281,6 +281,45 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
 }
 
 /**
+ * Subsystem directories that live under `$DEV_STORAGE` but aren't named
+ * in the resolver (they're composed at use-site by each module).
+ * Mirrored here so `ensureDirs` can precreate them in one pass, keeping
+ * hermetic test fixtures happy when they want to pre-seed files.
+ *
+ * Paths are mirrored (not imported) to avoid a core → agents / core →
+ * remote cycle. Grep-anchor each mirror to the canonical source:
+ *
+ * - healer:       packages/agents/src/healer/journal.ts
+ *                 (`defaultHealerJournalPath`, also shared by
+ *                 `packages/agents/src/cost-guardian/journal.ts`)
+ * - ops-chat:     packages/remote/src/ops-chat/paths.ts
+ *                 (`defaultOpsChatDir`)
+ * - workloads:    packages/remote/src/workload/store.ts
+ *                 (`defaultWorkloadsDir`)
+ * - mcp/pipelines: packages/remote/src/router.ts
+ *                  (`pipelineExportMcp` baseDir cascade)
+ * - mcp/audit:    node_modules/@nova/mcp-shared/src/audit.ts
+ *                 (`defaultAuditDir` — production uses homedir(), but
+ *                 hermetic test setups set `LLAMACTL_MCP_AUDIT_DIR` to
+ *                 `$DEV_STORAGE/mcp/audit`; precreate that path so
+ *                 fixtures can drop files into it without racing the
+ *                 first tool call's mkdir.)
+ * - tunnel:       packages/remote/src/tunnel/journal.ts
+ *                 (`defaultTunnelJournalPath`)
+ */
+function subsystemDirs(resolved: ResolvedEnv): string[] {
+  const devStorage = resolved.DEV_STORAGE;
+  return [
+    join(devStorage, 'healer'),
+    join(devStorage, 'ops-chat'),
+    join(devStorage, 'workloads'),
+    join(devStorage, 'mcp', 'pipelines'),
+    join(devStorage, 'mcp', 'audit'),
+    join(devStorage, 'tunnel'),
+  ];
+}
+
+/**
  * Side-effectful: create the directories llamactl operates inside. Pass
  * the original `env` so the test-profile case can also precreate the
  * (empty) bin dir — that keeps the PATH-prepend guard firing and means
@@ -294,6 +333,9 @@ export function ensureDirs(
   const dirs: string[] = MANAGED_DIRS.map((key) => resolved[key]).filter(
     (d): d is string => Boolean(d),
   );
+  // Subsystem directories composed at use-site by each module.
+  // Additive — no existing entry is replaced.
+  dirs.push(...subsystemDirs(resolved));
   // Under a test profile, also precreate the (empty) bin dir. No
   // behaviour change in production: this branch only runs when
   // $LLAMACTL_TEST_PROFILE is set.
@@ -343,6 +385,10 @@ export function formatEvalScript(
   const managed: string[] = MANAGED_DIRS.map((key) => resolved[key]).filter(
     (d): d is string => Boolean(d),
   );
+  // Keep the shell-emitted mkdir list in lockstep with `ensureDirs` so
+  // `eval "$(llamactl env --eval)"` precreates the same subsystem dirs
+  // (healer, ops-chat, workloads, mcp/pipelines, mcp/audit, tunnel).
+  managed.push(...subsystemDirs(resolved));
   if (env.LLAMACTL_TEST_PROFILE && env.LLAMACTL_TEST_PROFILE.length > 0) {
     managed.push(resolved.LLAMA_CPP_BIN);
   }

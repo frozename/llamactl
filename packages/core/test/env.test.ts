@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { formatEvalScript, resolveEnv } from '../src/env.js';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ensureDirs, formatEvalScript, resolveEnv } from '../src/env.js';
 
 describe('env.resolveEnv', () => {
   test('derives sensible defaults from just DEV_STORAGE', () => {
@@ -232,6 +235,79 @@ describe('env.resolveEnv — process.env seed shape', () => {
     for (const value of Object.values(resolved)) {
       expect(value).not.toBe(undefined);
       expect(value).not.toBe('undefined');
+    }
+  });
+});
+
+describe('env.ensureDirs — subsystem directories', () => {
+  /**
+   * Each subsystem (healer, ops-chat, workloads, mcp/pipelines,
+   * mcp/audit, tunnel) writes to `$DEV_STORAGE/<name>` at use-site.
+   * `ensureDirs` precreates them so test fixtures that pre-seed files
+   * don't trip on a missing parent directory.
+   */
+  test('creates every subsystem dir under $LLAMACTL_TEST_PROFILE', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'llamactl-ensuredirs-'));
+    try {
+      const env = {
+        LLAMACTL_TEST_PROFILE: profile,
+        LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
+      } as NodeJS.ProcessEnv;
+      const resolved = resolveEnv(env);
+      ensureDirs(resolved, env);
+
+      expect(existsSync(join(profile, 'healer'))).toBe(true);
+      expect(existsSync(join(profile, 'ops-chat'))).toBe(true);
+      expect(existsSync(join(profile, 'workloads'))).toBe(true);
+      expect(existsSync(join(profile, 'mcp', 'pipelines'))).toBe(true);
+      expect(existsSync(join(profile, 'mcp', 'audit'))).toBe(true);
+      expect(existsSync(join(profile, 'tunnel'))).toBe(true);
+    } finally {
+      rmSync(profile, { recursive: true, force: true });
+    }
+  });
+
+  test('still creates MANAGED_DIRS entries (regression guard)', () => {
+    const profile = mkdtempSync(join(tmpdir(), 'llamactl-ensuredirs-managed-'));
+    try {
+      const env = {
+        LLAMACTL_TEST_PROFILE: profile,
+        LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
+      } as NodeJS.ProcessEnv;
+      const resolved = resolveEnv(env);
+      ensureDirs(resolved, env);
+
+      // Pre-existing managed dirs must keep being created.
+      expect(existsSync(resolved.HF_HOME)).toBe(true);
+      expect(existsSync(resolved.LLAMA_CPP_MODELS)).toBe(true);
+      expect(existsSync(resolved.LLAMA_CPP_LOGS)).toBe(true);
+      expect(existsSync(resolved.LOCAL_AI_RUNTIME_DIR)).toBe(true);
+      // Under test profile, bin also gets precreated.
+      expect(existsSync(resolved.LLAMA_CPP_BIN)).toBe(true);
+    } finally {
+      rmSync(profile, { recursive: true, force: true });
+    }
+  });
+
+  test('creates subsystem dirs in production mode (no test profile)', () => {
+    const devStorage = mkdtempSync(join(tmpdir(), 'llamactl-ensuredirs-prod-'));
+    try {
+      const env = {
+        DEV_STORAGE: devStorage,
+        LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
+      } as NodeJS.ProcessEnv;
+      const resolved = resolveEnv(env);
+      ensureDirs(resolved, env);
+
+      // Subsystem dirs derive from DEV_STORAGE regardless of test profile.
+      expect(existsSync(join(devStorage, 'healer'))).toBe(true);
+      expect(existsSync(join(devStorage, 'ops-chat'))).toBe(true);
+      expect(existsSync(join(devStorage, 'workloads'))).toBe(true);
+      expect(existsSync(join(devStorage, 'mcp', 'pipelines'))).toBe(true);
+      expect(existsSync(join(devStorage, 'mcp', 'audit'))).toBe(true);
+      expect(existsSync(join(devStorage, 'tunnel'))).toBe(true);
+    } finally {
+      rmSync(devStorage, { recursive: true, force: true });
     }
   });
 });

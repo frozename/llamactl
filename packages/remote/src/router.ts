@@ -1348,9 +1348,16 @@ export const router = t.router({
         })
         .optional(),
     )
-    .query(({ input }) =>
-      lmstudioMod.planImport({ root: input?.root, link: input?.link }),
-    ),
+    .query(({ input }) => {
+      const plan = lmstudioMod.planImport({
+        root: input?.root,
+        link: input?.link,
+      });
+      // Surface the resolver's canonical default so the UI can show it
+      // as a placeholder without recomputing paths client-side. Under
+      // $LLAMACTL_TEST_PROFILE this re-roots to the profile-scoped dir.
+      return { ...plan, defaultRoot: lmstudioMod.defaultLMStudioRoot() };
+    }),
 
   lmstudioImport: t.procedure
     .input(

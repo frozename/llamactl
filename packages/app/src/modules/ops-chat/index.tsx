@@ -466,7 +466,12 @@ export default function OpsChat(): React.JSX.Element {
               click; mutations preview dry-first; destructive actions require
               the operator to type the tool name to confirm. Every attempt —
               dry, wet, successful, failed — appends one entry to
-              <span className="font-mono"> ~/.llamactl/ops-chat/audit.jsonl</span>.
+              {auditTail.data?.path ? (
+                <span className="font-mono"> {auditTail.data.path}</span>
+              ) : (
+                <span> the ops-chat audit journal</span>
+              )}
+              .
             </p>
           </div>
           {turns.length > 0 && (
@@ -680,9 +685,11 @@ export default function OpsChat(): React.JSX.Element {
         ) : (
           <p className="mt-2 text-[color:var(--color-fg-muted)]">
             No audit entries yet — run a step to start populating{' '}
-            <span className="font-mono">
-              {auditTail.data?.path ?? '~/.llamactl/ops-chat/audit.jsonl'}
-            </span>
+            {auditTail.data?.path ? (
+              <span className="font-mono">{auditTail.data.path}</span>
+            ) : (
+              <span>the ops-chat audit journal</span>
+            )}
             .
           </p>
         )}
