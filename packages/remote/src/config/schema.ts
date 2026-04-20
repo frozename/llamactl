@@ -76,9 +76,52 @@ export type CloudBinding = z.infer<typeof CloudBindingSchema>;
  *     `owned_by === providerName`. First-class targets for every
  *     feature (bench, workload, chat, logs) — no per-feature
  *     special cases.
+ *   * `rag`      — retrieval-augmented generation backend: vector
+ *     stores and knowledge bases (Chroma, pgvector, …). Exposes
+ *     `search` / `store` / `delete` / `listCollections` via the
+ *     `RetrievalProvider` contract in `@nova/contracts`. The `rag`
+ *     binding block selects the backend and carries endpoint / auth.
  */
-export const NodeKindSchema = z.enum(['agent', 'gateway', 'provider']);
+export const NodeKindSchema = z.enum(['agent', 'gateway', 'provider', 'rag']);
 export type NodeKind = z.infer<typeof NodeKindSchema>;
+
+/**
+ * Built-in RAG backends. `chroma` routes through chroma-mcp over
+ * stdio; `pgvector` is a native SQL adapter against Postgres + the
+ * pgvector extension. Future backends (Qdrant, Weaviate, …) extend
+ * this enum alongside their adapter.
+ */
+export const RagProviderKindSchema = z.enum(['chroma', 'pgvector']);
+export type RagProviderKind = z.infer<typeof RagProviderKindSchema>;
+
+/**
+ * RAG binding. Attaches to a `kind: 'rag'` node and tells the
+ * adapter factory how to reach the backend. `endpoint` is
+ * provider-specific: for `chroma` it's the chroma-mcp command
+ * (e.g. `chroma-mcp run --persist-directory /data/chroma`); for
+ * `pgvector` it's a `postgres://` URL. `auth.tokenEnv` / `tokenRef`
+ * keep credentials out of the persisted config; the adapter resolves
+ * them at call time.
+ */
+export const RagBindingSchema = z.object({
+  provider: RagProviderKindSchema,
+  endpoint: z.string().min(1),
+  /** Default collection for search/store when the caller omits it. */
+  collection: z.string().optional(),
+  auth: z
+    .object({
+      /** Env var containing the auth token / DB password. */
+      tokenEnv: z.string().optional(),
+      /** Path to a file containing the token. */
+      tokenRef: z.string().optional(),
+    })
+    .optional(),
+  /** Optional embedding-model override — when the backend supports it. */
+  embedModel: z.string().optional(),
+  /** Extra arguments forwarded to the backend subprocess / driver. */
+  extraArgs: z.array(z.string()).default([]),
+});
+export type RagBinding = z.infer<typeof RagBindingSchema>;
 
 /**
  * Pointer from a provider-kind virtual node to its parent gateway
@@ -114,6 +157,12 @@ export const ClusterNodeSchema = z.object({
    * through the tunnel.
    */
   tunnelPreferred: z.boolean().optional(),
+  /**
+   * RAG backend binding. Set on `kind: 'rag'` nodes only — the
+   * refine below enforces the pairing. `rag` and the cloud/provider
+   * blocks are mutually exclusive (a node is exactly one kind).
+   */
+  rag: RagBindingSchema.optional(),
 }).refine(
   (n) => {
     // Legacy kubeconfigs may carry `kind: 'cloud'`. Treat that as
@@ -121,22 +170,30 @@ export const ClusterNodeSchema = z.object({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rawKind = (n as any).kind as string | undefined;
     const k =
-      rawKind === 'gateway' || rawKind === 'agent' || rawKind === 'provider'
+      rawKind === 'gateway' ||
+      rawKind === 'agent' ||
+      rawKind === 'provider' ||
+      rawKind === 'rag'
         ? rawKind
         : rawKind === 'cloud'
           ? 'gateway'
           : n.provider
             ? 'provider'
-            : n.cloud
-              ? 'gateway'
-              : 'agent';
+            : n.rag
+              ? 'rag'
+              : n.cloud
+                ? 'gateway'
+                : 'agent';
+    if (k === 'rag') return !!n.rag;
+    // Non-rag nodes must not carry a rag block.
+    if (n.rag) return false;
     if (k === 'provider') return !!n.provider;
     if (k === 'gateway') return !!n.cloud;
     return typeof n.endpoint === 'string' && n.endpoint.length > 0;
   },
   {
     message:
-      "agent nodes require endpoint; gateway nodes require cloud{} block; provider nodes require provider{} block",
+      "agent nodes require endpoint; gateway nodes require cloud{} block; provider nodes require provider{} block; rag nodes require rag{} block and must not carry cloud/provider blocks",
   },
 );
 
@@ -219,9 +276,16 @@ export const LOCAL_NODE_ENDPOINT = 'inproc://local';
 export function resolveNodeKind(node: ClusterNode): NodeKind {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const explicit = (node as any).kind as string | undefined;
-  if (explicit === 'gateway' || explicit === 'agent' || explicit === 'provider') return explicit;
+  if (
+    explicit === 'gateway' ||
+    explicit === 'agent' ||
+    explicit === 'provider' ||
+    explicit === 'rag'
+  )
+    return explicit;
   if (explicit === 'cloud') return 'gateway';
   if (node.provider) return 'provider';
+  if (node.rag) return 'rag';
   return node.cloud ? 'gateway' : 'agent';
 }
 

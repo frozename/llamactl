@@ -33,6 +33,10 @@ export const KNOWN_OPS_CHAT_TOOLS = [
   'llamactl.node.remove',
   'llamactl.operator.plan',
   'llamactl.promotions.list',
+  'llamactl.rag.delete',
+  'llamactl.rag.listCollections',
+  'llamactl.rag.search',
+  'llamactl.rag.store',
   'llamactl.server.status',
   'llamactl.workload.delete',
   'llamactl.workload.list',
@@ -53,9 +57,11 @@ export function toolTier(name: OpsChatToolName): ToolTier {
     case 'llamactl.node.remove':
     case 'llamactl.workload.delete':
     case 'llamactl.catalog.promoteDelete':
+    case 'llamactl.rag.delete':
       return 'mutation-destructive';
     case 'llamactl.node.add':
     case 'llamactl.catalog.promote':
+    case 'llamactl.rag.store':
       return 'mutation-dry-run-safe';
     default:
       return 'read';
@@ -194,6 +200,26 @@ export async function dispatchOpsChatTool(
           args as unknown as Parameters<Caller['operatorPlan']>[0],
         );
         break;
+      case 'llamactl.rag.search': {
+        const payload: Parameters<Caller['ragSearch']>[0] = {
+          node: requireString(args, 'node'),
+          query: requireString(args, 'query'),
+          topK: typeof args.topK === 'number' ? args.topK : 10,
+        };
+        if (args.filter && typeof args.filter === 'object') {
+          payload.filter = args.filter as Record<string, unknown>;
+        }
+        if (typeof args.collection === 'string') {
+          payload.collection = args.collection;
+        }
+        result = await caller.ragSearch(payload);
+        break;
+      }
+      case 'llamactl.rag.listCollections':
+        result = await caller.ragListCollections({
+          node: requireString(args, 'node'),
+        });
+        break;
 
       /* ---------------- mutations (dry-run-safe) ---------------- */
       case 'llamactl.catalog.promote': {
@@ -239,6 +265,33 @@ export async function dispatchOpsChatTool(
         }
         break;
       }
+      case 'llamactl.rag.store': {
+        const node = requireString(args, 'node');
+        const documents = Array.isArray(args.documents)
+          ? (args.documents as Array<{
+              id: string;
+              content: string;
+              metadata?: Record<string, unknown>;
+              vector?: number[];
+            }>)
+          : [];
+        if (input.dryRun) {
+          result = {
+            dryRun: true,
+            wouldStore: { node, count: documents.length },
+          };
+        } else {
+          const payload: Parameters<Caller['ragStore']>[0] = {
+            node,
+            documents: documents as Parameters<Caller['ragStore']>[0]['documents'],
+          };
+          if (typeof args.collection === 'string') {
+            payload.collection = args.collection;
+          }
+          result = await caller.ragStore(payload);
+        }
+        break;
+      }
 
       /* ---------------- mutations (destructive) ---------------- */
       case 'llamactl.catalog.promoteDelete': {
@@ -279,6 +332,20 @@ export async function dispatchOpsChatTool(
           result = { dryRun: true, wouldRemove: payload };
         } else {
           result = await caller.nodeRemove(payload);
+        }
+        break;
+      }
+      case 'llamactl.rag.delete': {
+        const node = requireString(args, 'node');
+        const ids = Array.isArray(args.ids) ? (args.ids as string[]) : [];
+        if (input.dryRun) {
+          result = { dryRun: true, wouldDelete: { node, ids } };
+        } else {
+          const payload: Parameters<Caller['ragDelete']>[0] = { node, ids };
+          if (typeof args.collection === 'string') {
+            payload.collection = args.collection;
+          }
+          result = await caller.ragDelete(payload);
         }
         break;
       }

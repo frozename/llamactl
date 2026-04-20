@@ -1,6 +1,7 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
 import {
   Activity,
+  Brain,
   BrainCircuit,
   Coins,
   Database,
@@ -51,6 +52,7 @@ const LazyServer = lazy(() => import('./server/index'));
 const LazyLogs = lazy(() => import('./logs/index'));
 const LazyLMStudio = lazy(() => import('./lmstudio/index'));
 const LazyPlan = lazy(() => import('./plan/index'));
+const LazyKnowledge = lazy(() => import('./knowledge/index'));
 const LazyOpsChat = lazy(() => import('./ops-chat/index'));
 const LazyCost = lazy(() => import('./cost/index'));
 const LazySettings = lazy(() => import('./settings/index'));
@@ -82,6 +84,12 @@ export const APP_MODULES: AppModule[] = [
     labelKey: 'Plan',
     icon: BrainCircuit,
     Component: LazyPlan,
+  },
+  {
+    id: 'knowledge',
+    labelKey: 'Knowledge',
+    icon: Brain,
+    Component: LazyKnowledge,
   },
   {
     id: 'ops-chat',

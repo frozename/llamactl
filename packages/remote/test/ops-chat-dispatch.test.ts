@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import { router } from '../src/router.js';
 import {
   KNOWN_OPS_CHAT_TOOLS,
+  dispatchOpsChatTool,
   toolTier,
+  type Caller,
 } from '../src/ops-chat/dispatch.js';
 import { readOpsChatAudit } from '../src/ops-chat/audit.js';
 
@@ -112,6 +114,24 @@ describe('operatorRunTool', () => {
     expect(toolTier('llamactl.env')).toBe('read');
   });
 
+  test('RAG tool tiers match the retrieval-contract surface', () => {
+    expect(toolTier('llamactl.rag.search')).toBe('read');
+    expect(toolTier('llamactl.rag.listCollections')).toBe('read');
+    expect(toolTier('llamactl.rag.store')).toBe('mutation-dry-run-safe');
+    expect(toolTier('llamactl.rag.delete')).toBe('mutation-destructive');
+  });
+
+  test('RAG tools are registered in KNOWN_OPS_CHAT_TOOLS', () => {
+    for (const name of [
+      'llamactl.rag.search',
+      'llamactl.rag.listCollections',
+      'llamactl.rag.store',
+      'llamactl.rag.delete',
+    ]) {
+      expect((KNOWN_OPS_CHAT_TOOLS as readonly string[]).includes(name)).toBe(true);
+    }
+  });
+
   test('missing required arguments surface as a dispatch error', async () => {
     const caller = router.createCaller({});
     const res = await caller.operatorRunTool({
@@ -131,6 +151,173 @@ describe('operatorRunTool', () => {
     const known = [...KNOWN_OPS_CHAT_TOOLS].sort();
     const got = [...listing.tools].sort() as typeof known;
     expect(got).toEqual(known);
+  });
+});
+
+describe('RAG dispatch', () => {
+  /**
+   * Phase 5 of rag-nodes.md — the 4 RAG tools must route through to
+   * the matching tRPC caller method with input passthrough. Dry-run
+   * for destructive writes (`store`, `delete`) returns a preview
+   * without hitting the procedure.
+   */
+
+  type RagCalls = Array<{ method: string; input: unknown }>;
+
+  function makeFakeCaller(calls: RagCalls): Caller {
+    const stub = (method: string, reply: unknown) => async (input: unknown) => {
+      calls.push({ method, input });
+      return reply;
+    };
+    // Narrow Caller proxy — we stub only the RAG surface the tests
+    // exercise; other methods don't get called in these assertions.
+    return {
+      ragSearch: stub('ragSearch', {
+        collection: 'default',
+        results: [
+          {
+            document: { id: 'd1', content: 'x' },
+            score: 0.9,
+          },
+        ],
+      }),
+      ragStore: stub('ragStore', { collection: 'default', ids: ['a', 'b'] }),
+      ragDelete: stub('ragDelete', { collection: 'default', deleted: 2 }),
+      ragListCollections: stub('ragListCollections', {
+        collections: [{ name: 'default', count: 7 }],
+      }),
+    } as unknown as Caller;
+  }
+
+  test('rag.search routes to caller.ragSearch with forwarded args', async () => {
+    const calls: RagCalls = [];
+    const caller = makeFakeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.rag.search',
+      arguments: {
+        node: 'kb-chroma',
+        query: 'hello',
+        topK: 5,
+        filter: { src: 'test' },
+        collection: 'default',
+      },
+      dryRun: false,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.tier).toBe('read');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('ragSearch');
+    expect(calls[0]?.input).toEqual({
+      node: 'kb-chroma',
+      query: 'hello',
+      topK: 5,
+      filter: { src: 'test' },
+      collection: 'default',
+    });
+  });
+
+  test('rag.listCollections routes to caller.ragListCollections', async () => {
+    const calls: RagCalls = [];
+    const caller = makeFakeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.rag.listCollections',
+      arguments: { node: 'kb-pg' },
+      dryRun: false,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.tier).toBe('read');
+    expect(calls[0]?.method).toBe('ragListCollections');
+    expect(calls[0]?.input).toEqual({ node: 'kb-pg' });
+  });
+
+  test('rag.store wet-run routes to caller.ragStore', async () => {
+    const calls: RagCalls = [];
+    const caller = makeFakeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.rag.store',
+      arguments: {
+        node: 'kb-chroma',
+        documents: [
+          { id: 'a', content: 'alpha' },
+          { id: 'b', content: 'beta' },
+        ],
+      },
+      dryRun: false,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.tier).toBe('mutation-dry-run-safe');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('ragStore');
+    expect((calls[0]?.input as { documents: unknown[] }).documents).toHaveLength(2);
+  });
+
+  test('rag.store dry-run returns wouldStore without calling the procedure', async () => {
+    const calls: RagCalls = [];
+    const caller = makeFakeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.rag.store',
+      arguments: {
+        node: 'kb-chroma',
+        documents: [
+          { id: 'a', content: 'alpha' },
+          { id: 'b', content: 'beta' },
+          { id: 'c', content: 'gamma' },
+        ],
+      },
+      dryRun: true,
+    });
+    expect(res.ok).toBe(true);
+    const payload = res.result as { dryRun: boolean; wouldStore: { node: string; count: number } };
+    expect(payload.dryRun).toBe(true);
+    expect(payload.wouldStore).toEqual({ node: 'kb-chroma', count: 3 });
+    expect(calls).toHaveLength(0);
+  });
+
+  test('rag.delete wet-run routes to caller.ragDelete', async () => {
+    const calls: RagCalls = [];
+    const caller = makeFakeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.rag.delete',
+      arguments: { node: 'kb-pg', ids: ['a', 'b'], collection: 'docs' },
+      dryRun: false,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.tier).toBe('mutation-destructive');
+    expect(calls[0]?.method).toBe('ragDelete');
+    expect(calls[0]?.input).toEqual({
+      node: 'kb-pg',
+      ids: ['a', 'b'],
+      collection: 'docs',
+    });
+  });
+
+  test('rag.delete dry-run returns wouldDelete without calling the procedure', async () => {
+    const calls: RagCalls = [];
+    const caller = makeFakeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.rag.delete',
+      arguments: { node: 'kb-pg', ids: ['x', 'y', 'z'] },
+      dryRun: true,
+    });
+    expect(res.ok).toBe(true);
+    const payload = res.result as { dryRun: boolean; wouldDelete: { node: string; ids: string[] } };
+    expect(payload.dryRun).toBe(true);
+    expect(payload.wouldDelete).toEqual({ node: 'kb-pg', ids: ['x', 'y', 'z'] });
+    expect(calls).toHaveLength(0);
+  });
+
+  test('rag.search missing required node argument surfaces a dispatch error', async () => {
+    const calls: RagCalls = [];
+    const caller = makeFakeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.rag.search',
+      arguments: { query: 'x' /* node missing */ },
+      dryRun: false,
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error?.code).toBe('dispatch_error');
+    expect(res.error?.message).toContain('node');
+    expect(calls).toHaveLength(0);
   });
 });
 

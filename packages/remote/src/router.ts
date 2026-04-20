@@ -169,6 +169,24 @@ function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
   });
   return trpc as unknown as WorkloadNodeClient;
 }
+
+/**
+ * Resolve `nodeName` from kubeconfig and assert it carries a RAG
+ * binding. Throws `TRPCError('BAD_REQUEST')` when the node isn't a
+ * RAG node — every ragX procedure uses this up-front so callers get
+ * a predictable error shape instead of an adapter-layer exception.
+ */
+function resolveRagNode(nodeName: string): { node: ClusterNode } {
+  const cfg = kubecfg.loadConfig();
+  const resolved = kubecfg.resolveNode(cfg, nodeName);
+  if (!resolved.node.rag) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `node '${nodeName}' is not a RAG node`,
+    });
+  }
+  return { node: resolved.node };
+}
 import {
   autotune as autotuneMod,
   bench,
@@ -2027,6 +2045,105 @@ export const router = t.router({
         .default({ limit: 100 }),
     )
     .query(({ input }) => readOpsChatAudit({ limit: input.limit })),
+
+  // ---- RAG (retrieval) --------------------------------------------------
+  //
+  // Each procedure opens a RetrievalProvider per call and closes it in
+  // `finally`. Pooling is a follow-up (see rag-nodes.md Phase 4). The
+  // adapter factory dispatches on `node.rag.provider`; nodes without
+  // `kind: 'rag'` fail fast with BAD_REQUEST.
+
+  ragSearch: t.procedure
+    .input(
+      z.object({
+        node: z.string().min(1),
+        query: z.string().min(1),
+        topK: z.number().int().positive().max(100).default(10),
+        filter: z.record(z.string(), z.unknown()).optional(),
+        collection: z.string().optional(),
+      }),
+    )
+    .query(async ({ input }) => {
+      const { node } = resolveRagNode(input.node);
+      const { createRagAdapter } = await import('./rag/index.js');
+      const adapter = await createRagAdapter(node);
+      try {
+        return await adapter.search({
+          query: input.query,
+          topK: input.topK,
+          filter: input.filter,
+          collection: input.collection,
+        });
+      } finally {
+        await adapter.close();
+      }
+    }),
+
+  ragStore: t.procedure
+    .input(
+      z.object({
+        node: z.string().min(1),
+        documents: z
+          .array(
+            z.object({
+              id: z.string().min(1),
+              content: z.string(),
+              metadata: z.record(z.string(), z.unknown()).optional(),
+              vector: z.array(z.number()).optional(),
+            }),
+          )
+          .min(1),
+        collection: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { node } = resolveRagNode(input.node);
+      const { createRagAdapter } = await import('./rag/index.js');
+      const adapter = await createRagAdapter(node);
+      try {
+        return await adapter.store({
+          documents: input.documents,
+          collection: input.collection,
+        });
+      } finally {
+        await adapter.close();
+      }
+    }),
+
+  ragDelete: t.procedure
+    .input(
+      z.object({
+        node: z.string().min(1),
+        ids: z.array(z.string().min(1)).min(1),
+        collection: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { node } = resolveRagNode(input.node);
+      const { createRagAdapter } = await import('./rag/index.js');
+      const adapter = await createRagAdapter(node);
+      try {
+        return await adapter.delete({
+          ids: input.ids,
+          collection: input.collection,
+        });
+      } finally {
+        await adapter.close();
+      }
+    }),
+
+  ragListCollections: t.procedure
+    .input(z.object({ node: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const { node } = resolveRagNode(input.node);
+      const { createRagAdapter } = await import('./rag/index.js');
+      const adapter = await createRagAdapter(node);
+      try {
+        return await adapter.listCollections();
+      } finally {
+        await adapter.close();
+      }
+    }),
 });
 
 export type AppRouter = typeof router;

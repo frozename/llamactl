@@ -54,6 +54,7 @@ const TIER_1_SUFFIXES = [
   '.env',
   '.simulate',
   '.tail',
+  '.search',
 ];
 
 /** Tier-2 (mutation with dry-run path) verb suffixes. */
@@ -65,6 +66,7 @@ const TIER_2_SUFFIXES = [
   '.reload',
   '.add',
   '.apply',
+  '.store',
   '.start',
   '.stop',
 ];

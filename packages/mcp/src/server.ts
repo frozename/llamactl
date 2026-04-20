@@ -13,6 +13,7 @@ import {
   config as kubecfg,
   embersynth,
   resolveNodeKind,
+  router,
   workloadStore,
   type ClusterNode,
 } from '@llamactl/remote';
@@ -758,6 +759,128 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         tools: plannerTools,
         executor,
         allowlist: DEFAULT_ALLOWLIST,
+      });
+      return toTextContent(result);
+    },
+  );
+
+  // ---- RAG (retrieval) -------------------------------------------
+  //
+  // Phase 5 of rag-nodes.md — MCP-tool surface mirroring the tRPC
+  // `ragSearch` / `ragStore` / `ragDelete` / `ragListCollections`
+  // procedures. Each handler is a thin caller shim so ops-chat +
+  // runbooks + external MCP clients can hit a RAG node through the
+  // same code path the router uses. Schemas mirror the tRPC inputs
+  // 1:1 so future API changes cascade cleanly.
+
+  server.registerTool(
+    'llamactl.rag.search',
+    {
+      title: 'Search a RAG node',
+      description:
+        'Run a vector search against a configured RAG node. Returns up to topK results with normalized scores (0..1, higher = more relevant). Read-only.',
+      inputSchema: {
+        node: z.string().min(1).describe('Name of the RAG node in kubeconfig.'),
+        query: z.string().min(1),
+        topK: z.number().int().positive().max(100).default(10),
+        filter: z.record(z.string(), z.unknown()).optional(),
+        collection: z.string().optional(),
+      },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      const result = await caller.ragSearch(input);
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.rag.search',
+        input,
+        dryRun: false,
+        result: { collection: result.collection, count: result.results.length },
+      });
+      return toTextContent(result);
+    },
+  );
+
+  server.registerTool(
+    'llamactl.rag.store',
+    {
+      title: 'Store documents in a RAG node',
+      description:
+        'Upsert one or more documents into a configured RAG node. Backends embed internally (Chroma) or require caller-supplied vectors (pgvector).',
+      inputSchema: {
+        node: z.string().min(1).describe('Name of the RAG node in kubeconfig.'),
+        documents: z
+          .array(
+            z.object({
+              id: z.string().min(1),
+              content: z.string(),
+              metadata: z.record(z.string(), z.unknown()).optional(),
+              vector: z.array(z.number()).optional(),
+            }),
+          )
+          .min(1),
+        collection: z.string().optional(),
+      },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      const result = await caller.ragStore(input);
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.rag.store',
+        input: { node: input.node, collection: input.collection, count: input.documents.length },
+        dryRun: false,
+        result: { collection: result.collection, ids: result.ids.length },
+      });
+      return toTextContent(result);
+    },
+  );
+
+  server.registerTool(
+    'llamactl.rag.delete',
+    {
+      title: 'Delete documents from a RAG node',
+      description:
+        'Remove one or more documents (by id) from a configured RAG node. Destructive — verify the ids before calling.',
+      inputSchema: {
+        node: z.string().min(1).describe('Name of the RAG node in kubeconfig.'),
+        ids: z.array(z.string().min(1)).min(1),
+        collection: z.string().optional(),
+      },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      const result = await caller.ragDelete(input);
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.rag.delete',
+        input,
+        dryRun: false,
+        result: { collection: result.collection, deleted: result.deleted },
+      });
+      return toTextContent(result);
+    },
+  );
+
+  server.registerTool(
+    'llamactl.rag.listCollections',
+    {
+      title: 'List collections on a RAG node',
+      description:
+        'Return every collection registered on a RAG node with (when the backend exposes them) counts + dimensions. Read-only.',
+      inputSchema: {
+        node: z.string().min(1).describe('Name of the RAG node in kubeconfig.'),
+      },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      const result = await caller.ragListCollections(input);
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.rag.listCollections',
+        input,
+        dryRun: false,
+        result: { count: result.collections.length },
       });
       return toTextContent(result);
     },

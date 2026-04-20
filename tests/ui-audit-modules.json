@@ -3,6 +3,7 @@
   { "id": "nodes", "label": "Nodes" },
   { "id": "chat", "label": "Chat" },
   { "id": "plan", "label": "Plan" },
+  { "id": "knowledge", "label": "Knowledge" },
   { "id": "ops-chat", "label": "Operator Console" },
   { "id": "cost", "label": "Cost" },
   { "id": "pipelines", "label": "Pipelines" },

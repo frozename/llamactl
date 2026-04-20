@@ -290,6 +290,16 @@ For multi-node tensor-parallel workloads that shard one model
 across several agents via `rpc-server`, see
 `docs/tensor-parallel.md`.
 
+For **RAG nodes** (vector stores / knowledge bases registered as a
+new `kind: 'rag'` alongside agent/gateway/provider), see
+`docs/rag-nodes.md`. v1 ships two backends — `chroma` (MCP-proxied
+via chroma-mcp) and `pgvector` (native SQL against Postgres +
+pgvector). Adapters implement a shared `RetrievalProvider` contract
+from `@nova/contracts`; tRPC exposes `ragSearch` / `ragStore` /
+`ragDelete` / `ragListCollections`; MCP mirrors the same surface as
+`llamactl.rag.*`; the Electron activity bar surfaces them through
+the Knowledge module.
+
 ## Cost guardian (`llamactl cost-guardian`, N.3)
 
 Base usage:
