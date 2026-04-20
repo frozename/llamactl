@@ -40,6 +40,15 @@ Subcommands:
       Run the self-healing loop (observe + journal + plan/execute).
       See 'llamactl agent heal --help' for full flag set. Also
       available as the top-level alias 'llamactl heal'.
+  install-launchd [--scope=user|system] [--binary=<path> | --from-release=<tag> | --from-source]
+                  [--install-path=<path>] [--dir=<path>] [--log-dir=<path>]
+                  [--env=KEY=VAL]... [--label=<label>] [--repo=<owner/repo>]
+                  [--dry-run] [--force]
+      macOS only. Resolve an agent binary (existing path, GitHub release,
+      or local bun build --compile), render a launchd plist, write it to
+      ~/Library/LaunchAgents (user) or /Library/LaunchDaemons (system),
+      and load it via launchctl. --dry-run prints the plist + launchctl
+      plan without touching disk.
 
 All state lives under \$LLAMACTL_AGENT_DIR or \$DEV_STORAGE or ~/.llamactl.
 `;
@@ -55,6 +64,10 @@ export async function runAgent(args: string[]): Promise<number> {
       return runStatus(rest);
     case 'heal':
       return runHeal(rest);
+    case 'install-launchd': {
+      const { runAgentInstallLaunchd } = await import('./agent-install/index.js');
+      return runAgentInstallLaunchd(rest);
+    }
     case undefined:
     case '--help':
     case '-h':

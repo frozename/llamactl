@@ -51,10 +51,10 @@ EXAMPLES:
   llamactl artifacts show-path --target=linux-arm64
 `;
 
-type Platform = 'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64';
-const ALLOWED_PLATFORMS: Platform[] = ['darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64'];
+export type Platform = 'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64';
+export const ALLOWED_PLATFORMS: Platform[] = ['darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64'];
 
-function currentPlatform(): Platform | null {
+export function currentPlatform(): Platform | null {
   const p = nodePlatform();
   const a = nodeArch();
   if (p === 'darwin' && a === 'arm64') return 'darwin-arm64';
@@ -64,14 +64,14 @@ function currentPlatform(): Platform | null {
   return null;
 }
 
-function defaultArtifactsDir(): string {
+export function defaultArtifactsDir(): string {
   const override = process.env.LLAMACTL_ARTIFACTS_DIR?.trim();
   if (override) return override;
   const base = process.env.DEV_STORAGE?.trim() || join(process.env.HOME ?? '.', '.llamactl');
   return join(base, 'artifacts');
 }
 
-function agentBinaryPath(platform: Platform, dir: string): string {
+export function agentBinaryPath(platform: Platform, dir: string): string {
   return join(dir, 'agent', platform, 'llamactl-agent');
 }
 
@@ -82,11 +82,70 @@ function agentBinaryPath(platform: Platform, dir: string): string {
  * gracefully when llamactl is running as a bun-compile'd binary (no
  * source alongside the binary).
  */
-function resolveSourceDefault(): string | null {
+export function resolveSourceDefault(): string | null {
   // import.meta.dir of this file is `.../packages/cli/src/commands`.
   // bin.ts sits one directory up.
   const candidate = resolve(import.meta.dir, '..', 'bin.ts');
   return existsSync(candidate) ? candidate : null;
+}
+
+export interface BuildAgentBinaryOptions {
+  target: Platform;
+  /** Path to packages/cli/src/bin.ts. null → no source checkout available. */
+  src: string | null;
+  /** Artifacts root. Binary lands at `<dir>/agent/<target>/llamactl-agent`. */
+  dir: string;
+}
+
+export interface BuildAgentBinaryResult {
+  ok: boolean;
+  /** Absolute path to the produced binary. Always set. */
+  outPath: string;
+  /** bun build --compile exit code; 0 on success. */
+  code: number;
+  /** Present when the build could not start (missing src). */
+  reason?: string;
+}
+
+/**
+ * Shell out to `bun build --compile` to produce a self-contained
+ * llamactl agent binary for `opts.target`. Extracted from the
+ * `artifacts build-agent` CLI handler so Phase 3's `install-launchd`
+ * can invoke the same build path without duplicating the flag surface.
+ *
+ * Returns a structured result instead of writing to stderr; callers
+ * decide how to surface failures. The bun subprocess still inherits
+ * stdio so bun's own progress output reaches the operator.
+ */
+export async function buildAgentBinary(
+  opts: BuildAgentBinaryOptions,
+): Promise<BuildAgentBinaryResult> {
+  const outPath = agentBinaryPath(opts.target, opts.dir);
+  if (!opts.src) {
+    return {
+      ok: false,
+      outPath,
+      code: 1,
+      reason:
+        'could not locate packages/cli/src/bin.ts — pass --src=<path-to-source-repo>/packages/cli/src/bin.ts or re-run from a source checkout',
+    };
+  }
+  mkdirSync(dirname(outPath), { recursive: true });
+  const proc = Bun.spawn({
+    cmd: [
+      'bun',
+      'build',
+      '--compile',
+      `--target=bun-${opts.target}`,
+      opts.src,
+      '--outfile',
+      outPath,
+    ],
+    stdout: 'inherit',
+    stderr: 'inherit',
+  });
+  const code = await proc.exited;
+  return { ok: code === 0, outPath, code };
 }
 
 interface BuildFlags {
@@ -151,30 +210,24 @@ async function runBuildAgent(argv: string[]): Promise<number> {
     return 1;
   }
   const outPath = agentBinaryPath(parsed.target, parsed.dir);
-  mkdirSync(dirname(outPath), { recursive: true });
   process.stderr.write(
     `artifacts build-agent: bun build --compile --target=bun-${parsed.target}\n` +
       `  src: ${parsed.src}\n  out: ${outPath}\n`,
   );
-  const proc = Bun.spawn({
-    cmd: [
-      'bun',
-      'build',
-      '--compile',
-      `--target=bun-${parsed.target}`,
-      parsed.src,
-      '--outfile',
-      outPath,
-    ],
-    stdout: 'inherit',
-    stderr: 'inherit',
+  const result = await buildAgentBinary({
+    target: parsed.target,
+    src: parsed.src,
+    dir: parsed.dir,
   });
-  const code = await proc.exited;
-  if (code !== 0) {
-    process.stderr.write(`artifacts build-agent: bun build exited ${code}\n`);
-    return code === 0 ? 0 : 1;
+  if (!result.ok) {
+    if (result.reason) {
+      process.stderr.write(`artifacts build-agent: ${result.reason}\n`);
+    } else {
+      process.stderr.write(`artifacts build-agent: bun build exited ${result.code}\n`);
+    }
+    return 1;
   }
-  process.stderr.write(`artifacts build-agent: wrote ${outPath}\n`);
+  process.stderr.write(`artifacts build-agent: wrote ${result.outPath}\n`);
   return 0;
 }
 
