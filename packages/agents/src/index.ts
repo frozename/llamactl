@@ -17,6 +17,7 @@ export type {
 } from './types.js';
 export { probeFleet, stateTransitions } from './healer/probe.js';
 export type { ProbeReport, ProbeResult, ProbeState, ProbeFleetOptions } from './healer/probe.js';
+export { probeFleetViaNova } from './healer/facade-probe.js';
 export {
   appendHealerJournal,
   defaultHealerJournalPath,

@@ -1,7 +1,12 @@
 import {
+  createDefaultToolClient,
   defaultHealerJournalPath,
   startHealerLoop,
+  stateTransitions,
+  type DefaultToolClientHandle,
+  type HealerLoopOptions,
   type JournalEntry,
+  type ProbeReport,
 } from '@llamactl/agents';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -12,11 +17,18 @@ USAGE:
   llamactl heal [--interval=<seconds>] [--once] [--timeout=<ms>]
                 [--journal=<path>] [--kubeconfig=<path>]
                 [--providers-file=<path>] [--quiet]
+                [--use-facade] [--no-use-facade]
 
 The loop probes every gateway and sirius-provider baseUrl on an
 interval. Every tick is journaled; every observed state change
 (healthy↔unhealthy) gets a prominent 'transition' entry. Runs until
 SIGINT / SIGTERM (or returns after one tick with --once).
+
+Primary health signal is the in-proc nova.ops.healthcheck facade
+(default). When that call rejects or returns isError, the loop logs
+one stderr line and falls back to a raw HTTP probe for that tick.
+Pass --no-use-facade to force the raw path (useful when nova-mcp
+can't boot in the current environment).
 
 Autonomous remediation (auto-promote, flip to private-first, etc.)
 stays out of this command until the mutation tool surface carries
@@ -33,11 +45,15 @@ FLAGS:
   --kubeconfig=<path>    Override kubeconfig (default ~/.llamactl/config).
   --providers-file=<path> Override sirius-providers.yaml.
   --quiet                Suppress per-tick stderr summary.
+  --use-facade           Use nova.ops.healthcheck as the primary
+                         probe (default).
+  --no-use-facade        Skip the facade and probe HTTP directly.
 
 EXAMPLES:
   llamactl heal --once
   llamactl heal --interval=15 --quiet
   llamactl heal --journal=/tmp/heal.jsonl --once
+  llamactl heal --once --no-use-facade
 `;
 
 interface HealFlags {
@@ -48,6 +64,7 @@ interface HealFlags {
   kubeconfigPath: string;
   providersPath: string;
   quiet: boolean;
+  useFacade: boolean;
 }
 
 function parseFlags(argv: string[]): HealFlags | null {
@@ -60,6 +77,7 @@ function parseFlags(argv: string[]): HealFlags | null {
     kubeconfigPath: process.env.LLAMACTL_CONFIG?.trim() || join(base, 'config'),
     providersPath: process.env.LLAMACTL_PROVIDERS_FILE?.trim() || join(base, 'sirius-providers.yaml'),
     quiet: false,
+    useFacade: true,
   };
   for (const arg of argv) {
     if (arg === '--help' || arg === '-h') {
@@ -72,6 +90,14 @@ function parseFlags(argv: string[]): HealFlags | null {
     }
     if (arg === '--quiet') {
       flags.quiet = true;
+      continue;
+    }
+    if (arg === '--use-facade') {
+      flags.useFacade = true;
+      continue;
+    }
+    if (arg === '--no-use-facade') {
+      flags.useFacade = false;
       continue;
     }
     const eq = arg.indexOf('=');
@@ -109,14 +135,31 @@ export async function runHeal(argv: string[]): Promise<number> {
   const flags = parseFlags(argv);
   if (!flags) return 0;
 
-  const handle = startHealerLoop({
+  // Boot the in-proc MCP client once (not per-tick) when facade mode
+  // is enabled. `createDefaultToolClient` mounts @llamactl/mcp +
+  // @nova/mcp in-process via InMemoryTransport and routes by
+  // tool-name prefix — exactly the harness runbooks use.
+  let toolHandle: DefaultToolClientHandle | null = null;
+  if (flags.useFacade) {
+    try {
+      toolHandle = await createDefaultToolClient();
+    } catch (err) {
+      process.stderr.write(
+        `healer: failed to boot in-proc MCP client (${(err as Error).message}); ` +
+          'continuing with direct probe\n',
+      );
+      toolHandle = null;
+    }
+  }
+
+  const loopOpts: HealerLoopOptions = {
     kubeconfigPath: flags.kubeconfigPath,
     siriusProvidersPath: flags.providersPath,
     intervalMs: flags.intervalSec * 1000,
     once: flags.once,
     timeoutMs: flags.timeoutMs,
     journalPath: flags.journalPath,
-    onTick: (report, transitions) => {
+    onTick: (report: ProbeReport, transitions: ReturnType<typeof stateTransitions>): void => {
       if (flags.quiet) return;
       const summary = `healer: ${report.probes.length} probes, ${report.unhealthy} unhealthy`;
       process.stderr.write(`${report.ts}  ${summary}\n`);
@@ -124,7 +167,10 @@ export async function runHeal(argv: string[]): Promise<number> {
         process.stderr.write(`  ${t.kind}/${t.name}: ${t.from} → ${t.to}\n`);
       }
     },
-  });
+    ...(toolHandle ? { toolClient: toolHandle.client } : {}),
+  };
+
+  const handle = startHealerLoop(loopOpts);
 
   // Graceful shutdown on SIGINT / SIGTERM — don't tear down mid-tick.
   const stopSignals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
@@ -134,8 +180,18 @@ export async function runHeal(argv: string[]): Promise<number> {
   };
   for (const sig of stopSignals) process.on(sig, onSignal);
 
-  await handle.done;
-  for (const sig of stopSignals) process.off(sig, onSignal);
+  try {
+    await handle.done;
+  } finally {
+    for (const sig of stopSignals) process.off(sig, onSignal);
+    if (toolHandle) {
+      try {
+        await toolHandle.dispose();
+      } catch (err) {
+        process.stderr.write(`healer: dispose failed: ${(err as Error).message}\n`);
+      }
+    }
+  }
   return 0;
 }
 

@@ -1,5 +1,7 @@
 import { probeFleet, stateTransitions, type ProbeFleetOptions, type ProbeReport } from './probe.js';
+import { probeFleetViaNova } from './facade-probe.js';
 import { appendHealerJournal, defaultHealerJournalPath, type JournalEntry } from './journal.js';
+import type { RunbookToolClient } from '../types.js';
 
 /**
  * Healer loop — the "observe + journal" half of autonomous ops.
@@ -29,6 +31,14 @@ export interface HealerLoopOptions extends Omit<ProbeFleetOptions, 'fetch' | 'no
   /** Injectable journal writer — tests assert against the entries it
    *  receives instead of touching disk. */
   writeJournal?: (entry: JournalEntry, path: string) => void;
+  /**
+   * Optional MCP tool client. When provided, the loop's primary health
+   * signal becomes `nova.ops.healthcheck` routed through this client;
+   * if that call rejects or returns `isError`, the loop logs one
+   * stderr line and falls back to the raw `probeFleet` path. When
+   * omitted, the loop uses raw `probeFleet` only (legacy path).
+   */
+  toolClient?: RunbookToolClient;
 }
 
 export interface HealerLoopHandle {
@@ -45,17 +55,34 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
   let stopped = false;
   let previous: ProbeReport | null = null;
 
+  const runDirectProbe = (): Promise<ProbeReport> =>
+    probeFleet({
+      kubeconfigPath: opts.kubeconfigPath,
+      siriusProvidersPath: opts.siriusProvidersPath,
+      timeoutMs: opts.timeoutMs,
+      ...(opts.fetch ? { fetch: opts.fetch } : {}),
+      ...(opts.now ? { now: opts.now } : {}),
+    });
+
   const done = (async (): Promise<void> => {
     do {
       let report: ProbeReport;
+      let source: 'nova' | 'direct' = opts.toolClient ? 'nova' : 'direct';
       try {
-        report = await probeFleet({
-          kubeconfigPath: opts.kubeconfigPath,
-          siriusProvidersPath: opts.siriusProvidersPath,
-          timeoutMs: opts.timeoutMs,
-          ...(opts.fetch ? { fetch: opts.fetch } : {}),
-          ...(opts.now ? { now: opts.now } : {}),
-        });
+        if (opts.toolClient) {
+          try {
+            report = await probeFleetViaNova(opts.toolClient);
+          } catch (err) {
+            const msg = (err as Error).message ?? String(err);
+            process.stderr.write(
+              `healer: facade health call failed: ${msg}; falling back to direct probe\n`,
+            );
+            source = 'direct';
+            report = await runDirectProbe();
+          }
+        } else {
+          report = await runDirectProbe();
+        }
       } catch (err) {
         writeJournal(
           {
@@ -84,7 +111,7 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
           journalPath,
         );
       }
-      writeJournal({ kind: 'tick', ts: report.ts, report }, journalPath);
+      writeJournal({ kind: 'tick', ts: report.ts, report, source }, journalPath);
       previous = report;
       opts.onTick?.(report, transitions);
 

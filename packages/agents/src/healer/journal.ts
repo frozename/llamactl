@@ -15,6 +15,12 @@ export interface JournalTickEntry {
   kind: 'tick';
   ts: string;
   report: ProbeReport;
+  /**
+   * Which probe path produced the report: `'nova'` means the in-proc
+   * `nova.ops.healthcheck` facade; `'direct'` means raw `probeFleet`
+   * (either the legacy path or a fallback after the facade failed).
+   */
+  source: 'nova' | 'direct';
 }
 
 export interface JournalTransitionEntry {
