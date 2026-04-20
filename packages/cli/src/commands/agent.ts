@@ -21,11 +21,16 @@ Subcommands:
       bootstrap blob without jq.
   serve [--dir=<path>] [--bind=<host>] [--port=<n>]
         [--dial-central=<wss-url>] [--central-bearer=<token>] [--tunnel-node-name=<name>]
+        [--tunnel-central=true] [--tunnel-bearer=<token>]
       Run the node agent (blocks until SIGINT/SIGTERM).
       With --dial-central + --central-bearer, the agent additionally
       dials a central's /tunnel endpoint so its tRPC router is
       reachable through the reverse tunnel. The bearer can also be
       provided via the LLAMACTL_TUNNEL_BEARER env var.
+      With --tunnel-central=true + --tunnel-bearer, the agent mounts
+      /tunnel (WS upgrade) and /tunnel-relay on itself so NAT'd nodes
+      can dial in. The bearer can also come from
+      LLAMACTL_TUNNEL_CENTRAL_BEARER.
   status [--dir=<path>]
       Print the agent config and its advertised URL.
   heal [flags]
@@ -195,16 +200,18 @@ async function runInit(args: string[]): Promise<number> {
   return 0;
 }
 
-interface ServeFlags {
+export interface ServeFlags {
   dir: string;
   bindHost?: string;
   port?: number;
   dialCentral?: string;
   centralBearer?: string;
   tunnelNodeName?: string;
+  tunnelCentral?: boolean;
+  tunnelBearer?: string;
 }
 
-function parseServeFlags(args: string[]): ServeFlags | { error: string } {
+export function parseServeFlags(args: string[]): ServeFlags | { error: string } {
   const flags: ServeFlags = { dir: agentConfigMod.defaultAgentDir() };
   for (const arg of args) {
     const [k, v] = splitFlag(arg);
@@ -221,6 +228,8 @@ function parseServeFlags(args: string[]): ServeFlags | { error: string } {
       case '--dial-central': flags.dialCentral = v; break;
       case '--central-bearer': flags.centralBearer = v; break;
       case '--tunnel-node-name': flags.tunnelNodeName = v; break;
+      case '--tunnel-central': flags.tunnelCentral = v === 'true'; break;
+      case '--tunnel-bearer': flags.tunnelBearer = v; break;
       default: return { error: `agent serve: unknown flag ${k}` };
     }
   }
@@ -252,6 +261,27 @@ async function runServe(args: string[]): Promise<number> {
     }
   }
 
+  // --tunnel-central=true mounts /tunnel (WS) + /tunnel-relay on this
+  // agent so NAT'd dialing nodes can reach its tRPC router. The bearer
+  // is a distinct credential from tokenHash and from LLAMACTL_TUNNEL_BEARER
+  // (that env is the dial-side secret). Bearer-without-central is a
+  // warning, not a failure — the bearer is harmless when unused.
+  const tunnelCentralOn = parsed.tunnelCentral === true;
+  const tunnelCentralBearer =
+    parsed.tunnelBearer ?? process.env.LLAMACTL_TUNNEL_CENTRAL_BEARER;
+  if (tunnelCentralOn) {
+    if (!tunnelCentralBearer) {
+      process.stderr.write(
+        '--tunnel-central=true requires --tunnel-bearer (or set LLAMACTL_TUNNEL_CENTRAL_BEARER)\n',
+      );
+      return 1;
+    }
+  } else if (parsed.tunnelBearer) {
+    process.stderr.write(
+      'warning: --tunnel-bearer set without --tunnel-central=true; ignoring\n',
+    );
+  }
+
   const running = startAgentServer({
     bindHost: parsed.bindHost ?? cfg.bindHost,
     port: parsed.port ?? cfg.port,
@@ -268,6 +298,14 @@ async function runServe(args: string[]): Promise<number> {
             onStateChange: (s): void => {
               process.stderr.write(`tunnel: ${s}\n`);
             },
+          },
+        }
+      : {}),
+    ...(tunnelCentralOn && tunnelCentralBearer
+      ? {
+          tunnelCentral: {
+            expectedBearerHash: auth.hashToken(tunnelCentralBearer),
+            // onNodeConnect/onNodeDisconnect land in Slice D (journal).
           },
         }
       : {}),
