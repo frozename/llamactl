@@ -17,7 +17,15 @@
 # $LLAMACTL_HOME defaults to the working location under DEV_STORAGE.
 
 if [ -z "$DEV_STORAGE" ]; then
-  export DEV_STORAGE="$HOME/.llamactl"
+  # Test profile takes precedence over the production home-dir fallback
+  # so callers that set only $LLAMACTL_TEST_PROFILE get a fully rerooted
+  # tree. When LLAMACTL_TEST_PROFILE is unset this branch is identical
+  # to the historical behaviour.
+  if [ -n "$LLAMACTL_TEST_PROFILE" ]; then
+    export DEV_STORAGE="$LLAMACTL_TEST_PROFILE"
+  else
+    export DEV_STORAGE="$HOME/.llamactl"
+  fi
 fi
 
 : "${LLAMACTL_HOME:=$DEV_STORAGE/repos/personal/llamactl}"
@@ -41,6 +49,26 @@ unset -f _llamactl_ts_env_eval
 
 # ---- fallback (Bun or CLI unavailable) ----------------------------------
 # Static defaults so a broken Bun install doesn't strand shell integrations.
+
+# Hermetic test-profile cascade: when $LLAMACTL_TEST_PROFILE is set, every
+# AI-model / runtime / cache path re-roots under that prefix so audits +
+# CI stay isolated from the operator's real state. Individual env vars
+# still win because the assignments below use `:=` (only set if unset).
+# Mirrors `testProfileDefaults` in packages/core/src/env.ts.
+if [ -n "$LLAMACTL_TEST_PROFILE" ]; then
+  : "${DEV_STORAGE:=$LLAMACTL_TEST_PROFILE}"
+  : "${LOCAL_AI_RUNTIME_DIR:=$LLAMACTL_TEST_PROFILE/ai-models/local-ai}"
+  : "${LLAMA_CPP_ROOT:=$LLAMACTL_TEST_PROFILE/ai-models/llama.cpp}"
+  : "${LLAMA_CPP_MODELS:=$LLAMACTL_TEST_PROFILE/ai-models/llama.cpp/models}"
+  : "${LLAMA_CPP_CACHE:=$LLAMACTL_TEST_PROFILE/ai-models/llama.cpp/.cache}"
+  : "${LLAMA_CPP_LOGS:=$LLAMACTL_TEST_PROFILE/logs/llama.cpp}"
+  : "${LLAMA_CPP_BIN:=$LLAMACTL_TEST_PROFILE/bin}"
+  : "${HF_HOME:=$LLAMACTL_TEST_PROFILE/cache/huggingface}"
+  : "${HUGGINGFACE_HUB_CACHE:=$HF_HOME/hub}"
+  : "${OLLAMA_MODELS:=$LLAMACTL_TEST_PROFILE/ai-models/ollama}"
+  : "${LLAMA_CPP_HOST:=127.0.0.1}"
+  : "${LLAMA_CPP_PORT:=65534}"
+fi
 
 export HF_HOME="${HF_HOME:-$DEV_STORAGE/cache/huggingface}"
 export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"
@@ -109,3 +137,9 @@ mkdir -p \
   "$LLAMA_CPP_CACHE" \
   "$LLAMA_CPP_LOGS" \
   "$LOCAL_AI_RUNTIME_DIR" 2>/dev/null || true
+
+# Under a test profile, precreate the (empty) bin dir too so the PATH
+# guard above is consistent with what the TypeScript resolver materialises.
+if [ -n "$LLAMACTL_TEST_PROFILE" ]; then
+  mkdir -p "$LLAMA_CPP_BIN" 2>/dev/null || true
+fi

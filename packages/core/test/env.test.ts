@@ -51,6 +51,96 @@ describe('env.resolveEnv', () => {
   });
 });
 
+describe('env.resolveEnv — LLAMACTL_TEST_PROFILE', () => {
+  test('reroots every ai-model / cache / runtime path under the profile', () => {
+    const resolved = resolveEnv({
+      LLAMACTL_TEST_PROFILE: '/tmp/hermetic',
+      LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
+    } as NodeJS.ProcessEnv);
+
+    expect(resolved.DEV_STORAGE).toBe('/tmp/hermetic');
+    expect(resolved.LOCAL_AI_RUNTIME_DIR).toBe('/tmp/hermetic/ai-models/local-ai');
+    expect(resolved.LLAMA_CPP_ROOT).toBe('/tmp/hermetic/ai-models/llama.cpp');
+    expect(resolved.LLAMA_CPP_MODELS).toBe('/tmp/hermetic/ai-models/llama.cpp/models');
+    expect(resolved.LLAMA_CPP_CACHE).toBe('/tmp/hermetic/ai-models/llama.cpp/.cache');
+    expect(resolved.LLAMA_CPP_LOGS).toBe('/tmp/hermetic/logs/llama.cpp');
+    expect(resolved.LLAMA_CPP_BIN).toBe('/tmp/hermetic/bin');
+    expect(resolved.HF_HOME).toBe('/tmp/hermetic/cache/huggingface');
+    expect(resolved.HUGGINGFACE_HUB_CACHE).toBe('/tmp/hermetic/cache/huggingface/hub');
+    expect(resolved.OLLAMA_MODELS).toBe('/tmp/hermetic/ai-models/ollama');
+  });
+
+  test('pins host to 127.0.0.1 and port to 65534 (sentinel)', () => {
+    const resolved = resolveEnv({
+      LLAMACTL_TEST_PROFILE: '/tmp/hermetic',
+      LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
+    } as NodeJS.ProcessEnv);
+
+    expect(resolved.LLAMA_CPP_HOST).toBe('127.0.0.1');
+    expect(resolved.LLAMA_CPP_PORT).toBe('65534');
+    // Derived URLs pick up the sentinel automatically.
+    expect(resolved.LOCAL_AI_LLAMA_CPP_BASE_URL).toBe('http://127.0.0.1:65534/v1');
+    expect(resolved.LOCAL_AI_PROVIDER_URL).toBe('http://127.0.0.1:65534/v1');
+    expect(resolved.OPENAI_BASE_URL).toBe('http://127.0.0.1:65534/v1');
+  });
+
+  test('individual env var wins over test-profile default', () => {
+    const resolved = resolveEnv({
+      LLAMACTL_TEST_PROFILE: '/tmp/hermetic',
+      LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
+      LLAMA_CPP_BIN: '/my/real/bin',
+      LLAMA_CPP_PORT: '8081',
+    } as NodeJS.ProcessEnv);
+
+    expect(resolved.LLAMA_CPP_BIN).toBe('/my/real/bin');
+    expect(resolved.LLAMA_CPP_PORT).toBe('8081');
+    // Other paths still under the test profile.
+    expect(resolved.LLAMA_CPP_ROOT).toBe('/tmp/hermetic/ai-models/llama.cpp');
+    expect(resolved.HF_HOME).toBe('/tmp/hermetic/cache/huggingface');
+    expect(resolved.LLAMA_CPP_HOST).toBe('127.0.0.1');
+  });
+
+  test('empty LLAMACTL_TEST_PROFILE behaves as unset', () => {
+    const resolved = resolveEnv({
+      LLAMACTL_TEST_PROFILE: '',
+      DEV_STORAGE: '/tmp/ds',
+      LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
+    } as NodeJS.ProcessEnv);
+
+    // Production cascade still drives derivation — $DEV_STORAGE wins.
+    expect(resolved.DEV_STORAGE).toBe('/tmp/ds');
+    expect(resolved.LLAMA_CPP_ROOT).toBe('/tmp/ds/ai-models/llama.cpp');
+    expect(resolved.LLAMA_CPP_PORT).toBe('8080');
+    expect(resolved.LLAMA_CPP_BIN).toBe('/tmp/ds/src/llama.cpp/build/bin');
+  });
+
+  test('without LLAMACTL_TEST_PROFILE, behaviour is unchanged', () => {
+    // Baseline snapshot: production defaults keyed off $DEV_STORAGE.
+    const resolved = resolveEnv({
+      DEV_STORAGE: '/tmp/ds',
+      LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
+    } as NodeJS.ProcessEnv);
+
+    expect(resolved.DEV_STORAGE).toBe('/tmp/ds');
+    expect(resolved.LLAMA_CPP_ROOT).toBe('/tmp/ds/ai-models/llama.cpp');
+    expect(resolved.LLAMA_CPP_BIN).toBe('/tmp/ds/src/llama.cpp/build/bin');
+    expect(resolved.LLAMA_CPP_PORT).toBe('8080');
+    expect(resolved.LLAMA_CPP_HOST).toBe('127.0.0.1');
+    expect(resolved.HF_HOME).toBe('/tmp/ds/cache/huggingface');
+    expect(resolved.OLLAMA_MODELS).toBe('/tmp/ds/ai-models/ollama');
+  });
+
+  test('does not mutate the caller env map', () => {
+    const caller: NodeJS.ProcessEnv = {
+      LLAMACTL_TEST_PROFILE: '/tmp/hermetic',
+      LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
+    };
+    const snapshot = { ...caller };
+    resolveEnv(caller);
+    expect(caller).toEqual(snapshot);
+  });
+});
+
 describe('env.formatEvalScript', () => {
   test('emits export lines + mkdir + PATH tweak', () => {
     const resolved = resolveEnv({

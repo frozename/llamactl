@@ -235,6 +235,12 @@ scoped to `gui/<uid>`, which needs a login session. For a truly
 headless machine with no auto-login, use `--scope=system` instead
 (LaunchDaemon, runs from boot without a login).
 
+For repeatable audits against an isolated profile (no bleed-through
+from the operator's real llama-server, catalog, or caches), see
+AGENTS.md §Test profiles for hermetic audits — set
+`LLAMACTL_TEST_PROFILE=<dir>` and every model / runtime / cache path
+gets rerooted under that one prefix.
+
 For multi-node setups that shard one model across several Mac minis
 via llama.cpp's `rpc-server`, see
 [`./tensor-parallel.md`](./tensor-parallel.md).

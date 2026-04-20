@@ -412,6 +412,46 @@ offline audit.
 - Use `InMemoryTransport.createLinkedPair()` for MCP smoke tests.
   No subprocess needed.
 
+### Test profiles for hermetic audits
+
+Set `LLAMACTL_TEST_PROFILE=<dir>` to reroot every AI-model / runtime /
+cache path under one prefix. Designed for repeatable UI audits and CI
+runs where the operator's real `$DEV_STORAGE` and llama-server would
+otherwise bleed through.
+
+When `$LLAMACTL_TEST_PROFILE` is set the resolver applies these
+defaults — any individually-set env var still wins:
+
+| Env var                 | Default value                                       |
+|-------------------------|-----------------------------------------------------|
+| `DEV_STORAGE`           | `$LLAMACTL_TEST_PROFILE`                            |
+| `LOCAL_AI_RUNTIME_DIR`  | `$LLAMACTL_TEST_PROFILE/ai-models/local-ai`         |
+| `LLAMA_CPP_ROOT`        | `$LLAMACTL_TEST_PROFILE/ai-models/llama.cpp`        |
+| `LLAMA_CPP_MODELS`      | `$LLAMA_CPP_ROOT/models`                            |
+| `LLAMA_CPP_CACHE`       | `$LLAMA_CPP_ROOT/.cache`                            |
+| `LLAMA_CPP_LOGS`        | `$LLAMACTL_TEST_PROFILE/logs/llama.cpp`             |
+| `LLAMA_CPP_BIN`         | `$LLAMACTL_TEST_PROFILE/bin` (empty dir)            |
+| `HF_HOME`               | `$LLAMACTL_TEST_PROFILE/cache/huggingface`          |
+| `HUGGINGFACE_HUB_CACHE` | `$HF_HOME/hub`                                      |
+| `OLLAMA_MODELS`         | `$LLAMACTL_TEST_PROFILE/ai-models/ollama`           |
+| `LLAMA_CPP_HOST`        | `127.0.0.1` (constant — no real interface bind)     |
+| `LLAMA_CPP_PORT`        | `65534` (sentinel — nothing listens; Logs/Server surface "offline") |
+
+Both the TypeScript resolver (`packages/core/src/env.ts`) and the
+shell fallback cascade (`shell/env.zsh`) honour the same priority
+order: individual env var > `$LLAMACTL_TEST_PROFILE` default >
+production default.
+
+Example — hermetic UI audit:
+
+```sh
+LLAMACTL_TEST_PROFILE="$(mktemp -d -t llamactl-audit)" \
+  bun run tests/ui-audit-driver-v2.ts --executable=<path>
+```
+
+Unset `LLAMACTL_TEST_PROFILE` (or pass the empty string) for normal
+production behaviour — zero change for users that do not opt in.
+
 ## Cross-repo discipline
 
 **After a non-trivial slice, verify four repos still green:**
