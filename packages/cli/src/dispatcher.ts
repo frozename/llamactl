@@ -3,7 +3,87 @@ import {
   createNodeClient,
   LOCAL_NODE_ENDPOINT,
   type NodeClient,
+  type TunnelSendFn,
+  type Config,
 } from '@llamactl/remote';
+import { buildTunnelSend, type FetchLike } from './tunnel-dispatch.js';
+
+/**
+ * Optional seams for tests: lets a unit test inject a fake kubeconfig
+ * + a stubbed fetch without writing YAML + without monkey-patching
+ * the global fetch. Production code path ignores these (defaults to
+ * disk-backed config + global fetch).
+ */
+export interface DispatcherTestSeams {
+  config?: Config;
+  fetchImpl?: FetchLike;
+}
+
+let testSeams: DispatcherTestSeams = {};
+
+export function __setTestSeams(seams: DispatcherTestSeams): void {
+  testSeams = { ...seams };
+}
+
+export function __resetTestSeams(): void {
+  testSeams = {};
+}
+
+function loadConfigForDispatch(globals: Globals, env: NodeJS.ProcessEnv): Config {
+  if (testSeams.config) return testSeams.config;
+  const cfgPath = globals.configPath ?? kubecfg.defaultConfigPath(env);
+  return kubecfg.loadConfig(cfgPath);
+}
+
+/**
+ * Build a tunnel-send callable for the given context + node if the
+ * node declares `tunnelPreferred: true`. Returns `undefined` when
+ * direct HTTPS is the right path (unset / false). Throws with a
+ * clear message when the node demands tunneling but the context
+ * has no `tunnelCentralUrl` — silent fallback would hit the NAT'd
+ * node's direct HTTPS, which the operator already declared
+ * unreachable.
+ */
+function maybeBuildTunnelSend(
+  cfg: Config,
+  effectiveNodeName: string,
+  contextName: string | null,
+  env: NodeJS.ProcessEnv,
+): TunnelSendFn | undefined {
+  const ctxName = contextName ?? cfg.currentContext;
+  const ctx = cfg.contexts.find((c) => c.name === ctxName);
+  if (!ctx) return undefined;
+  const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
+  if (!cluster) return undefined;
+  const node = cluster.nodes.find((n) => n.name === effectiveNodeName);
+  if (!node?.tunnelPreferred) return undefined;
+
+  const centralUrl = ctx.tunnelCentralUrl;
+  if (!centralUrl) {
+    throw new Error(
+      `node '${effectiveNodeName}' has tunnelPreferred=true but the ` +
+        `current context '${ctx.name}' has no tunnelCentralUrl set; ` +
+        `cannot route via reverse tunnel`,
+    );
+  }
+
+  const user = cfg.users.find((u) => u.name === ctx.user);
+  if (!user) {
+    throw new Error(`user '${ctx.user}' not found`);
+  }
+  // Same bearer the operator's local agent uses to guard direct-HTTPS
+  // `/trpc` — the relay endpoint lives on that same local agent, so
+  // the same `verifyBearer` check applies.
+  const bearer = kubecfg.resolveToken(user, env);
+
+  const sendOpts: Parameters<typeof buildTunnelSend>[0] = {
+    centralUrl,
+    bearer,
+    nodeName: effectiveNodeName,
+  };
+  if (testSeams.fetchImpl) sendOpts.fetchImpl = testSeams.fetchImpl;
+  return buildTunnelSend(sendOpts);
+}
 
 /**
  * Global flags parsed from argv before subcommand dispatch. Mirrors the
@@ -104,8 +184,7 @@ export function resolveEffectiveNodeName(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   if (globals.nodeName) return globals.nodeName;
-  const cfgPath = globals.configPath ?? kubecfg.defaultConfigPath(env);
-  const cfg = kubecfg.loadConfig(cfgPath);
+  const cfg = loadConfigForDispatch(globals, env);
   const ctxName = globals.contextName ?? cfg.currentContext;
   const ctx = cfg.contexts.find((c) => c.name === ctxName);
   return ctx?.defaultNode ?? 'local';
@@ -116,8 +195,7 @@ export function isLocalDispatch(
   globals: Globals = currentGlobals,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  const cfgPath = globals.configPath ?? kubecfg.defaultConfigPath(env);
-  const cfg = kubecfg.loadConfig(cfgPath);
+  const cfg = loadConfigForDispatch(globals, env);
   const name = resolveEffectiveNodeName(globals, env);
   const ctxName = globals.contextName ?? cfg.currentContext;
   const ctx = cfg.contexts.find((c) => c.name === ctxName);
@@ -131,17 +209,27 @@ export function isLocalDispatch(
 /**
  * Build a NodeClient for the effective node. Local nodes short-circuit
  * to in-process dispatch; remote nodes open a pinned-TLS tRPC client.
+ * When the target node has `tunnelPreferred: true`, queries +
+ * mutations are routed through the context's `tunnelCentralUrl`
+ * relay instead of direct HTTPS.
  */
 export function getNodeClient(
   globals: Globals = currentGlobals,
   env: NodeJS.ProcessEnv = process.env,
 ): NodeClient {
-  const cfgPath = globals.configPath ?? kubecfg.defaultConfigPath(env);
-  const cfg = kubecfg.loadConfig(cfgPath);
+  const cfg = loadConfigForDispatch(globals, env);
   const opts: Parameters<typeof createNodeClient>[1] = {};
   if (globals.nodeName) opts.nodeName = globals.nodeName;
   if (globals.contextName) opts.contextName = globals.contextName;
   opts.env = env;
+  const effectiveName = resolveEffectiveNodeName(globals, env);
+  const tunnelSend = maybeBuildTunnelSend(
+    cfg,
+    effectiveName,
+    globals.contextName,
+    env,
+  );
+  if (tunnelSend) opts.tunnelSend = tunnelSend;
   return createNodeClient(cfg, opts);
 }
 
@@ -150,10 +238,16 @@ export function getNodeClientByName(
   globals: Globals = currentGlobals,
   env: NodeJS.ProcessEnv = process.env,
 ): NodeClient {
-  const cfgPath = globals.configPath ?? kubecfg.defaultConfigPath(env);
-  const cfg = kubecfg.loadConfig(cfgPath);
+  const cfg = loadConfigForDispatch(globals, env);
   const opts: Parameters<typeof createNodeClient>[1] = { nodeName, env };
   if (globals.contextName) opts.contextName = globals.contextName;
+  const tunnelSend = maybeBuildTunnelSend(
+    cfg,
+    nodeName,
+    globals.contextName,
+    env,
+  );
+  if (tunnelSend) opts.tunnelSend = tunnelSend;
   return createNodeClient(cfg, opts);
 }
 
@@ -167,8 +261,7 @@ export function listContextNodes(
   globals: Globals = currentGlobals,
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  const cfgPath = globals.configPath ?? kubecfg.defaultConfigPath(env);
-  const cfg = kubecfg.loadConfig(cfgPath);
+  const cfg = loadConfigForDispatch(globals, env);
   const ctxName = globals.contextName ?? cfg.currentContext;
   const ctx = cfg.contexts.find((c) => c.name === ctxName);
   if (!ctx) return [];

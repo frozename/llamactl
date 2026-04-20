@@ -150,6 +150,14 @@ export const ContextSchema = z.object({
   cluster: z.string().min(1),
   user: z.string().min(1),
   defaultNode: z.string().min(1).default('local'),
+  /**
+   * Base URL of the local agent hosting `/tunnel-relay` for this
+   * context. Required when any node in this cluster has
+   * `tunnelPreferred=true` — the dispatcher POSTs the tunnel-relay
+   * request here so central can forward it to the NAT'd node over
+   * the reverse WebSocket. Example: `https://127.0.0.1:7843`.
+   */
+  tunnelCentralUrl: z.url().optional(),
 });
 
 export const UserSchema = z.object({
