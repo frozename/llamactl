@@ -159,13 +159,18 @@ handler fails the
 call (dry + wet, success + failure) appends one line to
 `~/.llamactl/ops-chat/audit.jsonl`.
 
-## Self-healing loop (`llamactl heal`, N.2)
+## Self-healing loop (`llamactl agent heal`, N.2)
 
 Base usage:
 
 ```bash
-llamactl heal [--interval <seconds>] [--once] [--quiet] [--journal <path>]
+llamactl agent heal [--interval <seconds>] [--once] [--quiet] [--journal <path>]
+llamactl heal       [--interval <seconds>] [--once] [--quiet] [--journal <path>]
 ```
+
+The canonical form is `llamactl agent heal`; `llamactl heal` is
+preserved as a backwards-compat alias. Both dispatch paths share the
+same flag parser.
 
 Observes fleet health on an interval (default 30s), journals every
 tick + every healthy↔unhealthy transition, and — as of N.2 —

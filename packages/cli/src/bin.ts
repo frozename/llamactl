@@ -206,6 +206,7 @@ async function main(argv: string[]): Promise<number> {
       return runEmbersynth(rest);
     case 'runbook':
       return runRunbookCmd(rest);
+    // Alias: canonical form is 'llamactl agent heal'.
     case 'heal':
       return runHeal(rest);
     case 'cost-guardian':

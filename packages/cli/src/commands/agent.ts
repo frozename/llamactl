@@ -7,6 +7,7 @@ import {
   startAgentServer,
   tls,
 } from '@llamactl/remote';
+import { runHeal } from './heal.js';
 
 const USAGE = `Usage: llamactl agent <subcommand>
 
@@ -22,6 +23,10 @@ Subcommands:
       Run the node agent (blocks until SIGINT/SIGTERM).
   status [--dir=<path>]
       Print the agent config and its advertised URL.
+  heal [flags]
+      Run the self-healing loop (observe + journal + plan/execute).
+      See 'llamactl agent heal --help' for full flag set. Also
+      available as the top-level alias 'llamactl heal'.
 
 All state lives under \$LLAMACTL_AGENT_DIR or \$DEV_STORAGE or ~/.llamactl.
 `;
@@ -35,6 +40,8 @@ export async function runAgent(args: string[]): Promise<number> {
       return runServe(rest);
     case 'status':
       return runStatus(rest);
+    case 'heal':
+      return runHeal(rest);
     case undefined:
     case '--help':
     case '-h':

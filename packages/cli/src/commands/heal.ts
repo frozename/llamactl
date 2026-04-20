@@ -19,12 +19,16 @@ import { join } from 'node:path';
 const USAGE = `llamactl heal — observe + journal fleet health + propose/auto-remediate
 
 USAGE:
-  llamactl heal [--interval=<seconds>] [--once] [--timeout=<ms>]
-                [--journal=<path>] [--kubeconfig=<path>]
-                [--providers-file=<path>] [--quiet]
-                [--use-facade] [--no-use-facade]
-                [--auto] [--severity-threshold=<1|2|3>]
-                [--execute=<proposal-id>]
+  llamactl agent heal [flags]   (canonical)
+  llamactl heal [flags]         (alias)
+
+  Flags (identical for both invocation forms):
+    [--interval=<seconds>] [--once] [--timeout=<ms>]
+    [--journal=<path>] [--kubeconfig=<path>]
+    [--providers-file=<path>] [--quiet]
+    [--use-facade] [--no-use-facade]
+    [--auto] [--severity-threshold=<1|2|3>]
+    [--execute=<proposal-id>]
 
 The loop probes every gateway and sirius-provider baseUrl on an
 interval. Every tick is journaled; every observed state change
@@ -68,12 +72,13 @@ FLAGS:
                          'executed' entry, exit. Does not start a loop.
 
 EXAMPLES:
-  llamactl heal --once
-  llamactl heal --interval=15 --quiet
-  llamactl heal --journal=/tmp/heal.jsonl --once
-  llamactl heal --once --no-use-facade
-  llamactl heal --auto --severity-threshold=2
-  llamactl heal --execute=1a2b3c4d5e6f
+  llamactl agent heal --once
+  llamactl agent heal --interval=15 --quiet
+  llamactl agent heal --journal=/tmp/heal.jsonl --once
+  llamactl agent heal --once --no-use-facade
+  llamactl agent heal --auto --severity-threshold=2
+  llamactl agent heal --execute=1a2b3c4d5e6f
+  llamactl heal --once                 # alias form still works
 `;
 
 interface HealFlags {
