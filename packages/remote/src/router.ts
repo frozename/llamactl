@@ -1152,7 +1152,16 @@ export const router = t.router({
 
   catalogList: t.procedure
     .input(z.enum(['all', 'builtin', 'custom']).default('all'))
-    .query(({ input }) => catalog.listCatalog(input)),
+    .query(({ input }) => {
+      // Mirror the CLI's `catalog status` signal: a row is "installed"
+      // when the GGUF exists under $LLAMA_CPP_MODELS. The renderer uses
+      // this to gate the Uninstall action, which is a no-op otherwise.
+      const resolved = envMod.resolveEnv();
+      return catalog.listCatalog(input).map((entry) => ({
+        ...entry,
+        installed: existsSync(join(resolved.LLAMA_CPP_MODELS, entry.rel)),
+      }));
+    }),
 
   catalogStatus: t.procedure
     .input(z.string().min(1))

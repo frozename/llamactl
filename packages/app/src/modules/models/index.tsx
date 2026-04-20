@@ -160,53 +160,54 @@ export default function Models(): React.JSX.Element {
                     {row.rel}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    {isPending ? (
-                      <span className="inline-flex items-center gap-1">
-                        {needsForce && (
-                          <label className="flex items-center gap-1 text-xs text-[color:var(--color-fg-muted)]">
-                            <input
-                              type="checkbox"
-                              checked={force}
-                              onChange={(e) => setForce(e.target.checked)}
-                            />
-                            force
-                          </label>
-                        )}
+                    {row.installed &&
+                      (isPending ? (
+                        <span className="inline-flex items-center gap-1">
+                          {needsForce && (
+                            <label className="flex items-center gap-1 text-xs text-[color:var(--color-fg-muted)]">
+                              <input
+                                type="checkbox"
+                                checked={force}
+                                onChange={(e) => setForce(e.target.checked)}
+                              />
+                              force
+                            </label>
+                          )}
+                          <button
+                            type="button"
+                            disabled={uninstallMutation.isPending}
+                            onClick={() =>
+                              uninstallMutation.mutate({ rel: row.rel, force })
+                            }
+                            className="rounded border border-[var(--color-danger)] px-2 py-0.5 text-xs text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                          >
+                            {uninstallMutation.isPending ? 'Removing…' : 'Confirm'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={uninstallMutation.isPending}
+                            onClick={() => {
+                              setPendingRel(null);
+                              setForce(false);
+                            }}
+                            className="rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)]"
+                          >
+                            Cancel
+                          </button>
+                        </span>
+                      ) : (
                         <button
                           type="button"
-                          disabled={uninstallMutation.isPending}
-                          onClick={() =>
-                            uninstallMutation.mutate({ rel: row.rel, force })
-                          }
-                          className="rounded border border-[var(--color-danger)] px-2 py-0.5 text-xs text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                        >
-                          {uninstallMutation.isPending ? 'Removing…' : 'Confirm'}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={uninstallMutation.isPending}
                           onClick={() => {
-                            setPendingRel(null);
-                            setForce(false);
+                            setPendingRel(row.rel);
+                            setReport(null);
+                            setError(null);
                           }}
-                          className="rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)]"
+                          className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-fg-muted)] hover:border-[var(--color-border)] hover:text-[color:var(--color-fg)]"
                         >
-                          Cancel
+                          Uninstall
                         </button>
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPendingRel(row.rel);
-                          setReport(null);
-                          setError(null);
-                        }}
-                        className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-fg-muted)] hover:border-[var(--color-border)] hover:text-[color:var(--color-fg)]"
-                      >
-                        Uninstall
-                      </button>
-                    )}
+                      ))}
                   </td>
                 </tr>
               );
