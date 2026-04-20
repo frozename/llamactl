@@ -254,6 +254,71 @@ The cost journal at `~/.llamactl/healer/cost-journal.jsonl`
 (override with `--journal` or `LLAMACTL_COST_JOURNAL`) captures
 every decision, preview, wet-run outcome, refusal, and failure.
 
+## Reverse tunnel (I.3)
+
+**When to use** — a node is behind NAT with no port forward, or
+the fleet spans cloud + home lab and direct HTTPS from the CLI to
+the NAT'd node won't work.
+
+**Topology** — two roles:
+
+- **Central** — an agent on a host the CLI can reach directly.
+  Mounts a `/tunnel` WebSocket endpoint that dialing nodes connect
+  to, plus a `/tunnel-relay/<nodeName>` HTTP bridge the CLI POSTs
+  into.
+- **Dialing node** — an agent behind NAT that opens an outbound
+  WSS to a central and carries its tRPC router across the tunnel.
+
+A single agent can be both (central for NAT'd siblings while
+itself dialing another central). Typical setup is one central on
+the operator's reachable machine + N nodes dialing in.
+
+**Flags**:
+
+- *On central*: no CLI flag today. The tunnel server is wired
+  programmatically via `startAgentServer({ tunnelCentral: { port,
+  expectedBearerHash, onNodeConnect?, onNodeDisconnect? } })` in
+  `packages/remote/src/server/serve.ts`. An operator that wants to
+  run an agent in central mode must script the boot path (or
+  extend `agent serve` with a matching flag in a follow-up slice).
+- *On dialing node* — `llamactl agent serve`:
+  - `--dial-central=<wss-url>` — the central's `/tunnel` URL.
+  - `--central-bearer=<token>` — tunnel bearer (or set
+    `LLAMACTL_TUNNEL_BEARER` so it stays out of the command line).
+  - `--tunnel-node-name=<name>` — identity presented in the hello
+    frame; defaults to the agent's `nodeName`.
+- *In kubeconfig*: mark a node with `tunnelPreferred: true` and
+  set the context's `tunnelCentralUrl` to the local central's URL.
+  The dispatcher then POSTs `tunnelCentralUrl/tunnel-relay/<node>`
+  instead of talking to the node directly.
+
+**Security model** — two distinct bearers, intentionally separate
+so operators can rotate tunnel access without touching the main
+agent bearer:
+
+- The **tunnel bearer** — the raw token is passed on the dialing
+  side as `--central-bearer`; its hash is configured on the
+  central as `expectedBearerHash`. Presented in the first WS
+  hello frame; guards the inbound `/tunnel` WS upgrade only.
+- The **agent bearer** — standard kubeconfig user token. Guards
+  `/trpc`, `/tunnel-relay/*`, and every other HTTP route on the
+  agent. The CLI uses this for relay POSTs.
+
+**Audit trail** — the tunnel server's state transitions log to
+stderr on the agent (e.g. `tunnel: ready`, `tunnel: disconnected`)
+via the `onStateChange` callback wired by `agent serve`. No JSONL
+journal today; add one in a future slice if operators need
+offline audit.
+
+**Known gaps**:
+
+- Subscriptions (streaming tRPC) aren't supported over the tunnel
+  yet — the tunneled path rejects them with a "not supported yet"
+  error. Use direct HTTPS for streaming ops.
+- Fingerprint pinning over the tunnel-relay HTTP call isn't
+  implemented — rely on TLS on the central agent's
+  `/tunnel-relay` endpoint and trust the system CA.
+
 ## Testing
 
 - `bun:test` everywhere.
