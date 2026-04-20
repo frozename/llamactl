@@ -12,6 +12,21 @@ That's it. A GitHub Actions workflow builds four per-platform
 `llamactl-agent` binaries, attaches SHA-256 checksums, and publishes
 them as a GitHub Release.
 
+## Building locally
+
+For one-off local builds without cutting a release:
+
+```sh
+bun run build:agent                 # current platform
+bun run build:agent:all             # all four supported platforms
+```
+
+Both call `llamactl artifacts build-agent` under the hood. The
+binaries land under `$LLAMACTL_ARTIFACTS_DIR` or
+`$DEV_STORAGE/artifacts` or `~/.llamactl/artifacts` at
+`agent/<platform>/llamactl-agent`. `llamactl artifacts list` prints
+the current layout.
+
 ## What the workflow produces
 
 The `.github/workflows/release-agent.yml` workflow runs on any pushed

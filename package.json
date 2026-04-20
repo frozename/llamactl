@@ -10,6 +10,8 @@
   ],
   "scripts": {
     "cli": "bun run --cwd packages/cli src/bin.ts",
+    "build:agent": "bun run packages/cli/src/bin.ts artifacts build-agent",
+    "build:agent:all": "scripts/build-all-targets.sh",
     "typecheck": "bun run --cwd packages/core tsc --noEmit && bun run --cwd packages/cli tsc --noEmit",
     "test": "zsh test/run-all.zsh",
     "test:core": "bun run --cwd packages/core test",
