@@ -159,6 +159,55 @@ handler fails the
 call (dry + wet, success + failure) appends one line to
 `~/.llamactl/ops-chat/audit.jsonl`.
 
+## Self-healing loop (`llamactl heal`, N.2)
+
+Base usage:
+
+```bash
+llamactl heal [--interval <seconds>] [--once] [--quiet] [--journal <path>]
+```
+
+Observes fleet health on an interval (default 30s), journals every
+tick + every healthy↔unhealthy transition, and — as of N.2 —
+plans + optionally executes remediation.
+
+N.2 flags:
+
+- `--use-facade` / `--no-use-facade` (default on) — health signal
+  source. On: call `nova.ops.healthcheck` through an in-proc MCP
+  client (same pattern runbooks use). Off: raw HTTP probes against
+  gateway + provider baseUrls. Facade is the canonical path; the
+  raw probe is retained as a fallback when nova-mcp can't boot, and
+  fires automatically for the current tick if a facade call rejects
+  or returns `isError`.
+- `--auto` — enable auto-execution of remediation plans. Default is
+  propose-only: on a healthy→unhealthy flip the loop asks
+  `nova.operator.plan` for a remediation plan and appends a
+  `proposal` entry to the journal. An operator applies it later via
+  `--execute`.
+- `--severity-threshold <1|2|3>` — max tier allowed in `--auto`
+  mode (default 2). Tier 1 is read-only, tier 2 is mutation-safe,
+  tier 3 is destructive. **Tier 3 is always refused regardless of
+  threshold** — destructive remediation requires manual approval.
+  Plans with `requiresConfirmation: true` are also refused.
+- `--execute <proposal-id>` — one-shot: look up a previously
+  journaled proposal by id, execute its plan through the N.1
+  runbook harness, journal an `executed` entry, exit. Does not
+  start a loop.
+
+Remediation behavior: on a healthy→unhealthy transition the loop
+calls `nova.operator.plan({goal})`, journals a `proposal` with a
+content-hash id, and in `--auto` mode passes the plan through the
+severity gate. If the gate allows, steps execute sequentially via
+`runRunbook` (for known runbook names) or the raw in-proc tool
+client (for raw MCP tool names), stopping at first failure. Every
+outcome — proposal, refused, plan-failed, executed, step failure —
+is journaled.
+
+The journal at `~/.llamactl/healer/journal.jsonl` (override with
+`--journal` or `LLAMACTL_HEALER_JOURNAL`) is the audit trail. Keep
+it rotated; the loop appends, never truncates.
+
 ## Testing
 
 - `bun:test` everywhere.
