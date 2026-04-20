@@ -286,6 +286,10 @@ End-to-end walkthrough for a fresh Mac mini (clean-slate prep,
 dotfiles, DEV_STORAGE split, agent init, install-launchd, FDA
 grant, smoke tests): see `docs/deployment-mac-mini.md`.
 
+For multi-node tensor-parallel workloads that shard one model
+across several agents via `rpc-server`, see
+`docs/tensor-parallel.md`.
+
 ## Cost guardian (`llamactl cost-guardian`, N.3)
 
 Base usage:

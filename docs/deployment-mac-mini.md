@@ -235,6 +235,10 @@ scoped to `gui/<uid>`, which needs a login session. For a truly
 headless machine with no auto-login, use `--scope=system` instead
 (LaunchDaemon, runs from boot without a login).
 
+For multi-node setups that shard one model across several Mac minis
+via llama.cpp's `rpc-server`, see
+[`./tensor-parallel.md`](./tensor-parallel.md).
+
 ---
 
 ## Alternatives
