@@ -25,6 +25,7 @@ import { runArtifacts } from './commands/artifacts.js';
 import { runCostGuardian } from './commands/cost-guardian.js';
 import { runPlan } from './commands/plan.js';
 import { runInfra } from './commands/infra.js';
+import { runTunnel } from './commands/tunnel.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
@@ -152,6 +153,9 @@ Agentic operations:
       --version=<v> [--node <n>]              a specific installed version
   llamactl infra uninstall <pkg>              Remove a version (or the whole
       [--version=<v>] [--node <n>]            package when --version omitted)
+  llamactl tunnel pin-central                 Capture the central agent's TLS
+      [--context=<name>] [--url=<url>]        cert + fingerprint and pin the
+                                              /tunnel-relay POST against it.
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -219,6 +223,8 @@ async function main(argv: string[]): Promise<number> {
       return runArtifacts(rest);
     case 'infra':
       return runInfra(rest);
+    case 'tunnel':
+      return runTunnel(rest);
     case undefined:
     case '--help':
     case '-h':

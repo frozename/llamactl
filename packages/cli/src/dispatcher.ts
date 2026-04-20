@@ -82,7 +82,34 @@ function maybeBuildTunnelSend(
     nodeName: effectiveNodeName,
   };
   if (testSeams.fetchImpl) sendOpts.fetchImpl = testSeams.fetchImpl;
+  // Slice C (I.3.7) — pin the relay POST against central's cert if
+  // the operator ran `llamactl tunnel pin-central` to populate these
+  // fields. Absent fields fail closed inside `callViaTunnelRelay`
+  // unless `--insecure-tunnel-relay` was passed on the CLI.
+  if (ctx.tunnelCentralCertificate) sendOpts.pinnedCa = ctx.tunnelCentralCertificate;
+  if (ctx.tunnelCentralFingerprint) sendOpts.expectedFingerprint = ctx.tunnelCentralFingerprint;
+  // `--insecure-tunnel-relay` is a rarely-used bypass flag, so we
+  // scan `process.argv` once per tunnel-send build rather than
+  // plumbing a new field through the globals parser for every
+  // command that might route via the tunnel. Documented choice —
+  // keeps the existing Globals surface lean.
+  if (isInsecureTunnelRelay()) sendOpts.insecure = true;
   return buildTunnelSend(sendOpts);
+}
+
+/**
+ * One-shot scan of `process.argv` for the `--insecure-tunnel-relay`
+ * bypass flag. Accepts both bare `--insecure-tunnel-relay` and
+ * `--insecure-tunnel-relay=true`; anything else (e.g. `=false`) is
+ * treated as "not set" so operators can't accidentally leave the
+ * flag enabled via env/shell alias with a stale value.
+ */
+function isInsecureTunnelRelay(argv: readonly string[] = process.argv): boolean {
+  for (const raw of argv) {
+    if (raw === '--insecure-tunnel-relay') return true;
+    if (raw === '--insecure-tunnel-relay=true') return true;
+  }
+  return false;
 }
 
 /**

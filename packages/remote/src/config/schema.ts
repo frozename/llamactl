@@ -158,6 +158,24 @@ export const ContextSchema = z.object({
    * the reverse WebSocket. Example: `https://127.0.0.1:7843`.
    */
   tunnelCentralUrl: z.url().optional(),
+  /**
+   * `"sha256:<hex>"` fingerprint of the *local central agent's* TLS
+   * cert (I.3.7 / Slice C). Required alongside `tunnelCentralUrl` to
+   * pin the `/tunnel-relay` POST against this specific cert —
+   * ignores system roots so a misconfigured LB or MITM with a
+   * CA-issued cert can't hijack the relay path. Distinct from
+   * `ClusterNode.certificateFingerprint` (that's the NAT'd node's
+   * cert, not central's). Run `llamactl tunnel pin-central` to
+   * populate automatically.
+   */
+  tunnelCentralFingerprint: z.string().optional(),
+  /**
+   * PEM-encoded central agent certificate, persisted after the first
+   * pin so the relay POST can verify against this CA via Bun's
+   * `fetch({ tls: { ca } })` option. Paired with
+   * `tunnelCentralFingerprint`; both or neither.
+   */
+  tunnelCentralCertificate: z.string().optional(),
 });
 
 export const UserSchema = z.object({

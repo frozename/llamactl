@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   __resetTestSeams,
   __setTestSeams,
@@ -6,8 +9,23 @@ import {
   getNodeClientByName,
   EMPTY_GLOBALS,
 } from '../src/dispatcher.js';
-import type { Config } from '@llamactl/remote';
+import { tls, type Config } from '@llamactl/remote';
 import type { FetchLike } from '../src/tunnel-dispatch.js';
+
+// Slice C (I.3.7) — pin fields are now required to reach the relay
+// unless `--insecure-tunnel-relay` is set. These tests exercise the
+// happy pinned path, so we generate a real self-signed cert upfront
+// and feed both the PEM + fingerprint into the kubeconfig stub.
+let pinPem: string;
+let pinFingerprint: string;
+
+beforeAll(async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'llamactl-dispatcher-tunnel-'));
+  const cert = await tls.generateSelfSignedCert({ dir, commonName: '127.0.0.1' });
+  pinPem = cert.certPem;
+  pinFingerprint = cert.fingerprint;
+  rmSync(dir, { recursive: true, force: true });
+});
 
 /**
  * I.3.3 — dispatcher routes tRPC calls through the reverse tunnel
@@ -19,6 +37,11 @@ import type { FetchLike } from '../src/tunnel-dispatch.js';
 function baseConfig(overrides: {
   tunnelPreferred?: boolean;
   tunnelCentralUrl?: string | undefined;
+  /** When true, populate `tunnelCentralCertificate` +
+   *  `tunnelCentralFingerprint` so `callViaTunnelRelay` can satisfy
+   *  its fail-closed pin check. Default: true when a tunnelCentralUrl
+   *  is set, so existing tests exercise the pinned path naturally. */
+  withPinFields?: boolean;
 } = {}): Config {
   const ctx: Config['contexts'][number] = {
     name: 'default',
@@ -28,6 +51,12 @@ function baseConfig(overrides: {
   };
   if (overrides.tunnelCentralUrl !== undefined) {
     ctx.tunnelCentralUrl = overrides.tunnelCentralUrl;
+  }
+  const pinDefault = overrides.tunnelCentralUrl !== undefined;
+  const pin = overrides.withPinFields ?? pinDefault;
+  if (pin) {
+    ctx.tunnelCentralCertificate = pinPem;
+    ctx.tunnelCentralFingerprint = pinFingerprint;
   }
   return {
     apiVersion: 'llamactl/v1',
