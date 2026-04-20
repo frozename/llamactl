@@ -21,7 +21,7 @@ Subcommands:
       bootstrap blob without jq.
   serve [--dir=<path>] [--bind=<host>] [--port=<n>]
         [--dial-central=<wss-url>] [--central-bearer=<token>] [--tunnel-node-name=<name>]
-        [--tunnel-central=true] [--tunnel-bearer=<token>]
+        [--tunnel-central=true] [--tunnel-bearer=<token>] [--tunnel-journal=<path>]
       Run the node agent (blocks until SIGINT/SIGTERM).
       With --dial-central + --central-bearer, the agent additionally
       dials a central's /tunnel endpoint so its tRPC router is
@@ -31,6 +31,9 @@ Subcommands:
       /tunnel (WS upgrade) and /tunnel-relay on itself so NAT'd nodes
       can dial in. The bearer can also come from
       LLAMACTL_TUNNEL_CENTRAL_BEARER.
+      --tunnel-journal overrides the JSONL audit path for tunnel
+      events (default ~/.llamactl/tunnel/journal.jsonl, also
+      settable via LLAMACTL_TUNNEL_JOURNAL).
   status [--dir=<path>]
       Print the agent config and its advertised URL.
   heal [flags]
@@ -209,6 +212,7 @@ export interface ServeFlags {
   tunnelNodeName?: string;
   tunnelCentral?: boolean;
   tunnelBearer?: string;
+  tunnelJournal?: string;
 }
 
 export function parseServeFlags(args: string[]): ServeFlags | { error: string } {
@@ -230,6 +234,7 @@ export function parseServeFlags(args: string[]): ServeFlags | { error: string } 
       case '--tunnel-node-name': flags.tunnelNodeName = v; break;
       case '--tunnel-central': flags.tunnelCentral = v === 'true'; break;
       case '--tunnel-bearer': flags.tunnelBearer = v; break;
+      case '--tunnel-journal': flags.tunnelJournal = v; break;
       default: return { error: `agent serve: unknown flag ${k}` };
     }
   }
@@ -287,6 +292,9 @@ async function runServe(args: string[]): Promise<number> {
     port: parsed.port ?? cfg.port,
     tokenHash: cfg.tokenHash,
     tls: { certPath: cfg.certPath, keyPath: cfg.keyPath },
+    // Undefined → journal.ts resolves the default path (honors
+    // $LLAMACTL_TUNNEL_JOURNAL and $DEV_STORAGE).
+    ...(parsed.tunnelJournal ? { tunnelJournalPath: parsed.tunnelJournal } : {}),
     ...(dialUrl && dialBearer
       ? {
           tunnelDial: {

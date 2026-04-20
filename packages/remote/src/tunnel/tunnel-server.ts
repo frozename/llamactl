@@ -1,5 +1,10 @@
 import { hashToken } from '../server/auth.js';
 import {
+  appendTunnelJournal,
+  defaultTunnelJournalPath,
+  type TunnelJournalEntry,
+} from './journal.js';
+import {
   TUNNEL_CLOSE_BAD_HELLO,
   TUNNEL_CLOSE_HELLO_TIMEOUT,
   TUNNEL_CLOSE_UNAUTHORIZED,
@@ -61,6 +66,12 @@ export interface TunnelServerOptions {
   onNodeDisconnect?: (nodeName: string, reason: string) => void;
   /** Defaults to Date.now-driven id; override for tests. */
   clock?: () => Date;
+  /** Path to the JSONL audit journal. Defaults to
+   *  `defaultTunnelJournalPath()` (`~/.llamactl/tunnel/journal.jsonl`
+   *  or the `$LLAMACTL_TUNNEL_JOURNAL` / `$DEV_STORAGE` overrides).
+   *  Every connect, disconnect, unauthorized hello, and replaced
+   *  connection emits one line. */
+  journalPath?: string;
 }
 
 export interface TunnelServer {
@@ -85,6 +96,19 @@ export interface TunnelServer {
 export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
   const clock = opts.clock ?? (() => new Date());
   const nodes = new Map<string, AnyBunServerWebSocket>();
+  // Resolved once at setup so env overrides capture the process's
+  // startup state, not whatever `process.env` looks like when a ws
+  // event fires. Journal writes are best-effort; `appendTunnelJournal`
+  // already swallows I/O errors, but we wrap each call in try/catch
+  // too so a truly unexpected throw never nukes a tunnel handler.
+  const journalPath = opts.journalPath ?? defaultTunnelJournalPath();
+  const journal = (entry: TunnelJournalEntry): void => {
+    try {
+      appendTunnelJournal(entry, journalPath);
+    } catch {
+      // swallowed; appendTunnelJournal already stderr-warns once.
+    }
+  };
 
   function getState(ws: AnyBunServerWebSocket): ConnectionState {
     return ws.data as ConnectionState;
@@ -93,6 +117,14 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
   function registerNode(ws: AnyBunServerWebSocket, nodeName: string): void {
     const prior = nodes.get(nodeName);
     if (prior && prior !== ws) {
+      // Emit the replaced entry BEFORE closing the prior socket so
+      // operators see the displacement event even if the close fires
+      // a race-y disconnect-log-first.
+      journal({
+        kind: 'tunnel-replaced',
+        ts: clock().toISOString(),
+        nodeName,
+      });
       try {
         prior.close(TUNNEL_CLOSE_REPLACED, 'replaced by newer connection');
       } catch {
@@ -101,15 +133,34 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
     }
     nodes.set(nodeName, ws);
     opts.onNodeConnect?.(nodeName);
+    journal({
+      kind: 'tunnel-connect',
+      ts: clock().toISOString(),
+      nodeName,
+    });
   }
 
   function unregisterNode(ws: AnyBunServerWebSocket, reason: string): void {
     const state = getState(ws);
     if (!state.nodeName) return;
     // Only remove from registry if *this* ws still owns the slot.
+    // A displaced prior connection will fail this check — that case
+    // is already journaled as `tunnel-replaced` by registerNode.
     if (nodes.get(state.nodeName) === ws) {
       nodes.delete(state.nodeName);
       opts.onNodeDisconnect?.(state.nodeName, reason);
+      // close() calls pass `ws closed <code>(<reason>)`; extract the
+      // numeric code so downstream tooling can bucket by close code
+      // (1000 clean shutdown vs 4xxx policy-close vs 1006 abnormal).
+      const codeMatch = /^ws closed (\d+)/.exec(reason);
+      const code = codeMatch ? Number.parseInt(codeMatch[1]!, 10) : undefined;
+      journal({
+        kind: 'tunnel-disconnect',
+        ts: clock().toISOString(),
+        nodeName: state.nodeName,
+        reason,
+        ...(typeof code === 'number' && Number.isFinite(code) ? { code } : {}),
+      });
     }
     // Error out any pending requests awaiting responses.
     for (const { reject } of state.pending.values()) {
@@ -139,6 +190,14 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       open(ws) {
         const state = getState(ws);
         state.helloTimer = setTimeout(() => {
+          // NodeName is still unknown — hello never arrived. Journal
+          // the timeout itself so operators can distinguish idle
+          // loopback probes from actual nodes failing to auth.
+          journal({
+            kind: 'tunnel-unauthorized',
+            ts: clock().toISOString(),
+            reason: 'hello-timeout',
+          });
           try {
             ws.close(TUNNEL_CLOSE_HELLO_TIMEOUT, 'hello timeout');
           } catch {
@@ -151,6 +210,11 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
         const raw = typeof data === 'string' ? data : data.toString('utf8');
         const msg = parseTunnelMessage(raw);
         if (!msg) {
+          journal({
+            kind: 'tunnel-unauthorized',
+            ts: clock().toISOString(),
+            reason: 'malformed-hello',
+          });
           try {
             ws.close(TUNNEL_CLOSE_BAD_HELLO, 'malformed frame');
           } catch {
@@ -160,6 +224,11 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
         }
         if (!state.authenticated) {
           if (msg.type !== 'hello') {
+            journal({
+              kind: 'tunnel-unauthorized',
+              ts: clock().toISOString(),
+              reason: 'hello-required-first',
+            });
             try {
               ws.close(TUNNEL_CLOSE_UNAUTHORIZED, 'hello required first');
             } catch {
@@ -168,6 +237,15 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
             return;
           }
           if (hashToken(msg.bearer) !== opts.expectedBearerHash) {
+            // Hello parsed cleanly so the nodeName is known; journal it
+            // so operators can see WHICH node is presenting a stale
+            // bearer (common after a central-side bearer rotation).
+            journal({
+              kind: 'tunnel-unauthorized',
+              ts: clock().toISOString(),
+              nodeName: msg.nodeName,
+              reason: 'bad-bearer',
+            });
             try {
               ws.close(TUNNEL_CLOSE_UNAUTHORIZED, 'bad bearer');
             } catch {

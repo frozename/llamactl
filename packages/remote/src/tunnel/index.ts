@@ -31,3 +31,14 @@ export {
   createTunnelRouterHandler,
   type TunnelRouterParams,
 } from './router-bridge.js';
+export {
+  appendTunnelJournal,
+  defaultTunnelJournalPath,
+  type TunnelJournalEntry,
+  type TunnelJournalConnect,
+  type TunnelJournalDisconnect,
+  type TunnelJournalRelayCall,
+  type TunnelJournalRelayError,
+  type TunnelJournalUnauthorized,
+  type TunnelJournalReplaced,
+} from './journal.js';

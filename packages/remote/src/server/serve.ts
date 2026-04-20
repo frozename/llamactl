@@ -75,6 +75,16 @@ export interface StartAgentOptions {
     onNodeDisconnect?: (nodeName: string, reason: string) => void;
   };
   /**
+   * Override the JSONL audit journal path for tunnel events
+   * (connect / disconnect / relay-call / relay-error / unauthorized
+   * / replaced). Resolves to
+   * `defaultTunnelJournalPath()` inside journal.ts when undefined
+   * (honors `$LLAMACTL_TUNNEL_JOURNAL` and `$DEV_STORAGE`). Pass
+   * through on both sides: `createTunnelServer` gets it for the WS
+   * events, `handleTunnelRelay` gets it for the HTTP bridge events.
+   */
+  tunnelJournalPath?: string;
+  /**
    * When set, agent dials a central's /tunnel endpoint and bridges
    * inbound req frames to its own tRPC router. Use alongside or
    * independently of tunnelCentral — a given agent can be both
@@ -130,6 +140,9 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
         expectedBearerHash: opts.tunnelCentral.expectedBearerHash,
         onNodeConnect: opts.tunnelCentral.onNodeConnect,
         onNodeDisconnect: opts.tunnelCentral.onNodeDisconnect,
+        // journal.ts resolves undefined → the default path; we just
+        // pass through so callers can force a tempfile in tests.
+        journalPath: opts.tunnelJournalPath,
       })
     : null;
 
@@ -182,7 +195,13 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       return upgradeRes ?? new Response(null, { status: 101 });
     }
     if (url.pathname.startsWith('/tunnel-relay/') && tunnelServer) {
-      return handleTunnelRelay(req, url, tunnelServer, opts.tokenHash);
+      return handleTunnelRelay(
+        req,
+        url,
+        tunnelServer,
+        opts.tokenHash,
+        opts.tunnelJournalPath,
+      );
     }
     // Bootstrap registration — unauthenticated by design (nodes have
     // no bearer yet; that's what this endpoint mints). Consumes a
