@@ -117,7 +117,7 @@ describe('proxyFromTunnel — via createNodeClient', () => {
     expect(sent).toEqual(['deeply.nested.procedure']);
   });
 
-  test('subscribe throws — tunnel protocol is req/res only this slice', async () => {
+  test('subscribe throws when tunnelSubscribe dispatcher is absent', async () => {
     const send: TunnelSendFn = async () => ({ id: 'x' });
     const client = createNodeClient(baseConfig(), {
       nodeName: 'gpu1',
@@ -125,8 +125,40 @@ describe('proxyFromTunnel — via createNodeClient', () => {
     });
     expect(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (client as any).pullFile.subscribe();
-    }).toThrow(/not supported yet/);
+      (client as any).pullFile.subscribe(
+        { repo: 'r', file: 'f' },
+        { onData: () => {}, onError: () => {}, onComplete: () => {} },
+      );
+    }).toThrow(/requires a tunnelSubscribe dispatcher/);
+  });
+
+  test('subscribe forwards to tunnelSubscribe when wired (Slice B)', async () => {
+    const send: TunnelSendFn = async () => ({ id: 'x' });
+    const calls: Array<{ method: string; input: unknown }> = [];
+    const tunnelSubscribe = (
+      method: string,
+      input: unknown,
+      _handlers: {
+        onData: (e: unknown) => void;
+        onError: (err: unknown) => void;
+        onComplete: () => void;
+      },
+    ): { unsubscribe: () => void } => {
+      calls.push({ method, input });
+      return { unsubscribe() { /* no-op */ } };
+    };
+    const client = createNodeClient(baseConfig(), {
+      nodeName: 'gpu1',
+      tunnelSend: send,
+      tunnelSubscribe,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handle = (client as any).pullFile.subscribe(
+      { repo: 'a', file: 'b' },
+      { onData: () => {}, onError: () => {}, onComplete: () => {} },
+    );
+    expect(calls).toEqual([{ method: 'pullFile', input: { repo: 'a', file: 'b' } }]);
+    expect(typeof handle.unsubscribe).toBe('function');
   });
 
   test('tunnelPreferred=false → tunnel bypassed even if send is provided', async () => {

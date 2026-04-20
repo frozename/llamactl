@@ -35,6 +35,25 @@ export type TunnelSendFn = (req: {
   error?: { code: string; message: string };
 }>;
 
+/**
+ * Reverse-tunnel subscription dispatcher (I.3.4 / Slice B). Shape
+ * mirrors tRPC v11's client-subscription surface — the caller
+ * passes `{onData, onError, onComplete, onStarted?}` handlers; the
+ * returned `{unsubscribe}` closes the SSE connection (which the
+ * `handleTunnelRelay` relay in turn translates into a
+ * `stream-cancel` frame on the ws tunnel).
+ */
+export type TunnelSubscribeFn = (
+  method: string,
+  input: unknown,
+  handlers: {
+    onData: (e: unknown) => void;
+    onError: (err: unknown) => void;
+    onComplete: () => void;
+    onStarted?: () => void;
+  },
+) => { unsubscribe: () => void };
+
 export interface NodeClientOptions {
   /** If omitted, uses the current-context's defaultNode. */
   nodeName?: string;
@@ -46,10 +65,17 @@ export interface NodeClientOptions {
    * Reverse-tunnel dispatcher (I.3.3). When the resolved node has
    * `tunnelPreferred: true` AND this callable is supplied, queries
    * + mutations route through the tunnel instead of opening a
-   * pinned HTTPS tRPC client. Subscriptions still fall through to
-   * HTTPS for now — the tunnel frame protocol is req/res-only.
+   * pinned HTTPS tRPC client.
    */
   tunnelSend?: TunnelSendFn;
+  /**
+   * Reverse-tunnel subscription dispatcher (I.3.4). When set
+   * alongside `tunnelSend`, subscription calls on the proxy route
+   * through the tunnel-relay SSE endpoint instead of throwing
+   * "not supported". Absent → `.subscribe(...)` throws with the
+   * same not-supported message as before so callers notice.
+   */
+  tunnelSubscribe?: TunnelSubscribeFn;
 }
 
 /**
@@ -68,7 +94,7 @@ export function createNodeClient(config: Config, opts: NodeClientOptions = {}): 
     return proxyFromCaller();
   }
   if (node.tunnelPreferred === true && opts.tunnelSend) {
-    return proxyFromTunnel(opts.tunnelSend, nodeName);
+    return proxyFromTunnel(opts.tunnelSend, nodeName, opts.tunnelSubscribe);
   }
   const token = resolveToken(user, opts.env);
   return proxyFromHttp(node, token);
@@ -113,13 +139,17 @@ function proxyFromHttp(node: ClusterNode, token: string): NodeClient {
 }
 
 /**
- * Route tRPC queries + mutations through the reverse tunnel (I.3.3).
- * Subscriptions go through HTTPS until a stream frame lands on the
- * tunnel protocol — for now the subscribe surface on the proxy
+ * Route tRPC queries + mutations (and, when `tunnelSubscribe` is
+ * supplied, subscriptions) through the reverse tunnel (I.3.3/I.3.4).
+ * Without `tunnelSubscribe`, the subscribe surface on the proxy
  * throws a deliberate "not-supported" error so callers never
  * silently hang.
  */
-function proxyFromTunnel(send: TunnelSendFn, nodeName: string): NodeClient {
+function proxyFromTunnel(
+  send: TunnelSendFn,
+  nodeName: string,
+  subscribeFn?: TunnelSubscribeFn,
+): NodeClient {
   let counter = 0;
   const nextId = (): string =>
     `tunnel-${nodeName}-${Date.now().toString(36)}-${(counter++).toString(36)}`;
@@ -143,10 +173,18 @@ function proxyFromTunnel(send: TunnelSendFn, nodeName: string): NodeClient {
     return {
       query: (input: unknown) => invoke('query', method, input),
       mutate: (input: unknown) => invoke('mutation', method, input),
-      subscribe: (): never => {
-        throw new Error(
-          `tunnel-routed subscribe('${method}') is not supported yet — stream frames over the tunnel land in I.3.4`,
-        );
+      subscribe: (input: unknown, handlers: {
+        onData: (e: unknown) => void;
+        onError: (err: unknown) => void;
+        onComplete: () => void;
+        onStarted?: () => void;
+      }) => {
+        if (!subscribeFn) {
+          throw new Error(
+            `tunnel-routed subscribe('${method}') requires a tunnelSubscribe dispatcher; none was configured`,
+          );
+        }
+        return subscribeFn(method, input, handlers);
       },
     };
   }

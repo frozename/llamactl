@@ -14,6 +14,7 @@ export {
   createRemoteNodeClient,
   type NodeClient,
   type TunnelSendFn,
+  type TunnelSubscribeFn,
 } from './client/node-client.js';
 export {
   assertFingerprintMatch,

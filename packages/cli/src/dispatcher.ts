@@ -4,9 +4,14 @@ import {
   LOCAL_NODE_ENDPOINT,
   type NodeClient,
   type TunnelSendFn,
+  type TunnelSubscribeFn,
   type Config,
 } from '@llamactl/remote';
-import { buildTunnelSend, type FetchLike } from './tunnel-dispatch.js';
+import {
+  buildTunnelSend,
+  buildTunnelSubscribe,
+  type FetchLike,
+} from './tunnel-dispatch.js';
 
 /**
  * Optional seams for tests: lets a unit test inject a fake kubeconfig
@@ -44,12 +49,12 @@ function loadConfigForDispatch(globals: Globals, env: NodeJS.ProcessEnv): Config
  * node's direct HTTPS, which the operator already declared
  * unreachable.
  */
-function maybeBuildTunnelSend(
+function maybeBuildTunnelDispatch(
   cfg: Config,
   effectiveNodeName: string,
   contextName: string | null,
   env: NodeJS.ProcessEnv,
-): TunnelSendFn | undefined {
+): { send: TunnelSendFn; subscribe: TunnelSubscribeFn } | undefined {
   const ctxName = contextName ?? cfg.currentContext;
   const ctx = cfg.contexts.find((c) => c.name === ctxName);
   if (!ctx) return undefined;
@@ -76,25 +81,38 @@ function maybeBuildTunnelSend(
   // the same `verifyBearer` check applies.
   const bearer = kubecfg.resolveToken(user, env);
 
-  const sendOpts: Parameters<typeof buildTunnelSend>[0] = {
+  // Shared opts shape used by both the send + subscribe builders so
+  // they get identical pinning/auth/insecure-flag treatment.
+  const sharedOpts: {
+    centralUrl: string;
+    bearer: string;
+    nodeName: string;
+    fetchImpl?: FetchLike;
+    pinnedCa?: string;
+    expectedFingerprint?: string;
+    insecure?: boolean;
+  } = {
     centralUrl,
     bearer,
     nodeName: effectiveNodeName,
   };
-  if (testSeams.fetchImpl) sendOpts.fetchImpl = testSeams.fetchImpl;
+  if (testSeams.fetchImpl) sharedOpts.fetchImpl = testSeams.fetchImpl;
   // Slice C (I.3.7) — pin the relay POST against central's cert if
   // the operator ran `llamactl tunnel pin-central` to populate these
   // fields. Absent fields fail closed inside `callViaTunnelRelay`
   // unless `--insecure-tunnel-relay` was passed on the CLI.
-  if (ctx.tunnelCentralCertificate) sendOpts.pinnedCa = ctx.tunnelCentralCertificate;
-  if (ctx.tunnelCentralFingerprint) sendOpts.expectedFingerprint = ctx.tunnelCentralFingerprint;
+  if (ctx.tunnelCentralCertificate) sharedOpts.pinnedCa = ctx.tunnelCentralCertificate;
+  if (ctx.tunnelCentralFingerprint) sharedOpts.expectedFingerprint = ctx.tunnelCentralFingerprint;
   // `--insecure-tunnel-relay` is a rarely-used bypass flag, so we
   // scan `process.argv` once per tunnel-send build rather than
   // plumbing a new field through the globals parser for every
   // command that might route via the tunnel. Documented choice —
   // keeps the existing Globals surface lean.
-  if (isInsecureTunnelRelay()) sendOpts.insecure = true;
-  return buildTunnelSend(sendOpts);
+  if (isInsecureTunnelRelay()) sharedOpts.insecure = true;
+  return {
+    send: buildTunnelSend(sharedOpts),
+    subscribe: buildTunnelSubscribe(sharedOpts),
+  };
 }
 
 /**
@@ -250,13 +268,16 @@ export function getNodeClient(
   if (globals.contextName) opts.contextName = globals.contextName;
   opts.env = env;
   const effectiveName = resolveEffectiveNodeName(globals, env);
-  const tunnelSend = maybeBuildTunnelSend(
+  const tunnelDispatch = maybeBuildTunnelDispatch(
     cfg,
     effectiveName,
     globals.contextName,
     env,
   );
-  if (tunnelSend) opts.tunnelSend = tunnelSend;
+  if (tunnelDispatch) {
+    opts.tunnelSend = tunnelDispatch.send;
+    opts.tunnelSubscribe = tunnelDispatch.subscribe;
+  }
   return createNodeClient(cfg, opts);
 }
 
@@ -268,13 +289,16 @@ export function getNodeClientByName(
   const cfg = loadConfigForDispatch(globals, env);
   const opts: Parameters<typeof createNodeClient>[1] = { nodeName, env };
   if (globals.contextName) opts.contextName = globals.contextName;
-  const tunnelSend = maybeBuildTunnelSend(
+  const tunnelDispatch = maybeBuildTunnelDispatch(
     cfg,
     nodeName,
     globals.contextName,
     env,
   );
-  if (tunnelSend) opts.tunnelSend = tunnelSend;
+  if (tunnelDispatch) {
+    opts.tunnelSend = tunnelDispatch.send;
+    opts.tunnelSubscribe = tunnelDispatch.subscribe;
+  }
   return createNodeClient(cfg, opts);
 }
 

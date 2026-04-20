@@ -1,4 +1,4 @@
-import type { TunnelSendFn } from '@llamactl/remote';
+import type { TunnelSendFn, TunnelSubscribeFn } from '@llamactl/remote';
 import { tls } from '@llamactl/remote';
 
 const { computeFingerprint, fingerprintsEqual } = tls;
@@ -85,14 +85,41 @@ interface TunnelResEnvelope {
   error?: { code: string; message: string };
 }
 
-export async function callViaTunnelRelay(
-  opts: TunnelRelayCallOptions,
-): Promise<unknown> {
-  // Fingerprint gate. `tunnelCentralFingerprint` / `tunnelCentralCertificate`
-  // pin against the *local central agent's* TLS cert — NOT the remote
-  // node's cert (that's `ClusterNode.certificateFingerprint`, gated by
-  // `assertFingerprintMatch` on the direct-HTTPS path). See links.ts:38-62
-  // for the mirror pattern.
+/**
+ * Shared pin-gate + request-init builder used by both the JSON
+ * POST path (`callViaTunnelRelay`) and the SSE subscribe path
+ * (`openTunnelRelaySse`). Extracted so both surfaces enforce the
+ * fingerprint check + Bun `tls.ca` plumbing identically — the anti-
+ * pattern guard (B.4 docstring) explicitly forbids pinning drift
+ * between the two.
+ */
+interface BuildRelayFetchInitOptions {
+  method: string;
+  type: 'query' | 'mutation' | 'subscription';
+  input: unknown;
+  bearer: string;
+  pinnedCa?: string;
+  expectedFingerprint?: string;
+  insecure?: boolean;
+  /** Appended to the request init — used by the SSE path to carry
+   *  an AbortController signal so `.unsubscribe()` can tear down
+   *  the fetch response. */
+  signal?: AbortSignal;
+}
+interface BuiltRelayRequest {
+  url: string;
+  init: Parameters<FetchLike>[1];
+}
+function buildRelayFetchInit(
+  centralUrl: string,
+  nodeName: string,
+  opts: BuildRelayFetchInitOptions,
+  query?: Record<string, string>,
+): BuiltRelayRequest {
+  // Fingerprint gate. `tunnelCentralFingerprint` /
+  // `tunnelCentralCertificate` pin against the *local central agent's*
+  // TLS cert — NOT the remote node's cert. See links.ts:38-62 for
+  // the mirror pattern.
   if (opts.insecure) {
     if (!warnedAboutInsecureTunnel) {
       process.stderr.write(
@@ -115,10 +142,12 @@ export async function callViaTunnelRelay(
       );
     }
   }
-
-  const base = opts.centralUrl.replace(/\/$/, '');
-  const url = `${base}/tunnel-relay/${encodeURIComponent(opts.nodeName)}`;
-  const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as FetchLike);
+  const base = centralUrl.replace(/\/$/, '');
+  let url = `${base}/tunnel-relay/${encodeURIComponent(nodeName)}`;
+  if (query) {
+    const qs = new URLSearchParams(query).toString();
+    if (qs) url += `?${qs}`;
+  }
   // Bun-specific `tls.ca` extension (same cast-through-any pattern as
   // `makePinnedFetch` in links.ts:62). Only set when we've verified
   // the fingerprint above — omit entirely in insecure mode so the
@@ -131,14 +160,33 @@ export async function callViaTunnelRelay(
     },
     body: JSON.stringify({
       method: opts.method,
-      type: opts.type ?? 'query',
+      type: opts.type,
       input: opts.input,
     }),
+    ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.pinnedCa && !opts.insecure
       ? ({ tls: { ca: opts.pinnedCa } } as Record<string, unknown>)
       : {}),
   };
-  const res = await fetchImpl(url, init);
+  return { url, init };
+}
+
+export async function callViaTunnelRelay(
+  opts: TunnelRelayCallOptions,
+): Promise<unknown> {
+  const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as FetchLike);
+  const built = buildRelayFetchInit(opts.centralUrl, opts.nodeName, {
+    method: opts.method,
+    type: opts.type ?? 'query',
+    input: opts.input,
+    bearer: opts.bearer,
+    ...(opts.pinnedCa ? { pinnedCa: opts.pinnedCa } : {}),
+    ...(opts.expectedFingerprint
+      ? { expectedFingerprint: opts.expectedFingerprint }
+      : {}),
+    ...(opts.insecure ? { insecure: opts.insecure } : {}),
+  });
+  const res = await fetchImpl(built.url, built.init);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(
@@ -213,5 +261,187 @@ export function buildTunnelSend(opts: {
         },
       };
     }
+  };
+}
+
+/**
+ * Build a `TunnelSubscribeFn` closure. The returned fn — plugged
+ * into `createNodeClient({tunnelSubscribe})` — opens an SSE stream
+ * against `<centralUrl>/tunnel-relay/<nodeName>?stream=true`, parses
+ * the event frames (each `data:` line is a subscription event; the
+ * terminal `event: done\ndata: {ok, error?}` frame closes the
+ * stream), and funnels them through the caller's
+ * `{onData, onError, onComplete, onStarted?}` handlers.
+ *
+ * Pinning: same gate as the POST path — uses `buildRelayFetchInit`
+ * so mismatch / missing-fingerprint in secure mode throws before
+ * any network I/O. Abort semantics: `unsubscribe()` aborts the
+ * fetch, which Bun translates into ending the HTTP request; the
+ * central agent's SSE handler sees `req.signal.aborted` and
+ * iterator.return()-s the subscription, shipping a `stream-cancel`
+ * frame to the agent.
+ */
+export function buildTunnelSubscribe(opts: {
+  centralUrl: string;
+  bearer: string;
+  nodeName: string;
+  fetchImpl?: FetchLike;
+  pinnedCa?: string;
+  expectedFingerprint?: string;
+  insecure?: boolean;
+}): TunnelSubscribeFn {
+  const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as FetchLike);
+  return (method, input, handlers) => {
+    const abort = new AbortController();
+    let settled = false;
+    const safeError = (err: unknown): void => {
+      if (settled) return;
+      settled = true;
+      try {
+        handlers.onError(err);
+      } catch {
+        // ignore
+      }
+    };
+    const safeComplete = (): void => {
+      if (settled) return;
+      settled = true;
+      try {
+        handlers.onComplete();
+      } catch {
+        // ignore
+      }
+    };
+    const pump = async (): Promise<void> => {
+      let built: BuiltRelayRequest;
+      try {
+        built = buildRelayFetchInit(
+          opts.centralUrl,
+          opts.nodeName,
+          {
+            method,
+            type: 'subscription',
+            input,
+            bearer: opts.bearer,
+            signal: abort.signal,
+            ...(opts.pinnedCa ? { pinnedCa: opts.pinnedCa } : {}),
+            ...(opts.expectedFingerprint
+              ? { expectedFingerprint: opts.expectedFingerprint }
+              : {}),
+            ...(opts.insecure ? { insecure: opts.insecure } : {}),
+          },
+          { stream: 'true' },
+        );
+      } catch (err) {
+        safeError(err);
+        return;
+      }
+      let res: Response;
+      try {
+        res = await fetchImpl(built.url, built.init);
+      } catch (err) {
+        if (abort.signal.aborted) {
+          safeComplete();
+          return;
+        }
+        safeError(err);
+        return;
+      }
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        safeError(
+          new Error(`tunnel-relay ${res.status}: ${text || res.statusText}`),
+        );
+        return;
+      }
+      handlers.onStarted?.();
+      if (!res.body) {
+        safeError(new Error('tunnel-relay SSE returned an empty body'));
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      try {
+        while (true) {
+          if (abort.signal.aborted) break;
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          // Parse one SSE frame at a time — standard \n\n separator.
+          let idx: number;
+          while ((idx = buf.indexOf('\n\n')) !== -1) {
+            const chunk = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            if (!chunk) continue;
+            let eventName = '';
+            let dataPayload = '';
+            for (const line of chunk.split('\n')) {
+              if (line.startsWith('event:')) eventName = line.slice(6).trim();
+              else if (line.startsWith('data:')) dataPayload = line.slice(5).trim();
+            }
+            if (eventName === 'done') {
+              let parsed: { ok: boolean; error?: { code: string; message: string } };
+              try {
+                parsed = JSON.parse(dataPayload);
+              } catch {
+                safeError(new Error('tunnel-relay SSE: malformed done frame'));
+                return;
+              }
+              if (parsed.ok) {
+                safeComplete();
+              } else {
+                const err = new Error(parsed.error?.message ?? 'subscription error');
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (err as any).code = parsed.error?.code;
+                safeError(err);
+              }
+              return;
+            }
+            if (!eventName) {
+              // default 'message' event
+              let data: unknown;
+              try {
+                data = JSON.parse(dataPayload);
+              } catch {
+                // Corrupted frame; surface as error.
+                safeError(new Error('tunnel-relay SSE: malformed data frame'));
+                return;
+              }
+              if (abort.signal.aborted) return;
+              try {
+                handlers.onData(data);
+              } catch {
+                // caller handler threw; continue pumping — their
+                // subscribeRemote catches and surfaces.
+              }
+            }
+          }
+        }
+        // Stream ended without a done frame (server closed body).
+        if (abort.signal.aborted) safeComplete();
+        else safeError(new Error('tunnel-relay SSE: stream closed without a done frame'));
+      } catch (err) {
+        if (abort.signal.aborted) {
+          safeComplete();
+          return;
+        }
+        safeError(err);
+      }
+    };
+    void pump();
+    return {
+      unsubscribe(): void {
+        if (settled) return;
+        // Mark settled so duplicate unsubscribe is a no-op and the
+        // pump's next path observes an aborted signal cleanly.
+        settled = true;
+        try {
+          abort.abort();
+        } catch {
+          // ignore
+        }
+      },
+    };
   };
 }

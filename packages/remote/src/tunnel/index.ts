@@ -12,6 +12,9 @@ export {
   type TunnelRes,
   type TunnelPing,
   type TunnelPong,
+  type TunnelStreamEvent,
+  type TunnelStreamDone,
+  type TunnelStreamCancel,
 } from './messages.js';
 export {
   createTunnelServer,
@@ -29,7 +32,9 @@ export {
 } from './tunnel-client.js';
 export {
   createTunnelRouterHandler,
+  createTunnelSubscriptionHandler,
   type TunnelRouterParams,
+  type TunnelSubscription,
 } from './router-bridge.js';
 export {
   appendTunnelJournal,

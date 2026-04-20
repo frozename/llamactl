@@ -16,6 +16,20 @@ import {
 } from './messages.js';
 
 /**
+ * Subscription state tracked per correlation id. Kept in a
+ * distinct Map from `pending` (req/res) so late stream-event frames
+ * never mis-resolve a query/mutation promise, and vice versa.
+ *
+ *   push(data)  — called on every stream-event frame.
+ *   done(error?) — called on the stream-done frame; undefined error
+ *                  means clean completion.
+ */
+interface SubscriptionHandlers {
+  push: (value: unknown) => void;
+  done: (error?: { code: string; message: string }) => void;
+}
+
+/**
  * Central-side (control plane) reverse-tunnel server.
  *
  * Exposes the three pieces Bun.serve requires — a `fetch`
@@ -57,6 +71,7 @@ interface ConnectionState {
   nodeName: string | null;
   helloTimer: ReturnType<typeof setTimeout> | null;
   pending: Map<string, { resolve: (r: TunnelRes) => void; reject: (err: Error) => void }>;
+  subscriptions: Map<string, SubscriptionHandlers>;
 }
 
 export interface TunnelServerOptions {
@@ -87,10 +102,143 @@ export interface TunnelServer {
     close: (ws: AnyBunServerWebSocket, code: number, reason: string) => void;
   };
   send: (nodeName: string, req: Omit<TunnelReq, 'type'>) => Promise<TunnelRes>;
+  /**
+   * Open a streaming subscription to a node. Ships a `req` frame
+   * with `params.type === 'subscription'` and returns an
+   * AsyncIterable that yields each `stream-event.data` payload the
+   * node pushes back. The iterable terminates when a `stream-done`
+   * frame arrives (normal completion) or throws with the propagated
+   * error code + message when the node reports a failure. Calling
+   * the iterator's `.return()` (e.g. by breaking out of a
+   * `for await`) sends a `stream-cancel` back to the node and
+   * releases the correlation-id slot.
+   */
+  sendSubscribe: (
+    nodeName: string,
+    req: Omit<TunnelReq, 'type'>,
+  ) => AsyncIterable<unknown>;
   registry: () => TunnelRegistryEntry[];
   /** Force-close a node's tunnel; primarily for tests + operator
    *  "agent tunnel kick" tooling. */
   disconnect: (nodeName: string, reason?: string) => boolean;
+}
+
+/**
+ * Construct an AsyncIterable wrapping a subscription-over-tunnel.
+ * Push-pull model: incoming stream-event frames are buffered, each
+ * `next()` drains the buffer or awaits a Deferred. A terminal
+ * stream-done resolves the iterator as either "complete" or throws
+ * with the agent-reported error. Iterator `return()` ships a
+ * stream-cancel frame and releases the correlation-id slot so a
+ * later event after cancel is silently dropped.
+ */
+function buildSubscriptionIterable(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ws: any,
+  state: ConnectionState,
+  req: TunnelReq,
+): AsyncIterable<unknown> {
+  // Typed as an internal tagged union so the next()-side consumer
+  // knows which branch to take after a Deferred resolves.
+  type Entry =
+    | { kind: 'value'; value: unknown }
+    | { kind: 'error'; error: { code: string; message: string } }
+    | { kind: 'complete' };
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<unknown> {
+      const buffer: Entry[] = [];
+      let pending: { resolve: (r: IteratorResult<unknown>) => void; reject: (e: Error) => void } | null = null;
+      let registered = false;
+      let finished = false;
+      const handlers: SubscriptionHandlers = {
+        push(value) {
+          if (finished) return;
+          if (pending) {
+            const p = pending;
+            pending = null;
+            p.resolve({ value, done: false });
+          } else {
+            buffer.push({ kind: 'value', value });
+          }
+        },
+        done(error) {
+          if (finished) return;
+          finished = true;
+          state.subscriptions.delete(req.id);
+          if (error) {
+            if (pending) {
+              const p = pending;
+              pending = null;
+              p.reject(
+                Object.assign(new Error(error.message), { code: error.code }),
+              );
+            } else {
+              buffer.push({ kind: 'error', error });
+            }
+          } else {
+            if (pending) {
+              const p = pending;
+              pending = null;
+              p.resolve({ value: undefined, done: true });
+            } else {
+              buffer.push({ kind: 'complete' });
+            }
+          }
+        },
+      };
+      const cleanup = (): void => {
+        if (finished) return;
+        finished = true;
+        state.subscriptions.delete(req.id);
+        try {
+          ws.send(
+            encodeTunnelMessage({ type: 'stream-cancel', id: req.id }),
+          );
+        } catch {
+          // ws already gone; nothing to ship.
+        }
+      };
+      const ensureRegistered = (): void => {
+        if (registered) return;
+        registered = true;
+        state.subscriptions.set(req.id, handlers);
+        try {
+          ws.send(encodeTunnelMessage(req));
+        } catch (err) {
+          handlers.done({
+            code: 'ws-send-failed',
+            message: (err as Error).message,
+          });
+        }
+      };
+      return {
+        async next(): Promise<IteratorResult<unknown>> {
+          ensureRegistered();
+          if (buffer.length > 0) {
+            const head = buffer.shift()!;
+            if (head.kind === 'value') return { value: head.value, done: false };
+            if (head.kind === 'complete') return { value: undefined, done: true };
+            throw Object.assign(new Error(head.error.message), {
+              code: head.error.code,
+            });
+          }
+          if (finished) return { value: undefined, done: true };
+          return new Promise<IteratorResult<unknown>>((resolve, reject) => {
+            pending = { resolve, reject };
+          });
+        },
+        async return(): Promise<IteratorResult<unknown>> {
+          cleanup();
+          if (pending) {
+            const p = pending;
+            pending = null;
+            p.resolve({ value: undefined, done: true });
+          }
+          return { value: undefined, done: true };
+        },
+      };
+    },
+  };
 }
 
 export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
@@ -167,6 +315,14 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       reject(new Error(`tunnel-disconnected: ${reason}`));
     }
     state.pending.clear();
+    // Terminate any in-flight subscriptions with a synthetic error —
+    // the consumer's `for await` will throw with the reason so it
+    // can bail out of its SSE body loop cleanly. No explicit
+    // stream-cancel ships because the ws is already gone.
+    for (const { done } of state.subscriptions.values()) {
+      done({ code: 'tunnel-disconnected', message: reason });
+    }
+    state.subscriptions.clear();
   }
 
   return {
@@ -178,6 +334,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
         nodeName: null,
         helloTimer: null,
         pending: new Map(),
+        subscriptions: new Map(),
       };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const upgraded = (server as any).upgrade(req, { data: state });
@@ -275,6 +432,22 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
           }
           return;
         }
+        if (msg.type === 'stream-event') {
+          // Route to subscription map ONLY — a late stream-event
+          // after cancel will miss (no-op) which is the intended
+          // silent-drop behaviour.
+          const sub = state.subscriptions.get(msg.id);
+          if (sub) sub.push(msg.data);
+          return;
+        }
+        if (msg.type === 'stream-done') {
+          const sub = state.subscriptions.get(msg.id);
+          if (sub) {
+            state.subscriptions.delete(msg.id);
+            sub.done(msg.ok ? undefined : msg.error);
+          }
+          return;
+        }
         if (msg.type === 'ping') {
           ws.send(encodeTunnelMessage({ type: 'pong', nonce: msg.nonce }));
           return;
@@ -305,6 +478,33 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
           reject(err as Error);
         }
       });
+    },
+    sendSubscribe(nodeName, req) {
+      const ws = nodes.get(nodeName);
+      if (!ws) {
+        // Return an iterable that throws on first `next()` so the
+        // synchronous call signature stays simple. Consumers inside
+        // a `for await` will see the throw on iteration start.
+        const err = new Error(`tunnel not connected for node '${nodeName}'`);
+        return {
+          [Symbol.asyncIterator](): AsyncIterator<unknown> {
+            let thrown = false;
+            return {
+              async next(): Promise<IteratorResult<unknown>> {
+                if (thrown) return { value: undefined, done: true };
+                thrown = true;
+                throw err;
+              },
+              async return(): Promise<IteratorResult<unknown>> {
+                return { value: undefined, done: true };
+              },
+            };
+          },
+        };
+      }
+      const state = getState(ws);
+      const full: TunnelReq = { type: 'req', ...req };
+      return buildSubscriptionIterable(ws, state, full);
     },
     registry() {
       const out: TunnelRegistryEntry[] = [];

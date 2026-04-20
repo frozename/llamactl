@@ -6,6 +6,23 @@ import {
 } from './messages.js';
 
 /**
+ * Subscription-side handler shape. Mirrors `TunnelSubscription`
+ * exported from `./router-bridge.ts` — kept here as a separate
+ * local interface so `tunnel-client.ts` stays independent of
+ * router-bridge's router-typing. Callers (agents) build these via
+ * `createTunnelSubscriptionHandler(router, ctxFn)`.
+ */
+export interface TunnelSubscriptionHandle {
+  subscribe(handlers: {
+    onEvent: (data: unknown) => void;
+    onError: (err: Error) => void;
+    onComplete: () => void;
+  }): { cancel: () => void };
+}
+
+export type HandleSubscriptionFn = (req: TunnelReq) => TunnelSubscriptionHandle;
+
+/**
  * Agent-side (node) reverse-tunnel client.
  *
  * Dials central's `/tunnel` WebSocket, sends a hello frame carrying
@@ -51,6 +68,13 @@ export interface TunnelClientOptions {
   /** Invoked for each inbound req; returned value is packaged as a
    *  success `res`. Throw to send an error `res`. */
   handleRequest: (req: TunnelReq) => Promise<unknown>;
+  /** Invoked for each inbound req whose `params.type === 'subscription'`.
+   *  Returns a subscription handle whose `.subscribe()` wires the
+   *  tunnel client's event/error/complete callbacks; the handle's
+   *  `cancel()` runs when central sends a stream-cancel frame (or
+   *  the ws disconnects). When absent, subscription reqs error back
+   *  with `code: 'subscription-unsupported'`. */
+  handleSubscription?: HandleSubscriptionFn;
   /** Override for tests. Defaults to the global WebSocket. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   WebSocketCtor?: any;
@@ -117,6 +141,12 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
   const pendingPings = new Map<string, { resolve: () => void; reject: (err: Error) => void }>();
   const readyWaiters: Array<{ resolve: () => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> | null }> = [];
   let firstAttemptResolver: { resolve: () => void; reject: (err: Error) => void } | null = null;
+  // Active subscription teardowns keyed by req.id. On stream-cancel
+  // from central (or any disconnect path), we call cancel() and
+  // drop the entry; the subscription's onComplete/onError still
+  // fires through the normal router-bridge handler so the server
+  // side of the tunnel gets its terminal stream-done frame.
+  const activeSubscriptions = new Map<string, { cancel: () => void }>();
 
   function setState(next: TunnelState): void {
     if (state === next) return;
@@ -147,6 +177,16 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
       reject(new Error('tunnel-disconnected'));
     }
     pendingPings.clear();
+    // Tear down any in-flight subscriptions — the source observable
+    // gets aborted so background work stops, and future stream-cancel
+    // frames from central (which won't arrive anyway) would have no
+    // subscription to cancel. The router-bridge handler's
+    // onComplete/onError terminal still fires but the ws.send that
+    // would ship stream-done silently fails (swallowed below).
+    for (const { cancel } of activeSubscriptions.values()) {
+      try { cancel(); } catch { /* ignore */ }
+    }
+    activeSubscriptions.clear();
   }
 
   function computeBackoff(): number {
@@ -206,6 +246,99 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
     }
   }
 
+  /**
+   * Fan a subscription req into stream-event frames. `index` stays
+   * monotonic per subscription id; the consumer (central) uses it
+   * to gap-detect in future replay-aware variants. On completion
+   * or error, ship exactly one stream-done then release the id.
+   */
+  function doHandleSubscription(req: TunnelReq): void {
+    const handler = opts.handleSubscription;
+    if (!handler) {
+      // No subscription handler wired — ship a stream-done immediately
+      // so the central side doesn't hang forever. Correlation id
+      // stays tied to the originating req.
+      try {
+        ws?.send(
+          encodeTunnelMessage({
+            type: 'stream-done',
+            id: req.id,
+            ok: false,
+            error: {
+              code: 'subscription-unsupported',
+              message: 'this agent does not have a subscription handler wired',
+            },
+          }),
+        );
+      } catch { /* ignore */ }
+      return;
+    }
+    let index = 0;
+    let sub: TunnelSubscriptionHandle;
+    try {
+      sub = handler(req);
+    } catch (err) {
+      try {
+        ws?.send(
+          encodeTunnelMessage({
+            type: 'stream-done',
+            id: req.id,
+            ok: false,
+            error: {
+              code: 'subscription-handler-threw',
+              message: (err as Error).message,
+            },
+          }),
+        );
+      } catch { /* ignore */ }
+      return;
+    }
+    const handle = sub.subscribe({
+      onEvent: (data) => {
+        try {
+          ws?.send(
+            encodeTunnelMessage({
+              type: 'stream-event',
+              id: req.id,
+              index: index++,
+              data,
+            }),
+          );
+        } catch { /* ignore */ }
+      },
+      onError: (err) => {
+        activeSubscriptions.delete(req.id);
+        try {
+          ws?.send(
+            encodeTunnelMessage({
+              type: 'stream-done',
+              id: req.id,
+              ok: false,
+              error: {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                code: (err as any).code ?? 'subscription-error',
+                message: err.message,
+              },
+            }),
+          );
+        } catch { /* ignore */ }
+      },
+      onComplete: () => {
+        activeSubscriptions.delete(req.id);
+        try {
+          ws?.send(
+            encodeTunnelMessage({
+              type: 'stream-done',
+              id: req.id,
+              ok: true,
+            }),
+          );
+        } catch { /* ignore */ }
+      },
+    });
+    activeSubscriptions.set(req.id, handle);
+  }
+
   function doConnect(): void {
     if (stopped) return;
     attempt++;
@@ -257,9 +390,25 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         return;
       }
       if (msg.type === 'req') {
+        // Inspect params.type to split subscription reqs from
+        // query/mutation reqs. Subscription reqs take a distinct
+        // path (stream frames) and never write a `res`.
+        const params = msg.params as { type?: string } | undefined;
+        if (params?.type === 'subscription') {
+          doHandleSubscription(msg);
+          return;
+        }
         void doHandleRequest(msg).then((res) => {
           try { ws?.send(encodeTunnelMessage(res)); } catch { /* ignore */ }
         });
+        return;
+      }
+      if (msg.type === 'stream-cancel') {
+        const handle = activeSubscriptions.get(msg.id);
+        if (handle) {
+          activeSubscriptions.delete(msg.id);
+          try { handle.cancel(); } catch { /* ignore */ }
+        }
         return;
       }
       if (msg.type === 'pong') {

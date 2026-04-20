@@ -64,6 +64,45 @@ export const TunnelPongSchema = z.object({
 export type TunnelPing = z.infer<typeof TunnelPingSchema>;
 export type TunnelPong = z.infer<typeof TunnelPongSchema>;
 
+/**
+ * Streaming frames for subscriptions (Slice B / I.3.4). A subscription
+ * req frame (`params.type === 'subscription'`) opens a stream; the
+ * node side ships zero or more `stream-event` frames with a
+ * monotonic `index` per subscription `id`, then exactly one
+ * `stream-done`. The central → node `stream-cancel` frame tells the
+ * node to unsubscribe early (SSE client disconnect propagation).
+ *
+ * `id` collates with the originating `req.id`, but subscription
+ * state lives in a separate map from req/res pending so a late
+ * stream-event never resolves a req/res promise.
+ */
+export const TunnelStreamEventSchema = z.object({
+  type: z.literal('stream-event'),
+  id: z.string().min(1),
+  index: z.number().int().min(0),
+  data: z.unknown(),
+});
+export type TunnelStreamEvent = z.infer<typeof TunnelStreamEventSchema>;
+
+export const TunnelStreamDoneSchema = z.object({
+  type: z.literal('stream-done'),
+  id: z.string().min(1),
+  ok: z.boolean(),
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string(),
+    })
+    .optional(),
+});
+export type TunnelStreamDone = z.infer<typeof TunnelStreamDoneSchema>;
+
+export const TunnelStreamCancelSchema = z.object({
+  type: z.literal('stream-cancel'),
+  id: z.string().min(1),
+});
+export type TunnelStreamCancel = z.infer<typeof TunnelStreamCancelSchema>;
+
 export const TunnelMessageSchema = z.discriminatedUnion('type', [
   TunnelHelloSchema,
   TunnelHelloAckSchema,
@@ -71,6 +110,9 @@ export const TunnelMessageSchema = z.discriminatedUnion('type', [
   TunnelResSchema,
   TunnelPingSchema,
   TunnelPongSchema,
+  TunnelStreamEventSchema,
+  TunnelStreamDoneSchema,
+  TunnelStreamCancelSchema,
 ]);
 export type TunnelMessage = z.infer<typeof TunnelMessageSchema>;
 
