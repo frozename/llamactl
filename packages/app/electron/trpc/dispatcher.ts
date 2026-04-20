@@ -95,6 +95,7 @@ const CONTROL_PLANE_ONLY = new Set<string>([
   'chatComplete',
   'chatStream',
   'workloadList',
+  'workloadsDir',
   'workloadDescribe',
   'workloadApply',
   'workloadDelete',

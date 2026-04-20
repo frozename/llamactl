@@ -472,6 +472,10 @@ function ReconcilerToolbar(): React.JSX.Element {
 
 export default function Workloads(): React.JSX.Element {
   const list = trpc.workloadList.useQuery();
+  // Server-resolved path the store actually scans — avoids hard-coding
+  // `~/.llamactl/workloads/*.yaml` in the subheader when `$DEV_STORAGE`
+  // or `$LLAMACTL_WORKLOADS_DIR` point elsewhere (e.g. hermetic audits).
+  const workloadsDir = trpc.workloadsDir.useQuery();
   const [showApply, setShowApply] = useState(false);
 
   if (list.isLoading) {
@@ -495,7 +499,11 @@ export default function Workloads(): React.JSX.Element {
         <div>
           <h1 className="text-lg font-semibold text-[color:var(--color-fg)]">Workloads</h1>
           <div className="text-xs text-[color:var(--color-fg-muted)]">
-            Declarative ModelRun manifests (~/.llamactl/workloads/*.yaml)
+            Declarative ModelRun manifests (
+            <span className="font-mono">
+              {workloadsDir.data?.dir ?? '…'}/*.yaml
+            </span>
+            )
           </div>
         </div>
         <button

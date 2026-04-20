@@ -102,7 +102,13 @@ export default function Logs(): React.JSX.Element {
         <div>
           <h1 className="text-lg font-semibold text-[color:var(--color-fg)]">Logs</h1>
           <div className="text-xs text-[color:var(--color-fg-muted)]">
-            Tailing <span className="font-mono">server.log</span>
+            {serverDown ? (
+              <span>Server offline</span>
+            ) : (
+              <>
+                Tailing <span className="font-mono">server.log</span>
+              </>
+            )}
             {error && (
               <span className="ml-2 text-[color:var(--color-danger)]">· error: {error}</span>
             )}

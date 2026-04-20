@@ -168,3 +168,70 @@ describe('env.formatEvalScript', () => {
     expect(script).toContain(`export LLAMA_CPP_SERVER_ALIAS='name with '\\''quotes'\\'''`);
   });
 });
+
+describe('env.resolveEnv — process.env seed shape', () => {
+  /**
+   * Electron main (`packages/app/electron/main.ts`) does:
+   *
+   *   const resolved = resolveEnv();
+   *   for (const [k, v] of Object.entries(resolved))
+   *     if (v !== undefined) process.env[k] = String(v);
+   *
+   * These assertions guard that seed loop: every resolver field must
+   * be string-valued and non-undefined so `process.env.FOO` never
+   * ends up as the literal string "undefined" (which then trips up
+   * downstream `if (env.FOO)` checks). Also confirms the individual
+   * override still wins so shell-set vars aren't clobbered.
+   */
+  test('every resolved field is a non-empty string (safe for process.env assign)', () => {
+    const resolved = resolveEnv({
+      LLAMACTL_TEST_PROFILE: '/tmp/profile-for-seed',
+      LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
+    } as NodeJS.ProcessEnv);
+    for (const [key, value] of Object.entries(resolved)) {
+      expect(typeof value).toBe('string');
+      // LOCAL_AI_BENCH_IMAGE is intentionally empty-string when unset;
+      // other fields must not be undefined/null. The seed loop's
+      // `!== undefined` guard is exactly what keeps "undefined" out.
+      if (key !== 'LOCAL_AI_BENCH_IMAGE' && key !== 'LLAMA_CPP_ADVERTISED_HOST') {
+        expect(value.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  test('Object.assign-with-undefined-filter preserves existing overrides', () => {
+    // Simulate the Electron seed loop on a scratch process.env copy.
+    const procEnv: NodeJS.ProcessEnv = {
+      LLAMACTL_TEST_PROFILE: '/tmp/hermetic-seed',
+      LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
+      // Operator pre-set DEV_STORAGE — resolver must propagate that
+      // through, not overwrite it with the test-profile default.
+      DEV_STORAGE: '/my/custom/storage',
+    };
+    const resolved = resolveEnv(procEnv);
+    expect(resolved.DEV_STORAGE).toBe('/my/custom/storage');
+
+    for (const [key, value] of Object.entries(resolved)) {
+      if (value === undefined) continue;
+      procEnv[key] = String(value);
+    }
+    expect(procEnv.DEV_STORAGE).toBe('/my/custom/storage');
+    // LLAMA_CPP_ROOT fell through to the profile default since it
+    // wasn't individually set — that's the whole point of the cascade.
+    expect(procEnv.LLAMA_CPP_ROOT).toBe('/tmp/hermetic-seed/ai-models/llama.cpp');
+  });
+
+  test('no field stringifies to literal "undefined"', () => {
+    // Regression for anti-pattern: `Object.assign(process.env, resolveEnv())`
+    // without a filter would coerce `undefined` values to the string
+    // "undefined". We never want that — assert up-front that every
+    // value is already string-typed so the seed loop is safe.
+    const resolved = resolveEnv({
+      LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
+    } as NodeJS.ProcessEnv);
+    for (const value of Object.values(resolved)) {
+      expect(value).not.toBe(undefined);
+      expect(value).not.toBe('undefined');
+    }
+  });
+});

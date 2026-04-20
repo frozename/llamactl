@@ -17,12 +17,26 @@ import type { ResolvedEnv } from './types.js';
  * Candidate LM Studio installation roots, probed in order. Mirrors
  * the layout the LM Studio macOS app uses by default, plus an
  * override so power users can point at a non-default install.
+ *
+ * Under a hermetic `$LLAMACTL_TEST_PROFILE` the probe is narrowed
+ * to a profile-scoped directory so audits don't read the operator's
+ * real LM Studio tree. We intentionally do NOT add LMSTUDIO to the
+ * resolver's test-profile cascade in `env.ts` — that cascade is
+ * owned by production-observed vars and widening it has a larger
+ * blast radius. This fallback stays local to `lmstudio.ts`. The
+ * profile-scoped dir is created by `env.ensureDirs` (Fix 1 seeds
+ * it at Electron startup) so no duplicate `mkdir` here.
  */
 function defaultRoots(env: NodeJS.ProcessEnv = process.env): string[] {
   const override = env.LMSTUDIO_MODELS_DIR;
-  const home = homedir();
   const candidates: string[] = [];
   if (override) candidates.push(override);
+  const testProfile = env.LLAMACTL_TEST_PROFILE?.trim();
+  if (testProfile) {
+    candidates.push(join(testProfile, 'ai-models/lmstudio'));
+    return candidates;
+  }
+  const home = homedir();
   candidates.push(join(home, '.lmstudio', 'models'));
   candidates.push(join(home, '.cache', 'lm-studio', 'models'));
   return candidates;

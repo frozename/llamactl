@@ -762,6 +762,19 @@ export const router = t.router({
 
   // ---- workload management --------------------------------------------
 
+  /**
+   * Resolved directory scanned for `ModelRun` manifests. Mirrors the
+   * same cascade the store uses server-side (respects
+   * `$LLAMACTL_WORKLOADS_DIR` override, then `$DEV_STORAGE`, then the
+   * production `~/.llamactl` default). The UI reads this to render the
+   * subheader "Declarative ModelRun manifests (<path>/*.yaml)" so
+   * hermetic audits show the profile path instead of the user's real
+   * home dir.
+   */
+  workloadsDir: t.procedure.query(() => ({
+    dir: workloadStoreMod.defaultWorkloadsDir(),
+  })),
+
   workloadList: t.procedure.query(async () => {
     const manifests = workloadStoreMod.listWorkloads();
     const cfg = kubecfg.loadConfig();
@@ -1904,9 +1917,15 @@ export const router = t.router({
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/^-+|-+$/g, '') || `pipeline-${Date.now().toString(36)}`;
+      // Cascade: override > DEV_STORAGE (honours hermetic audits and
+      // the resolver's test-profile re-root seeded in Electron main)
+      // > production default under the operator's homedir.
+      const devStorage = process.env.DEV_STORAGE?.trim();
       const baseDir =
-        process.env.LLAMACTL_MCP_PIPELINES_DIR ??
-        join(homedir(), '.llamactl', 'mcp', 'pipelines');
+        process.env.LLAMACTL_MCP_PIPELINES_DIR?.trim() ||
+        (devStorage
+          ? join(devStorage, 'mcp', 'pipelines')
+          : join(homedir(), '.llamactl', 'mcp', 'pipelines'));
       const outPath = join(baseDir, `${slug}.json`);
       if (!input.overwrite && existsSync(outPath)) {
         return {

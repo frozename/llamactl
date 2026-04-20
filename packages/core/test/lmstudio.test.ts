@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { applyImport, planImport, scanLMStudio } from '../src/lmstudio.js';
+import {
+  applyImport,
+  detectLMStudioRoot,
+  planImport,
+  scanLMStudio,
+} from '../src/lmstudio.js';
 import { envForTemp, makeTempRuntime } from './helpers.js';
 
 function makeLMTree(root: string): void {
@@ -113,5 +118,51 @@ describe('lmstudio.applyImport', () => {
     const second = await applyImport({ root, apply: true });
     expect(second.applied).toHaveLength(0);
     expect(second.skipped.every((s) => s.action === 'skip-already-catalogued')).toBe(true);
+  });
+});
+
+describe('lmstudio.detectLMStudioRoot — LLAMACTL_TEST_PROFILE', () => {
+  let temp: ReturnType<typeof makeTempRuntime>;
+
+  beforeEach(() => {
+    temp = makeTempRuntime();
+  });
+  afterEach(() => temp.cleanup());
+
+  test('probes a profile-scoped dir instead of homedir when the test profile is set', () => {
+    const profile = temp.devStorage;
+    const profileRoot = join(profile, 'ai-models/lmstudio');
+    mkdirSync(profileRoot, { recursive: true });
+    const env = { LLAMACTL_TEST_PROFILE: profile } as NodeJS.ProcessEnv;
+    expect(detectLMStudioRoot(env)).toBe(profileRoot);
+  });
+
+  test('LMSTUDIO_MODELS_DIR override still wins over the test profile', () => {
+    const profile = temp.devStorage;
+    mkdirSync(join(profile, 'ai-models/lmstudio'), { recursive: true });
+    const override = join(profile, 'custom-lm');
+    mkdirSync(override, { recursive: true });
+    const env = {
+      LLAMACTL_TEST_PROFILE: profile,
+      LMSTUDIO_MODELS_DIR: override,
+    } as NodeJS.ProcessEnv;
+    expect(detectLMStudioRoot(env)).toBe(override);
+  });
+
+  test('returns null when the profile dir does not exist', () => {
+    const env = {
+      LLAMACTL_TEST_PROFILE: join(temp.devStorage, 'missing-profile'),
+    } as NodeJS.ProcessEnv;
+    expect(detectLMStudioRoot(env)).toBe(null);
+  });
+
+  test('test-profile mode does NOT probe the user homedir fallbacks', () => {
+    // The profile dir is absent → resolver returns null rather than
+    // walking out to `~/.lmstudio/models`, which is exactly what keeps
+    // hermetic audits from leaking the operator's real LM Studio tree.
+    const env = {
+      LLAMACTL_TEST_PROFILE: join(temp.devStorage, 'empty-profile'),
+    } as NodeJS.ProcessEnv;
+    expect(detectLMStudioRoot(env)).toBe(null);
   });
 });
