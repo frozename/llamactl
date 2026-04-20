@@ -23,10 +23,16 @@ export default function Logs(): React.JSX.Element {
   const [conn, setConn] = useState<ConnState>('connecting');
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
+  // Mirror the Server module's status poll so we can gate tailing when
+  // no llama-server is reachable. Without this the subscription keeps
+  // retrying a dead endpoint and the UI sits on an opaque empty state.
+  const serverStatus = trpc.serverStatus.useQuery(undefined, { refetchInterval: 5000 });
+  const serverDown = serverStatus.data?.state === 'down';
+
   trpc.serverLogs.useSubscription(
     { lines: historyLines, follow },
     {
-      enabled: true,
+      enabled: !serverDown,
       onStarted: () => {
         setConn(follow ? 'live' : 'idle');
         setError(null);
@@ -164,7 +170,11 @@ export default function Logs(): React.JSX.Element {
         ref={scrollRef}
         className="flex-1 overflow-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-0)] p-2 font-mono text-[11px] leading-snug text-[color:var(--color-fg)]"
       >
-        {lines.length === 0 ? (
+        {serverDown ? (
+          <div data-testid="logs-offline" className="text-[color:var(--color-fg-muted)]">
+            No llama-server running. Start one from the Server module first.
+          </div>
+        ) : lines.length === 0 ? (
           <div className="text-[color:var(--color-fg-muted)]">(no log lines yet)</div>
         ) : (
           lines.map((line, i) => (

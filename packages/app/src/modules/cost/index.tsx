@@ -347,7 +347,7 @@ export default function CostDashboard(): React.JSX.Element {
           testId="cost-budget-weekly"
         />
         <div className="sm:col-span-2 text-xs text-[color:var(--color-fg-muted)]">
-          Thresholds: warn ≥ {fmtPercent(d.config.thresholds.warn)} ·
+          Thresholds (% of budget): warn ≥ {fmtPercent(d.config.thresholds.warn)} ·
           force_private ≥ {fmtPercent(d.config.thresholds.force_private)} ·
           deregister ≥ {fmtPercent(d.config.thresholds.deregister)}
           {d.config.hasWebhook ? ' · webhook wired' : ''}

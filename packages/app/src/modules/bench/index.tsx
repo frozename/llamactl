@@ -170,7 +170,7 @@ function SchedulerPanel(): React.JSX.Element {
             onChange={(e) => setHours(Math.max(1, Number(e.target.value) || 1))}
             className="w-14 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-1 text-right text-[color:var(--color-fg)]"
           />
-          h
+          hours
         </label>
         <button
           type="button"
@@ -208,7 +208,7 @@ function SchedulerPanel(): React.JSX.Element {
               <span className="mx-1 text-[color:var(--color-fg-muted)]">·</span>
               <span className="font-mono text-[11px]">{s.rel}</span>
               <div className="text-[10px] text-[color:var(--color-fg-muted)]">
-                every {Math.round(s.intervalSeconds / 3600)}h · last {s.lastRunAt ?? '—'}
+                every {Math.round(s.intervalSeconds / 3600)} hours · last {s.lastRunAt ?? '—'}
                 {s.lastError && (
                   <span className="ml-2 text-[color:var(--color-danger)]">err: {s.lastError}</span>
                 )}

@@ -227,6 +227,10 @@ function DashboardBody(): React.JSX.Element {
   const envQuery = trpc.env.useQuery();
   const compareQuery = trpc.benchCompare.useQuery();
   const promotionsQuery = trpc.promotions.useQuery();
+  // Poll alongside the Server module so "Active Model" reflects the
+  // llama-server's actually-loaded rel rather than the LOCAL_AI_MODEL
+  // env var (which defaults to a node alias when unset).
+  const serverStatusQuery = trpc.serverStatus.useQuery(undefined, { refetchInterval: 5000 });
 
   if (envQuery.isLoading || compareQuery.isLoading || promotionsQuery.isLoading) {
     return <div className="p-6 text-[color:var(--color-fg-muted)]">Loading…</div>;
@@ -235,6 +239,9 @@ function DashboardBody(): React.JSX.Element {
   const env = envQuery.data;
   const rows = compareQuery.data ?? [];
   const promotions = promotionsQuery.data ?? [];
+  const serverStatus = serverStatusQuery.data;
+  const activeModel =
+    serverStatus?.state === 'up' && serverStatus.rel ? serverStatus.rel : 'none';
   const topBench = [...rows]
     .filter((row: BenchCompareRow) => row.tuned)
     .sort((a: BenchCompareRow, b: BenchCompareRow) => {
@@ -254,7 +261,7 @@ function DashboardBody(): React.JSX.Element {
         <StatusCard title="Profile" body={env?.LLAMA_CPP_MACHINE_PROFILE ?? '—'} />
         <StatusCard title="Provider" body={env?.LOCAL_AI_PROVIDER ?? '—'} />
         <StatusCard title="Default Model" body={env?.LLAMA_CPP_DEFAULT_MODEL ?? '—'} />
-        <StatusCard title="Active Model" body={env?.LOCAL_AI_MODEL ?? '—'} />
+        <StatusCard title="Active Model" body={activeModel} />
         <StatusCard title="Context Length" body={env?.LOCAL_AI_CONTEXT_LENGTH ?? '—'} />
         <StatusCard title="Provider URL" body={env?.LOCAL_AI_PROVIDER_URL ?? '—'} />
       </div>
