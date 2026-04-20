@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { Layers } from 'lucide-react';
 import * as YAML from 'yaml';
 import { trpc } from '@/lib/trpc';
+import { WorkersPanel, type WorkerManifest } from './workers-panel';
 
 /**
  * Workloads module. Drives the declarative `ModelRun` manifests stored
@@ -24,6 +26,14 @@ interface WorkloadRow {
   phase: Phase;
   endpoint: string | null;
   status: unknown;
+  /**
+   * E.4 — multi-node summary. `workerCount === 0` means single-node;
+   * no badge is rendered. `workerNodes` is a plain string[] shown on
+   * hover / for compactness. Full per-worker detail comes from
+   * `workloadDescribe` when the drawer opens.
+   */
+  workerCount: number;
+  workerNodes: string[];
 }
 
 function phaseBadgeClass(phase: Phase): string {
@@ -242,6 +252,18 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
           <span className="text-xs text-[color:var(--color-fg-muted)]">
             node <span className="font-mono">{row.node}</span>
           </span>
+          {row.workerCount > 0 && (
+            <span
+              data-testid="workloads-row-workers-badge"
+              title={`workers: ${row.workerNodes.join(', ')}`}
+              className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]"
+            >
+              <Layers className="h-3 w-3" aria-hidden="true" />
+              <span>
+                {row.workerCount} worker{row.workerCount === 1 ? '' : 's'}
+              </span>
+            </span>
+          )}
         </div>
         <div className="flex gap-1 text-xs">
           <button
@@ -313,6 +335,11 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
             <span className="text-[color:var(--color-danger)]">{describe.error.message}</span>
           ) : describe.data ? (
             <div className="space-y-2">
+              <WorkersPanel
+                workers={
+                  (describe.data.manifest.spec.workers ?? []) as WorkerManifest[]
+                }
+              />
               <div>
                 <div className="font-medium text-[color:var(--color-fg)]">Manifest</div>
                 <pre className="mt-1 overflow-x-auto whitespace-pre font-mono text-[10px] text-[color:var(--color-fg)]">

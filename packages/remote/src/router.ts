@@ -780,6 +780,7 @@ export const router = t.router({
         } catch {
           phase = 'Unreachable';
         }
+        const workers = manifest.spec.workers ?? [];
         return {
           name: manifest.metadata.name,
           node: nodeName,
@@ -787,6 +788,16 @@ export const router = t.router({
           phase,
           endpoint,
           status: manifest.status ?? null,
+          /**
+           * E.4 — multi-node summary. `workerCount` powers a badge on
+           * the list row; `workerNodes` is handy for quick tooltips
+           * without a second roundtrip. The full per-worker detail
+           * (rpcHost, rpcPort, timeoutSeconds, extraArgs) lives in the
+           * manifest and is fetched via `workloadDescribe` when the
+           * operator opens the drawer. Keeps list response cheap.
+           */
+          workerCount: workers.length,
+          workerNodes: workers.map((w) => w.node),
         };
       }),
     );
