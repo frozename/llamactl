@@ -1,0 +1,18 @@
+[
+  { "id": "dashboard", "label": "Dashboard" },
+  { "id": "nodes", "label": "Nodes" },
+  { "id": "chat", "label": "Chat" },
+  { "id": "plan", "label": "Plan" },
+  { "id": "ops-chat", "label": "Operator Console" },
+  { "id": "cost", "label": "Cost" },
+  { "id": "pipelines", "label": "Pipelines" },
+  { "id": "workloads", "label": "Workloads" },
+  { "id": "models", "label": "Models" },
+  { "id": "presets", "label": "Presets" },
+  { "id": "pulls", "label": "Pulls" },
+  { "id": "bench", "label": "Bench" },
+  { "id": "server", "label": "Server" },
+  { "id": "logs", "label": "Logs" },
+  { "id": "lmstudio", "label": "LM Studio" },
+  { "id": "settings", "label": "Settings" }
+]

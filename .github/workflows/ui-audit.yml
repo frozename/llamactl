@@ -29,14 +29,15 @@ jobs:
           path: llamactl
 
       - name: Checkout electron-mcp-server
-        # Pinned to the commit that shipped the driver's diff-mode gate
-        # + screenshot_diff + env/userDataDir launch params. Bump this
-        # when the driver API changes.
+        # Pinned to the commit that shipped the driver's library-generic
+        # `--modules=<path>` + `--out-dir=<path>` flags (with
+        # screenshot_diff + env/userDataDir launch params preserved).
+        # Bump this when the driver API changes.
         uses: actions/checkout@v4
         with:
           repository: frozename/electron-mcp
           path: electron-mcp-server
-          ref: 7bafb7bdcb27f007501b7d96c85cb55f108a3749
+          ref: fceaaa3ed06d1ce85fe7ece8934c2a40ea2b351d
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

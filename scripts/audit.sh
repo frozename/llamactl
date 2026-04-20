@@ -27,7 +27,11 @@ MODE="${1:-diff}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BASELINES_DIR="$REPO_ROOT/tests/ui-audit-baselines"
+MODULES_JSON="$REPO_ROOT/tests/ui-audit-modules.json"
 DIFF_DIR="$REPO_ROOT/.audit-diffs"
+# Preserved path so docs/ui-audit.md references and the CI workflow's
+# artifact pickup (/tmp/llamactl-ui-audit-v2/report.json) stay valid.
+OUT_DIR="/tmp/llamactl-ui-audit-v2"
 
 # Hermetic workspace: fresh LLAMACTL_TEST_PROFILE prefix + a private
 # Chromium userDataDir so parallel runs don't collide on the singleton
@@ -80,11 +84,19 @@ fi
 # ---- Invoke the driver -----------------------------------------------------
 # Threshold: 1% pixel ratio, 0 per-pixel delta. Tight. If false positives
 # cascade, loosen here before reseeding.
+#
+# The driver is library-generic as of the electron-mcp genericization
+# pass; --modules=<json> supplies llamactl's 16-module activity bar
+# (tests/ui-audit-modules.json) and --out-dir keeps the report landing
+# at the llamactl-scoped path that docs/ui-audit.md + the CI workflow
+# reference.
 DRIVER_ARGS=(
   "--executable=$ELECTRON_BIN"
   "--args=$APP_DIR"
   "--env=LLAMACTL_TEST_PROFILE=$PROFILE"
   "--userDataDir=$USERDATA"
+  "--modules=$MODULES_JSON"
+  "--out-dir=$OUT_DIR"
   "--baselines=$BASELINES_DIR"
   "--diffDir=$DIFF_DIR"
   "--threshold=0.01"

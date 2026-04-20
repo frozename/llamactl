@@ -8,14 +8,21 @@ each screenshot against the committed baselines at
 ## What it checks
 
 The driver (`ui-audit-driver-v2.ts` in
-[electron-mcp-server](https://github.com/frozename/electron-mcp)) walks
-the app's primary nav and captures one PNG per module:
+[electron-mcp-server](https://github.com/frozename/electron-mcp)) is
+library-generic — it reads the module list from
+[`tests/ui-audit-modules.json`](../tests/ui-audit-modules.json) (passed
+via `--modules=<path>` from `scripts/audit.sh`) and walks each entry in
+order. That file is the single source of truth for which modules the
+audit covers — today, the 16 top-level activity-bar modules:
 
 ```
 dashboard  nodes      chat       plan       ops-chat   cost
 pipelines  workloads  models     presets    pulls      bench
 server     logs       lmstudio   settings
 ```
+
+Add a new module to the registry + this JSON file (and capture a
+baseline PNG) in the same PR that introduces the feature.
 
 Each screenshot is diffed against `tests/ui-audit-baselines/<module>.png`
 via the `screenshot_diff` MCP tool. A module fails when:
