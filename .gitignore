@@ -23,3 +23,6 @@ __pycache__/
 # Local env and runtime artifacts
 .env
 .env.local
+
+# UI-audit diff artifacts (local runs of `bun run audit`)
+.audit-diffs/

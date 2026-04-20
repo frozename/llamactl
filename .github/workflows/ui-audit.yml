@@ -1,0 +1,79 @@
+name: ui-audit
+
+# Pixel-regression gate for the Electron UI. Renders every module under
+# a hermetic LLAMACTL_TEST_PROFILE and compares each screenshot against
+# the committed baselines at tests/ui-audit-baselines/. Any module that
+# breaches the per-pixel or ratio threshold fails the build; the diff
+# PNGs are uploaded as a workflow artifact for inspection.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ui-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    # mac-only for now — matches the primary operator's environment and
+    # skips the Xvfb dance linux CI would need. Linux is a follow-up.
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout llamactl
+        uses: actions/checkout@v4
+        with:
+          path: llamactl
+
+      - name: Checkout electron-mcp-server
+        # Pinned to the commit that shipped the driver's diff-mode gate
+        # + screenshot_diff + env/userDataDir launch params. Bump this
+        # when the driver API changes.
+        uses: actions/checkout@v4
+        with:
+          repository: frozename/electron-mcp
+          path: electron-mcp-server
+          ref: 7bafb7bdcb27f007501b7d96c85cb55f108a3749
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install llamactl workspace
+        working-directory: llamactl
+        run: bun install --frozen-lockfile
+
+      - name: Install electron-mcp-server
+        working-directory: electron-mcp-server
+        run: bun install --frozen-lockfile
+
+      - name: Build electron-mcp-server
+        working-directory: electron-mcp-server
+        run: bun run build
+
+      - name: Run UI audit
+        working-directory: llamactl
+        env:
+          ELECTRON_MCP_DIR: ${{ github.workspace }}/electron-mcp-server
+        run: bun run audit
+
+      - name: Upload diff artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-audit-diffs
+          path: llamactl/.audit-diffs
+          retention-days: 14
+
+      - name: Upload audit report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-audit-report
+          path: /tmp/llamactl-ui-audit-v2/report.json
+          retention-days: 14
+          if-no-files-found: warn

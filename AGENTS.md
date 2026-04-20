@@ -452,6 +452,14 @@ LLAMACTL_TEST_PROFILE="$(mktemp -d -t llamactl-audit)" \
 Unset `LLAMACTL_TEST_PROFILE` (or pass the empty string) for normal
 production behaviour — zero change for users that do not opt in.
 
+### UI regression gate
+
+Every PR + push to `main` runs a pixel-diff gate over the 16 top-level
+Electron modules against baselines at `tests/ui-audit-baselines/`. See
+[`docs/ui-audit.md`](./docs/ui-audit.md) — covers how to handle
+failures, reseed baselines after intentional UI changes
+(`bun run audit:update`), and run the gate locally (`bun run audit`).
+
 ## Cross-repo discipline
 
 **After a non-trivial slice, verify four repos still green:**

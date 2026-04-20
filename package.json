@@ -16,7 +16,9 @@
     "test": "zsh test/run-all.zsh",
     "test:core": "bun run --cwd packages/core test",
     "test:cli": "bun run --cwd packages/cli test",
-    "test:shell": "zsh test/shell-smoke.zsh"
+    "test:shell": "zsh test/shell-smoke.zsh",
+    "audit": "scripts/audit.sh diff",
+    "audit:update": "scripts/audit.sh update"
   },
   "devDependencies": {
     "@types/bun": "1.3.12",
