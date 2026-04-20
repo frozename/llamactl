@@ -55,6 +55,12 @@ export function createTunnelRouterHandler(
  * invokable at the leaf or undefined when any segment is missing /
  * non-callable. Narrow `any` usage — tRPC v11's caller types are
  * structurally callable but don't expose a typed walker.
+ *
+ * Property access is permitted on both 'object' and 'function'
+ * cursors: tRPC v11's createCaller returns a Proxy whose top-level
+ * `typeof` is 'function' (the callable target), even though property
+ * access into procedures still works. Restricting to 'object' would
+ * fail on the very first segment for any real caller.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function walkCaller(caller: any, method: string): ((input: unknown) => Promise<unknown>) | undefined {
@@ -62,9 +68,16 @@ function walkCaller(caller: any, method: string): ((input: unknown) => Promise<u
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let cursor: any = caller;
   for (const part of parts) {
-    if (cursor == null || typeof cursor !== 'object') return undefined;
+    if (cursor == null) return undefined;
+    if (typeof cursor !== 'object' && typeof cursor !== 'function') return undefined;
     cursor = cursor[part];
     if (cursor === undefined) return undefined;
   }
-  return typeof cursor === 'function' ? cursor.bind(caller) : undefined;
+  if (typeof cursor !== 'function') return undefined;
+  // Don't use cursor.bind(caller): tRPC v11's caller is a Proxy that
+  // intercepts EVERY property access (including `.bind`) and treats
+  // it as another procedure-path segment, so cursor.bind would walk
+  // into the proxy and 404. Use the prototype method directly.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return Function.prototype.bind.call(cursor, caller) as (input: unknown) => Promise<unknown>;
 }

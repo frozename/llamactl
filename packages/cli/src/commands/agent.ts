@@ -20,7 +20,12 @@ Subcommands:
       install-agent.sh flow can capture stdout and shell-extract the
       bootstrap blob without jq.
   serve [--dir=<path>] [--bind=<host>] [--port=<n>]
+        [--dial-central=<wss-url>] [--central-bearer=<token>] [--tunnel-node-name=<name>]
       Run the node agent (blocks until SIGINT/SIGTERM).
+      With --dial-central + --central-bearer, the agent additionally
+      dials a central's /tunnel endpoint so its tRPC router is
+      reachable through the reverse tunnel. The bearer can also be
+      provided via the LLAMACTL_TUNNEL_BEARER env var.
   status [--dir=<path>]
       Print the agent config and its advertised URL.
   heal [flags]
@@ -194,6 +199,9 @@ interface ServeFlags {
   dir: string;
   bindHost?: string;
   port?: number;
+  dialCentral?: string;
+  centralBearer?: string;
+  tunnelNodeName?: string;
 }
 
 function parseServeFlags(args: string[]): ServeFlags | { error: string } {
@@ -210,6 +218,9 @@ function parseServeFlags(args: string[]): ServeFlags | { error: string } {
         flags.port = n;
         break;
       }
+      case '--dial-central': flags.dialCentral = v; break;
+      case '--central-bearer': flags.centralBearer = v; break;
+      case '--tunnel-node-name': flags.tunnelNodeName = v; break;
       default: return { error: `agent serve: unknown flag ${k}` };
     }
   }
@@ -224,11 +235,42 @@ async function runServe(args: string[]): Promise<number> {
   }
   const cfgPath = join(parsed.dir, 'agent.yaml');
   const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+
+  // --dial-central / --central-bearer must travel together. The
+  // bearer can also come from LLAMACTL_TUNNEL_BEARER so the CLI line
+  // doesn't need to embed secrets. Either both are present (and we
+  // wire tunnelDial below) or neither is.
+  const dialUrl = parsed.dialCentral;
+  const dialBearer = parsed.centralBearer ?? process.env.LLAMACTL_TUNNEL_BEARER;
+  const dialNodeName = parsed.tunnelNodeName ?? cfg.nodeName ?? 'agent';
+  if (dialUrl || parsed.centralBearer) {
+    if (!dialUrl || !dialBearer) {
+      process.stderr.write(
+        '--dial-central and --central-bearer must be provided together (or set LLAMACTL_TUNNEL_BEARER for the bearer)\n',
+      );
+      return 1;
+    }
+  }
+
   const running = startAgentServer({
     bindHost: parsed.bindHost ?? cfg.bindHost,
     port: parsed.port ?? cfg.port,
     tokenHash: cfg.tokenHash,
     tls: { certPath: cfg.certPath, keyPath: cfg.keyPath },
+    ...(dialUrl && dialBearer
+      ? {
+          tunnelDial: {
+            url: dialUrl,
+            bearer: dialBearer,
+            nodeName: dialNodeName,
+            // Stderr-only diagnostics — never include the bearer or
+            // central URL in the transition line.
+            onStateChange: (s): void => {
+              process.stderr.write(`tunnel: ${s}\n`);
+            },
+          },
+        }
+      : {}),
   });
 
   process.stdout.write(
@@ -239,10 +281,12 @@ async function runServe(args: string[]): Promise<number> {
   );
 
   await new Promise<void>((resolve) => {
-    const handle = () => resolve();
+    const handle = (): void => resolve();
     process.once('SIGINT', handle);
     process.once('SIGTERM', handle);
   });
+  // running.stop() tears down the tunnel client (when present)
+  // before the HTTP server stops — see startAgentServer's stop().
   await running.stop();
   return 0;
 }

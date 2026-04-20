@@ -21,7 +21,14 @@ import {
 } from './install-script.js';
 import { handleArtifact, type ArtifactsHandlerOptions } from './artifacts.js';
 import { handleTunnelRelay } from './tunnel-relay.js';
-import { createTunnelServer, type TunnelServer } from '../tunnel/index.js';
+import {
+  createTunnelClient,
+  createTunnelRouterHandler,
+  createTunnelServer,
+  type TunnelClient,
+  type TunnelServer,
+  type TunnelState,
+} from '../tunnel/index.js';
 
 export interface StartAgentOptions {
   bindHost?: string;          // default '127.0.0.1'
@@ -67,6 +74,25 @@ export interface StartAgentOptions {
     onNodeConnect?: (nodeName: string) => void;
     onNodeDisconnect?: (nodeName: string, reason: string) => void;
   };
+  /**
+   * When set, agent dials a central's /tunnel endpoint and bridges
+   * inbound req frames to its own tRPC router. Use alongside or
+   * independently of tunnelCentral — a given agent can be both
+   * central (for NAT'd nodes that dial in) and a dialing node
+   * (relative to a different central) if the fleet topology wants it.
+   */
+  tunnelDial?: {
+    url: string;
+    bearer: string;
+    nodeName: string;
+    /** Optional observer for connecting|ready|disconnected|stopped. */
+    onStateChange?: (state: TunnelState) => void;
+    /** Pass through to createTunnelClient; omit for production defaults. */
+    initialAttemptTimeoutMs?: number;
+    /** Test-only WebSocket constructor override. */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    WebSocketCtor?: any;
+  };
 }
 
 export interface RunningAgent {
@@ -76,6 +102,8 @@ export interface RunningAgent {
   stop: () => Promise<void>;
   /** Present only when StartAgentOptions.tunnelCentral was set. */
   tunnelServer?: TunnelServer;
+  /** Present only when StartAgentOptions.tunnelDial was set. */
+  tunnelClient?: TunnelClient;
 }
 
 /**
@@ -270,14 +298,48 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     }
   }
 
+  // Reverse-tunnel dial-out — gated on opts.tunnelDial. The HTTP
+  // server is already up at this point; the tunnel client runs in
+  // the background and uses its own reconnect loop, so an unreachable
+  // central never blocks the local agent. Bridges inbound `req`
+  // frames from central into the same appRouter the /trpc endpoint
+  // serves (createCaller({}) — matches the existing /trpc context
+  // shape on line 244 above).
+  let tunnelClient: TunnelClient | null = null;
+  if (opts.tunnelDial) {
+    const caller = appRouter.createCaller({});
+    const handleRequest = createTunnelRouterHandler(caller);
+    tunnelClient = createTunnelClient({
+      url: opts.tunnelDial.url,
+      bearer: opts.tunnelDial.bearer,
+      nodeName: opts.tunnelDial.nodeName,
+      handleRequest,
+      onStateChange: opts.tunnelDial.onStateChange,
+      // Background mode by default: the HTTP server must come up
+      // regardless of central's reachability. The reconnect loop
+      // handles transient failures on its own schedule.
+      initialAttemptTimeoutMs: opts.tunnelDial.initialAttemptTimeoutMs ?? 0,
+      WebSocketCtor: opts.tunnelDial.WebSocketCtor,
+    });
+    // Fire-and-forget; state transitions are observable via
+    // opts.tunnelDial.onStateChange.
+    void tunnelClient.start();
+  }
+
   return {
     url: `${scheme}://${bindHost}:${listenPort}`,
     port: listenPort,
     fingerprint,
     stop: async () => {
+      // Best-effort — never let a tunnel-client teardown error
+      // prevent the HTTP server from also stopping.
+      if (tunnelClient) {
+        try { tunnelClient.stop(); } catch { /* ignore */ }
+      }
       await mdns?.stop().catch(() => {});
       server.stop(true);
     },
     ...(tunnelServer ? { tunnelServer } : {}),
+    ...(tunnelClient ? { tunnelClient } : {}),
   };
 }
