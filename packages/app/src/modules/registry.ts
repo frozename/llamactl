@@ -1,6 +1,7 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
 import {
   Activity,
+  Boxes,
   Brain,
   BrainCircuit,
   Coins,
@@ -44,6 +45,7 @@ const LazyNodes = lazy(() => import('./nodes/index'));
 const LazyChat = lazy(() => import('./chat/index'));
 const LazyPipelines = lazy(() => import('./pipelines/index'));
 const LazyWorkloads = lazy(() => import('./workloads/index'));
+const LazyComposites = lazy(() => import('./composites/index'));
 const LazyModels = lazy(() => import('./models/index'));
 const LazyPresets = lazy(() => import('./presets/index'));
 const LazyPulls = lazy(() => import('./pulls/index'));
@@ -115,6 +117,12 @@ export const APP_MODULES: AppModule[] = [
     icon: Layers,
     Component: LazyWorkloads,
     shortcut: 4,
+  },
+  {
+    id: 'composites',
+    labelKey: 'Composites',
+    icon: Boxes,
+    Component: LazyComposites,
   },
   {
     id: 'models',

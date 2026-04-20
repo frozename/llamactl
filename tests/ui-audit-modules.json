@@ -8,6 +8,7 @@
   { "id": "cost", "label": "Cost" },
   { "id": "pipelines", "label": "Pipelines" },
   { "id": "workloads", "label": "Workloads" },
+  { "id": "composites", "label": "Composites" },
   { "id": "models", "label": "Models" },
   { "id": "presets", "label": "Presets" },
   { "id": "pulls", "label": "Pulls" },

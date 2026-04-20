@@ -25,6 +25,10 @@ export const KNOWN_OPS_CHAT_TOOLS = [
   'llamactl.catalog.list',
   'llamactl.catalog.promote',
   'llamactl.catalog.promoteDelete',
+  'llamactl.composite.apply',
+  'llamactl.composite.destroy',
+  'llamactl.composite.get',
+  'llamactl.composite.list',
   'llamactl.cost.snapshot',
   'llamactl.env',
   'llamactl.node.add',
@@ -58,10 +62,12 @@ export function toolTier(name: OpsChatToolName): ToolTier {
     case 'llamactl.workload.delete':
     case 'llamactl.catalog.promoteDelete':
     case 'llamactl.rag.delete':
+    case 'llamactl.composite.destroy':
       return 'mutation-destructive';
     case 'llamactl.node.add':
     case 'llamactl.catalog.promote':
     case 'llamactl.rag.store':
+    case 'llamactl.composite.apply':
       return 'mutation-dry-run-safe';
     default:
       return 'read';
@@ -220,6 +226,14 @@ export async function dispatchOpsChatTool(
           node: requireString(args, 'node'),
         });
         break;
+      case 'llamactl.composite.list':
+        result = await caller.compositeList();
+        break;
+      case 'llamactl.composite.get':
+        result = await caller.compositeGet({
+          name: requireString(args, 'name'),
+        });
+        break;
 
       /* ---------------- mutations (dry-run-safe) ---------------- */
       case 'llamactl.catalog.promote': {
@@ -292,6 +306,17 @@ export async function dispatchOpsChatTool(
         }
         break;
       }
+      case 'llamactl.composite.apply': {
+        // The composite procedure supports dry-run natively (it
+        // returns `{ dryRun: true, manifest, order, impliedEdges }`)
+        // so we just forward the flag — no synthesized preview at
+        // this layer.
+        result = await caller.compositeApply({
+          manifestYaml: requireString(args, 'manifestYaml'),
+          dryRun: input.dryRun,
+        });
+        break;
+      }
 
       /* ---------------- mutations (destructive) ---------------- */
       case 'llamactl.catalog.promoteDelete': {
@@ -347,6 +372,15 @@ export async function dispatchOpsChatTool(
           }
           result = await caller.ragDelete(payload);
         }
+        break;
+      }
+      case 'llamactl.composite.destroy': {
+        // Like compositeApply, the procedure handles dry-run
+        // natively — forward the flag.
+        result = await caller.compositeDestroy({
+          name: requireString(args, 'name'),
+          dryRun: input.dryRun,
+        });
         break;
       }
     }

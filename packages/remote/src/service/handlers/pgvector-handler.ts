@@ -1,0 +1,214 @@
+/**
+ * pgvector Postgres handler. Pure translation.
+ *
+ * Image: pgvector/pgvector:0.8.2-pg18-trixie by default. The image
+ * ships the extension but does **not** auto-run
+ * `CREATE EXTENSION vector;` on a fresh database — the operator
+ * must run it, or a later phase's post-start hook will. This
+ * handler deliberately does NOT mount an init-script (no pure-
+ * translation way to emit arbitrary SQL payloads without drifting
+ * into I/O). Flagged as a deferred item for Phase 4+ to revisit.
+ *
+ * Password handling: `passwordEnv` names a process env var that
+ * holds the password at translate time. We resolve it here (pure
+ * read of `process.env`) and embed the value in `POSTGRES_PASSWORD`
+ * on the deployment. Operators who don't want the password in their
+ * composite manifest can export the env var before running apply.
+ *
+ * The `resolvedEndpoint.url` redacts the password (`:REDACTED@`) —
+ * the URL is for logs / UI only. Consumers that need the actual
+ * connection string should resolve the env var themselves at
+ * connect time.
+ */
+import type {
+  ServiceDeployment,
+  ServiceInstance,
+} from '../../runtime/backend.js';
+import { LABEL_KEYS, MANAGED_BY_VALUE } from '../../runtime/labels.js';
+import { ServiceError } from '../errors.js';
+import type { PgvectorServiceSpec } from '../schema.js';
+import { sha256Hex } from './hash.js';
+import type {
+  ResolvedServiceEndpoint,
+  ServiceHandler,
+  HandlerTranslateOptions,
+} from './types.js';
+
+const DEFAULT_IMAGE_REPOSITORY = 'pgvector/pgvector';
+const DEFAULT_IMAGE_TAG = '0.8.2-pg18-trixie';
+const DEFAULT_MOUNT_PATH = '/var/lib/postgresql/data';
+const CONTAINER_PORT = 5432;
+
+function resolveImage(spec: PgvectorServiceSpec): {
+  repository: string;
+  tag: string;
+} {
+  return {
+    repository: spec.image?.repository ?? DEFAULT_IMAGE_REPOSITORY,
+    tag: spec.image?.tag ?? DEFAULT_IMAGE_TAG,
+  };
+}
+
+function resolveMountPath(spec: PgvectorServiceSpec): string {
+  return spec.persistence?.mountPath ?? DEFAULT_MOUNT_PATH;
+}
+
+function resolvePassword(spec: PgvectorServiceSpec): string | undefined {
+  if (!spec.passwordEnv) return undefined;
+  const v = process.env[spec.passwordEnv];
+  if (v === undefined || v === '') {
+    throw new ServiceError(
+      'spec-invalid',
+      `pgvector service '${spec.name}': passwordEnv references env var '${spec.passwordEnv}' but it is unset or empty`,
+    );
+  }
+  return v;
+}
+
+function hashMaterial(spec: PgvectorServiceSpec): Record<string, unknown> {
+  const image = resolveImage(spec);
+  const persistence = spec.persistence
+    ? { volume: spec.persistence.volume, mountPath: resolveMountPath(spec) }
+    : undefined;
+  // Hash the **env var name**, not its value: rotating the actual
+  // password shouldn't force a container recreate; changing which
+  // env var holds it is a material change.
+  return {
+    kind: spec.kind,
+    runtime: spec.runtime,
+    image,
+    port: spec.port,
+    database: spec.database,
+    user: spec.user,
+    passwordEnv: spec.passwordEnv,
+    persistence,
+    externalEndpoint: spec.externalEndpoint,
+  };
+}
+
+export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
+  kind: 'pgvector',
+
+  validate(spec) {
+    if (spec.runtime === 'external') {
+      if (!spec.externalEndpoint || spec.externalEndpoint.length === 0) {
+        throw new ServiceError(
+          'spec-invalid',
+          `pgvector service '${spec.name}': runtime='external' requires externalEndpoint`,
+        );
+      }
+      if (spec.image) {
+        throw new ServiceError(
+          'spec-invalid',
+          `pgvector service '${spec.name}': runtime='external' cannot set image — remove it or switch runtime to 'docker'`,
+        );
+      }
+      return;
+    }
+    if (spec.externalEndpoint && spec.externalEndpoint.length > 0) {
+      throw new ServiceError(
+        'spec-invalid',
+        `pgvector service '${spec.name}': runtime='docker' cannot set externalEndpoint — remove it or switch runtime to 'external'`,
+      );
+    }
+    // Probe password-env resolution early so validation catches
+    // the obvious "I forgot to export FOO" case before apply.
+    resolvePassword(spec);
+  },
+
+  computeSpecHash(spec) {
+    return sha256Hex(hashMaterial(spec));
+  },
+
+  toDeployment(
+    spec,
+    opts: HandlerTranslateOptions,
+  ): ServiceDeployment | null {
+    if (spec.runtime === 'external') return null;
+
+    const image = resolveImage(spec);
+    const password = resolvePassword(spec);
+    const hash = pgvectorHandler.computeSpecHash(spec);
+    const name = `llamactl-pgvector-${opts.compositeName}-${spec.name}`;
+    const mountPath = resolveMountPath(spec);
+
+    const env: Record<string, string> = {
+      POSTGRES_DB: spec.database,
+      POSTGRES_USER: spec.user,
+    };
+    if (password !== undefined) {
+      env.POSTGRES_PASSWORD = password;
+    }
+
+    const deployment: ServiceDeployment = {
+      name,
+      image,
+      env,
+      ports: [
+        { containerPort: CONTAINER_PORT, hostPort: spec.port, protocol: 'tcp' },
+      ],
+      labels: {
+        [LABEL_KEYS.managedBy]: MANAGED_BY_VALUE,
+        [LABEL_KEYS.composite]: opts.compositeName,
+        [LABEL_KEYS.service]: spec.name,
+        [LABEL_KEYS.specHash]: hash,
+      },
+      // Exec form (no shell) — substitute the user at translate
+      // time. A shell form with `$POSTGRES_USER` would rely on the
+      // container env being set; exec form keeps us robust.
+      healthcheck: {
+        test: ['CMD', 'pg_isready', '-U', spec.user],
+        intervalMs: 10_000,
+        timeoutMs: 3_000,
+        retries: 10,
+      },
+      restartPolicy: 'unless-stopped',
+      specHash: hash,
+    };
+
+    if (spec.persistence?.volume) {
+      deployment.volumes = [
+        { hostPath: spec.persistence.volume, containerPath: mountPath },
+      ];
+    }
+
+    return deployment;
+  },
+
+  resolvedEndpoint(
+    spec,
+    instance: ServiceInstance | null,
+  ): ResolvedServiceEndpoint {
+    if (spec.runtime === 'external') {
+      const raw = spec.externalEndpoint;
+      if (!raw) {
+        throw new ServiceError(
+          'spec-invalid',
+          `pgvector service '${spec.name}': externalEndpoint is missing`,
+        );
+      }
+      let parsed: URL;
+      try {
+        parsed = new URL(raw);
+      } catch (err) {
+        throw new ServiceError(
+          'spec-invalid',
+          `pgvector service '${spec.name}': externalEndpoint '${raw}' is not a valid URL`,
+          err,
+        );
+      }
+      const port = parsed.port ? Number(parsed.port) : CONTAINER_PORT;
+      return { host: parsed.hostname, port, url: raw };
+    }
+
+    if (!instance || !instance.endpoint) {
+      throw new ServiceError(
+        'endpoint-unresolvable',
+        `pgvector service '${spec.name}': docker runtime has no reachable endpoint yet (instance=${instance ? 'present-no-endpoint' : 'null'})`,
+      );
+    }
+    const { host, port } = instance.endpoint;
+    const url = `postgres://${spec.user}:REDACTED@${host}:${port}/${spec.database}`;
+    return { host, port, url };
+  },
+};

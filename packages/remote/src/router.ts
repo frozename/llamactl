@@ -187,6 +187,94 @@ function resolveRagNode(nodeName: string): { node: ClusterNode } {
   }
   return { node: resolved.node };
 }
+
+/**
+ * Lazy-initialized Docker runtime backend shared by every composite
+ * procedure. Instantiation is deferred until first use so
+ * `router.ts`-at-load-time never fails on hosts without Docker — the
+ * first `compositeApply` / `compositeDestroy` call is what triggers
+ * the `createDockerBackend()` import + construction.
+ *
+ * Tests that need to inject a fake backend go through `composite-
+ * apply.test.ts` (which calls `applyComposite` directly with a
+ * synthetic `RuntimeBackend`). The router-level tests stay on the
+ * dry-run path so they never touch this helper.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _compositeRuntime: import('./runtime/backend.js').RuntimeBackend | null = null;
+async function getCompositeRuntime(): Promise<
+  import('./runtime/backend.js').RuntimeBackend
+> {
+  if (_compositeRuntime) return _compositeRuntime;
+  const { createDockerBackend } = await import('./runtime/docker/backend.js');
+  _compositeRuntime = createDockerBackend();
+  return _compositeRuntime;
+}
+
+/**
+ * Planner tool descriptors the server always advertises, regardless of
+ * what the caller (UI, CLI, MCP client) supplies via `input.tools`.
+ * These are tools whose "reach" spans multiple individual procedures —
+ * the LLM planner needs to know about them up-front so it can emit a
+ * single-step plan that replaces a multi-step decomposition.
+ *
+ * Phase 6 scope: `llamactl.composite.apply`. A Composite manifest
+ * bundles services, workloads, RAG nodes, and gateway registrations
+ * into one atomic unit with an internal dependency DAG — the LLM
+ * reaches for this when the operator describes a stack rather than a
+ * single component. Dispatch routing is Phase 5's responsibility in
+ * `ops-chat/dispatch.ts`; this registration layer never executes the
+ * tool, only teaches the planner it exists.
+ */
+export const BUILT_IN_PLANNER_TOOLS: readonly PlannerToolDescriptor[] = [
+  {
+    name: 'llamactl.composite.apply',
+    description:
+      'Apply a Composite manifest that declares a full stack in one atomic unit — models + gateways + RAG nodes + supporting services (chroma, pgvector, and future database/nginx/redis backends) — with a dependency DAG and rollback on failure. PREFER this tool over multiple individual tool calls (llamactl.workload.apply + llamactl.rag.store + supporting-service setup) when the operator describes a multi-component setup (three or more interacting pieces). The manifest is a YAML string; the applier topologically orders components, spawns containers via Docker for runtime:"docker" services (external-runtime services are assumed up), wires RAG node endpoints from backing services, and registers everything atomically. For single-model or single-service asks, prefer the narrower individual tool instead.',
+    inputSchema: {
+      type: 'object',
+      required: ['manifestYaml'],
+      properties: {
+        manifestYaml: {
+          type: 'string',
+          minLength: 1,
+          description:
+            'The full Composite YAML manifest (apiVersion: llamactl/v1, kind: Composite). Includes services, workloads, ragNodes, gateways, and optional dependencies edges inside `spec`.',
+        },
+        dryRun: {
+          type: 'boolean',
+          default: false,
+          description:
+            'When true, return the would-apply plan + topological order without hitting the backend. Use this on the first emission of the step so the operator can review the DAG before wet-run.',
+        },
+      },
+    },
+    tier: 'mutation-dry-run-safe',
+  },
+];
+
+/**
+ * Merge caller-supplied planner tools with the server-side built-ins.
+ * Caller entries take precedence on name collision so an explicit
+ * override from the UI keeps working if we ever need to redefine a
+ * built-in description at call site. Built-ins not present in the
+ * caller list are appended at the end so they appear last in the
+ * prompt's AVAILABLE TOOLS block — the LLM still sees them, but
+ * caller-supplied tools keep their prompt ordering.
+ */
+export function mergePlannerTools(
+  callerTools: PlannerToolDescriptor[],
+  builtins: readonly PlannerToolDescriptor[],
+): PlannerToolDescriptor[] {
+  const seen = new Set(callerTools.map((t) => t.name));
+  const out: PlannerToolDescriptor[] = [...callerTools];
+  for (const t of builtins) {
+    if (seen.has(t.name)) continue;
+    out.push(t);
+    seen.add(t.name);
+  }
+  return out;
+}
 import {
   autotune as autotuneMod,
   bench,
@@ -1782,12 +1870,19 @@ export const router = t.router({
         });
         executor = createLlmExecutor({ provider, model: input.model });
       }
-      const plannerTools: PlannerToolDescriptor[] = (input.tools ?? []).map((t) => ({
+      const callerTools: PlannerToolDescriptor[] = (input.tools ?? []).map((t) => ({
         name: t.name,
         description: t.description,
         inputSchema: { type: 'object' },
         tier: t.tier,
       }));
+      // Merge caller-supplied tools with server-side built-ins (e.g.
+      // composite.apply). Caller wins on name collision so UI-defined
+      // descriptions can override defaults if ever needed. Phase 5's
+      // ops-chat dispatch routes composite.apply plan steps to the
+      // `compositeApply` tRPC procedure — this layer only teaches the
+      // planner that the tool exists and when to prefer it.
+      const plannerTools = mergePlannerTools(callerTools, BUILT_IN_PLANNER_TOOLS);
 
       // Fold history into the context string so the planner sees the
       // ongoing conversation. Keep the formatting deterministic — one
@@ -2143,6 +2238,168 @@ export const router = t.router({
       } finally {
         await adapter.close();
       }
+    }),
+
+  // ---- Composite (multi-component apply) --------------------------------
+  //
+  // Phase 5 of composite-infra.md — tRPC surface for the composite
+  // applier. Each procedure is a thin caller shim over `applyComposite`
+  // / `destroyComposite` / the `store.ts` YAML helpers, mirroring the
+  // MCP `llamactl.composite.*` tools 1:1 so ops-chat + external MCP
+  // clients + the Electron module share one code path.
+
+  compositeApply: t.procedure
+    .input(
+      z.object({
+        manifestYaml: z.string().min(1),
+        dryRun: z.boolean().default(false),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { parseComposite } = await import('./composite/store.js');
+      const { topologicalOrder, impliedEdges } = await import(
+        './composite/dag.js'
+      );
+      let manifest;
+      try {
+        manifest = parseComposite(input.manifestYaml);
+      } catch (err) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `invalid composite manifest: ${(err as Error).message}`,
+        });
+      }
+      if (input.dryRun) {
+        const order = topologicalOrder(manifest.spec);
+        const implied = impliedEdges(manifest.spec);
+        return {
+          dryRun: true as const,
+          manifest,
+          order,
+          impliedEdges: implied,
+        };
+      }
+      // Wet run — drive the applier through the shared backend.
+      const { applyComposite } = await import('./composite/apply.js');
+      const backend = await getCompositeRuntime();
+      const result = await applyComposite({
+        manifest,
+        backend,
+        getWorkloadClient: (nodeName) =>
+          clientForNode(kubecfg.loadConfig(), nodeName) as workloadApplyMod.WorkloadClient,
+      });
+      return { dryRun: false as const, ...result };
+    }),
+
+  compositeDestroy: t.procedure
+    .input(
+      z.object({
+        name: z.string().min(1),
+        dryRun: z.boolean().default(false),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { loadComposite, deleteComposite } = await import(
+        './composite/store.js'
+      );
+      const { topologicalOrder, reverseOrder } = await import(
+        './composite/dag.js'
+      );
+      const manifest = loadComposite(input.name);
+      if (!manifest) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: `composite '${input.name}' not found`,
+        });
+      }
+      if (input.dryRun) {
+        const wouldRemove = reverseOrder(topologicalOrder(manifest.spec));
+        return { dryRun: true as const, name: input.name, wouldRemove };
+      }
+      const { destroyComposite } = await import('./composite/apply.js');
+      const backend = await getCompositeRuntime();
+      const result = await destroyComposite({
+        manifest,
+        backend,
+        getWorkloadClient: (nodeName) =>
+          clientForNode(kubecfg.loadConfig(), nodeName) as workloadApplyMod.WorkloadClient,
+      });
+      // Best-effort cleanup of the on-disk YAML. Destroy is the only
+      // place the file gets removed; apply-failures leave a status-
+      // tagged record so operators can investigate.
+      deleteComposite(input.name);
+      return {
+        dryRun: false as const,
+        ok: result.ok,
+        removed: result.removed,
+        errors: result.errors,
+      };
+    }),
+
+  compositeList: t.procedure.query(async () => {
+    const { listComposites } = await import('./composite/store.js');
+    return listComposites();
+  }),
+
+  compositeGet: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const { loadComposite } = await import('./composite/store.js');
+      return loadComposite(input.name);
+    }),
+
+  /**
+   * Subscription variant of compositeGet — streams the persisted
+   * status as a single `CompositeApplyEvent` synthesized from the
+   * last-known manifest status. Live event streaming (real-time
+   * apply progress) is a follow-up; v1 replays what `saveComposite`
+   * wrote at the end of the last `applyComposite` pass so UIs can
+   * render the final state without polling.
+   */
+  compositeStatus: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .subscription(({ input, signal }) => {
+      return bridgeEventStream<
+        import('./composite/types.js').CompositeApplyEvent
+      >(signal ?? new AbortController().signal, async (emit) => {
+        const { loadComposite } = await import('./composite/store.js');
+        const manifest = loadComposite(input.name);
+        if (!manifest) {
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: `composite '${input.name}' not found`,
+          });
+        }
+        const status = manifest.status;
+        if (status) {
+          emit({ type: 'phase', phase: status.phase });
+          for (const c of status.components) {
+            emit({ type: 'component-start', ref: c.ref });
+            if (c.state === 'Ready') {
+              emit({
+                type: 'component-ready',
+                ref: c.ref,
+                ...(c.message !== undefined && { message: c.message }),
+              });
+            } else if (c.state === 'Failed') {
+              emit({
+                type: 'component-failed',
+                ref: c.ref,
+                message: c.message ?? 'component failed',
+              });
+            }
+          }
+          emit({
+            type: 'done',
+            ok: status.phase === 'Ready',
+          });
+        } else {
+          // Manifest exists but was never applied — emit a pending
+          // phase so the UI can render an empty state cleanly.
+          emit({ type: 'phase', phase: 'Pending' });
+          emit({ type: 'done', ok: false });
+        }
+      });
     }),
 });
 

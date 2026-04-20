@@ -321,6 +321,159 @@ describe('RAG dispatch', () => {
   });
 });
 
+describe('Composite dispatch', () => {
+  /**
+   * Phase 5 of composite-infra.md — the 4 composite tools route
+   * through to the matching tRPC caller method. Dry-run handling
+   * lives inside the procedure (not synthesized at this layer) so
+   * every case just forwards `input.dryRun` verbatim.
+   */
+
+  type CompositeCalls = Array<{ method: string; input: unknown }>;
+
+  function makeFakeCompositeCaller(calls: CompositeCalls): Caller {
+    const stub = (method: string, reply: unknown) => async (input: unknown) => {
+      calls.push({ method, input });
+      return reply;
+    };
+    return {
+      compositeApply: stub('compositeApply', {
+        dryRun: true,
+        manifest: { apiVersion: 'llamactl/v1', kind: 'Composite' },
+        order: [],
+        impliedEdges: [],
+      }),
+      compositeDestroy: stub('compositeDestroy', {
+        dryRun: true,
+        name: 'x',
+        wouldRemove: [],
+      }),
+      compositeList: stub('compositeList', []),
+      compositeGet: stub('compositeGet', null),
+    } as unknown as Caller;
+  }
+
+  test('composite tools are registered in KNOWN_OPS_CHAT_TOOLS', () => {
+    for (const name of [
+      'llamactl.composite.apply',
+      'llamactl.composite.destroy',
+      'llamactl.composite.get',
+      'llamactl.composite.list',
+    ]) {
+      expect((KNOWN_OPS_CHAT_TOOLS as readonly string[]).includes(name)).toBe(true);
+    }
+  });
+
+  test('composite tier classification matches the spec', () => {
+    expect(toolTier('llamactl.composite.apply')).toBe('mutation-dry-run-safe');
+    expect(toolTier('llamactl.composite.destroy')).toBe('mutation-destructive');
+    expect(toolTier('llamactl.composite.list')).toBe('read');
+    expect(toolTier('llamactl.composite.get')).toBe('read');
+  });
+
+  test('composite.list routes to caller.compositeList', async () => {
+    const calls: CompositeCalls = [];
+    const caller = makeFakeCompositeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.composite.list',
+      arguments: {},
+      dryRun: false,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.tier).toBe('read');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('compositeList');
+  });
+
+  test('composite.get routes to caller.compositeGet with name', async () => {
+    const calls: CompositeCalls = [];
+    const caller = makeFakeCompositeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.composite.get',
+      arguments: { name: 'kb-stack' },
+      dryRun: false,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.tier).toBe('read');
+    expect(calls[0]?.method).toBe('compositeGet');
+    expect(calls[0]?.input).toEqual({ name: 'kb-stack' });
+  });
+
+  test('composite.apply dry-run forwards dryRun through to the procedure', async () => {
+    const calls: CompositeCalls = [];
+    const caller = makeFakeCompositeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.composite.apply',
+      arguments: { manifestYaml: 'apiVersion: llamactl/v1\nkind: Composite\n' },
+      dryRun: true,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.tier).toBe('mutation-dry-run-safe');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('compositeApply');
+    expect(calls[0]?.input).toEqual({
+      manifestYaml: 'apiVersion: llamactl/v1\nkind: Composite\n',
+      dryRun: true,
+    });
+  });
+
+  test('composite.apply wet-run forwards dryRun=false', async () => {
+    const calls: CompositeCalls = [];
+    const caller = makeFakeCompositeCaller(calls);
+    await dispatchOpsChatTool(caller, {
+      name: 'llamactl.composite.apply',
+      arguments: { manifestYaml: 'k: v\n' },
+      dryRun: false,
+    });
+    expect(calls[0]?.input).toEqual({
+      manifestYaml: 'k: v\n',
+      dryRun: false,
+    });
+  });
+
+  test('composite.destroy dry-run forwards dryRun through to the procedure', async () => {
+    const calls: CompositeCalls = [];
+    const caller = makeFakeCompositeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.composite.destroy',
+      arguments: { name: 'kb-stack' },
+      dryRun: true,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.tier).toBe('mutation-destructive');
+    expect(calls[0]?.method).toBe('compositeDestroy');
+    expect(calls[0]?.input).toEqual({ name: 'kb-stack', dryRun: true });
+  });
+
+  test('composite.apply missing manifestYaml surfaces a dispatch error', async () => {
+    const calls: CompositeCalls = [];
+    const caller = makeFakeCompositeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.composite.apply',
+      arguments: {},
+      dryRun: true,
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error?.code).toBe('dispatch_error');
+    expect(res.error?.message).toContain('manifestYaml');
+    expect(calls).toHaveLength(0);
+  });
+
+  test('composite.destroy missing name surfaces a dispatch error', async () => {
+    const calls: CompositeCalls = [];
+    const caller = makeFakeCompositeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.composite.destroy',
+      arguments: {},
+      dryRun: true,
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error?.code).toBe('dispatch_error');
+    expect(res.error?.message).toContain('name');
+    expect(calls).toHaveLength(0);
+  });
+});
+
 // Cross-package coverage (KNOWN_OPS_CHAT_TOOLS vs @llamactl/mcp
 // advertised surface) lives in packages/mcp/test/smoke.test.ts —
 // `@llamactl/remote` isn't allowed to depend on `@llamactl/mcp` and

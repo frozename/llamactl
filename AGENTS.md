@@ -300,6 +300,21 @@ from `@nova/contracts`; tRPC exposes `ragSearch` / `ragStore` /
 `llamactl.rag.*`; the Electron activity bar surfaces them through
 the Knowledge module.
 
+For **Composites** (declarative multi-component infra — model +
+gateway + RAG + supporting services applied as one atomic unit
+with dependency DAG + rollback), see `docs/composites.md`.
+`RuntimeBackend` interface in `packages/remote/src/runtime/` wires
+a Docker backend today and is designed for a k8s backend swap
+later. `ServiceHandler` registry at `packages/remote/src/service/`
+covers chroma, pgvector, and a generic-container escape hatch; add
+handlers for new container kinds (nginx, redis, databases) the
+same way gateway-handlers plug into `workload/gateway-handlers/`.
+tRPC: `compositeApply` / `compositeDestroy` / `compositeList` /
+`compositeGet` / `compositeStatus`. MCP: `llamactl.composite.*`.
+Electron module: `Composites` (activity bar, `Boxes` icon). The
+planner prefers `llamactl.composite.apply` over multi-step plans
+when operators describe 3+ interacting components.
+
 ## Cost guardian (`llamactl cost-guardian`, N.3)
 
 Base usage:
