@@ -22,8 +22,43 @@ export {
   appendHealerJournal,
   defaultHealerJournalPath,
 } from './healer/journal.js';
-export type { JournalEntry, JournalTickEntry, JournalTransitionEntry, JournalErrorEntry } from './healer/journal.js';
+export type {
+  JournalEntry,
+  JournalTickEntry,
+  JournalTransitionEntry,
+  JournalErrorEntry,
+  JournalProposalEntry,
+  JournalExecutedEntry,
+  JournalRefusedEntry,
+  JournalPlanFailedEntry,
+  JournalTransitionSnapshot,
+  RefusedReason,
+} from './healer/journal.js';
 export { startHealerLoop, type HealerLoopOptions, type HealerLoopHandle } from './healer/loop.js';
+export {
+  tierOf,
+  stepTier,
+  gatePlan,
+  type Tier,
+  type PlanLike,
+  type PlanStepLike,
+  type GateResult,
+} from './healer/severity.js';
+export {
+  executePlan,
+  executePlanStep,
+  type StepOutcome,
+  type ExecutePlanResult,
+  type ExecuteStepOptions,
+} from './healer/execute.js';
+export {
+  askPlanner,
+  buildGoal,
+  proposalId,
+  type AskPlannerResult,
+  type PlannerResult,
+  type Transition,
+} from './healer/remediation.js';
 
 export {
   CostGuardianConfigSchema,

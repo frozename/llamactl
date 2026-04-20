@@ -2,6 +2,8 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ProbeReport } from './probe.js';
+import type { PlanLike } from './severity.js';
+import type { StepOutcome } from './execute.js';
 
 /**
  * Append-only JSONL journal for the healer loop. One record per tick
@@ -38,10 +40,68 @@ export interface JournalErrorEntry {
   message: string;
 }
 
+/**
+ * Transition record stored on remediation entries. Mirrors the output
+ * of `stateTransitions` so downstream tooling (and `--execute
+ * <proposal-id>`) can reconstruct the context that triggered the
+ * plan.
+ */
+export interface JournalTransitionSnapshot {
+  name: string;
+  resourceKind: 'gateway' | 'provider';
+  from: string;
+  to: string;
+}
+
+export interface JournalProposalEntry {
+  kind: 'proposal';
+  ts: string;
+  transition: JournalTransitionSnapshot;
+  plan: PlanLike;
+  proposalId: string;
+  /** Which probe path surfaced the transition — matches the tick
+   *  entry's `source` field so operators can correlate. */
+  source: 'nova' | 'direct';
+}
+
+export interface JournalExecutedEntry {
+  kind: 'executed';
+  ts: string;
+  proposalId: string;
+  steps: Array<{ index: number; tool: string; outcome: StepOutcome }>;
+  stoppedAt?: number;
+}
+
+export type RefusedReason =
+  | 'destructive-requires-manual-approval'
+  | 'planner-requires-confirmation'
+  | 'severity-exceeded';
+
+export interface JournalRefusedEntry {
+  kind: 'refused';
+  ts: string;
+  proposalId: string;
+  reason: RefusedReason;
+  /** Only set when the refusal was triggered by the severity gate. */
+  refusedSteps?: Array<{ index: number; tool: string; tier: 1 | 2 | 3 }>;
+}
+
+export interface JournalPlanFailedEntry {
+  kind: 'plan-failed';
+  ts: string;
+  transition: JournalTransitionSnapshot;
+  reason: string;
+  message: string;
+}
+
 export type JournalEntry =
   | JournalTickEntry
   | JournalTransitionEntry
-  | JournalErrorEntry;
+  | JournalErrorEntry
+  | JournalProposalEntry
+  | JournalExecutedEntry
+  | JournalRefusedEntry
+  | JournalPlanFailedEntry;
 
 export function defaultHealerJournalPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_HEALER_JOURNAL?.trim();
