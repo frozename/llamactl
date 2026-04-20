@@ -685,3 +685,398 @@ describe('runCostGuardianTick — tier-2 force-private intent', () => {
     expect(entries.some((e) => e.action === 'force-private')).toBe(false);
   });
 });
+
+describe('runCostGuardianTick — tier-2/tier-3 auto wet-run', () => {
+  let dir = '';
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'guardian-auto-')); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  function readJournal(path: string): Array<Record<string, unknown>> {
+    const body = readFileSync(path, 'utf8').trim();
+    return body.split('\n').map((line) => JSON.parse(line));
+  }
+
+  function makeForcePrivateResponse(overrides: Record<string, unknown> = {}) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            ok: true,
+            mode: 'dry-run',
+            previous: 'auto',
+            next: 'private-first',
+            unchanged: false,
+            ...overrides,
+          }),
+        },
+      ],
+    };
+  }
+
+  function makeDeregisterResponse(overrides: Record<string, unknown> = {}) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            ok: true,
+            mode: 'dry-run',
+            wasPresent: true,
+            remainingCount: 2,
+            ...overrides,
+          }),
+        },
+      ],
+    };
+  }
+
+  test('tier-2 auto_force_private:true → dry-run THEN wet-run, both journaled', async () => {
+    const calls: ToolCallInput[] = [];
+    const tools: RunbookToolClient = {
+      async callTool(input) {
+        calls.push(input);
+        if (input.name === 'nova.ops.cost.snapshot') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  totalEstimatedCostUsd: 8.5,
+                  windowSince: 'x',
+                  windowUntil: 'y',
+                }),
+              },
+            ],
+          };
+        }
+        if (input.name === 'llamactl.embersynth.set-default-profile') {
+          return makeForcePrivateResponse({
+            mode: input.arguments?.dryRun ? 'dry-run' : 'wet',
+          });
+        }
+        throw new Error(`unexpected: ${input.name}`);
+      },
+    };
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig({ auto_force_private: true }),
+      journalPath,
+      disableWebhook: true,
+    });
+    const profileCalls = calls.filter(
+      (c) => c.name === 'llamactl.embersynth.set-default-profile',
+    );
+    expect(profileCalls).toHaveLength(2);
+    expect(profileCalls[0]!.arguments).toEqual({
+      profile: 'private-first',
+      syntheticModel: 'fusion-auto',
+      dryRun: true,
+    });
+    expect(profileCalls[1]!.arguments).toEqual({
+      profile: 'private-first',
+      syntheticModel: 'fusion-auto',
+      dryRun: false,
+    });
+    const entries = readJournal(journalPath);
+    const dryEntry = entries.find((e) => e.action === 'force-private')!;
+    const wetEntry = entries.find((e) => e.action === 'force-private-wet')!;
+    expect(dryEntry).toBeDefined();
+    expect(wetEntry).toBeDefined();
+    expect(dryEntry.ok).toBe(true);
+    expect(wetEntry.ok).toBe(true);
+    const wetDetail = wetEntry.detail as {
+      toolInvoked: boolean;
+      mode: string;
+      autoForcePrivateEnabled: boolean;
+    };
+    expect(wetDetail.toolInvoked).toBe(true);
+    expect(wetDetail.mode).toBe('wet');
+    expect(wetDetail.autoForcePrivateEnabled).toBe(true);
+  });
+
+  test('tier-2 auto_force_private:false → only dry-run, no wet-run entry', async () => {
+    const calls: ToolCallInput[] = [];
+    const tools: RunbookToolClient = {
+      async callTool(input) {
+        calls.push(input);
+        if (input.name === 'nova.ops.cost.snapshot') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  totalEstimatedCostUsd: 8.5,
+                  windowSince: 'x',
+                  windowUntil: 'y',
+                }),
+              },
+            ],
+          };
+        }
+        if (input.name === 'llamactl.embersynth.set-default-profile') {
+          return makeForcePrivateResponse();
+        }
+        throw new Error(`unexpected: ${input.name}`);
+      },
+    };
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig(),
+      journalPath,
+      disableWebhook: true,
+    });
+    const profileCalls = calls.filter(
+      (c) => c.name === 'llamactl.embersynth.set-default-profile',
+    );
+    expect(profileCalls).toHaveLength(1);
+    expect(profileCalls[0]!.arguments).toEqual({
+      profile: 'private-first',
+      syntheticModel: 'fusion-auto',
+      dryRun: true,
+    });
+    const entries = readJournal(journalPath);
+    expect(entries.some((e) => e.action === 'force-private')).toBe(true);
+    expect(entries.some((e) => e.action === 'force-private-wet')).toBe(false);
+  });
+
+  test('tier-3 auto_deregister:true + non-protected provider → dry-run THEN wet-run', async () => {
+    const calls: ToolCallInput[] = [];
+    const tools: RunbookToolClient = {
+      async callTool(input) {
+        calls.push(input);
+        if (input.name === 'nova.ops.cost.snapshot') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  totalEstimatedCostUsd: 9.8,
+                  windowSince: 'x',
+                  windowUntil: 'y',
+                  byProvider: [{ key: 'openrouter-paid', estimatedCostUsd: 9.7 }],
+                }),
+              },
+            ],
+          };
+        }
+        if (input.name === 'llamactl.embersynth.set-default-profile') {
+          return makeForcePrivateResponse();
+        }
+        if (input.name === 'sirius.providers.deregister') {
+          return makeDeregisterResponse({
+            mode: input.arguments?.dryRun ? 'dry-run' : 'wet',
+          });
+        }
+        throw new Error(`unexpected: ${input.name}`);
+      },
+    };
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig({ auto_deregister: true }),
+      journalPath,
+      disableWebhook: true,
+    });
+    const deregisterCalls = calls.filter(
+      (c) => c.name === 'sirius.providers.deregister',
+    );
+    expect(deregisterCalls).toHaveLength(2);
+    expect(deregisterCalls[0]!.arguments).toEqual({
+      name: 'openrouter-paid',
+      dryRun: true,
+    });
+    expect(deregisterCalls[1]!.arguments).toEqual({
+      name: 'openrouter-paid',
+      dryRun: false,
+    });
+    const entries = readJournal(journalPath);
+    const dryEntry = entries.find((e) => e.action === 'deregister-dry-run')!;
+    const wetEntry = entries.find((e) => e.action === 'deregister-wet')!;
+    expect(dryEntry).toBeDefined();
+    expect(wetEntry).toBeDefined();
+    expect(wetEntry.ok).toBe(true);
+    const wetDetail = wetEntry.detail as {
+      provider: string;
+      toolInvoked: boolean;
+      mode: string;
+    };
+    expect(wetDetail.provider).toBe('openrouter-paid');
+    expect(wetDetail.toolInvoked).toBe(true);
+    expect(wetDetail.mode).toBe('wet');
+    // No refusal entry — provider wasn't on the denylist.
+    expect(entries.some((e) => e.action === 'deregister-refused')).toBe(false);
+  });
+
+  test('tier-3 auto_deregister:true + protected provider → refused, no wet-run', async () => {
+    const calls: ToolCallInput[] = [];
+    const tools: RunbookToolClient = {
+      async callTool(input) {
+        calls.push(input);
+        if (input.name === 'nova.ops.cost.snapshot') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  totalEstimatedCostUsd: 9.8,
+                  windowSince: 'x',
+                  windowUntil: 'y',
+                  byProvider: [{ key: 'fleet-internal', estimatedCostUsd: 9.7 }],
+                }),
+              },
+            ],
+          };
+        }
+        if (input.name === 'llamactl.embersynth.set-default-profile') {
+          return makeForcePrivateResponse();
+        }
+        if (input.name === 'sirius.providers.deregister') {
+          return makeDeregisterResponse();
+        }
+        throw new Error(`unexpected: ${input.name}`);
+      },
+    };
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig({ auto_deregister: true }),
+      journalPath,
+      disableWebhook: true,
+    });
+    const deregisterCalls = calls.filter(
+      (c) => c.name === 'sirius.providers.deregister',
+    );
+    // Only the dry-run — wet-run refused by the denylist.
+    expect(deregisterCalls).toHaveLength(1);
+    expect(deregisterCalls[0]!.arguments).toEqual({
+      name: 'fleet-internal',
+      dryRun: true,
+    });
+    const entries = readJournal(journalPath);
+    const refused = entries.find((e) => e.action === 'deregister-refused')!;
+    expect(refused).toBeDefined();
+    expect(refused.ok).toBe(true);
+    const refusedDetail = refused.detail as {
+      reason: string;
+      provider: string;
+      protectedProviders: string[];
+    };
+    expect(refusedDetail.reason).toBe('provider-protected');
+    expect(refusedDetail.provider).toBe('fleet-internal');
+    expect(refusedDetail.protectedProviders).toContain('fleet-internal');
+    expect(entries.some((e) => e.action === 'deregister-wet')).toBe(false);
+  });
+
+  test('tier-3 auto_deregister:false + non-protected target → dry-run only (baseline unchanged)', async () => {
+    const calls: ToolCallInput[] = [];
+    const tools: RunbookToolClient = {
+      async callTool(input) {
+        calls.push(input);
+        if (input.name === 'nova.ops.cost.snapshot') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  totalEstimatedCostUsd: 9.8,
+                  windowSince: 'x',
+                  windowUntil: 'y',
+                  byProvider: [{ key: 'openrouter-paid', estimatedCostUsd: 9.7 }],
+                }),
+              },
+            ],
+          };
+        }
+        if (input.name === 'llamactl.embersynth.set-default-profile') {
+          return makeForcePrivateResponse();
+        }
+        if (input.name === 'sirius.providers.deregister') {
+          return makeDeregisterResponse();
+        }
+        throw new Error(`unexpected: ${input.name}`);
+      },
+    };
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig(),
+      journalPath,
+      disableWebhook: true,
+    });
+    const deregisterCalls = calls.filter(
+      (c) => c.name === 'sirius.providers.deregister',
+    );
+    expect(deregisterCalls).toHaveLength(1);
+    expect(deregisterCalls[0]!.arguments).toEqual({
+      name: 'openrouter-paid',
+      dryRun: true,
+    });
+    const entries = readJournal(journalPath);
+    expect(entries.some((e) => e.action === 'deregister-dry-run')).toBe(true);
+    expect(entries.some((e) => e.action === 'deregister-wet')).toBe(false);
+    expect(entries.some((e) => e.action === 'deregister-refused')).toBe(false);
+  });
+
+  test('tier-2 dry-run fails → auto flag ignored, no wet-run attempt', async () => {
+    const calls: ToolCallInput[] = [];
+    const tools: RunbookToolClient = {
+      async callTool(input) {
+        calls.push(input);
+        if (input.name === 'nova.ops.cost.snapshot') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  totalEstimatedCostUsd: 8.5,
+                  windowSince: 'x',
+                  windowUntil: 'y',
+                }),
+              },
+            ],
+          };
+        }
+        if (input.name === 'llamactl.embersynth.set-default-profile') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  ok: false,
+                  reason: 'unknown-profile',
+                  message: "profile 'private-first' not found",
+                  availableProfiles: ['auto', 'fast'],
+                }),
+              },
+            ],
+          };
+        }
+        throw new Error(`unexpected: ${input.name}`);
+      },
+    };
+    const journalPath = join(dir, 'cg.jsonl');
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig({ auto_force_private: true }),
+      journalPath,
+      disableWebhook: true,
+    });
+    const profileCalls = calls.filter(
+      (c) => c.name === 'llamactl.embersynth.set-default-profile',
+    );
+    // Dry-run happened, but no wet-run because the dry-run reported ok:false.
+    expect(profileCalls).toHaveLength(1);
+    expect(profileCalls[0]!.arguments).toEqual({
+      profile: 'private-first',
+      syntheticModel: 'fusion-auto',
+      dryRun: true,
+    });
+    const entries = readJournal(journalPath);
+    const dry = entries.find((e) => e.action === 'force-private')!;
+    expect(dry.ok).toBe(false);
+    expect(entries.some((e) => e.action === 'force-private-wet')).toBe(false);
+  });
+});

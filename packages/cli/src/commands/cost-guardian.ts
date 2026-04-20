@@ -9,17 +9,22 @@ import {
 const USAGE = `llamactl cost-guardian — periodic spend checks with tiered intents
 
 USAGE:
-  llamactl cost-guardian tick [--config=<path>] [--journal=<path>] [--skip-journal]
+  llamactl cost-guardian tick [--config=<path>] [--journal=<path>]
+                              [--skip-journal]
+                              [--auto] [--auto-tier-2] [--auto-tier-3]
 
 Reads the guardian config (default: ~/.llamactl/cost-guardian.yaml or
 \$LLAMACTL_COST_GUARDIAN_CONFIG), calls nova.ops.cost.snapshot to
 compute daily + (if configured) weekly spend, runs the pure tier
 state machine, journals the decision, and prints it.
 
-This slice is intent-only. Webhook POST, embersynth flip, and
-sirius deregister actions land in follow-up slices keyed off the
-emitted decision. Tier fires only when pricing YAMLs exist under
-~/.llamactl/pricing/ and match the recorded (provider, model) pairs.
+The tier-2 (force-private) and tier-3 (deregister) branches always
+journal a dry-run preview. A follow-up wet-run (dryRun:false) is
+gated behind an explicit opt-in via \`auto_force_private\` /
+\`auto_deregister\` in the config file, or via the \`--auto*\` CLI
+flags below (CLI wins when set). Tier-3 additionally honors
+\`config.protectedProviders\` — names on that denylist are refused
+even when the flag is on, and journaled as \`deregister-refused\`.
 
 FLAGS:
   --config=<path>       Override the config YAML path.
@@ -28,16 +33,30 @@ FLAGS:
                         ~/.llamactl/healer/cost-journal.jsonl.
   --skip-journal        Print the decision without appending to
                         the journal. Useful for on-demand checks.
+  --auto                Enable tier-2 AND tier-3 auto wet-runs.
+                        Equivalent to --auto-tier-2 --auto-tier-3.
+                        CLI flag overrides config file values.
+  --auto-tier-2         Override \`auto_force_private\` to true. The
+                        tier-2 branch follows every successful
+                        dry-run with a wet-run (dryRun:false).
+  --auto-tier-3         Override \`auto_deregister\` to true. The
+                        tier-3 branch follows every successful
+                        dry-run with a wet-run, unless the target
+                        provider is on \`protectedProviders\`.
 
 EXAMPLES:
   llamactl cost-guardian tick
   llamactl cost-guardian tick --config=/etc/cost.yaml --skip-journal
+  llamactl cost-guardian tick --auto
+  llamactl cost-guardian tick --auto-tier-2   # force-private wet, deregister dry-only
 `;
 
 interface TickFlags {
   configPath: string;
   journalPath: string;
   skipJournal: boolean;
+  autoTier2: boolean;
+  autoTier3: boolean;
 }
 
 function parseFlags(argv: string[]): TickFlags | null {
@@ -45,6 +64,8 @@ function parseFlags(argv: string[]): TickFlags | null {
     configPath: defaultCostGuardianConfigPath(),
     journalPath: defaultCostJournalPath(),
     skipJournal: false,
+    autoTier2: false,
+    autoTier3: false,
   };
   for (const arg of argv) {
     if (arg === '--help' || arg === '-h') {
@@ -53,6 +74,19 @@ function parseFlags(argv: string[]): TickFlags | null {
     }
     if (arg === '--skip-journal') {
       flags.skipJournal = true;
+      continue;
+    }
+    if (arg === '--auto') {
+      flags.autoTier2 = true;
+      flags.autoTier3 = true;
+      continue;
+    }
+    if (arg === '--auto-tier-2') {
+      flags.autoTier2 = true;
+      continue;
+    }
+    if (arg === '--auto-tier-3') {
+      flags.autoTier3 = true;
       continue;
     }
     const eq = arg.indexOf('=');
@@ -87,6 +121,10 @@ async function runTick(argv: string[]): Promise<number> {
     process.stderr.write(`cost-guardian: invalid config: ${(err as Error).message}\n`);
     return 1;
   }
+  // CLI flag overrides — only present flags win over config values.
+  // A bare boolean absence means "defer to config" (not "force off").
+  if (flags.autoTier2) config = { ...config, auto_force_private: true };
+  if (flags.autoTier3) config = { ...config, auto_deregister: true };
   const { client, dispose } = await createDefaultToolClient();
   try {
     const decision = await runCostGuardianTick({

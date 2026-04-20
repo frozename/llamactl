@@ -24,7 +24,13 @@ export interface CostJournalActionEntry {
    *  `decision.tier` because a single decision might dispatch
    *  multiple actions (webhook + embersynth flip) that each warrant
    *  their own audit line. */
-  action: 'webhook' | 'force-private' | 'deregister-dry-run';
+  action:
+    | 'webhook'
+    | 'force-private'
+    | 'force-private-wet'
+    | 'deregister-dry-run'
+    | 'deregister-wet'
+    | 'deregister-refused';
   ok: boolean;
   detail?: unknown;
   error?: string;

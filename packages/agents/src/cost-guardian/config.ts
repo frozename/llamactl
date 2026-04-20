@@ -52,6 +52,10 @@ export const CostGuardianConfigSchema = z.object({
   webhook_url: z.url().optional(),
   auto_force_private: z.boolean().default(false),
   auto_deregister: z.boolean().default(false),
+  /** Provider names that must never be auto-deregistered, regardless of
+   *  `auto_deregister` / `--auto-tier-3`. The denylist overrides the auto
+   *  flag; matches here are always journaled as `deregister-refused`. */
+  protectedProviders: z.array(z.string()).default(['fleet-internal']),
 });
 
 export type CostGuardianBudget = z.infer<typeof CostGuardianBudgetSchema>;
