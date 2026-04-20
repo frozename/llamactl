@@ -38,12 +38,33 @@ export interface WorkloadClient {
     ): Unsubscribable;
   };
   rpcServerStop: { mutate(input?: { graceSeconds?: number }): Promise<unknown> };
+  rpcServerDoctor: {
+    query(input?: Record<string, never>): Promise<{
+      ok: boolean;
+      path: string | null;
+      llamaCppBin: string | null;
+      reason?:
+        | 'LLAMA_CPP_BIN-unset'
+        | 'LLAMA_CPP_BIN-missing'
+        | 'rpc-server-missing'
+        | 'rpc-server-not-executable';
+      hint?: string;
+    }>;
+  };
 }
 
 export type ApplyAction = 'unchanged' | 'started' | 'restarted' | 'pending';
 
 export interface ApplyEvent {
-  type: 'stop' | 'start' | 'started' | 'skipped' | 'worker-start' | 'worker-ready' | 'gateway-pending';
+  type:
+    | 'stop'
+    | 'start'
+    | 'started'
+    | 'skipped'
+    | 'worker-start'
+    | 'worker-ready'
+    | 'worker-preflight'
+    | 'gateway-pending';
   message: string;
 }
 
@@ -66,6 +87,79 @@ interface StartDone {
   error?: string;
 }
 
+/**
+ * Apply-time preflight for tensor-parallel workloads. Before any
+ * `rpcServerStart` spawn, ask each worker node's `rpcServerDoctor`
+ * procedure whether `$LLAMA_CPP_BIN/rpc-server` is present and
+ * executable. On any failure, return a composed multi-line error
+ * naming every failing node + its reason + build hint so the operator
+ * can fix all nodes in one pass rather than one-node-at-a-time ENOENT
+ * surprises from the spawn path.
+ *
+ * Returns `{ ok: true }` on success so callers can proceed. Returns
+ * `{ ok: false, ... }` with a human-readable `error` string built from
+ * each failing node's reason and hint; apply.ts folds this into the
+ * same `worker-preflight-failed` shape other worker failures use.
+ *
+ * Runs in parallel across workers — each doctor call is independent
+ * and the preflight runs once per apply (not at tick time). No
+ * retries here; if the operator just rebuilt llama.cpp, they'll
+ * re-apply.
+ */
+async function preflightWorkers(
+  workers: readonly ModelRunWorker[],
+  getClient: (nodeName: string) => WorkloadClient,
+  onEvent?: (e: ApplyEvent) => void,
+): Promise<
+  | { ok: true }
+  | { ok: false; error: string }
+> {
+  if (workers.length === 0) return { ok: true };
+  onEvent?.({
+    type: 'worker-preflight',
+    message: `preflight: checking rpc-server on ${workers.length} worker node(s)`,
+  });
+  const results = await Promise.all(
+    workers.map(async (w) => {
+      try {
+        const wc = getClient(w.node);
+        const r = await wc.rpcServerDoctor.query({});
+        return { node: w.node, result: r as {
+          ok: boolean;
+          reason?: string;
+          hint?: string;
+        } };
+      } catch (err) {
+        // Treat dispatcher / network failures as a preflight failure
+        // so the operator sees the node name. Wrapping into the same
+        // doctor shape keeps the composed error uniform.
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          node: w.node,
+          result: {
+            ok: false,
+            reason: 'doctor-call-failed',
+            hint: `could not reach ${w.node}: ${msg}`,
+          },
+        };
+      }
+    }),
+  );
+  const failures = results.filter((r) => !r.result.ok);
+  if (failures.length === 0) return { ok: true };
+  const lines = failures.map((f) => {
+    const reason = f.result.reason ?? 'unknown';
+    const hint = f.result.hint ?? '(no hint)';
+    return `  - ${f.node}: ${reason}\n    ${hint}`;
+  });
+  return {
+    ok: false,
+    error:
+      `rpc-server not available on ${failures.length} worker node(s):\n` +
+      lines.join('\n'),
+  };
+}
+
 /** Fan out rpc-server starts across every worker in the spec. Returns
  *  "host:port,host:port,..." suitable for llama-server's --rpc flag. */
 async function startWorkers(
@@ -73,6 +167,14 @@ async function startWorkers(
   getClient: (nodeName: string) => WorkloadClient,
   onEvent?: (e: ApplyEvent) => void,
 ): Promise<{ rpcList: string; error?: string }> {
+  // Preflight: bail before the first rpcServerStart spawn when any
+  // worker node lacks rpc-server. This replaces a raw ENOENT from the
+  // core spawn wrapper with a composed error listing every failing
+  // node + the cmake hint.
+  const preflight = await preflightWorkers(workers, getClient, onEvent);
+  if (!preflight.ok) {
+    return { rpcList: '', error: preflight.error };
+  }
   const endpoints: string[] = [];
   for (const worker of workers) {
     onEvent?.({

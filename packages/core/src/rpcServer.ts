@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 import {
+  accessSync,
+  constants,
   existsSync,
   mkdirSync,
   openSync,
@@ -12,6 +14,87 @@ import { connect } from 'node:net';
 import { join } from 'node:path';
 import { resolveEnv } from './env.js';
 import type { ResolvedEnv } from './types.js';
+
+/**
+ * Distinct failure modes `checkRpcServerAvailable()` can surface. Each
+ * reason pairs with a `hint` string intended to be copy-pasteable —
+ * operators who hit `rpc-server-missing` can copy the cmake line
+ * verbatim to rebuild llama.cpp with RPC enabled.
+ */
+export type RpcServerDoctorReason =
+  | 'LLAMA_CPP_BIN-unset'
+  | 'LLAMA_CPP_BIN-missing'
+  | 'rpc-server-missing'
+  | 'rpc-server-not-executable';
+
+export interface RpcServerDoctorResult {
+  ok: boolean;
+  /** Resolved path to rpc-server when `ok: true` or when we got as far
+   *  as locating the file (e.g. not-executable). Null otherwise. */
+  path: string | null;
+  /** Echo of the resolved $LLAMA_CPP_BIN; null only when the env var
+   *  itself was unset. */
+  llamaCppBin: string | null;
+  reason?: RpcServerDoctorReason;
+  hint?: string;
+}
+
+/**
+ * Preflight check for `$LLAMA_CPP_BIN/rpc-server`. llama.cpp only
+ * builds `rpc-server` when configured with `-DGGML_RPC=ON`, so a stock
+ * build lacks it. This helper maps each failure mode to a structured
+ * reason + copy-pasteable hint so apply-time preflight and the
+ * `llamactl agent rpc-doctor` CLI can both surface the same message
+ * shape. Pure fs — no network, no spawn.
+ */
+export function checkRpcServerAvailable(
+  env: NodeJS.ProcessEnv = process.env,
+): RpcServerDoctorResult {
+  const bin = env.LLAMA_CPP_BIN?.trim();
+  if (!bin) {
+    return {
+      ok: false,
+      path: null,
+      llamaCppBin: null,
+      reason: 'LLAMA_CPP_BIN-unset',
+      hint: 'set $LLAMA_CPP_BIN to the llama.cpp build/bin directory',
+    };
+  }
+  if (!existsSync(bin)) {
+    return {
+      ok: false,
+      path: null,
+      llamaCppBin: bin,
+      reason: 'LLAMA_CPP_BIN-missing',
+      hint: `LLAMA_CPP_BIN=${bin} does not exist`,
+    };
+  }
+  const rpc = join(bin, 'rpc-server');
+  if (!existsSync(rpc)) {
+    return {
+      ok: false,
+      path: null,
+      llamaCppBin: bin,
+      reason: 'rpc-server-missing',
+      hint:
+        'rpc-server is built only when llama.cpp is configured with ' +
+        '-DGGML_RPC=ON. From your llama.cpp source tree: ' +
+        'cmake -B build -DGGML_RPC=ON && cmake --build build --target rpc-server',
+    };
+  }
+  try {
+    accessSync(rpc, constants.X_OK);
+  } catch {
+    return {
+      ok: false,
+      path: rpc,
+      llamaCppBin: bin,
+      reason: 'rpc-server-not-executable',
+      hint: `chmod +x ${rpc}`,
+    };
+  }
+  return { ok: true, path: rpc, llamaCppBin: bin };
+}
 
 /**
  * llama.cpp RPC worker (`rpc-server`) lifecycle. A worker binds a TCP

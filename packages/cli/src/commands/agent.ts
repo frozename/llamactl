@@ -49,6 +49,12 @@ Subcommands:
       ~/Library/LaunchAgents (user) or /Library/LaunchDaemons (system),
       and load it via launchctl. --dry-run prints the plist + launchctl
       plan without touching disk.
+  rpc-doctor [--node=<name>] [--json]
+      Verify \$LLAMA_CPP_BIN/rpc-server is available for tensor-parallel
+      workloads. Checks the local node by default; pass --node=<name>
+      to dispatch through the rpcServerDoctor tRPC procedure on a
+      remote node. --json emits the raw result for tooling. Exit 0 on
+      ok, 1 otherwise.
 
 All state lives under \$LLAMACTL_AGENT_DIR or \$DEV_STORAGE or ~/.llamactl.
 `;
@@ -67,6 +73,10 @@ export async function runAgent(args: string[]): Promise<number> {
     case 'install-launchd': {
       const { runAgentInstallLaunchd } = await import('./agent-install/index.js');
       return runAgentInstallLaunchd(rest);
+    }
+    case 'rpc-doctor': {
+      const { runRpcDoctor } = await import('./agent-rpc-doctor.js');
+      return runRpcDoctor(rest);
     }
     case undefined:
     case '--help':

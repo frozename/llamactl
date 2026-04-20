@@ -519,7 +519,7 @@ export const router = t.router({
     .input(
       z.object({
         node: z.string().min(1),
-        request: z.object({
+        request: z.looseObject({
           model: z.string(),
           messages: z.array(
             z.object({
@@ -530,7 +530,7 @@ export const router = t.router({
           temperature: z.number().optional(),
           max_tokens: z.number().int().positive().optional(),
           providerOptions: z.record(z.string(), z.unknown()).optional(),
-        }).passthrough(),
+        }),
       }),
     )
     .mutation(async ({ input }) => {
@@ -569,7 +569,7 @@ export const router = t.router({
     .input(
       z.object({
         node: z.string().min(1),
-        request: z.object({
+        request: z.looseObject({
           model: z.string(),
           messages: z.array(
             z.object({
@@ -580,7 +580,7 @@ export const router = t.router({
           temperature: z.number().optional(),
           max_tokens: z.number().int().positive().optional(),
           providerOptions: z.record(z.string(), z.unknown()).optional(),
-        }).passthrough(),
+        }),
       }),
     )
     .subscription(async function* ({ input, signal }) {
@@ -1333,6 +1333,18 @@ export const router = t.router({
   keepAliveStatus: t.procedure.query(() => keepAliveMod.keepAliveStatus()),
 
   rpcServerStatus: t.procedure.query(async () => rpcServerMod.rpcServerStatus()),
+
+  /**
+   * Preflight check for tensor-parallel apply. Fires before any
+   * `rpcServerStart` call in `applyOne` → `startWorkers` and surfaces
+   * a structured reason + build hint when `$LLAMA_CPP_BIN/rpc-server`
+   * is missing (stock llama.cpp builds lack it — it only lands with
+   * `-DGGML_RPC=ON`). Also available interactively as the
+   * `llamactl agent rpc-doctor --node <name>` CLI.
+   */
+  rpcServerDoctor: t.procedure
+    .input(z.object({}))
+    .query(async () => rpcServerMod.checkRpcServerAvailable()),
 
   rpcServerStop: t.procedure
     .input(

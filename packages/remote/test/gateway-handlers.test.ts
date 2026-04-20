@@ -222,6 +222,11 @@ describe('applyOne + gatewayDispatch integration', () => {
         throw new Error('rpcServerStop should not be called');
       },
     },
+    rpcServerDoctor: {
+      async query() {
+        throw new Error('rpcServerDoctor should not be called on a gateway workload');
+      },
+    },
   };
 
   test('invokes the injected gatewayDispatch and returns its result', async () => {
@@ -291,6 +296,7 @@ describe('applyOne + gatewayDispatch integration', () => {
       serverStart: noopClient.serverStart,
       rpcServerStart: noopClient.rpcServerStart,
       rpcServerStop: noopClient.rpcServerStop,
+      rpcServerDoctor: noopClient.rpcServerDoctor,
     };
     const result = await applyOne(
       manifest,
