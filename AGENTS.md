@@ -213,6 +213,79 @@ The journal at `~/.llamactl/healer/journal.jsonl` (override with
 `--journal` or `LLAMACTL_HEALER_JOURNAL`) is the audit trail. Keep
 it rotated; the loop appends, never truncates.
 
+## Deploying agents
+
+Two steps: build a single-file `llamactl-agent` binary, then install
+it as a Launch service so it starts on boot and stays up.
+
+### Build
+
+```bash
+bun run build:agent         # current platform
+bun run build:agent:all     # all four supported platforms
+```
+
+Both call `llamactl artifacts build-agent` under the hood. The
+binary lands at
+`$DEV_STORAGE/artifacts/agent/<platform>/llamactl-agent` (or
+`$LLAMACTL_ARTIFACTS_DIR` / `~/.llamactl/artifacts` depending on
+which env var is set). `build:agent:all` cross-compiles all four
+targets from macOS.
+
+### Install (macOS)
+
+`llamactl agent install-launchd` resolves a binary, renders a plist,
+writes it to `~/Library/LaunchAgents/` (user scope) or
+`/Library/LaunchDaemons/` (system scope), and loads it via
+`launchctl`. The binary source is one of three mutually exclusive
+flags; default is `--from-source`:
+
+- `--binary=<path>` — use an existing binary at this path.
+- `--from-release=<tag>` — fetch + SHA/cosign-verify a GitHub
+  Release artifact into `--install-path`.
+- `--from-source` — build locally via `artifacts build-agent` and
+  copy the result into `--install-path`.
+
+User scope example (home-lab Mac):
+
+```sh
+llamactl agent install-launchd --scope=user --from-source \
+  --install-path=/usr/local/bin/llamactl-agent \
+  --dir=$DEV_STORAGE/agent/mac-mini
+```
+
+System scope example (headless server, requires `sudo`):
+
+```sh
+sudo llamactl agent install-launchd --scope=system --from-release=v0.4.0 \
+  --install-path=/usr/local/bin/llamactl-agent \
+  --dir=/var/llamactl/agent
+```
+
+`--dry-run` prints the rendered plist + the launchctl plan without
+touching disk. Always run it first on a new host to eyeball the
+result before committing to disk writes + service load.
+
+The plist's `EnvironmentVariables` block carries only non-secret
+system vars (`PATH`, `DEV_STORAGE`, `HF_HOME`, `LLAMA_CPP_*`,
+`HUGGINGFACE_HUB_CACHE`, `OLLAMA_MODELS`). The agent bearer token
+stays on disk in `--dir` and never enters the plist.
+
+### Full Disk Access (one-time GUI step)
+
+When the agent needs to read certs or models from an external
+volume (`/Volumes/…`), grant Full Disk Access to the installed
+binary path via System Settings → Privacy & Security → Full Disk
+Access → `+` → pick the installed binary. One grant per binary path
+— the grant survives reinstalls at the same path. Processes spawned
+by `launchd` do **not** inherit the Terminal's FDA grant, so this
+step is required separately from any grant already given to Bun or
+iTerm.
+
+End-to-end walkthrough for a fresh Mac mini (clean-slate prep,
+dotfiles, DEV_STORAGE split, agent init, install-launchd, FDA
+grant, smoke tests): see `docs/deployment-mac-mini.md`.
+
 ## Cost guardian (`llamactl cost-guardian`, N.3)
 
 Base usage:

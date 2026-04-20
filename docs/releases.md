@@ -69,6 +69,34 @@ byte-identical to what CI built from the tagged commit.
 `plans/infra-supply-chain.md` I.5.3. Until then, SHA-256 is the
 only integrity check.)
 
+## Installing via `artifacts fetch` + `agent install-launchd`
+
+End-to-end on a macOS host, starting from a published release tag:
+
+```sh
+# 1. fetch signed, SHA-verified binary into $DEV_STORAGE/artifacts/
+llamactl artifacts fetch --version=v0.4.0 --verify-sig
+
+# 2. locate the binary
+llamactl artifacts show-path
+
+# 3. install as a LaunchAgent (user scope)
+llamactl agent install-launchd \
+  --scope=user \
+  --binary=$(llamactl artifacts show-path) \
+  --dir=$DEV_STORAGE/agent/$(hostname -s)
+```
+
+`artifacts fetch --verify-sig` enables cosign keyless verification
+when `cosign` is on `PATH`, and falls back to best-effort (SHA-only)
+when not. For strict deployments that must not ship if cosign can't
+verify, use `--verify-sig=require` — the fetch then fails closed
+if cosign is unavailable or the signature doesn't validate.
+
+For the full end-to-end bring-up of a fresh Mac mini (dotfiles,
+DEV_STORAGE layout, agent init, FDA grant, smoke tests) see
+`docs/deployment-mac-mini.md`.
+
 ## Installing a downloaded binary
 
 Drop the binary under your central's artifacts directory:
