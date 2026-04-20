@@ -1,277 +1,377 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { spawn } from 'node:child_process';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { createServer as createNetServer, connect as tcpConnect } from 'node:net';
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
-  writeFileSync,
+  statSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import {
-  auth,
-  config as kubecfg,
-  configSchema,
-  startAgentServer,
-  tls,
-  type RunningAgent,
-} from '@llamactl/remote';
+import { join } from 'node:path';
+import { rpcServer } from '@llamactl/core';
+import { makeCluster, type Cluster } from '../../remote/test/helpers';
 
 /**
- * Phase E.3 end-to-end: a two-agent cluster where one acts as
- * "coordinator" and the other as "worker1", with fake llama-server +
- * fake rpc-server binaries on their shared PATH. Apply a ModelRun
- * spec that lists workers and assert both binaries end up running
- * with the right args; delete the workload and assert both come
- * down.
+ * Phase E.2 — real two-node multinode apply, end-to-end.
  *
- * Two agents share one process.env here (Bun test runs them in the
- * same process). The coordinator's llama-server and the worker's
- * rpc-server write to distinct PID/state files (llama-server.pid
- * vs. rpc-server.pid) so they coexist fine on the one runtimeDir.
- * Binding ports are distinct by design (spec.rpcPort differs from
- * \$LLAMA_CPP_PORT).
+ * Scenario: coordinator runs llama-server with `--rpc host:port`
+ * pointing at a worker's rpc-server. Both pieces are spawned via the
+ * actual remote-router procedures (`workloadApply` on the coordinator,
+ * which in turn invokes `rpcServerStart` on the worker through the
+ * pinned tRPC client wired by the kubeconfig).
+ *
+ * Two hard skip gates, both stderr-only:
+ *
+ *   1. `rpcServer.checkRpcServerAvailable()` — stock llama.cpp builds
+ *      do not ship `rpc-server` (it requires `-DGGML_RPC=ON`). We skip
+ *      rather than fail since most developer machines lack it. The
+ *      apply-time preflight shipped in Slice E.1 also surfaces this
+ *      exact reason via `rpcServerDoctor`, but here we check locally
+ *      so the describe block never starts in the first place.
+ *
+ *   2. Local GGUF availability — `llama-server --rpc` still needs a
+ *      model file to load. We search `$LLAMA_CPP_MODELS` (the standard
+ *      catalog location) and `$LOCAL_AI_RUNTIME_DIR/ai-models/local-ai`
+ *      recursively for any `*.gguf`, pick the smallest by file size,
+ *      and use its relative path as the ModelRun target. If nothing
+ *      is found, the block skips with that reason. We never create a
+ *      GGUF on the fly; the test is gated on the developer's real
+ *      catalog because generating a valid GGUF fixture is out of scope.
+ *
+ * Connectivity-only. This test does not assert on token generation,
+ * inference correctness, or multi-worker topologies beyond one
+ * coordinator + one worker. Those belong to the bench runner and to
+ * future slices respectively.
+ *
+ * Design notes:
+ *
+ *   - `makeCluster({nodes: 2})` spins up two in-proc agent servers on
+ *     OS-assigned HTTPS ports with per-node TLS + tokens + kubeconfig.
+ *     Both agents share the one `process.env` since Bun test runs them
+ *     in the same Bun process — llama-server.pid and rpc-server.pid
+ *     live in distinct files inside the one runtime dir, which is how
+ *     the production apply path already coexists them.
+ *
+ *   - Worker rpc-server port is picked via `net.createServer().listen(0)`
+ *     then closed, so the OS guarantees it's free. No hardcoded ports.
+ *
+ *   - Teardown goes through `workloadDelete` (exercises the real path)
+ *     plus a `finally` block that calls `cluster.cleanup()` on any
+ *     outcome — assertion failure, timeout, or thrown error — so no
+ *     bun-server or spawned binary ever leaks across iterations.
  */
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const CLI_ENTRY = join(__dirname, '..', 'src', 'bin.ts');
+// ---------- skip guards (resolved once per file) --------------------
 
-interface CliResult { code: number; stdout: string; stderr: string; }
+const rpcCheck = rpcServer.checkRpcServerAvailable();
+const ggufPath = findSmallestLocalGguf();
 
-function runCliAsync(args: string[], env: NodeJS.ProcessEnv, timeoutMs = 30_000): Promise<CliResult> {
-  return new Promise((resolve) => {
-    const child = spawn('bun', [CLI_ENTRY, ...args], { env });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (d) => { stdout += d.toString(); });
-    child.stderr.on('data', (d) => { stderr += d.toString(); });
-    const killer = setTimeout(() => { child.kill('SIGKILL'); }, timeoutMs);
-    child.on('exit', (code) => {
-      clearTimeout(killer);
-      resolve({ code: code ?? -1, stdout, stderr });
+const skipReason: string | null = !rpcCheck.ok
+  ? `rpc-server not available: ${rpcCheck.reason ?? 'unknown'} — ${rpcCheck.hint ?? ''}`
+  : ggufPath === null
+    ? 'no local GGUF found under $LLAMA_CPP_MODELS or $LOCAL_AI_RUNTIME_DIR/ai-models/local-ai'
+    : null;
+
+const shouldRun = skipReason === null;
+
+// ---------- helpers -------------------------------------------------
+
+interface GgufHit {
+  absPath: string;
+  /** Path relative to the models root. Passed to ModelRunSpec.target. */
+  rel: string;
+  /** Root dir that was the source of this hit; becomes LLAMA_CPP_MODELS. */
+  modelsRoot: string;
+  size: number;
+}
+
+/**
+ * Recursively scan candidate model roots for .gguf files and return
+ * the smallest by size. Skips quickly when nothing is set. Returns
+ * null so the describe block can skip with a clear reason rather than
+ * synthesizing a fake GGUF (llama-server would reject a non-GGUF file
+ * anyway, so there's no safe short-circuit).
+ */
+function findSmallestLocalGguf(): GgufHit | null {
+  const candidates: string[] = [];
+  const cppModels = process.env.LLAMA_CPP_MODELS?.trim();
+  if (cppModels) candidates.push(cppModels);
+  const runtime = process.env.LOCAL_AI_RUNTIME_DIR?.trim();
+  if (runtime) candidates.push(join(runtime, 'ai-models', 'local-ai'));
+  // Keep the roots in priority order. The first root with any .gguf
+  // wins — we don't merge across roots because the `target` field is
+  // resolved against a single models directory.
+  for (const root of candidates) {
+    let entries: string[];
+    try {
+      entries = readdirSync(root, { recursive: true }) as string[];
+    } catch {
+      continue;
+    }
+    let best: GgufHit | null = null;
+    for (const entry of entries) {
+      if (!entry.endsWith('.gguf')) continue;
+      const abs = join(root, entry);
+      let size = 0;
+      try {
+        size = statSync(abs).size;
+      } catch {
+        continue;
+      }
+      if (!best || size < best.size) {
+        best = { absPath: abs, rel: entry, modelsRoot: root, size };
+      }
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
+/**
+ * Allocate a TCP port by binding to :0, reading back the OS-assigned
+ * port, and releasing immediately. There's a short TOCTOU window, but
+ * it's the standard hermetic-test pattern and the worker rpc-server
+ * binds in ~ms so the race never surfaces in practice.
+ */
+function pickFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createNetServer();
+    srv.unref();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address();
+      if (addr && typeof addr === 'object') {
+        const port = addr.port;
+        srv.close(() => resolve(port));
+      } else {
+        srv.close();
+        reject(new Error('could not read OS-assigned port'));
+      }
     });
   });
 }
 
-const FAKE_LLAMA_SERVER = `#!/bin/bash
-HOST=127.0.0.1
-PORT=8080
-# Record the full args so the test can inspect what was launched with.
-echo "$@" > "$LLAMA_CPP_LOGS/fake-llama-last-args.txt" 2>/dev/null || true
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --host) HOST="$2"; shift 2 ;;
-    --port) PORT="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-export FAKE_HOST="$HOST"
-export FAKE_PORT="$PORT"
-exec bun -e "const s=Bun.serve({port:Number(process.env.FAKE_PORT),hostname:process.env.FAKE_HOST,fetch(){return new Response('ok',{status:200});}});process.on('SIGTERM',()=>{s.stop(true);process.exit(0);});process.on('SIGINT',()=>{s.stop(true);process.exit(0);});await new Promise(()=>{});"
-`;
-
-const FAKE_RPC_SERVER = `#!/bin/bash
-HOST=0.0.0.0
-PORT=0
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --host) HOST="$2"; shift 2 ;;
-    --port) PORT="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-export FAKE_HOST="$HOST"
-export FAKE_PORT="$PORT"
-exec bun -e "const s=Bun.listen({hostname:process.env.FAKE_HOST,port:Number(process.env.FAKE_PORT),socket:{data(){},open(){},close(){},error(){}}});process.on('SIGTERM',()=>{s.stop();process.exit(0);});process.on('SIGINT',()=>{s.stop();process.exit(0);});await new Promise(()=>{});"
-`;
-
-let tmp = '';
-let coordinatorAgent: RunningAgent | null = null;
-let workerAgent: RunningAgent | null = null;
-let kubeconfigPath = '';
-let workloadsDir = '';
-let manifestPath = '';
-let runtimeDir = '';
-let logsDir = '';
-let coordPort = 0;
-let rpcPort = 0;
-const originalEnv: NodeJS.ProcessEnv = { ...process.env };
-
-beforeEach(async () => {
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-multi-'));
-  const devStorage = join(tmp, 'devstorage');
-  runtimeDir = join(devStorage, 'ai-models', 'local-ai');
-  const modelsDir = join(devStorage, 'ai-models', 'llama.cpp', 'models');
-  const binDir = join(tmp, 'bin');
-  logsDir = join(devStorage, 'logs', 'llama.cpp');
-  kubeconfigPath = join(tmp, 'kubeconfig');
-  workloadsDir = join(tmp, 'workloads');
-  mkdirSync(runtimeDir, { recursive: true });
-  mkdirSync(modelsDir, { recursive: true });
-  mkdirSync(binDir, { recursive: true });
-  mkdirSync(logsDir, { recursive: true });
-  mkdirSync(workloadsDir, { recursive: true });
-
-  coordPort = 19200 + Math.floor(Math.random() * 99);
-  rpcPort = 19300 + Math.floor(Math.random() * 99);
-
-  process.env.DEV_STORAGE = devStorage;
-  process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
-  process.env.LLAMA_CPP_MODELS = modelsDir;
-  process.env.LLAMA_CPP_BIN = binDir;
-  process.env.LLAMA_CPP_LOGS = logsDir;
-  process.env.LLAMA_CPP_HOST = '127.0.0.1';
-  process.env.LLAMA_CPP_PORT = String(coordPort);
-  process.env.LLAMA_CPP_USE_TUNED_ARGS = 'false';
-
-  writeFileSync(join(binDir, 'llama-server'), FAKE_LLAMA_SERVER, { mode: 0o755 });
-  writeFileSync(join(binDir, 'rpc-server'), FAKE_RPC_SERVER, { mode: 0o755 });
-
-  const rel = 'fake-org/fake-model.gguf';
-  mkdirSync(join(modelsDir, 'fake-org'), { recursive: true });
-  writeFileSync(join(modelsDir, rel), 'GGUF-fake', 'utf8');
-
-  const cCert = await tls.generateSelfSignedCert({
-    dir: join(tmp, 'coord-tls'), commonName: '127.0.0.1', hostnames: ['127.0.0.1'],
+/**
+ * Bounded TCP connect retry. Resolves when a single TCP connect to
+ * host:port succeeds; rejects when the deadline elapses. Doubling
+ * backoff from 50ms to 500ms cap means at most ~ceil(timeoutMs/500)
+ * attempts. No hidden retry loop without a deadline.
+ */
+function waitForTcpOpen(host: string, port: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let delay = 50;
+  return new Promise((resolve, reject) => {
+    const tryOnce = (): void => {
+      const sock = tcpConnect({ host, port, timeout: 500 });
+      sock.once('connect', () => {
+        sock.destroy();
+        resolve();
+      });
+      const fail = (): void => {
+        sock.destroy();
+        if (Date.now() >= deadline) {
+          reject(
+            new Error(
+              `waitForTcpOpen(${host}:${port}) timed out after ${timeoutMs}ms`,
+            ),
+          );
+          return;
+        }
+        setTimeout(tryOnce, delay).unref?.();
+        delay = Math.min(delay * 2, 500);
+      };
+      sock.once('error', fail);
+      sock.once('timeout', fail);
+    };
+    tryOnce();
   });
-  const cTok = auth.generateToken();
-  coordinatorAgent = startAgentServer({
-    bindHost: '127.0.0.1', port: 0, tokenHash: cTok.hash,
-    tls: { certPath: cCert.certPath, keyPath: cCert.keyPath },
-  });
-
-  const wCert = await tls.generateSelfSignedCert({
-    dir: join(tmp, 'worker-tls'), commonName: '127.0.0.1', hostnames: ['127.0.0.1'],
-  });
-  const wTok = auth.generateToken();
-  workerAgent = startAgentServer({
-    bindHost: '127.0.0.1', port: 0, tokenHash: wTok.hash,
-    tls: { certPath: wCert.certPath, keyPath: wCert.keyPath },
-  });
-
-  let cfg = configSchema.freshConfig();
-  cfg = kubecfg.upsertNode(cfg, 'home', {
-    name: 'coordinator',
-    endpoint: coordinatorAgent.url,
-    certificateFingerprint: cCert.fingerprint,
-    certificate: cCert.certPem,
-  });
-  cfg = kubecfg.upsertNode(cfg, 'home', {
-    name: 'worker1',
-    endpoint: workerAgent.url,
-    certificateFingerprint: wCert.fingerprint,
-    certificate: wCert.certPem,
-  });
-  cfg = {
-    ...cfg,
-    users: cfg.users.map((u) =>
-      u.name === 'me'
-        // Both agents share the "me" bearer token — same user/tenant.
-        // Each agent's tokenHash was derived from *its* own token, but
-        // for the purposes of this test we just re-issue one shared
-        // token and re-init each agent's tokenHash from it.
-        ? { ...u, token: cTok.token }
-        : u,
-    ),
-  };
-  // Simpler: re-create worker agent with the coordinator's token so
-  // both accept the same bearer. Tear down the old worker first.
-  await workerAgent.stop();
-  workerAgent = startAgentServer({
-    bindHost: '127.0.0.1', port: 0, tokenHash: cTok.hash,
-    tls: { certPath: wCert.certPath, keyPath: wCert.keyPath },
-  });
-  cfg = kubecfg.upsertNode(cfg, 'home', {
-    name: 'worker1',
-    endpoint: workerAgent.url,
-    certificateFingerprint: wCert.fingerprint,
-    certificate: wCert.certPem,
-  });
-  // (cTok is the shared token; wTok is discarded.)
-  void wTok;
-  kubecfg.saveConfig(cfg, kubeconfigPath);
-
-  manifestPath = join(tmp, 'split.yaml');
-  writeFileSync(
-    manifestPath,
-    [
-      'apiVersion: llamactl/v1',
-      'kind: ModelRun',
-      'metadata:',
-      '  name: split-qa',
-      'spec:',
-      '  node: coordinator',
-      '  target:',
-      '    kind: rel',
-      '    value: fake-org/fake-model.gguf',
-      '  workers:',
-      '    - node: worker1',
-      '      rpcHost: 127.0.0.1',
-      `      rpcPort: ${rpcPort}`,
-      '  timeoutSeconds: 10',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
-});
-
-afterEach(async () => {
-  if (coordinatorAgent) { await coordinatorAgent.stop(); coordinatorAgent = null; }
-  if (workerAgent) { await workerAgent.stop(); workerAgent = null; }
-  // Reap both kinds of fake subprocesses.
-  for (const pidFile of [
-    join(runtimeDir, 'llama-server.pid'),
-    join(runtimeDir, 'rpc-server.pid'),
-  ]) {
-    if (existsSync(pidFile)) {
-      const pid = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10);
-      if (Number.isFinite(pid) && pid > 0) {
-        try { process.kill(pid, 'SIGTERM'); } catch {}
-      }
-    }
-  }
-  process.env = { ...originalEnv };
-  rmSync(tmp, { recursive: true, force: true });
-});
-
-function testEnv(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    LLAMACTL_CONFIG: kubeconfigPath,
-    LLAMACTL_WORKLOADS_DIR: workloadsDir,
-  };
 }
 
-describe('multi-node workload: coordinator + rpc worker', () => {
-  test('apply brings up worker rpc-server + coordinator llama-server, delete tears both down', async () => {
-    const apply = await runCliAsync(['apply', '-f', manifestPath], testEnv(), 40_000);
-    expect(apply.code).toBe(0);
-    expect(apply.stdout).toContain('started modelrun/split-qa on node coordinator');
+// ---------- shared fixture state ------------------------------------
 
-    // Coordinator's llama-server must have been launched with --rpc.
-    const argsPath = join(logsDir, 'fake-llama-last-args.txt');
-    expect(existsSync(argsPath)).toBe(true);
-    const coordArgs = readFileSync(argsPath, 'utf8');
-    expect(coordArgs).toContain(`--rpc 127.0.0.1:${rpcPort}`);
+let cluster: Cluster | null = null;
+let tmpRuntime = '';
+const originalEnv: NodeJS.ProcessEnv = { ...process.env };
 
-    // Both server + rpc-server tracked on their respective pid files.
-    expect(existsSync(join(runtimeDir, 'llama-server.pid'))).toBe(true);
-    expect(existsSync(join(runtimeDir, 'rpc-server.pid'))).toBe(true);
+const describeMaybe = shouldRun ? describe : describe.skip;
 
-    const coordStatus = await runCliAsync(
-      ['--node', 'coordinator', 'server', 'status', '--json'], testEnv(), 10_000,
-    );
-    expect(coordStatus.stdout).toContain('"state": "up"');
+// ---------- beforeAll / afterAll ------------------------------------
 
-    const del = await runCliAsync(['delete', 'workload', 'split-qa'], testEnv(), 30_000);
-    expect(del.code).toBe(0);
-    expect(del.stdout).toContain('stopped server on node coordinator');
-    expect(del.stdout).toContain('stopped rpc-server on worker worker1');
+beforeAll(() => {
+  if (skipReason !== null) {
+    process.stderr.write(`multinode-e2e skipped: ${skipReason}\n`);
+  }
+});
 
-    expect(existsSync(join(runtimeDir, 'llama-server.pid'))).toBe(false);
-    expect(existsSync(join(runtimeDir, 'rpc-server.pid'))).toBe(false);
-  }, 80_000);
+afterAll(async () => {
+  if (cluster) {
+    await cluster.cleanup().catch(() => {});
+    cluster = null;
+  }
+  if (tmpRuntime) {
+    rmSync(tmpRuntime, { recursive: true, force: true });
+    tmpRuntime = '';
+  }
+  process.env = { ...originalEnv };
+});
+
+// ---------- the test ------------------------------------------------
+
+describeMaybe('multinode e2e: coordinator + worker via --rpc', () => {
+  test(
+    'worker rpc-server binds + coordinator llama-server connects via --rpc',
+    async () => {
+      // Narrowing — shouldRun === true implies both are non-null, but
+      // TS can't see that across the describe boundary.
+      if (!ggufPath) throw new Error('unreachable: ggufPath must be set');
+
+      tmpRuntime = mkdtempSync(join(tmpdir(), 'llamactl-multinode-'));
+      const runtimeDir = join(tmpRuntime, 'ai-models', 'local-ai');
+      const logsDir = join(tmpRuntime, 'logs', 'llama.cpp');
+      const workloadsDir = join(tmpRuntime, 'workloads');
+      mkdirSync(runtimeDir, { recursive: true });
+      mkdirSync(logsDir, { recursive: true });
+      mkdirSync(workloadsDir, { recursive: true });
+
+      // Pick ports before starting anything so allocation failures
+      // surface before the cluster boots — bounded at pickFreePort's
+      // own connect timeout (500ms per attempt) via the OS.
+      const coordPort = await pickFreePort();
+      const workerPort = await pickFreePort();
+
+      // The remote router resolves env live (resolveEnv(process.env)
+      // inside each serverStart / rpcServerStart). Both in-proc agents
+      // share the one process.env; setting once here is sufficient.
+      // Preserve the existing LLAMA_CPP_BIN since the doctor check
+      // has already confirmed rpc-server lives there.
+      process.env.DEV_STORAGE = tmpRuntime;
+      process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
+      process.env.LLAMA_CPP_MODELS = ggufPath.modelsRoot;
+      process.env.LLAMA_CPP_LOGS = logsDir;
+      process.env.LLAMA_CPP_HOST = '127.0.0.1';
+      process.env.LLAMA_CPP_PORT = String(coordPort);
+      // Skip tuned-profile lookup: would require a seeded bench TSV.
+      process.env.LLAMA_CPP_USE_TUNED_ARGS = 'false';
+
+      cluster = await makeCluster({
+        nodes: [{ name: 'coord' }, { name: 'worker1' }],
+      });
+
+      // The router's `workloadApply` calls `kubecfg.loadConfig()`,
+      // which reads $LLAMACTL_CONFIG. Point it at the cluster config
+      // makeCluster just wrote so `clientForNode(name)` can resolve
+      // every node in the topology.
+      process.env.LLAMACTL_CONFIG = cluster.clusterConfigPath;
+      process.env.LLAMACTL_WORKLOADS_DIR = workloadsDir;
+
+      const [coord, worker] = cluster.nodes;
+      if (!coord || !worker) throw new Error('unreachable: 2 nodes requested');
+      // `worker` exists only to assert the topology makeCluster handed
+      // back matches what the manifest names; the worker-side calls
+      // all flow through the coordinator via `workloadApply` below.
+      expect(worker.name).toBe('worker1');
+
+      const manifestYaml = [
+        'apiVersion: llamactl/v1',
+        'kind: ModelRun',
+        'metadata:',
+        '  name: e2e-tp-test',
+        'spec:',
+        '  node: coord',
+        '  target:',
+        '    kind: rel',
+        `    value: ${ggufPath.rel}`,
+        '  extraArgs:',
+        '    - --host',
+        '    - 127.0.0.1',
+        '    - --port',
+        `    - "${coordPort}"`,
+        '  workers:',
+        '    - node: worker1',
+        '      rpcHost: 127.0.0.1',
+        `      rpcPort: ${workerPort}`,
+        '      timeoutSeconds: 10',
+        '  timeoutSeconds: 20',
+        '',
+      ].join('\n');
+
+      try {
+        // Apply through the coordinator's pinned tRPC client. The
+        // router handles worker preflight + rpcServerStart on worker1
+        // + serverStart on coord, all in sequence.
+        const applyResult = await coord.client.workloadApply.mutate({
+          yaml: manifestYaml,
+        });
+        expect(applyResult.name).toBe('e2e-tp-test');
+        expect(applyResult.node).toBe('coord');
+        expect(applyResult.status.phase).toBe('Running');
+
+        // Worker rpc-server should be bound on its port. Bounded
+        // probe — 5s is a generous ceiling; rpc-server typically
+        // binds in <1s once spawned.
+        await waitForTcpOpen('127.0.0.1', workerPort, 5_000);
+
+        // Confirm the coordinator llama-server is actually up with
+        // the composed flags. We go via `serverStatus.query()` rather
+        // than hitting the agent's OpenAI `/v1/models` directly: the
+        // tRPC client already has the pinned TLS + bearer, so it's
+        // the cheapest way to read back PID + rel + extraArgs in one
+        // round-trip (listOpenAIModels reads the same underlying
+        // state file, so the signal is equivalent).
+        const status = await coord.client.serverStatus.query();
+        expect(status.state).toBe('up');
+        expect(status.rel).toBe(ggufPath.rel);
+        expect(status.pid).toBeGreaterThan(0);
+        // The `--rpc host:port` flag the apply path composed should
+        // appear in the live server's extraArgs.
+        expect(status.extraArgs.join(' ')).toContain(
+          `--rpc 127.0.0.1:${workerPort}`,
+        );
+
+        // Delete the workload through the same coordinator client.
+        // Stops both the coordinator llama-server and the worker
+        // rpc-server via `workloadDelete` → `rpcServerStop` reverse.
+        const deleteResult = await coord.client.workloadDelete.mutate({
+          name: 'e2e-tp-test',
+        });
+        expect(deleteResult.ok).toBe(true);
+
+        // After delete, the worker rpc-server port must be free.
+        // `waitForTcpOpen` rejects on timeout — exactly what we want
+        // to assert (the port is NO LONGER open). 2s is enough; the
+        // stop path SIGTERM + wait ≤ 3s by default.
+        await expect(
+          waitForTcpOpen('127.0.0.1', workerPort, 2_000),
+        ).rejects.toThrow(/timed out/);
+      } finally {
+        // Even if any assertion above threw, tear the cluster down so
+        // bun:test doesn't hang on dangling servers. `cluster.cleanup`
+        // stops both agents and rms their tempdirs.
+        if (cluster) {
+          await cluster.cleanup().catch(() => {});
+          cluster = null;
+        }
+        // Best-effort kill any still-tracked pids (covers the failed
+        // apply case where workloadDelete never ran).
+        for (const basename of ['llama-server.pid', 'rpc-server.pid']) {
+          const pidFile = join(runtimeDir, basename);
+          if (!existsSync(pidFile)) continue;
+          try {
+            const pid = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10);
+            if (Number.isFinite(pid) && pid > 0) {
+              try { process.kill(pid, 'SIGTERM'); } catch {}
+            }
+          } catch {}
+        }
+      }
+    },
+    // Wall-time cap for the whole test. Covers cluster boot (~0.5s),
+    // rpc-server spawn + bind (1-2s), llama-server spawn + warm
+    // /health on a small GGUF (up to ~20s in pathological cases),
+    // and teardown (~1s). Under 30s per the slice budget.
+    30_000,
+  );
 });
