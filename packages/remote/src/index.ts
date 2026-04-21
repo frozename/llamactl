@@ -57,3 +57,30 @@ export {
   readOpsChatAudit,
   type OpsChatAuditEntry,
 } from './ops-chat/audit.js';
+export {
+  createDockerBackend,
+  DockerBackend,
+  type DockerBackendOptions,
+} from './runtime/docker/backend.js';
+export {
+  createKubernetesBackend,
+  KubernetesBackend,
+  type KubernetesBackendOptions,
+} from './runtime/kubernetes/backend.js';
+export {
+  createKubernetesClient,
+  type KubernetesClient,
+  type KubernetesClientOptions,
+} from './runtime/kubernetes/client.js';
+export type {
+  RuntimeBackend,
+  ServiceDeployment,
+  ServiceInstance,
+  ServiceRef,
+  ServiceFilter,
+  RemoveServiceOptions,
+} from './runtime/backend.js';
+export {
+  RuntimeError,
+  type RuntimeErrorCode,
+} from './runtime/errors.js';
