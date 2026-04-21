@@ -401,7 +401,7 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
         ? 'bg-[var(--color-danger)] text-[color:var(--color-fg-inverted)]'
         : 'bg-[var(--color-surface-1)] text-[color:var(--color-fg)]';
   return (
-    <div className={`flex flex-col ${align} gap-1`}>
+    <div className={`flex flex-col ${align} gap-1`} data-role={role}>
       <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-fg-muted)]">
         {role}
       </span>
