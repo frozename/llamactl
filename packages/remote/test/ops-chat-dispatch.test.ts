@@ -442,7 +442,44 @@ describe('Composite dispatch', () => {
     expect(res.ok).toBe(true);
     expect(res.tier).toBe('mutation-destructive');
     expect(calls[0]?.method).toBe('compositeDestroy');
-    expect(calls[0]?.input).toEqual({ name: 'kb-stack', dryRun: true });
+    expect(calls[0]?.input).toEqual({
+      name: 'kb-stack',
+      dryRun: true,
+      purgeVolumes: false,
+    });
+  });
+
+  test('composite.destroy with purgeVolumes=true threads through', async () => {
+    const calls: CompositeCalls = [];
+    const caller = makeFakeCompositeCaller(calls);
+    const res = await dispatchOpsChatTool(caller, {
+      name: 'llamactl.composite.destroy',
+      arguments: { name: 'kb-stack', purgeVolumes: true },
+      dryRun: false,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.tier).toBe('mutation-destructive');
+    expect(calls[0]?.method).toBe('compositeDestroy');
+    expect(calls[0]?.input).toEqual({
+      name: 'kb-stack',
+      dryRun: false,
+      purgeVolumes: true,
+    });
+  });
+
+  test('composite.destroy without purgeVolumes arg defaults to false', async () => {
+    const calls: CompositeCalls = [];
+    const caller = makeFakeCompositeCaller(calls);
+    await dispatchOpsChatTool(caller, {
+      name: 'llamactl.composite.destroy',
+      arguments: { name: 'kb-stack' },
+      dryRun: false,
+    });
+    expect(calls[0]?.input).toEqual({
+      name: 'kb-stack',
+      dryRun: false,
+      purgeVolumes: false,
+    });
   });
 
   test('composite.apply missing manifestYaml surfaces a dispatch error', async () => {

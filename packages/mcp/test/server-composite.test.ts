@@ -84,7 +84,7 @@ describe('@llamactl/mcp Composite tool registration', () => {
     expect(schema.required).toContain('manifestYaml');
   });
 
-  test('llamactl.composite.destroy advertises the name+dryRun shape', async () => {
+  test('llamactl.composite.destroy advertises the name+dryRun+purgeVolumes shape', async () => {
     const { client } = await connected();
     const list = await client.listTools();
     const tool = list.tools.find((t) => t.name === 'llamactl.composite.destroy');
@@ -96,7 +96,10 @@ describe('@llamactl/mcp Composite tool registration', () => {
     };
     expect(schema.properties).toHaveProperty('name');
     expect(schema.properties).toHaveProperty('dryRun');
+    expect(schema.properties).toHaveProperty('purgeVolumes');
+    // Only `name` is required — dryRun and purgeVolumes both default.
     expect(schema.required).toContain('name');
+    expect(schema.required ?? []).not.toContain('purgeVolumes');
   });
 
   test('llamactl.composite.list advertises no required input', async () => {

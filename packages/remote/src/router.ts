@@ -2279,16 +2279,28 @@ export const router = t.router({
           impliedEdges: implied,
         };
       }
-      // Wet run — drive the applier through the shared backend.
+      // Wet run — drive the applier through the shared backend and
+      // publish every event onto the in-memory bus so concurrent
+      // `compositeStatus` subscribers can stream live progress.
       const { applyComposite } = await import('./composite/apply.js');
+      const { compositeEvents } = await import('./composite/event-bus.js');
       const backend = await getCompositeRuntime();
-      const result = await applyComposite({
-        manifest,
-        backend,
-        getWorkloadClient: (nodeName) =>
-          clientForNode(kubecfg.loadConfig(), nodeName) as workloadApplyMod.WorkloadClient,
-      });
-      return { dryRun: false as const, ...result };
+      const name = manifest.metadata.name;
+      compositeEvents.startRun(name);
+      try {
+        const result = await applyComposite({
+          manifest,
+          backend,
+          getWorkloadClient: (nodeName) =>
+            clientForNode(kubecfg.loadConfig(), nodeName) as workloadApplyMod.WorkloadClient,
+          onEvent: (e) => compositeEvents.emit(name, e),
+        });
+        return { dryRun: false as const, ...result };
+      } finally {
+        // Even on throw we want the bus to flip the run to `done` so
+        // subscribers drain cleanly and the retention timer starts.
+        compositeEvents.endRun(name);
+      }
     }),
 
   compositeDestroy: t.procedure
@@ -2296,6 +2308,7 @@ export const router = t.router({
       z.object({
         name: z.string().min(1),
         dryRun: z.boolean().default(false),
+        purgeVolumes: z.boolean().default(false),
       }),
     )
     .mutation(async ({ input }) => {
@@ -2314,7 +2327,12 @@ export const router = t.router({
       }
       if (input.dryRun) {
         const wouldRemove = reverseOrder(topologicalOrder(manifest.spec));
-        return { dryRun: true as const, name: input.name, wouldRemove };
+        return {
+          dryRun: true as const,
+          name: input.name,
+          wouldRemove,
+          wouldPurgeVolumes: input.purgeVolumes,
+        };
       }
       const { destroyComposite } = await import('./composite/apply.js');
       const backend = await getCompositeRuntime();
@@ -2323,6 +2341,7 @@ export const router = t.router({
         backend,
         getWorkloadClient: (nodeName) =>
           clientForNode(kubecfg.loadConfig(), nodeName) as workloadApplyMod.WorkloadClient,
+        purgeVolumes: input.purgeVolumes,
       });
       // Best-effort cleanup of the on-disk YAML. Destroy is the only
       // place the file gets removed; apply-failures leave a status-
@@ -2333,6 +2352,7 @@ export const router = t.router({
         ok: result.ok,
         removed: result.removed,
         errors: result.errors,
+        purgedVolumes: input.purgeVolumes,
       };
     }),
 
@@ -2349,19 +2369,44 @@ export const router = t.router({
     }),
 
   /**
-   * Subscription variant of compositeGet — streams the persisted
-   * status as a single `CompositeApplyEvent` synthesized from the
-   * last-known manifest status. Live event streaming (real-time
-   * apply progress) is a follow-up; v1 replays what `saveComposite`
-   * wrote at the end of the last `applyComposite` pass so UIs can
-   * render the final state without polling.
+   * Subscription variant of compositeGet. Prefers the live in-memory
+   * bus when a `compositeApply` is in-flight for this name: late
+   * subscribers receive the replayed buffer + any future events up to
+   * and including `done`. When no run is active (or the run has aged
+   * out of the retention window), we fall back to synthesizing a
+   * one-shot stream from the persisted `status` field on the YAML.
    */
   compositeStatus: t.procedure
     .input(z.object({ name: z.string().min(1) }))
     .subscription(({ input, signal }) => {
+      const clientSignal = signal ?? new AbortController().signal;
       return bridgeEventStream<
         import('./composite/types.js').CompositeApplyEvent
-      >(signal ?? new AbortController().signal, async (emit) => {
+      >(clientSignal, async (emit) => {
+        const { compositeEvents } = await import('./composite/event-bus.js');
+        const runBus = compositeEvents.currentRun(input.name);
+        if (runBus && !runBus.done) {
+          // Live path — replay the buffer + attach for future events.
+          // The returned Promise resolves on the terminal `done` event
+          // or when the client disconnects, whichever lands first.
+          return new Promise<void>((resolve) => {
+            let settled = false;
+            const finish = (): void => {
+              if (settled) return;
+              settled = true;
+              unsub();
+              resolve();
+            };
+            const unsub = compositeEvents.subscribe(input.name, (e) => {
+              emit(e);
+              if (e.type === 'done') {
+                finish();
+              }
+            });
+            clientSignal.addEventListener('abort', finish);
+          });
+        }
+        // Fall back to the persisted-status synthesis path.
         const { loadComposite } = await import('./composite/store.js');
         const manifest = loadComposite(input.name);
         if (!manifest) {

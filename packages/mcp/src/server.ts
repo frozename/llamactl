@@ -932,10 +932,16 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
     {
       title: 'Destroy a Composite',
       description:
-        'Tear down every component of a previously-applied Composite, walking the dependency DAG in reverse. `dryRun: true` returns the teardown order without touching the runtime. Wet-run removes containers + rag-node kubeconfig entries and deletes the on-disk composite YAML. Destructive.',
+        'Tear down every component of a previously-applied Composite, walking the dependency DAG in reverse. `dryRun: true` returns the teardown order without touching the runtime. Wet-run removes containers + rag-node kubeconfig entries and deletes the on-disk composite YAML. Destructive. Pass `purgeVolumes: true` for a full reset that also reaps anonymous docker volumes — storage is preserved by default.',
       inputSchema: {
         name: z.string().min(1).describe('metadata.name of the composite.'),
         dryRun: z.boolean().default(false),
+        purgeVolumes: z
+          .boolean()
+          .default(false)
+          .describe(
+            'Also remove anonymous docker volumes tied to the containers (default: preserve storage). Named volumes + bind mounts are not touched.',
+          ),
       },
     },
     async (input) => {
@@ -948,8 +954,15 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         dryRun: input.dryRun,
         result:
           'dryRun' in result && result.dryRun
-            ? { dryRun: true, wouldRemoveCount: result.wouldRemove.length }
-            : { ok: (result as { ok: boolean }).ok },
+            ? {
+                dryRun: true,
+                wouldRemoveCount: result.wouldRemove.length,
+                wouldPurgeVolumes: result.wouldPurgeVolumes,
+              }
+            : {
+                ok: (result as { ok: boolean }).ok,
+                purgedVolumes: (result as { purgedVolumes?: boolean }).purgedVolumes ?? false,
+              },
       });
       return toTextContent(result);
     },

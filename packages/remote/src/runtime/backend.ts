@@ -103,6 +103,25 @@ export interface ServiceFilter {
   includeStopped?: boolean;
 }
 
+export interface RemoveServiceOptions {
+  /**
+   * When true, the backend ALSO removes storage attached to the
+   * service (docker: anonymous + named volumes via the `v` flag on
+   * DELETE /containers; k8s: PVCs alongside the namespace delete).
+   * Default false — storage survives service teardown so operators
+   * can bring the same spec back up without data loss.
+   *
+   * Caveats (docker):
+   *   - The `v` flag only reaps **anonymous** volumes tied to the
+   *     container. Named docker volumes (declared via
+   *     `spec.volumes[].name`) are NOT auto-removed — reclaim those
+   *     with `docker volume rm` explicitly.
+   *   - Bind mounts (`hostPath`) are the operator's filesystem and
+   *     are never removed by the backend. Out of scope by design.
+   */
+  purgeVolumes?: boolean;
+}
+
 export interface RuntimeBackend {
   readonly kind: string; // 'docker' for v1, 'kubernetes' later
 
@@ -119,7 +138,7 @@ export interface RuntimeBackend {
    */
   ensureService(spec: ServiceDeployment): Promise<ServiceInstance>;
 
-  removeService(ref: ServiceRef): Promise<void>;
+  removeService(ref: ServiceRef, opts?: RemoveServiceOptions): Promise<void>;
 
   /** Returns null when the service does not exist. Not an error. */
   inspectService(ref: ServiceRef): Promise<ServiceInstance | null>;

@@ -7,6 +7,11 @@ import { stringify as stringifyYaml } from 'yaml';
 import { router } from '../src/router.js';
 import type { Composite } from '../src/composite/schema.js';
 import { saveComposite } from '../src/composite/store.js';
+import {
+  _resetForTests as resetCompositeEvents,
+  compositeEvents,
+} from '../src/composite/event-bus.js';
+import type { CompositeApplyEvent } from '../src/composite/types.js';
 
 /**
  * Phase 5 of composite-infra.md — router-level coverage for the
@@ -33,6 +38,7 @@ beforeEach(() => {
     LLAMACTL_COMPOSITES_DIR: compositesDir,
     LLAMACTL_CONFIG: configPath,
   });
+  resetCompositeEvents();
 });
 
 afterEach(() => {
@@ -182,6 +188,160 @@ describe('router compositeDestroy — dry-run', () => {
     const caller = router.createCaller({});
     await expect(
       caller.compositeDestroy({ name: 'never-existed', dryRun: true }),
+    ).rejects.toThrow(/not found/);
+  });
+
+  test('dry-run with purgeVolumes: true surfaces wouldPurgeVolumes in the response', async () => {
+    saveComposite(sampleManifest(), compositesDir);
+    const caller = router.createCaller({});
+    const res = await caller.compositeDestroy({
+      name: 'kb-stack',
+      dryRun: true,
+      purgeVolumes: true,
+    });
+    expect(res.dryRun).toBe(true);
+    if (!res.dryRun) throw new Error('type narrowing failed');
+    expect(res.wouldPurgeVolumes).toBe(true);
+    // YAML untouched by dry-run regardless of purgeVolumes.
+    const still = await caller.compositeGet({ name: 'kb-stack' });
+    expect(still).not.toBeNull();
+  });
+
+  test('dry-run without purgeVolumes defaults to wouldPurgeVolumes=false', async () => {
+    saveComposite(sampleManifest(), compositesDir);
+    const caller = router.createCaller({});
+    const res = await caller.compositeDestroy({ name: 'kb-stack', dryRun: true });
+    expect(res.dryRun).toBe(true);
+    if (!res.dryRun) throw new Error('type narrowing failed');
+    expect(res.wouldPurgeVolumes).toBe(false);
+  });
+});
+
+describe('router compositeStatus — live event streaming', () => {
+  async function collectEvents(
+    iter: AsyncIterable<CompositeApplyEvent>,
+  ): Promise<CompositeApplyEvent[]> {
+    const out: CompositeApplyEvent[] = [];
+    for await (const ev of iter) {
+      out.push(ev);
+      if (ev.type === 'done') break;
+    }
+    return out;
+  }
+
+  test('subscribes to an in-flight run and streams live events', async () => {
+    // Pretend a compositeApply is running: the bus is seeded with an
+    // active run (no compositeApply call needed — that path needs a
+    // docker backend which the router-level tests never spin up).
+    compositeEvents.startRun('live-stack');
+    compositeEvents.emit('live-stack', { type: 'phase', phase: 'Applying' });
+
+    const caller = router.createCaller({});
+    const iter = (await caller.compositeStatus({
+      name: 'live-stack',
+    })) as AsyncIterable<CompositeApplyEvent>;
+    const collect = collectEvents(iter);
+
+    // Emit further events after the subscription lands so the test
+    // exercises both replay (phase:Applying) and live fan-out.
+    await new Promise((r) => setTimeout(r, 10));
+    compositeEvents.emit('live-stack', {
+      type: 'component-start',
+      ref: { kind: 'service', name: 'chroma-1' },
+    });
+    compositeEvents.emit('live-stack', {
+      type: 'component-ready',
+      ref: { kind: 'service', name: 'chroma-1' },
+    });
+    compositeEvents.emit('live-stack', { type: 'phase', phase: 'Ready' });
+    compositeEvents.emit('live-stack', { type: 'done', ok: true });
+
+    const events = await collect;
+    const types = events.map((e) => e.type);
+    expect(types).toContain('phase');
+    expect(types).toContain('component-start');
+    expect(types).toContain('component-ready');
+    expect(types).toContain('done');
+    expect(events[events.length - 1]).toEqual({ type: 'done', ok: true });
+
+    compositeEvents.endRun('live-stack');
+  });
+
+  test('late subscriber receives the full replayed buffer', async () => {
+    compositeEvents.startRun('live-stack-2');
+    compositeEvents.emit('live-stack-2', { type: 'phase', phase: 'Applying' });
+    compositeEvents.emit('live-stack-2', {
+      type: 'component-start',
+      ref: { kind: 'service', name: 'svc-a' },
+    });
+    compositeEvents.emit('live-stack-2', {
+      type: 'component-ready',
+      ref: { kind: 'service', name: 'svc-a' },
+    });
+
+    // Subscribe after three events are buffered; the stream should
+    // replay all three before we emit the terminal `done`.
+    const caller = router.createCaller({});
+    const iter = (await caller.compositeStatus({
+      name: 'live-stack-2',
+    })) as AsyncIterable<CompositeApplyEvent>;
+    const collect = collectEvents(iter);
+
+    await new Promise((r) => setTimeout(r, 10));
+    compositeEvents.emit('live-stack-2', { type: 'phase', phase: 'Ready' });
+    compositeEvents.emit('live-stack-2', { type: 'done', ok: true });
+
+    const events = await collect;
+    expect(events.length).toBeGreaterThanOrEqual(5);
+    expect(events[0]?.type).toBe('phase');
+    expect(events[events.length - 1]).toEqual({ type: 'done', ok: true });
+
+    compositeEvents.endRun('live-stack-2');
+  });
+
+  test('after endRun (no live run), falls back to persisted status', async () => {
+    // Persist a ready composite — no active run in the bus.
+    const manifest: Composite = {
+      ...sampleManifest(),
+      metadata: { name: 'persisted-stack' },
+      status: {
+        phase: 'Ready',
+        appliedAt: new Date().toISOString(),
+        components: [
+          { ref: { kind: 'service', name: 'chroma-1' }, state: 'Ready' },
+          { ref: { kind: 'rag', name: 'kb' }, state: 'Ready' },
+        ],
+      },
+    };
+    saveComposite(manifest, compositesDir);
+
+    const caller = router.createCaller({});
+    const iter = (await caller.compositeStatus({
+      name: 'persisted-stack',
+    })) as AsyncIterable<CompositeApplyEvent>;
+    const events = await collectEvents(iter);
+
+    // Synthesized order: phase → (component-start + component-ready)* → done.
+    expect(events[0]).toEqual({ type: 'phase', phase: 'Ready' });
+    expect(events[events.length - 1]).toEqual({ type: 'done', ok: true });
+    // Two components → two starts + two readys.
+    const starts = events.filter((e) => e.type === 'component-start');
+    const readys = events.filter((e) => e.type === 'component-ready');
+    expect(starts).toHaveLength(2);
+    expect(readys).toHaveLength(2);
+  });
+
+  test('NOT_FOUND when composite has no run and no persisted manifest', async () => {
+    const caller = router.createCaller({});
+    const iter = (await caller.compositeStatus({
+      name: 'ghost',
+    })) as AsyncIterable<CompositeApplyEvent>;
+    await expect(
+      (async () => {
+        for await (const _e of iter) {
+          // drain — should throw before first yield
+        }
+      })(),
     ).rejects.toThrow(/not found/);
   });
 });

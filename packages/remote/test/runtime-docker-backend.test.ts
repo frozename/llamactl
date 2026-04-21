@@ -359,6 +359,43 @@ describe('DockerBackend.removeService — 404 tolerant', () => {
   });
 });
 
+describe('DockerBackend.removeService — purgeVolumes flag', () => {
+  test('default (no opts) sends v=false on DELETE', async () => {
+    const recorded: Recorded[] = [];
+    const backend = new DockerBackend({
+      fetch: makeMockFetch(() => ({ status: 204, body: '' }), recorded),
+    });
+    await backend.removeService({ name: 'svc' });
+    const delCall = recorded.find((r) => r.method === 'DELETE');
+    expect(delCall).toBeDefined();
+    expect(delCall!.url).toContain('v=false');
+    expect(delCall!.url).toContain('force=true');
+  });
+
+  test('{ purgeVolumes: false } also sends v=false', async () => {
+    const recorded: Recorded[] = [];
+    const backend = new DockerBackend({
+      fetch: makeMockFetch(() => ({ status: 204, body: '' }), recorded),
+    });
+    await backend.removeService({ name: 'svc' }, { purgeVolumes: false });
+    const delCall = recorded.find((r) => r.method === 'DELETE');
+    expect(delCall).toBeDefined();
+    expect(delCall!.url).toContain('v=false');
+  });
+
+  test('{ purgeVolumes: true } flips DELETE to v=true', async () => {
+    const recorded: Recorded[] = [];
+    const backend = new DockerBackend({
+      fetch: makeMockFetch(() => ({ status: 204, body: '' }), recorded),
+    });
+    await backend.removeService({ name: 'svc' }, { purgeVolumes: true });
+    const delCall = recorded.find((r) => r.method === 'DELETE');
+    expect(delCall).toBeDefined();
+    expect(delCall!.url).toContain('v=true');
+    expect(delCall!.url).toContain('force=true');
+  });
+});
+
 describe('DockerBackend.inspectService', () => {
   test('404 → null (not an error)', async () => {
     const backend = new DockerBackend({

@@ -14,6 +14,7 @@ import { runAgent } from './commands/agent.js';
 import { runNode } from './commands/node.js';
 import { runCtx } from './commands/ctx.js';
 import { runApply, runDelete, runDescribe, runGet } from './commands/workload.js';
+import { runComposite } from './commands/composite.js';
 import { runController } from './commands/controller.js';
 import { runExpose } from './commands/expose.js';
 import { runSirius } from './commands/sirius.js';
@@ -112,6 +113,21 @@ Declarative workloads (Kubernetes-style):
   llamactl controller serve                   Reconcile every manifest on
       [--interval=<s>] [--once]               a timer; restarts servers
                                               that drift from the spec.
+  llamactl composite apply -f <file.yaml>     Apply a Composite manifest
+      [--dry-run]                             (services, workloads, rag
+                                              nodes, gateways) with DAG
+                                              ordering and rollback.
+  llamactl composite destroy <name>           Reverse-topo teardown of
+      [--dry-run] [--purge-volumes]           a composite; --purge-volumes
+                                              also removes backing docker
+                                              volumes.
+  llamactl composite list                     List persisted composites
+                                              with phase + component count.
+  llamactl composite get <name>               Print the stored composite
+                                              manifest as YAML.
+  llamactl composite status <name>            Stream live CompositeApplyEvents
+                                              for an apply-in-flight or the
+                                              last known result.
   llamactl expose <target> [--node <n>]       Deploy a model as a workload
       [--name <w>] [--extra-args="..."]       and print the OpenAI URL
       [--timeout=<s>] [--json]                external clients should use.
@@ -200,6 +216,8 @@ async function main(argv: string[]): Promise<number> {
       return runDescribe(rest);
     case 'delete':
       return runDelete(rest);
+    case 'composite':
+      return runComposite(rest);
     case 'controller':
       return runController(rest);
     case 'expose':

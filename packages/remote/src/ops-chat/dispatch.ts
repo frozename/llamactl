@@ -376,10 +376,13 @@ export async function dispatchOpsChatTool(
       }
       case 'llamactl.composite.destroy': {
         // Like compositeApply, the procedure handles dry-run
-        // natively — forward the flag.
+        // natively — forward the flag. `purgeVolumes` is the
+        // operator-initiated opt-in for wiping storage alongside
+        // the container; default false so re-apply is data-safe.
         result = await caller.compositeDestroy({
           name: requireString(args, 'name'),
           dryRun: input.dryRun,
+          purgeVolumes: (args.purgeVolumes as boolean | undefined) ?? false,
         });
         break;
       }

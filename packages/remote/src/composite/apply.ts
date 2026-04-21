@@ -396,7 +396,11 @@ async function teardownComponent(
   switch (rec.ref.kind) {
     case 'service': {
       if (rec.serviceRef) {
-        await opts.backend.removeService(rec.serviceRef);
+        // Rollback is a reactive cleanup pass after a failed apply —
+        // NEVER purge operator storage here. Explicit-destroy
+        // (`destroyComposite`) is the only path that honors an
+        // operator-initiated `purgeVolumes`.
+        await opts.backend.removeService(rec.serviceRef, { purgeVolumes: false });
       }
       return;
     }
@@ -435,6 +439,14 @@ export interface CompositeDestroyOptions {
   getWorkloadClient: (nodeName: string) => WorkloadClient;
   configPath?: string;
   compositesDir?: string;
+  /**
+   * Operator opt-in for wiping storage alongside the container. Default
+   * false — destroy removes containers but leaves docker volumes /
+   * future k8s PVCs intact so the operator can re-apply the same spec
+   * without data loss. Set true for a full reset. See
+   * `RemoveServiceOptions` for the backend-side caveats.
+   */
+  purgeVolumes?: boolean;
 }
 
 export interface CompositeDestroyResult {
@@ -484,7 +496,10 @@ async function destroyComponent(
         compositeName: manifest.metadata.name,
       });
       if (deployment === null) return;
-      await opts.backend.removeService({ name: deployment.name });
+      await opts.backend.removeService(
+        { name: deployment.name },
+        { purgeVolumes: opts.purgeVolumes ?? false },
+      );
       return;
     }
     case 'workload': {

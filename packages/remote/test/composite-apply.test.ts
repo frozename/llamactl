@@ -10,6 +10,7 @@ import { saveConfig } from '../src/config/kubeconfig.js';
 import { freshConfig } from '../src/config/schema.js';
 import type {
   ImageRef,
+  RemoveServiceOptions,
   RuntimeBackend,
   ServiceDeployment,
   ServiceFilter,
@@ -80,8 +81,8 @@ class FakeRuntimeBackend implements RuntimeBackend {
     this.services.set(spec.name, instance);
     return instance;
   }
-  async removeService(ref: ServiceRef): Promise<void> {
-    this.calls.push({ op: 'removeService', arg: ref });
+  async removeService(ref: ServiceRef, opts?: RemoveServiceOptions): Promise<void> {
+    this.calls.push({ op: 'removeService', arg: { ref, opts: opts ?? {} } });
     this.services.delete(ref.name);
   }
   async inspectService(ref: ServiceRef): Promise<ServiceInstance | null> {
@@ -527,6 +528,145 @@ describe('destroyComposite — reverses the DAG', () => {
     const cfg = loadConfig(configPath);
     const kbStillThere = cfg.clusters[0]?.nodes.find((n) => n.name === 'kb');
     expect(kbStillThere).toBeUndefined();
+  });
+});
+
+describe('destroyComposite — purgeVolumes plumbing', () => {
+  test('default destroy forwards purgeVolumes=false to the backend', async () => {
+    const backend = new FakeRuntimeBackend();
+    const { client } = makeFakeWorkloadClient();
+    const manifest = sampleComposite();
+
+    await applyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+    });
+
+    await destroyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+    });
+
+    const removeCall = backend.calls.find((c) => c.op === 'removeService');
+    expect(removeCall).toBeDefined();
+    const { opts } = removeCall!.arg as {
+      ref: ServiceRef;
+      opts: RemoveServiceOptions;
+    };
+    expect(opts.purgeVolumes).toBe(false);
+  });
+
+  test('purgeVolumes: true flows through to backend.removeService', async () => {
+    const backend = new FakeRuntimeBackend();
+    const { client } = makeFakeWorkloadClient();
+    const manifest = sampleComposite();
+
+    await applyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+    });
+
+    await destroyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+      purgeVolumes: true,
+    });
+
+    const removeCalls = backend.calls.filter((c) => c.op === 'removeService');
+    expect(removeCalls.length).toBeGreaterThan(0);
+    for (const call of removeCalls) {
+      const { opts } = call.arg as {
+        ref: ServiceRef;
+        opts: RemoveServiceOptions;
+      };
+      expect(opts.purgeVolumes).toBe(true);
+    }
+  });
+
+  test('rollback NEVER purges volumes — even if a hypothetical flag were passed', async () => {
+    // Rollback is a reactive cleanup pass after apply failure; per the
+    // anti-pattern list it MUST never wipe operator storage. We prove
+    // this by inducing a rollback and asserting every removeService
+    // call receives purgeVolumes: false.
+    const backend = new FakeRuntimeBackend();
+    const { client } = makeFakeWorkloadClient();
+
+    const manifest: Composite = {
+      apiVersion: 'llamactl/v1',
+      kind: 'Composite',
+      metadata: { name: 'rb' },
+      spec: {
+        services: [
+          {
+            kind: 'chroma',
+            name: 'chroma-1',
+            node: 'local',
+            runtime: 'docker',
+            port: 8001,
+            image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+          },
+          {
+            kind: 'chroma',
+            name: 'chroma-2',
+            node: 'local',
+            runtime: 'docker',
+            port: 8002,
+            image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+          },
+        ],
+        workloads: [],
+        ragNodes: [],
+        gateways: [],
+        dependencies: [
+          {
+            from: { kind: 'service', name: 'chroma-2' },
+            to: { kind: 'service', name: 'chroma-1' },
+          },
+        ],
+        onFailure: 'rollback',
+      },
+    };
+
+    let callCount = 0;
+    const origEnsure = backend.ensureService.bind(backend);
+    backend.ensureService = async (spec) => {
+      callCount++;
+      if (callCount === 2) throw new Error('simulated docker failure');
+      return origEnsure(spec);
+    };
+
+    const result = await applyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+    });
+
+    expect(result.rolledBack).toBe(true);
+    // Rollback teardown happened; every removeService call must have
+    // purgeVolumes: false.
+    const removeCalls = backend.calls.filter((c) => c.op === 'removeService');
+    expect(removeCalls.length).toBeGreaterThan(0);
+    for (const call of removeCalls) {
+      const { opts } = call.arg as {
+        ref: ServiceRef;
+        opts: RemoveServiceOptions;
+      };
+      expect(opts.purgeVolumes).toBe(false);
+    }
   });
 });
 

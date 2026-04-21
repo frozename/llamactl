@@ -25,6 +25,7 @@ import { arch as nodeArch, platform as nodePlatform } from 'node:os';
 
 import type {
   ImageRef,
+  RemoveServiceOptions,
   RuntimeBackend,
   ServiceDeployment,
   ServiceFilter,
@@ -117,7 +118,12 @@ export class DockerBackend implements RuntimeBackend {
   // swagger: operationId=ContainerDelete (DELETE /containers/{id})
   // Stops first via operationId=ContainerStop when the container is
   // running; DELETE on an already-stopped container works without it.
-  async removeService(ref: ServiceRef): Promise<void> {
+  //
+  // `opts.purgeVolumes` maps to the Docker `v` query flag which reaps
+  // **anonymous** volumes tied to the container. Named volumes
+  // (`spec.volumes[].name`) and bind mounts (`hostPath`) are not
+  // touched — see `RemoveServiceOptions` docs.
+  async removeService(ref: ServiceRef, opts?: RemoveServiceOptions): Promise<void> {
     // swagger: operationId=ContainerStop (POST /containers/{id}/stop)
     const stopRes = await this.client.request(
       `/containers/${encodeURIComponent(ref.name)}/stop`,
@@ -130,7 +136,10 @@ export class DockerBackend implements RuntimeBackend {
 
     const delRes = await this.client.request(
       `/containers/${encodeURIComponent(ref.name)}`,
-      { method: 'DELETE', query: { force: true, v: false } },
+      {
+        method: 'DELETE',
+        query: { force: true, v: opts?.purgeVolumes ?? false },
+      },
     );
     if (!delRes.ok && delRes.status !== 404) {
       throw await failWith('backend-unreachable', delRes, `remove ${ref.name}`);
