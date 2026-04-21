@@ -17,6 +17,12 @@ Subcommands:
   add <name> --server <url> --fingerprint <sha256:...>
       [--token <tok>|--token-file <p>] [--force]
       Register a node explicitly.
+  add-rag <name> --provider <chroma|pgvector> --endpoint <e>
+      [--collection <c>] [--embedder-node <n> --embedder-model <m>]
+      [--password-env <VAR> | --password-ref <secret-ref>]
+      [--extra-arg <a>]...
+      Register a RAG-kind node. --password-ref accepts any unified-
+      resolver ref: env:VAR / keychain:service/account / file:/path.
   rm <name>
       Remove a node (refuses to remove 'local').
   test <name>
@@ -36,6 +42,8 @@ export async function runNode(args: string[]): Promise<number> {
       return runLs(rest);
     case 'add':
       return runAdd(rest);
+    case 'add-rag':
+      return runAddRag(rest);
     case 'rm':
       return runRm(rest);
     case 'test':
@@ -301,4 +309,150 @@ async function runTest(args: string[]): Promise<number> {
     process.stderr.write(`node test failed: ${(err as Error).message}\n`);
     return 1;
   }
+}
+
+/**
+ * `llamactl node add-rag` — registers a RAG-kind node in the current
+ * context. Covers the common operator paths: pgvector with env or
+ * keychain-sourced password + optional delegated embedder, chroma-mcp
+ * with an optional collection override.
+ *
+ * Wraps `kubecfg.upsertNode` so it rides the same validation path as
+ * hand-editing the kubeconfig — the `.refine()` validator on
+ * `ClusterNodeSchema` catches bad provider/missing-rag combinations.
+ */
+function runAddRag(args: string[]): number {
+  let name: string | undefined;
+  let provider: 'chroma' | 'pgvector' | undefined;
+  let endpoint: string | undefined;
+  let collection: string | undefined;
+  let embedderNode: string | undefined;
+  let embedderModel: string | undefined;
+  let passwordEnv: string | undefined;
+  let passwordRef: string | undefined;
+  const extraArgs: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    const [flag, inline] = splitFlag(arg);
+    const takeValue = (): string | undefined =>
+      inline ?? (args[i + 1] && !args[i + 1]!.startsWith('-') ? args[++i] : undefined);
+    if (!flag.startsWith('-')) {
+      if (name === undefined) {
+        name = flag;
+        continue;
+      }
+      process.stderr.write(`node add-rag: unexpected positional ${flag}\n`);
+      return 1;
+    }
+    switch (flag) {
+      case '--provider': {
+        const v = takeValue();
+        if (v !== 'chroma' && v !== 'pgvector') {
+          process.stderr.write(
+            `node add-rag: --provider must be 'chroma' or 'pgvector' (got ${v ?? '<empty>'})\n`,
+          );
+          return 1;
+        }
+        provider = v;
+        break;
+      }
+      case '--endpoint':
+        endpoint = takeValue();
+        break;
+      case '--collection':
+        collection = takeValue();
+        break;
+      case '--embedder-node':
+        embedderNode = takeValue();
+        break;
+      case '--embedder-model':
+        embedderModel = takeValue();
+        break;
+      case '--password-env':
+        passwordEnv = takeValue();
+        break;
+      case '--password-ref':
+        passwordRef = takeValue();
+        break;
+      case '--extra-arg': {
+        // Extra args frequently begin with `--` (e.g.
+        // `--persist-directory`), so we accept the next argv slot
+        // unconditionally rather than stopping at a dash.
+        const v = inline ?? (i + 1 < args.length ? args[++i] : undefined);
+        if (v !== undefined) extraArgs.push(v);
+        break;
+      }
+      case '-h':
+      case '--help':
+        process.stdout.write(USAGE);
+        return 0;
+      default:
+        process.stderr.write(`node add-rag: unknown flag ${flag}\n`);
+        return 1;
+    }
+  }
+
+  if (!name) {
+    process.stderr.write('node add-rag: missing <name>\n');
+    return 1;
+  }
+  if (!provider) {
+    process.stderr.write('node add-rag: --provider is required\n');
+    return 1;
+  }
+  if (!endpoint) {
+    process.stderr.write('node add-rag: --endpoint is required\n');
+    return 1;
+  }
+  if ((embedderNode === undefined) !== (embedderModel === undefined)) {
+    process.stderr.write(
+      'node add-rag: --embedder-node and --embedder-model must be set together\n',
+    );
+    return 1;
+  }
+  if (passwordEnv && passwordRef) {
+    process.stderr.write(
+      'node add-rag: pass only one of --password-env / --password-ref\n',
+    );
+    return 1;
+  }
+
+  const binding: Record<string, unknown> = {
+    provider,
+    endpoint,
+    extraArgs,
+  };
+  if (collection) binding.collection = collection;
+  if (embedderNode && embedderModel) {
+    binding.embedder = { node: embedderNode, model: embedderModel };
+  }
+  if (passwordEnv) {
+    binding.auth = { tokenEnv: passwordEnv };
+  } else if (passwordRef) {
+    binding.auth = { tokenRef: passwordRef };
+  }
+
+  const cfgPath = kubecfg.defaultConfigPath();
+  const cfg = kubecfg.loadConfig(cfgPath);
+  const ctx = kubecfg.currentContext(cfg);
+  let next;
+  try {
+    next = kubecfg.upsertNode(cfg, ctx.cluster, {
+      name,
+      endpoint: '',
+      kind: 'rag',
+      rag: configSchema.RagBindingSchema.parse(binding),
+    });
+  } catch (err) {
+    process.stderr.write(
+      `node add-rag: invalid binding: ${(err as Error).message}\n`,
+    );
+    return 1;
+  }
+  kubecfg.saveConfig(next, cfgPath);
+  process.stdout.write(
+    `added rag node '${name}' (${provider}) to context '${ctx.name}'\n`,
+  );
+  return 0;
 }

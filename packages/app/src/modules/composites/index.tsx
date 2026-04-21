@@ -636,6 +636,29 @@ function ApplyTab(props: {
             />
           </label>
         )}
+        <label className="text-sm">
+          <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            Runtime
+          </span>
+          <select
+            value={detectRuntimeInYaml(yamlText)}
+            onChange={(e) =>
+              clearUnlockOnEdit(
+                rewriteRuntimeInYaml(
+                  yamlText,
+                  e.target.value as 'auto' | 'docker' | 'kubernetes',
+                ),
+              )
+            }
+            data-testid="composites-runtime-picker"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg)]"
+            title="Per-composite runtime override. `auto` inherits LLAMACTL_RUNTIME_BACKEND (defaults to 'docker')."
+          >
+            <option value="auto">auto (env fallback)</option>
+            <option value="docker">docker</option>
+            <option value="kubernetes">kubernetes</option>
+          </select>
+        </label>
       </div>
 
       <textarea
@@ -692,6 +715,64 @@ function ApplyTab(props: {
       {wetResult && <WetRunSummary result={wetResult} />}
     </div>
   );
+}
+
+/**
+ * Parse the current `spec.runtime:` choice from a YAML-editor string.
+ * Returns 'auto' when the field is absent or commented — mirrors the
+ * router's precedence chain (manifest → env → 'docker').
+ */
+function detectRuntimeInYaml(yaml: string): 'auto' | 'docker' | 'kubernetes' {
+  // Active (non-commented) `runtime:` line only.
+  const m = yaml.match(/^\s{2}runtime:\s*(docker|kubernetes)\s*$/m);
+  if (m && m[1]) return m[1] as 'docker' | 'kubernetes';
+  return 'auto';
+}
+
+/**
+ * Rewrite the `spec.runtime:` line in an operator-authored composite
+ * YAML. Mirrors the `init` command's flat-string rewrite pattern —
+ * safe because our templates + the DEFAULT_YAML carry stable
+ * formatting. Handles three cases:
+ *
+ *   - Manifest has `runtime: docker|kubernetes` (active line):
+ *     replace in place or remove when picking 'auto'.
+ *   - Manifest has a commented `# runtime: ...` (DEFAULT_YAML
+ *     starts like that): uncomment and set the value, or leave
+ *     commented when picking 'auto'.
+ *   - Manifest has no runtime line at all: insert one right after
+ *     the `spec:` key for docker/kubernetes; leave the YAML alone
+ *     for 'auto'.
+ */
+function rewriteRuntimeInYaml(
+  yaml: string,
+  choice: 'auto' | 'docker' | 'kubernetes',
+): string {
+  const ACTIVE = /^(\s{2})runtime:\s*(docker|kubernetes)\s*$/m;
+  const COMMENTED = /^(\s{2})#\s*runtime:.*$/m;
+
+  if (choice === 'auto') {
+    // Leave a commented breadcrumb so the picker still has
+    // somewhere to round-trip back to. If the manifest was clean,
+    // drop any active runtime line without adding anything new.
+    if (ACTIVE.test(yaml)) {
+      return yaml.replace(
+        ACTIVE,
+        '$1# runtime: docker        # or kubernetes',
+      );
+    }
+    return yaml;
+  }
+
+  if (ACTIVE.test(yaml)) {
+    return yaml.replace(ACTIVE, `$1runtime: ${choice}`);
+  }
+  if (COMMENTED.test(yaml)) {
+    return yaml.replace(COMMENTED, `$1runtime: ${choice}`);
+  }
+  // Insert immediately after `spec:` — composite specs always have
+  // this key.
+  return yaml.replace(/^(spec:\s*)$/m, `$1\n  runtime: ${choice}`);
 }
 
 function ExistingComposites(props: {

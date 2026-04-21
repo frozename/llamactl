@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { runDoctor } from '../src/commands/doctor.js';
+import {
+  runDoctor,
+  type CheckResult,
+  type DoctorDeps,
+} from '../src/commands/doctor.js';
 
 /**
  * `llamactl doctor` smoke tests. The probes hit real-ish surfaces
@@ -70,5 +74,156 @@ describe('doctor output format', () => {
     const { out } = await captureStdout(() => runDoctor(['--timeout=2']));
     expect(out).toContain('[agent]');
     expect(out).toContain('[secrets]');
+  });
+});
+
+describe('doctor probes (via injected deps)', () => {
+  function stubDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
+    return {
+      checkAgent: async () => [
+        { system: 'agent', status: 'ok', message: 'stub agent ok' },
+      ],
+      checkDocker: async () => [
+        { system: 'docker', status: 'ok', message: 'stub docker ok' },
+      ],
+      checkKubernetes: async () => [
+        { system: 'kubernetes', status: 'ok', message: 'stub k8s ok' },
+      ],
+      checkSecrets: () => [
+        { system: 'secrets', status: 'ok', message: 'stub secrets ok' },
+      ],
+      ...overrides,
+    };
+  }
+
+  test('all ok → exit 0 + summary reads "all clear"', async () => {
+    const { result, out } = await captureStdout(() =>
+      runDoctor([], stubDeps()),
+    );
+    expect(result).toBe(0);
+    expect(out).toContain('all clear');
+    expect(out).toContain('stub agent ok');
+    expect(out).toContain('stub docker ok');
+    expect(out).toContain('stub k8s ok');
+    expect(out).toContain('stub secrets ok');
+  });
+
+  test('one warn flips exit to 1 + surfaces the fix hint', async () => {
+    const { result, out } = await captureStdout(() =>
+      runDoctor(
+        [],
+        stubDeps({
+          checkDocker: async () => [
+            {
+              system: 'docker',
+              status: 'warn',
+              message: 'daemon not reachable',
+              fix: 'start Docker Desktop',
+            },
+          ],
+        }),
+      ),
+    );
+    expect(result).toBe(1);
+    expect(out).toContain('⚠ daemon not reachable');
+    expect(out).toContain('↳ start Docker Desktop');
+    expect(out).toContain('1 warn');
+  });
+
+  test('fail + warn tally reported in the summary', async () => {
+    const { result, out } = await captureStdout(() =>
+      runDoctor(
+        [],
+        stubDeps({
+          checkAgent: async () => [
+            { system: 'agent', status: 'fail', message: 'probe blew up' },
+          ],
+          checkKubernetes: async () => [
+            {
+              system: 'kubernetes',
+              status: 'warn',
+              message: 'RBAC probe failed',
+            },
+          ],
+        }),
+      ),
+    );
+    expect(result).toBe(1);
+    expect(out).toContain('1 fail, 1 warn');
+    expect(out).toContain('✗ probe blew up');
+    expect(out).toContain('⚠ RBAC probe failed');
+  });
+
+  test('probe that throws surfaces as fail with the error message', async () => {
+    const { result, out } = await captureStdout(() =>
+      runDoctor(
+        [],
+        stubDeps({
+          checkDocker: async () => {
+            throw new Error('unexpected crash');
+          },
+        }),
+      ),
+    );
+    expect(result).toBe(1);
+    expect(out).toContain('[docker]');
+    expect(out).toContain('unexpected crash');
+  });
+
+  test('info status does NOT flip exit to 1', async () => {
+    const { result } = await captureStdout(() =>
+      runDoctor(
+        [],
+        stubDeps({
+          checkSecrets: () => [
+            {
+              system: 'secrets',
+              status: 'info',
+              message: 'not on darwin',
+            },
+          ],
+        }),
+      ),
+    );
+    expect(result).toBe(0);
+  });
+
+  test('--verbose surfaces fix hints even under ✓ rows', async () => {
+    const { out } = await captureStdout(() =>
+      runDoctor(
+        ['--verbose'],
+        stubDeps({
+          checkAgent: async () => [
+            {
+              system: 'agent',
+              status: 'ok',
+              message: 'ok',
+              fix: 'nothing to do',
+            },
+          ],
+        }),
+      ),
+    );
+    expect(out).toContain('↳ nothing to do');
+  });
+
+  test('probe returning multiple results all land in the output', async () => {
+    const multi: CheckResult[] = [
+      { system: 'kubernetes', status: 'ok', message: 'cluster reachable' },
+      { system: 'kubernetes', status: 'ok', message: 'RBAC probe passed' },
+      { system: 'kubernetes', status: 'info', message: '2 labelled nodes' },
+    ];
+    const { result, out } = await captureStdout(() =>
+      runDoctor(
+        [],
+        stubDeps({
+          checkKubernetes: async () => multi,
+        }),
+      ),
+    );
+    expect(result).toBe(0);
+    for (const r of multi) {
+      expect(out).toContain(r.message);
+    }
   });
 });

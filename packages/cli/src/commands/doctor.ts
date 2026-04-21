@@ -18,16 +18,36 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 
-type Status = 'ok' | 'warn' | 'fail' | 'info';
+export type Status = 'ok' | 'warn' | 'fail' | 'info';
 
-interface CheckResult {
+export interface CheckResult {
   system: string;
   status: Status;
   message: string;
   fix?: string;
 }
 
-export async function runDoctor(argv: string[]): Promise<number> {
+/**
+ * Probe dependency-injection seams. Production leaves every field
+ * unset — defaults route through the real `@llamactl/remote`
+ * factories. Tests supply stubs so they can drive the OK/WARN/FAIL
+ * paths without touching a real daemon.
+ */
+export interface DoctorDeps {
+  /** Override the Docker ping. Throw → warn; resolve → ok. */
+  checkDocker?: () => Promise<CheckResult[]>;
+  /** Override the Kubernetes ping/RBAC/node probes. */
+  checkKubernetes?: () => Promise<CheckResult[]>;
+  /** Override the agent kubeconfig + launchd plist probes. */
+  checkAgent?: () => Promise<CheckResult[]>;
+  /** Override the macOS keychain CLI probe. */
+  checkSecrets?: () => CheckResult[];
+}
+
+export async function runDoctor(
+  argv: string[],
+  deps: DoctorDeps = {},
+): Promise<number> {
   const opts = parseArgs(argv);
   if (opts.help) {
     process.stdout.write(USAGE);
@@ -35,9 +55,14 @@ export async function runDoctor(argv: string[]): Promise<number> {
   }
   const results: CheckResult[] = [];
 
+  const agentProbe = deps.checkAgent ?? checkAgent;
+  const dockerProbe = deps.checkDocker ?? checkDocker;
+  const k8sProbe = deps.checkKubernetes ?? checkKubernetes;
+  const secretsProbe = deps.checkSecrets ?? checkSecrets;
+
   // ---- agent ----
   await withBudget(opts.timeoutMs, async () => {
-    results.push(...(await checkAgent()));
+    results.push(...(await agentProbe()));
   }, (err) =>
     results.push({
       system: 'agent',
@@ -48,7 +73,7 @@ export async function runDoctor(argv: string[]): Promise<number> {
 
   // ---- docker ----
   await withBudget(opts.timeoutMs, async () => {
-    results.push(...(await checkDocker()));
+    results.push(...(await dockerProbe()));
   }, (err) =>
     results.push({
       system: 'docker',
@@ -59,7 +84,7 @@ export async function runDoctor(argv: string[]): Promise<number> {
 
   // ---- kubernetes ----
   await withBudget(opts.timeoutMs, async () => {
-    results.push(...(await checkKubernetes()));
+    results.push(...(await k8sProbe()));
   }, (err) =>
     results.push({
       system: 'kubernetes',
@@ -70,7 +95,7 @@ export async function runDoctor(argv: string[]): Promise<number> {
 
   // ---- secrets ----
   await withBudget(opts.timeoutMs, async () => {
-    results.push(...checkSecrets());
+    results.push(...secretsProbe());
   }, (err) =>
     results.push({
       system: 'secrets',
