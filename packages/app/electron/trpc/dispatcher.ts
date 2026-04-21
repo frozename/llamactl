@@ -307,7 +307,14 @@ function wrapQueryOrMutation(
 }
 
 function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unknown {
-  return t.procedure.subscription(async function* (opts) {
+  // Same rationale as `wrapQueryOrMutation` above: electron-trpc's
+  // IPC serializer expects an `.input()` declaration on every wrapped
+  // procedure, even when the wrapper itself does no validation.
+  // Without it the input never crosses the renderer→main bridge on
+  // subscriptions, and the base router's schema downstream sees
+  // `undefined` → `"Invalid input: expected object, received
+  // undefined"`. Pass-through semantics preserved via `z.unknown()`.
+  return t.procedure.input(z.unknown()).subscription(async function* (opts) {
     const target = resolveDispatchTarget(path);
     const clientSignal = opts.signal as AbortSignal | undefined;
     if (target.kind === 'local') {
