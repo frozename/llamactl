@@ -6,6 +6,16 @@ on a composite and the same services, workloads, rag nodes, and
 gateway entries land in a per-composite namespace backed by
 Deployments, StatefulSets, Services, PVCs, and Secrets.
 
+**K8s is opt-in.** Docker is llamactl's default runtime; nothing
+about your onboarding requires a cluster. `llamactl doctor`
+reports "kubeconfig absent / unreachable" as `info` (not `warn`)
+unless it detects intent — either `LLAMACTL_RUNTIME_BACKEND=
+kubernetes` in your environment or a persisted composite whose
+`spec.runtime` is `kubernetes`. `llamactl init` picks docker
+silently when k8s isn't reachable. If you never plan to use the
+cluster, `llamactl doctor --skip=kubernetes` omits the probe
+entirely.
+
 v1 scope: k8s owns **supporting services** (chroma, pgvector,
 future nginx/redis/DBs). Workloads (llama-server `ModelRunSpec`)
 still dispatch through the llamactl agent on the target node —

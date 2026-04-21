@@ -166,30 +166,32 @@ async function pickRuntime(
   if (args.runtime === 'docker' || args.runtime === 'kubernetes') {
     return args.runtime;
   }
-  // auto: prefer docker when both are available (v1 default).
-  if (detected.docker && detected.kubernetes) {
-    if (rl) {
-      const ans = await rl.question(
-        'Both Docker and Kubernetes are reachable. Which runtime? [docker/kubernetes] (docker): ',
-      );
-      const pick = ans.trim().toLowerCase();
-      if (pick === 'k8s' || pick === 'kubernetes') return 'kubernetes';
-      return 'docker';
-    }
+  // auto: Docker is the default — k8s is opt-in. We only offer the
+  // choice when BOTH runtimes are reachable AND we're in a TTY
+  // interactive session. Otherwise just pick docker silently; k8s
+  // stays available via --runtime=kubernetes or
+  // spec.runtime:kubernetes at composite author time.
+  if (detected.docker && detected.kubernetes && rl) {
+    const ans = await rl.question(
+      'Both Docker and Kubernetes are reachable. Which runtime? [docker/kubernetes] (docker): ',
+    );
+    const pick = ans.trim().toLowerCase();
+    if (pick === 'k8s' || pick === 'kubernetes') return 'kubernetes';
     return 'docker';
   }
   if (detected.docker) {
-    process.stdout.write('Runtime: docker (only reachable runtime)\n');
     return 'docker';
   }
   if (detected.kubernetes) {
+    // Only reachable runtime is k8s — surface that as the pick.
     process.stdout.write('Runtime: kubernetes (only reachable runtime)\n');
     return 'kubernetes';
   }
-  // Neither reachable — let the user proceed anyway (they might be
-  // about to install docker or kubeconfig); default to docker.
+  // Docker didn't answer — k8s didn't either. Init goes ahead with
+  // docker as the default; the manifest won't apply until Docker is
+  // up, but we want to let the operator finish authoring the YAML.
   process.stdout.write(
-    '⚠ Neither Docker nor Kubernetes is reachable yet. Continuing with docker — run `llamactl doctor` after install.\n',
+    'Runtime: docker (default — neither runtime answered; run `llamactl doctor` after install).\n',
   );
   return 'docker';
 }

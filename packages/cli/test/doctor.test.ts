@@ -77,6 +77,40 @@ describe('doctor output format', () => {
   });
 });
 
+describe('doctor --skip=<system> suppresses the named probe', () => {
+  test('--skip=kubernetes omits the [kubernetes] line entirely', async () => {
+    const { out } = await captureStdout(() =>
+      runDoctor(['--skip=kubernetes', '--timeout=2']),
+    );
+    expect(out).not.toContain('[kubernetes]');
+    // Other systems still run.
+    expect(out).toContain('[agent]');
+    expect(out).toContain('[docker]');
+  });
+
+  test('--skip=k8s alias works the same', async () => {
+    const { out } = await captureStdout(() =>
+      runDoctor(['--skip=k8s', '--timeout=2']),
+    );
+    expect(out).not.toContain('[kubernetes]');
+  });
+
+  test('multiple --skip flags stack', async () => {
+    const { out } = await captureStdout(() =>
+      runDoctor([
+        '--skip=kubernetes',
+        '--skip=docker',
+        '--skip=secrets',
+        '--timeout=2',
+      ]),
+    );
+    expect(out).not.toContain('[kubernetes]');
+    expect(out).not.toContain('[docker]');
+    expect(out).not.toContain('[secrets]');
+    expect(out).toContain('[agent]');
+  });
+});
+
 describe('doctor probes (via injected deps)', () => {
   function stubDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
     return {

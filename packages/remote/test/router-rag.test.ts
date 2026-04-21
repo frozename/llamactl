@@ -318,7 +318,9 @@ describe('router ragX → createRagAdapter options passthrough', () => {
     lastNodeName = null;
     const caller = router.createCaller({});
     await caller.ragSearch({ node: 'kb-pg-embed', query: 'hi' });
-    expect(lastNodeName).toBe('kb-pg-embed');
+    // Read through `String()` so TypeScript doesn't narrow the
+    // variable to the literal `null` after the assignment above.
+    expect(String(lastNodeName)).toBe('kb-pg-embed');
     const opts = lastFactoryOpts as { config?: unknown } | undefined;
     expect(opts?.config).toBeDefined();
     // The factory would use config to resolve the embedder node; we

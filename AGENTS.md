@@ -323,20 +323,37 @@ manifest (first-class picker is a UI follow-up). The planner
 prefers `llamactl.composite.apply` over multi-step plans when
 operators describe 3+ interacting components.
 
-**K8s backend (Phase K8s-1 through K8s-7 shipped)**: namespace-
-per-composite (`llamactl-<name>`), Deployment for stateless
-services (chroma, generic) and StatefulSet + headless Service +
-`-client` ClusterIP + volumeClaimTemplates for stateful (pgvector).
-All resources stamp Helm common-labels (`app.kubernetes.io/*`) +
-llamactl-namespaced labels (`llamactl.io/composite/component`);
-drift detection uses the `llamactl.io/spec-hash` annotation.
-Secrets map to `v1.Secret` + `secretKeyRef` so values never land
-in the pod spec. Destroy short-circuits through
+**K8s backend (Phase K8s-1 through K8s-7 shipped) — opt-in by
+design**: the backend is fully implemented + tested, but nothing
+about llamactl's onboarding *requires* a cluster. Docker is the
+default runtime everywhere. K8s becomes active when either:
+
+  - `spec.runtime: kubernetes` is set on a composite manifest, or
+  - `LLAMACTL_RUNTIME_BACKEND=kubernetes` is exported in the env.
+
+The `@kubernetes/client-node` dep is installed unconditionally
+but lazy-loaded — nothing talks to a cluster until the first
+composite apply with k8s runtime fires. `llamactl doctor`
+demotes k8s "kubeconfig absent / unreachable" to `info` unless
+intent is detected; `llamactl init` auto-detect picks docker
+silently when k8s doesn't answer. Skip the probe entirely with
+`llamactl doctor --skip=kubernetes`.
+
+Implementation: namespace-per-composite (`llamactl-<name>`),
+Deployment for stateless services (chroma, generic) and
+StatefulSet + headless Service + `-client` ClusterIP +
+volumeClaimTemplates for stateful (pgvector). All resources stamp
+Helm common-labels (`app.kubernetes.io/*`) + llamactl-namespaced
+labels (`llamactl.io/composite/component`); drift detection uses
+the `llamactl.io/spec-hash` annotation. Secrets map to
+`v1.Secret` + `secretKeyRef` so values never land in the pod
+spec. Destroy short-circuits through
 `backend.destroyCompositeBoundary` — a single `DELETE namespace`
-that cascades via k8s GC. Workloads (llama-server) still ride the
-agent path; running them as k8s Deployments is a multi-quarter
-follow-up. Opt-in E2E at `packages/remote/test/composite-e2e.test.ts`
-behind `LLAMACTL_COMPOSITE_E2E_K8S=1` + reachable cluster.
+that cascades via k8s GC. Workloads (llama-server) still ride
+the agent path; running them as k8s Deployments is a
+multi-quarter follow-up. Opt-in E2E at
+`packages/remote/test/composite-e2e.test.ts` behind
+`LLAMACTL_COMPOSITE_E2E_K8S=1` + reachable cluster.
 
 ## Cost guardian (`llamactl cost-guardian`, N.3)
 

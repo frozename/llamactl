@@ -14,7 +14,7 @@
  *                 StorageClass + llamactl-labelled nodes
  *   [secrets]     macOS Keychain availability (Darwin only)
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 
@@ -61,48 +61,56 @@ export async function runDoctor(
   const secretsProbe = deps.checkSecrets ?? checkSecrets;
 
   // ---- agent ----
-  await withBudget(opts.timeoutMs, async () => {
-    results.push(...(await agentProbe()));
-  }, (err) =>
-    results.push({
-      system: 'agent',
-      status: 'fail',
-      message: `probe timed out or errored: ${err}`,
-    }),
-  );
+  if (!opts.skip.has('agent')) {
+    await withBudget(opts.timeoutMs, async () => {
+      results.push(...(await agentProbe()));
+    }, (err) =>
+      results.push({
+        system: 'agent',
+        status: 'fail',
+        message: `probe timed out or errored: ${err}`,
+      }),
+    );
+  }
 
   // ---- docker ----
-  await withBudget(opts.timeoutMs, async () => {
-    results.push(...(await dockerProbe()));
-  }, (err) =>
-    results.push({
-      system: 'docker',
-      status: 'fail',
-      message: `probe errored: ${err}`,
-    }),
-  );
+  if (!opts.skip.has('docker')) {
+    await withBudget(opts.timeoutMs, async () => {
+      results.push(...(await dockerProbe()));
+    }, (err) =>
+      results.push({
+        system: 'docker',
+        status: 'fail',
+        message: `probe errored: ${err}`,
+      }),
+    );
+  }
 
   // ---- kubernetes ----
-  await withBudget(opts.timeoutMs, async () => {
-    results.push(...(await k8sProbe()));
-  }, (err) =>
-    results.push({
-      system: 'kubernetes',
-      status: 'fail',
-      message: `probe errored: ${err}`,
-    }),
-  );
+  if (!opts.skip.has('kubernetes')) {
+    await withBudget(opts.timeoutMs, async () => {
+      results.push(...(await k8sProbe()));
+    }, (err) =>
+      results.push({
+        system: 'kubernetes',
+        status: 'fail',
+        message: `probe errored: ${err}`,
+      }),
+    );
+  }
 
   // ---- secrets ----
-  await withBudget(opts.timeoutMs, async () => {
-    results.push(...secretsProbe());
-  }, (err) =>
-    results.push({
-      system: 'secrets',
-      status: 'fail',
-      message: `probe errored: ${err}`,
-    }),
-  );
+  if (!opts.skip.has('secrets')) {
+    await withBudget(opts.timeoutMs, async () => {
+      results.push(...secretsProbe());
+    }, (err) =>
+      results.push({
+        system: 'secrets',
+        status: 'fail',
+        message: `probe errored: ${err}`,
+      }),
+    );
+  }
 
   print(results, opts.verbose);
 
@@ -200,7 +208,39 @@ async function checkDocker(): Promise<CheckResult[]> {
   }
 }
 
+/**
+ * Is the operator actually trying to use the k8s backend? Two
+ * signals, either is enough:
+ *   - `LLAMACTL_RUNTIME_BACKEND=kubernetes` in the environment.
+ *   - Any persisted composite at `~/.llamactl/composites/*.yaml`
+ *     carrying `spec.runtime: kubernetes`.
+ *
+ * When no intent exists, the k8s probe stays quiet — absent
+ * kubeconfig or unreachable cluster is reported as `info`, not
+ * `warn`, and doesn't flip doctor's exit to 1. Operators running a
+ * pure-Docker lab don't see k8s warnings they don't care about.
+ */
+function hasKubernetesIntent(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.LLAMACTL_RUNTIME_BACKEND === 'kubernetes') return true;
+  const dir =
+    env.LLAMACTL_COMPOSITES_DIR ??
+    join(env.LLAMACTL_HOME ?? join(homedir(), '.llamactl'), 'composites');
+  try {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.yaml')) continue;
+      const body = readFileSync(join(dir, entry.name), 'utf8');
+      // Match an active (non-commented) `runtime: kubernetes` line.
+      if (/^\s{2}runtime:\s*kubernetes\s*$/m.test(body)) return true;
+    }
+  } catch {
+    // Dir missing is common + expected for fresh installs.
+  }
+  return false;
+}
+
 async function checkKubernetes(): Promise<CheckResult[]> {
+  const intent = hasKubernetesIntent();
   const out: CheckResult[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let backend: any;
@@ -210,9 +250,13 @@ async function checkKubernetes(): Promise<CheckResult[]> {
   } catch (err) {
     out.push({
       system: 'kubernetes',
-      status: 'info',
-      message: `kubeconfig not loaded: ${truncate((err as Error).message, 80)}`,
-      fix: 'expected on hosts without ~/.kube/config; unset if not using k8s-runtime composites',
+      status: intent ? 'warn' : 'info',
+      message: intent
+        ? `kubeconfig not loaded: ${truncate((err as Error).message, 80)}`
+        : 'no kubeconfig — k8s backend stays dormant',
+      fix: intent
+        ? 'compositesSpec.runtime=kubernetes needs a reachable cluster; put a kubeconfig at ~/.kube/config or set KUBECONFIG'
+        : 'no action — set LLAMACTL_RUNTIME_BACKEND=kubernetes or add a composite with spec.runtime:kubernetes to enable probes',
     });
     return out;
   }
@@ -227,9 +271,13 @@ async function checkKubernetes(): Promise<CheckResult[]> {
   } catch (err) {
     out.push({
       system: 'kubernetes',
-      status: 'warn',
-      message: `cluster unreachable: ${truncate((err as Error).message, 80)}`,
-      fix: 'check `kubectl get nodes` reaches the cluster; refresh credentials if expired',
+      status: intent ? 'warn' : 'info',
+      message: intent
+        ? `cluster unreachable: ${truncate((err as Error).message, 80)}`
+        : `cluster not reachable via current kubeconfig (k8s backend not invoked)`,
+      fix: intent
+        ? 'check `kubectl get nodes` reaches the cluster; refresh credentials if expired'
+        : 'no action needed — probed because ~/.kube/config exists, not because llamactl wants the cluster',
     });
     return out;
   }
@@ -412,16 +460,29 @@ interface DoctorArgs {
   help: boolean;
   verbose: boolean;
   timeoutMs: number;
+  skip: Set<'agent' | 'docker' | 'kubernetes' | 'secrets'>;
 }
 
 function parseArgs(argv: string[]): DoctorArgs {
-  const a: DoctorArgs = { help: false, verbose: false, timeoutMs: 10_000 };
+  const a: DoctorArgs = {
+    help: false,
+    verbose: false,
+    timeoutMs: 10_000,
+    skip: new Set(),
+  };
   for (const arg of argv) {
     if (arg === '-h' || arg === '--help') a.help = true;
     else if (arg === '-v' || arg === '--verbose') a.verbose = true;
     else if (arg.startsWith('--timeout=')) {
       const n = Number.parseInt(arg.slice('--timeout='.length), 10);
       if (Number.isFinite(n) && n > 0) a.timeoutMs = n * 1000;
+    } else if (arg.startsWith('--skip=')) {
+      const v = arg.slice('--skip='.length);
+      if (v === 'agent' || v === 'docker' || v === 'kubernetes' || v === 'secrets') {
+        a.skip.add(v);
+      } else if (v === 'k8s') {
+        a.skip.add('kubernetes');
+      }
     }
   }
   return a;
@@ -431,12 +492,18 @@ const USAGE = `llamactl doctor — probe local + cluster readiness
 
 Usage:
   llamactl doctor [--verbose] [--timeout=<seconds>]
+                  [--skip=agent|docker|kubernetes|k8s|secrets]...
 
 Checks:
   [agent]       kubeconfig + local node + launchd plist
   [docker]      daemon reachable via /var/run/docker.sock
   [kubernetes]  cluster reachable, RBAC (namespace CRUD),
-                default StorageClass, llamactl-labelled nodes
+                default StorageClass, llamactl-labelled nodes.
+                Stays quiet (ℹ, not ⚠) when no intent to use k8s
+                is detected — set LLAMACTL_RUNTIME_BACKEND=
+                kubernetes or persist a composite with
+                spec.runtime:kubernetes to see the probe as ⚠
+                when the cluster is absent.
   [secrets]     macOS Keychain CLI availability
 
 Exit 0 when every probe is ✓ or ℹ; exit 1 on ⚠ / ✗.
