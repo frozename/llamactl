@@ -13,6 +13,20 @@ kind: Composite
 #        docker build -f embersynth/Dockerfile \
 #          -t llamactl/embersynth:dev .
 #
+#      On a *standard* Docker Desktop Kubernetes, the cluster reads
+#      from the same daemon image store — no extra step. On
+#      *Enhanced Container Isolation* (ECI) / Docker Desktop's newer
+#      Kubernetes mode, the cluster uses a sidecar containerd image
+#      store and won't see the newly-tagged image until it's imported:
+#        for img in llamactl/sirius-api:dev llamactl/embersynth:dev; do
+#          docker save "$img" | \
+#            docker exec -i desktop-control-plane \
+#              ctr -n=k8s.io images import -
+#        done
+#      Symptom when this step is missing: rebuilds of the same `:dev`
+#      tag don't land; pods keep running the first imported image
+#      after a `kubectl rollout restart`.
+#
 #   2. Start a native llama-server for the reasoning model + an
 #      embedder (Metal / GPU acceleration stays on the host):
 #        llama-server -m <qwen>.gguf --host 127.0.0.1 --port 8080
