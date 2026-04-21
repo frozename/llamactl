@@ -107,6 +107,18 @@ export interface ServiceDeployment {
    * consistent across hosts running different backend versions.
    */
   specHash: string;
+  /**
+   * k8s Service type override. Docker ignores (Docker services are
+   * host-reached via `hostPort` already). The k8s backend maps this
+   * onto `Service.spec.type` for the deployment-path ClusterIP
+   * Service and the StatefulSet-path `-client` Service; the headless
+   * Service companion always stays `clusterIP: None`. Absence →
+   * `'ClusterIP'` (the conventional default). The composite applier
+   * also reads this during rag-binding auto-wire so NodePort /
+   * LoadBalancer services surface a host-reachable endpoint instead
+   * of the in-cluster DNS name.
+   */
+  serviceType?: 'ClusterIP' | 'NodePort' | 'LoadBalancer';
 }
 
 export interface ServiceRef {
@@ -202,6 +214,34 @@ export interface RuntimeBackend {
     compositeName: string,
     opts?: RemoveServiceOptions,
   ): Promise<void>;
+
+  /**
+   * Resolve an externally-reachable URL for a managed service when
+   * the composite's rag-binding auto-wire needs to hand a non-
+   * ClusterIP endpoint to a rag node. The k8s backend implements
+   * this — it reads the live Service and branches on
+   * `spec.serviceType`:
+   *   - `NodePort` → `http://localhost:<nodePort>` (single-node
+   *     Docker Desktop K8s assumption; multi-node clusters still
+   *     see localhost because the kubelet runs on the operator's
+   *     host for the v1 target).
+   *   - `LoadBalancer` → prefers
+   *     `status.loadBalancer.ingress[0].ip/hostname`, falls back to
+   *     `localhost:<servicePort>` (Docker Desktop K8s auto-binds
+   *     localhost for LoadBalancer services).
+   *   - `ClusterIP` / unset → returns `null` so the caller uses the
+   *     handler's in-cluster DNS endpoint.
+   *
+   * Returns `null` when the backend can't resolve an external
+   * endpoint — the caller falls back to the handler-supplied
+   * in-cluster DNS endpoint. Docker backend omits the method
+   * entirely (its `resolvedEndpoint` already returns a host-
+   * reachable URL).
+   */
+  resolveExternalServiceEndpoint?(
+    ref: ServiceRef,
+    opts: { serviceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer' },
+  ): Promise<string | null>;
 }
 
 export type { RuntimeError };

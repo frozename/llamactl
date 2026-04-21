@@ -109,6 +109,27 @@ describe('chromaHandler.computeSpecHash', () => {
     );
     expect(h1).not.toBe(h2);
   });
+
+  test('serviceType variants produce distinct hashes (drift triggers recreate)', () => {
+    const hDefault = chromaHandler.computeSpecHash(spec());
+    const hClusterIP = chromaHandler.computeSpecHash(
+      spec({ serviceType: 'ClusterIP' }),
+    );
+    const hNodePort = chromaHandler.computeSpecHash(
+      spec({ serviceType: 'NodePort' }),
+    );
+    const hLoadBalancer = chromaHandler.computeSpecHash(
+      spec({ serviceType: 'LoadBalancer' }),
+    );
+    // Unset vs. an explicit 'ClusterIP' may differ by presence alone —
+    // what matters is each override produces a distinct hash from the
+    // others AND from an unset spec.
+    expect(hNodePort).not.toBe(hClusterIP);
+    expect(hLoadBalancer).not.toBe(hClusterIP);
+    expect(hNodePort).not.toBe(hLoadBalancer);
+    expect(hNodePort).not.toBe(hDefault);
+    expect(hLoadBalancer).not.toBe(hDefault);
+  });
 });
 
 describe('chromaHandler.toDeployment', () => {
@@ -187,6 +208,37 @@ describe('chromaHandler.toDeployment', () => {
     if (!d) throw new Error('expected deployment');
     expect(d.image.repository).toBe('ghcr.io/me/chroma');
     expect(d.image.tag).toBe('2.0.0');
+  });
+
+  test('serviceType default → deployment.serviceType = ClusterIP', () => {
+    const d = chromaHandler.toDeployment(spec(), { compositeName: 'demo' });
+    if (!d) throw new Error('expected deployment');
+    expect(d.serviceType).toBe('ClusterIP');
+  });
+
+  test('serviceType override propagates to ServiceDeployment', () => {
+    const d = chromaHandler.toDeployment(
+      spec({ serviceType: 'NodePort' }),
+      { compositeName: 'demo' },
+    );
+    if (!d) throw new Error('expected deployment');
+    expect(d.serviceType).toBe('NodePort');
+  });
+
+  test('serviceType is docker no-op: ports / hostPort / image unchanged', () => {
+    const baseline = chromaHandler.toDeployment(spec(), { compositeName: 'demo' });
+    const overridden = chromaHandler.toDeployment(
+      spec({ serviceType: 'NodePort' }),
+      { compositeName: 'demo' },
+    );
+    if (!baseline || !overridden) throw new Error('expected deployments');
+    // Ports (hostPort driver for docker exposure) must NOT be mutated
+    // by a serviceType override. The docker translate path reads
+    // ServiceDeployment.ports verbatim.
+    expect(overridden.ports).toEqual(baseline.ports);
+    expect(overridden.image).toEqual(baseline.image);
+    expect(overridden.healthcheck).toEqual(baseline.healthcheck);
+    expect(overridden.volumes).toEqual(baseline.volumes);
   });
 
   test('spec.secrets propagates to ServiceDeployment.secrets', () => {

@@ -173,6 +173,48 @@ kubectl -n llamactl-kb-stack port-forward svc/chroma-main 8001:8000
 the nginx-handler follow-up. For now bring your own Ingress or
 LoadBalancer if you need external access.
 
+### `serviceType` override (k8s-only)
+
+Each service spec accepts an optional `serviceType:
+ClusterIP | NodePort | LoadBalancer` that maps onto the emitted
+k8s `Service.spec.type`. Default is `ClusterIP` (the value above).
+Changing it triggers drift detection and recreates the Service on
+the next apply.
+
+```yaml
+services:
+  - kind: chroma
+    name: chroma-main
+    port: 8000
+    serviceType: NodePort        # k8s auto-assigns 30000-32767
+  - kind: pgvector
+    name: pg-main
+    port: 5432
+    serviceType: LoadBalancer    # Docker Desktop K8s binds localhost:5432
+```
+
+- **`NodePort`** — k8s picks the port in the 30000-32767 range;
+  llamactl never hardcodes one. On Docker Desktop K8s / a single-
+  node cluster you hit it at `localhost:<nodePort>`.
+- **`LoadBalancer`** — Docker Desktop K8s transparently binds the
+  service's `port` to `localhost`. On a real cluster with a cloud
+  provider, the cluster allocates an ingress IP/hostname visible in
+  `status.loadBalancer.ingress`.
+- **`ClusterIP`** (default) — no change from the current behavior;
+  use `kubectl port-forward` from the operator's laptop.
+
+Rag nodes whose `backingService` targets a non-`ClusterIP` service
+auto-wire their binding to the host-reachable URL (`http://
+localhost:<nodePort>` for NodePort; `http://<lb-ingress>:<port>` or
+the localhost fallback for LoadBalancer). Other consumers that read
+`resolvedEndpoint` continue to see the in-cluster DNS name — only
+the rag-binding path branches.
+
+StatefulSet services (pgvector and similar) retain their mandatory
+headless companion at `clusterIP: None` regardless of the override;
+only the accompanying `-client` ClusterIP Service takes on the
+override type.
+
 ---
 
 ## Destroy

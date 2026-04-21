@@ -110,11 +110,31 @@ export type RagProviderKind = z.infer<typeof RagProviderKindSchema>;
  * rag node, the adapter auto-computes vectors for docs that arrive
  * without them (store) and for free-text queries on search.
  *
- * Chroma ignores the embedder — it embeds internally.
+ * Chroma (HTTP backend) honors the same binding for symmetry; MCP
+ * chroma ignores it (chroma-mcp embeds via the collection's
+ * embedding function).
+ *
+ * `baseUrl` is an optional explicit OpenAI-compatible endpoint base
+ * (e.g. `http://127.0.0.1:8081/v1`) used verbatim when the embedder
+ * llama-server / sirius-gateway / OpenAI-compat service runs on a
+ * different host:port than the `node` would advertise. `node` stays
+ * required — it's the audit / display label even when resolution
+ * bypasses the kubeconfig. The `/embeddings` path is appended by the
+ * shared OpenAI-compat adapter.
+ *
+ * `apiKeyRef` is an optional secret reference (same shape as
+ * `CloudBinding.apiKeyRef` — `env:VAR`, `keychain:svc/acct`,
+ * `file:/path`, or a bare path). When present, the bearer token
+ * resolved via the unified secret resolver is attached as
+ * `Authorization: Bearer <token>` on embedding requests. Only
+ * honored on the `baseUrl` branch; the node-resolution path inherits
+ * the node's existing auth.
  */
 export const EmbedderBindingSchema = z.object({
   node: z.string().min(1),
   model: z.string().min(1),
+  baseUrl: z.url().optional(),
+  apiKeyRef: z.string().min(1).optional(),
 });
 export type EmbedderBinding = z.infer<typeof EmbedderBindingSchema>;
 

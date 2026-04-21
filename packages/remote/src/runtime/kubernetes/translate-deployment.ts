@@ -288,7 +288,9 @@ function buildService(
       annotations: { [K8S_ANNOTATION_KEYS.specHash]: spec.specHash },
     },
     spec: {
-      type: 'ClusterIP',
+      // `spec.serviceType` overrides the default for
+      // NodePort / LoadBalancer exposure. Absence → ClusterIP.
+      type: spec.serviceType ?? 'ClusterIP',
       selector: { app: podLabels.app ?? spec.name },
       ports,
     },

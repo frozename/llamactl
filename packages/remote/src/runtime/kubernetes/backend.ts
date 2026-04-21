@@ -555,6 +555,95 @@ export class KubernetesBackend implements RuntimeBackend {
     }
   }
 
+  /**
+   * Resolve a host-reachable URL for a non-ClusterIP managed Service.
+   * Used by the composite applier's rag-binding auto-wire when the
+   * operator overrides `serviceType` on a backing service. The
+   * returned URL replaces the in-cluster DNS endpoint on the rag
+   * node's binding.
+   *
+   * NodePort: we fetch the live Service (Deployment path → `spec.name`;
+   * StatefulSet path → `<spec.name>-client`), read `ports[0].nodePort`,
+   * and return `http://localhost:<nodePort>`. If the nodePort hasn't
+   * landed yet (k8s assigns asynchronously), we retry once after 2s
+   * rather than looping forever.
+   *
+   * LoadBalancer: prefer `status.loadBalancer.ingress[0].ip` or
+   * `.hostname`. If neither is populated (Docker Desktop K8s binds
+   * localhost but leaves the status block empty), fall back to
+   * `http://localhost:<servicePort>`.
+   *
+   * ClusterIP / unset / unresolvable → null. The caller falls back
+   * to the handler's in-cluster DNS URL.
+   */
+  async resolveExternalServiceEndpoint(
+    ref: ServiceRef,
+    opts: {
+      serviceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer';
+    },
+  ): Promise<string | null> {
+    if (opts.serviceType === 'ClusterIP') return null;
+
+    const located = await this.locateService(ref.name);
+    if (!located) return null;
+    const { namespace, controllerKind } = located;
+    const candidateName =
+      controllerKind === 'statefulset' ? `${ref.name}-client` : ref.name;
+
+    const readLive = async (): Promise<V1Service | null> => {
+      try {
+        return await this.client.core.readNamespacedService({
+          name: candidateName,
+          namespace,
+        });
+      } catch (err) {
+        if (isNotFound(err)) return null;
+        throw wrapBackend(err, `read service '${candidateName}'`);
+      }
+    };
+
+    let svc = await readLive();
+    if (!svc) return null;
+
+    if (opts.serviceType === 'NodePort') {
+      let nodePort = svc.spec?.ports?.[0]?.nodePort;
+      // k8s assigns the nodePort asynchronously on create. If it's
+      // still unset on the first read, back off once and retry
+      // rather than looping — the applier already blocks on pod
+      // readiness, so a bounded retry here is enough.
+      if (nodePort === undefined) {
+        await delay(2_000);
+        svc = await readLive();
+        nodePort = svc?.spec?.ports?.[0]?.nodePort;
+      }
+      if (typeof nodePort !== 'number') return null;
+      return `http://localhost:${nodePort}`;
+    }
+
+    // LoadBalancer
+    const ingress = svc.status?.loadBalancer?.ingress?.[0];
+    const ip = ingress?.ip;
+    const hostname = ingress?.hostname;
+    const port = svc.spec?.ports?.[0]?.port;
+    if (typeof ip === 'string' && ip.length > 0 && typeof port === 'number') {
+      return `http://${ip}:${port}`;
+    }
+    if (
+      typeof hostname === 'string' &&
+      hostname.length > 0 &&
+      typeof port === 'number'
+    ) {
+      return `http://${hostname}:${port}`;
+    }
+    if (typeof port === 'number') {
+      // Docker Desktop K8s binds LoadBalancer services at
+      // localhost:<servicePort> but doesn't populate the status
+      // ingress block. Fall back accordingly.
+      return `http://localhost:${port}`;
+    }
+    return null;
+  }
+
   // Consumed by Phase 3+ translators; exposed here so tests can
   // spell the resolved namespace without reaching into `client`.
   namespaceFor(compositeName: string): string {

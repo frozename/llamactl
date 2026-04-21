@@ -99,6 +99,11 @@ Notes:
 - `ragNodes[].backingService` auto-wires the binding's `endpoint`
   to the resolved service URL — you don't have to hard-code
   `http://127.0.0.1:8001` anywhere.
+- `services[].serviceType` (optional, `ClusterIP` | `NodePort` |
+  `LoadBalancer`) is k8s-only — docker runtime exposes services
+  through `hostPort` already and ignores the field. See
+  [`composites-kubernetes.md`](./composites-kubernetes.md) for the
+  external-exposure options.
 - `dependencies[]` is the explicit DAG. The applier also infers edges
   (rag→service via `backingService`, gateway→workload via
   `upstreamWorkloads`), so you usually don't need to declare those.

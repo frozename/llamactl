@@ -294,6 +294,119 @@ describe('applyComposite — happy path with rag + backingService', () => {
     expect(kbNode?.rag?.endpoint).toContain('127.0.0.1');
     expect(kbNode?.rag?.endpoint).toContain('8001');
   });
+
+  test('NodePort backing service → rag endpoint pulled from resolveExternalServiceEndpoint', async () => {
+    const backend = new FakeRuntimeBackend();
+    const { client } = makeFakeWorkloadClient();
+    // Simulate k8s backend's external-endpoint resolver.
+    (
+      backend as unknown as {
+        resolveExternalServiceEndpoint: (
+          ref: ServiceRef,
+          opts: {
+            serviceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer';
+          },
+        ) => Promise<string | null>;
+      }
+    ).resolveExternalServiceEndpoint = async (_ref, opts) => {
+      if (opts.serviceType === 'NodePort') return 'http://localhost:31234';
+      return null;
+    };
+
+    const manifest = sampleComposite({
+      services: [
+        {
+          kind: 'chroma',
+          name: 'chroma-1',
+          node: 'local',
+          runtime: 'docker',
+          port: 8001,
+          serviceType: 'NodePort',
+          image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+        },
+      ],
+      ragNodes: [
+        {
+          name: 'kb',
+          node: 'local',
+          binding: { provider: 'chroma', endpoint: '', extraArgs: [] },
+          backingService: 'chroma-1',
+        },
+      ],
+      dependencies: [
+        {
+          from: { kind: 'rag', name: 'kb' },
+          to: { kind: 'service', name: 'chroma-1' },
+        },
+      ],
+    });
+
+    const result = await applyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+    });
+    expect(result.ok).toBe(true);
+
+    const { loadConfig } = await import('../src/config/kubeconfig.js');
+    const cfg = loadConfig(configPath);
+    const kbNode = cfg.clusters[0]?.nodes.find((n) => n.name === 'kb');
+    expect(kbNode?.rag?.endpoint).toBe('http://localhost:31234');
+  });
+
+  test('ClusterIP backing service → external resolver NOT consulted (handler URL used)', async () => {
+    const backend = new FakeRuntimeBackend();
+    const { client } = makeFakeWorkloadClient();
+    let externalCalls = 0;
+    (
+      backend as unknown as {
+        resolveExternalServiceEndpoint: () => Promise<string | null>;
+      }
+    ).resolveExternalServiceEndpoint = async () => {
+      externalCalls++;
+      return 'http://should-not-be-used';
+    };
+
+    const manifest = sampleComposite({
+      services: [
+        {
+          kind: 'chroma',
+          name: 'chroma-1',
+          node: 'local',
+          runtime: 'docker',
+          port: 8001,
+          serviceType: 'ClusterIP',
+          image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+        },
+      ],
+      ragNodes: [
+        {
+          name: 'kb',
+          node: 'local',
+          binding: { provider: 'chroma', endpoint: '', extraArgs: [] },
+          backingService: 'chroma-1',
+        },
+      ],
+      dependencies: [
+        {
+          from: { kind: 'rag', name: 'kb' },
+          to: { kind: 'service', name: 'chroma-1' },
+        },
+      ],
+    });
+
+    const result = await applyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+    });
+    expect(result.ok).toBe(true);
+    expect(externalCalls).toBe(0);
+  });
 });
 
 describe('applyComposite — service failure triggers rollback', () => {

@@ -57,6 +57,10 @@ function hashMaterial(spec: ChromaServiceSpec): Record<string, unknown> {
     // keychain secret behind the ref shouldn't recreate the pod,
     // but changing which ref is bound is a material change.
     secrets: spec.secrets,
+    // serviceType flips the k8s Service shape (ClusterIP/NodePort/LoadBalancer).
+    // Changing it mid-stream must trigger drift → recreate so the
+    // replace path issues a fresh Service-spec.
+    serviceType: spec.serviceType,
   };
 }
 
@@ -128,6 +132,7 @@ export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
       },
       restartPolicy: 'unless-stopped',
       specHash: hash,
+      serviceType: spec.serviceType ?? 'ClusterIP',
     };
 
     if (spec.persistence?.volume) {

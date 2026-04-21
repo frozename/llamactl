@@ -370,6 +370,13 @@ export function translateToStatefulSet(
       annotations,
     },
     spec: {
+      // `spec.serviceType` only applies to the `-client` Service;
+      // the headless companion above MUST stay `clusterIP: None`
+      // regardless of the override (the StatefulSet's serviceName
+      // contract relies on it). Absence → default ClusterIP with
+      // `type` omitted so k8s auto-allocates.
+      ...(spec.serviceType &&
+        spec.serviceType !== 'ClusterIP' && { type: spec.serviceType }),
       // Omit `clusterIP` entirely → k8s auto-allocates a ClusterIP.
       // Do NOT set `'None'` here: that would make it headless too.
       selector: { app: spec.name },

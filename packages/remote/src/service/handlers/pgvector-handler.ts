@@ -88,6 +88,10 @@ function hashMaterial(spec: PgvectorServiceSpec): Record<string, unknown> {
     persistence,
     externalEndpoint: spec.externalEndpoint,
     secrets: spec.secrets,
+    // serviceType flips the k8s `-client` Service shape — changing it
+    // must trip drift detection so the replaced Service carries the
+    // new `spec.type`.
+    serviceType: spec.serviceType,
   };
 }
 
@@ -171,6 +175,7 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
       // each pod gets sticky storage. Docker ignores the field.
       controllerKind: 'statefulset',
       specHash: hash,
+      serviceType: spec.serviceType ?? 'ClusterIP',
     };
 
     // Merge domain-specific password ref with operator-supplied

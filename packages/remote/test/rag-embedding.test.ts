@@ -176,3 +176,176 @@ describe('createEmbedderFromBinding', () => {
     expect(builds).toBe(1);
   });
 });
+
+// ---- baseUrl override --------------------------------------------------
+//
+// Covers slice G4: `EmbedderBinding.baseUrl` routes the embedder at a
+// free-form OpenAI-compatible URL instead of going through kubeconfig
+// node resolution. The fixture below is a `Bun.serve` stand-in for a
+// llama-server `/v1/embeddings` endpoint — lets us exercise the real
+// `createOpenAICompatProvider` code path + assert the bearer header is
+// attached when `apiKeyRef` resolves.
+
+interface EmbedRecord {
+  path: string;
+  auth: string | null;
+  body: string;
+}
+
+async function startFakeEmbedder(opts: {
+  response?: (input: string[]) => number[][];
+  status?: number;
+} = {}): Promise<{ url: string; calls: EmbedRecord[]; stop: () => Promise<void> }> {
+  const calls: EmbedRecord[] = [];
+  const server = Bun.serve({
+    port: 0,
+    hostname: '127.0.0.1',
+    async fetch(req) {
+      const url = new URL(req.url);
+      const body = req.method === 'POST' ? await req.text() : '';
+      calls.push({
+        path: url.pathname,
+        auth: req.headers.get('authorization'),
+        body,
+      });
+      if (opts.status && opts.status !== 200) {
+        return new Response(`{"error":"nope"}`, {
+          status: opts.status,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.pathname.endsWith('/embeddings') && req.method === 'POST') {
+        const parsed = body ? JSON.parse(body) : {};
+        const inputs = Array.isArray(parsed.input)
+          ? (parsed.input as string[])
+          : [String(parsed.input ?? '')];
+        const vectors = opts.response
+          ? opts.response(inputs)
+          : inputs.map((_, i) => [i + 0.1, i + 0.2]);
+        return new Response(
+          JSON.stringify({
+            object: 'list',
+            model: parsed.model ?? 'stub-embed',
+            data: vectors.map((embedding, index) => ({
+              object: 'embedding',
+              index,
+              embedding,
+            })),
+            usage: { prompt_tokens: 1, total_tokens: 1 },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response('{}', {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  return {
+    url: `http://127.0.0.1:${server.port}`,
+    calls,
+    stop: async () => {
+      server.stop(true);
+    },
+  };
+}
+
+describe('createEmbedderFromBinding — baseUrl override', () => {
+  test('baseUrl routes requests to the override URL, bypassing kubeconfig', async () => {
+    const fake = await startFakeEmbedder();
+    try {
+      const embedder = createEmbedderFromBinding({
+        // `freshConfig()` has no such node; binding.node would fail
+        // through the resolver. Proves the override bypasses it.
+        binding: {
+          node: 'external-embedder',
+          model: 'nomic-embed-text-v1.5',
+          baseUrl: `${fake.url}/v1`,
+        },
+        config: freshConfig(),
+      });
+      const vectors = await embedder(['alpha', 'beta']);
+      expect(vectors).toEqual([
+        [0.1, 0.2],
+        [1.1, 1.2],
+      ]);
+      expect(fake.calls).toHaveLength(1);
+      expect(fake.calls[0]!.path).toBe('/v1/embeddings');
+      // No apiKeyRef → empty-string bearer (OpenAI-compat adapter
+      // always sets the header; unauthenticated upstreams ignore it).
+      // HTTP stacks trim trailing whitespace, so the wire value is
+      // the bare "Bearer" token.
+      expect(fake.calls[0]!.auth?.startsWith('Bearer')).toBe(true);
+      expect(fake.calls[0]!.auth).not.toContain('sk-');
+      const sent = JSON.parse(fake.calls[0]!.body) as { model: string; input: string[] };
+      expect(sent.model).toBe('nomic-embed-text-v1.5');
+      expect(sent.input).toEqual(['alpha', 'beta']);
+    } finally {
+      await fake.stop();
+    }
+  });
+
+  test('apiKeyRef resolves via the unified secret resolver → Bearer header', async () => {
+    const fake = await startFakeEmbedder();
+    try {
+      const embedder = createEmbedderFromBinding({
+        binding: {
+          node: 'external-embedder',
+          model: 'nomic-embed-text-v1.5',
+          baseUrl: `${fake.url}/v1`,
+          apiKeyRef: 'env:NOMIC_TOKEN_TEST',
+        },
+        config: freshConfig(),
+        env: { NOMIC_TOKEN_TEST: 'sk-test-abc123' } as NodeJS.ProcessEnv,
+      });
+      await embedder(['hello']);
+      expect(fake.calls).toHaveLength(1);
+      expect(fake.calls[0]!.auth).toBe('Bearer sk-test-abc123');
+    } finally {
+      await fake.stop();
+    }
+  });
+
+  test('unresolvable apiKeyRef surfaces connect-failed with audit label', async () => {
+    const embedder = createEmbedderFromBinding({
+      binding: {
+        node: 'external-embedder',
+        model: 'm',
+        baseUrl: 'http://127.0.0.1:1/v1',
+        apiKeyRef: 'env:DEFINITELY_NOT_SET_ANYWHERE',
+      },
+      config: freshConfig(),
+      env: {} as NodeJS.ProcessEnv,
+    });
+    try {
+      await embedder(['x']);
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(RagError);
+      expect((err as RagError).code).toBe('connect-failed');
+      expect((err as RagError).message).toContain("'external-embedder'");
+      expect((err as RagError).message).toContain('apiKeyRef');
+    }
+  });
+
+  test('baseUrl absent → existing node-resolution path still runs (regression)', async () => {
+    // Regression guard: without `baseUrl`, we must still reach the
+    // kubeconfig resolver. `freshConfig()` has no 'ghost' node, so the
+    // resolver throws `connect-failed` with the familiar message —
+    // proves we haven't silently hijacked the default path.
+    const embedder = createEmbedderFromBinding({
+      binding: { node: 'ghost', model: 'm' },
+      config: freshConfig(),
+    });
+    try {
+      await embedder(['x']);
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(RagError);
+      expect((err as RagError).code).toBe('connect-failed');
+      expect((err as RagError).message).toContain("'ghost'");
+      expect((err as RagError).message).toContain('kubeconfig');
+    }
+  });
+});

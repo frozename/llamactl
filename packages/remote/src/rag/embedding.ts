@@ -96,6 +96,36 @@ async function defaultBuildProvider(
   opts: EmbedderFactoryOptions,
 ): Promise<AiProvider> {
   const { binding, config, env } = opts;
+
+  // Explicit baseUrl override wins — skip kubeconfig resolution and
+  // point an OpenAI-compat adapter directly at the supplied endpoint.
+  // Useful when the embedder llama-server runs on a different
+  // host:port than the agent's advertised URL, or when the embedder
+  // lives on a separate host with no llamactl agent at all. `node`
+  // still carries its audit-label role in error messages.
+  if (binding.baseUrl) {
+    const { createOpenAICompatProvider } = await import('@nova/contracts');
+    let apiKey = '';
+    if (binding.apiKeyRef) {
+      const { resolveSecret } = await import('../config/secret.js');
+      try {
+        apiKey = resolveSecret(binding.apiKeyRef, env ?? process.env);
+      } catch (err) {
+        throw new RagError(
+          'connect-failed',
+          `embedder '${binding.node}': unable to resolve apiKeyRef (${binding.apiKeyRef})`,
+          err,
+        );
+      }
+    }
+    return createOpenAICompatProvider({
+      name: binding.node,
+      displayName: binding.node,
+      baseUrl: binding.baseUrl,
+      apiKey,
+    });
+  }
+
   // Resolve the node via the kubeconfig helpers; use the provider
   // factory the router already uses for cloud/gateway/agent kinds.
   const { resolveNode, resolveToken } = await import('../config/kubeconfig.js');

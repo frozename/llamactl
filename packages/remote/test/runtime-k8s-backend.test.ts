@@ -1118,3 +1118,161 @@ describe('KubernetesBackend.destroyCompositeBoundary', () => {
     await backend.destroyCompositeBoundary!('kb-stack');
   });
 });
+
+describe('KubernetesBackend.resolveExternalServiceEndpoint', () => {
+  test('ClusterIP short-circuits with null (no live service read)', async () => {
+    const stub = stubKubeConfig({ handlers: {} });
+    const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
+    const url = await backend.resolveExternalServiceEndpoint!(
+      { name: 'chroma-main' },
+      { serviceType: 'ClusterIP' },
+    );
+    expect(url).toBeNull();
+    expect(stub.calls).toHaveLength(0);
+  });
+
+  test('NodePort → http://localhost:<nodePort> pulled from live Deployment-path Service', async () => {
+    const spec = sampleSpec();
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({
+          items: [readyDeployment(spec)],
+        }),
+        'core.readNamespacedService': (p) => {
+          expect(p.name).toBe('chroma-main');
+          return {
+            spec: {
+              type: 'NodePort',
+              ports: [{ port: 8000, targetPort: 8000, nodePort: 31337 }],
+            },
+          };
+        },
+      },
+    });
+    const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
+    const url = await backend.resolveExternalServiceEndpoint!(
+      { name: 'chroma-main' },
+      { serviceType: 'NodePort' },
+    );
+    expect(url).toBe('http://localhost:31337');
+  });
+
+  test('NodePort (StatefulSet path) reads the -client service', async () => {
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({ items: [] }),
+        'apps.listStatefulSetForAllNamespaces': () => ({
+          items: [
+            {
+              apiVersion: 'apps/v1',
+              kind: 'StatefulSet',
+              metadata: {
+                name: 'pg-main',
+                namespace: 'llamactl-kb',
+                annotations: { [K8S_ANNOTATION_KEYS.specHash]: 'pg-hash' },
+              },
+              status: { readyReplicas: 1, replicas: 1 },
+            },
+          ],
+        }),
+        'core.readNamespacedService': (p) => {
+          expect(p.name).toBe('pg-main-client');
+          return {
+            spec: {
+              type: 'NodePort',
+              ports: [{ port: 5432, nodePort: 32001 }],
+            },
+          };
+        },
+      },
+    });
+    const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
+    const url = await backend.resolveExternalServiceEndpoint!(
+      { name: 'pg-main' },
+      { serviceType: 'NodePort' },
+    );
+    expect(url).toBe('http://localhost:32001');
+  });
+
+  test('LoadBalancer with ingress IP uses it', async () => {
+    const spec = sampleSpec();
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({
+          items: [readyDeployment(spec)],
+        }),
+        'core.readNamespacedService': () => ({
+          spec: { type: 'LoadBalancer', ports: [{ port: 8000 }] },
+          status: { loadBalancer: { ingress: [{ ip: '203.0.113.42' }] } },
+        }),
+      },
+    });
+    const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
+    const url = await backend.resolveExternalServiceEndpoint!(
+      { name: 'chroma-main' },
+      { serviceType: 'LoadBalancer' },
+    );
+    expect(url).toBe('http://203.0.113.42:8000');
+  });
+
+  test('LoadBalancer with ingress hostname uses it', async () => {
+    const spec = sampleSpec();
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({
+          items: [readyDeployment(spec)],
+        }),
+        'core.readNamespacedService': () => ({
+          spec: { type: 'LoadBalancer', ports: [{ port: 8000 }] },
+          status: {
+            loadBalancer: { ingress: [{ hostname: 'lb.example.com' }] },
+          },
+        }),
+      },
+    });
+    const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
+    const url = await backend.resolveExternalServiceEndpoint!(
+      { name: 'chroma-main' },
+      { serviceType: 'LoadBalancer' },
+    );
+    expect(url).toBe('http://lb.example.com:8000');
+  });
+
+  test('LoadBalancer with empty status falls back to localhost (Docker Desktop K8s)', async () => {
+    const spec = sampleSpec();
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({
+          items: [readyDeployment(spec)],
+        }),
+        'core.readNamespacedService': () => ({
+          spec: { type: 'LoadBalancer', ports: [{ port: 8000 }] },
+          // Docker Desktop binds LoadBalancer at localhost:<port> without
+          // populating status.loadBalancer.ingress.
+          status: {},
+        }),
+      },
+    });
+    const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
+    const url = await backend.resolveExternalServiceEndpoint!(
+      { name: 'chroma-main' },
+      { serviceType: 'LoadBalancer' },
+    );
+    expect(url).toBe('http://localhost:8000');
+  });
+
+  test('unknown name returns null (locateService miss)', async () => {
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({ items: [] }),
+        'apps.listStatefulSetForAllNamespaces': () => ({ items: [] }),
+      },
+    });
+    const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
+    const url = await backend.resolveExternalServiceEndpoint!(
+      { name: 'missing' },
+      { serviceType: 'NodePort' },
+    );
+    expect(url).toBeNull();
+  });
+});

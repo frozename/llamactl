@@ -313,6 +313,60 @@ embedder is skipped for that doc. Rotating the secret behind the
 embedder node's `apiKeyRef` does not recreate the pod; changing
 which env var / model the embedder uses does.
 
+### Embedder on the same node as the llamactl agent (default)
+
+The common case — a local `llama-server` running an embedding model
+behind the same HTTP port the agent already advertises. `embedder.node`
+names the cluster node and resolution goes through the kubeconfig to
+reach `<node.endpoint>/v1/embeddings`:
+
+```yaml
+rag:
+  provider: pgvector
+  endpoint: postgres://kb@db.local:5432/kb_main
+  collection: documents
+  embedder:
+    node: local                       # uses node.endpoint from kubeconfig
+    model: nomic-embed-text-v1.5
+```
+
+### Embedder on a different host:port (explicit `baseUrl`)
+
+When the embedder process listens on a port the local agent doesn't
+advertise — e.g. you run a second `llama-server -m nomic…` on `:8081`
+while the agent itself is on `:8080`, or the embedder lives on an
+entirely separate host — set `embedder.baseUrl` to the
+OpenAI-compatible endpoint. `node` is kept for audit / error-label
+purposes even though resolution bypasses the kubeconfig:
+
+```yaml
+rag:
+  provider: pgvector
+  endpoint: postgres://kb@db.local:5432/kb_main
+  collection: documents
+  embedder:
+    node: nomic-local               # free-form label for error messages
+    model: nomic-embed-text-v1.5
+    baseUrl: http://127.0.0.1:8081/v1   # hits <baseUrl>/embeddings
+```
+
+If the target requires bearer auth (a hosted embedding service, a
+sirius-gateway behind `Authorization: Bearer`), add `apiKeyRef` —
+resolved via the same unified secret resolver used by `CloudBinding`
+(`env:VAR`, `keychain:svc/acct`, `file:/path`, or a bare path):
+
+```yaml
+embedder:
+  node: openai-embeddings
+  model: text-embedding-3-small
+  baseUrl: https://api.openai.com/v1
+  apiKeyRef: env:OPENAI_API_KEY
+```
+
+Both backends (pgvector + chroma HTTP) honor the override identically;
+chroma-mcp ignores it (it embeds via the collection's embedding
+function).
+
 ## Chat auto-context (shipped)
 
 See ["From the Chat module"](#from-the-chat-module-auto-context)

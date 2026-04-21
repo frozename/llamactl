@@ -37,6 +37,8 @@ function hashMaterial(
     volumes: spec.volumes,
     healthcheck: spec.healthcheck,
     secrets: spec.secrets,
+    // serviceType flips the k8s Service shape; drift-detect on change.
+    serviceType: spec.serviceType,
   };
 }
 
@@ -114,6 +116,7 @@ export const genericContainerHandler: ServiceHandler<GenericContainerServiceSpec
         },
         restartPolicy: 'unless-stopped',
         specHash: hash,
+        serviceType: spec.serviceType ?? 'ClusterIP',
       };
 
       if (volumes.length > 0) deployment.volumes = volumes;

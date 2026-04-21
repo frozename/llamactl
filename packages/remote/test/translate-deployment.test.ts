@@ -228,6 +228,38 @@ describe('translateToDeployment — Service', () => {
     });
     expect(service).toBeNull();
   });
+
+  test('serviceType unset → defaults to ClusterIP', () => {
+    const { service } = translateToDeployment(sampleSpec(), {
+      namespace: 'ns',
+      compositeName: 'demo',
+      resolvedSecrets: {},
+    });
+    expect(service?.spec?.type).toBe('ClusterIP');
+  });
+
+  test('serviceType: NodePort → type=NodePort, nodePort unset (k8s auto-assigns)', () => {
+    const { service } = translateToDeployment(
+      sampleSpec({ serviceType: 'NodePort' }),
+      { namespace: 'ns', compositeName: 'demo', resolvedSecrets: {} },
+    );
+    expect(service?.spec?.type).toBe('NodePort');
+    // nodePort must NOT be set in translate output — k8s auto-assigns
+    // one in the 30000-32767 range when left blank.
+    for (const p of service?.spec?.ports ?? []) {
+      // V1ServicePort has nodePort optional; typechecking via cast
+      // so the test still reads natural.
+      expect((p as { nodePort?: number }).nodePort).toBeUndefined();
+    }
+  });
+
+  test('serviceType: LoadBalancer → type=LoadBalancer', () => {
+    const { service } = translateToDeployment(
+      sampleSpec({ serviceType: 'LoadBalancer' }),
+      { namespace: 'ns', compositeName: 'demo', resolvedSecrets: {} },
+    );
+    expect(service?.spec?.type).toBe('LoadBalancer');
+  });
 });
 
 describe('translateToDeployment — PVC + volumes', () => {

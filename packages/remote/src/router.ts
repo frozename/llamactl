@@ -654,6 +654,11 @@ export const router = t.router({
           .object({
             node: z.string().min(1),
             model: z.string().min(1),
+            // G4: explicit endpoint override for embedders not reachable
+            // through the kubeconfig's advertised node URL.
+            baseUrl: z.url().optional(),
+            // G4: unified secret ref for bearer auth on the override.
+            apiKeyRef: z.string().min(1).optional(),
           })
           .nullable()
           .optional(),

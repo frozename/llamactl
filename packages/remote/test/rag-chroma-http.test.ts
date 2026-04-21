@@ -566,6 +566,83 @@ describe('ChromaRagAdapter (HTTP backend)', () => {
     }
   });
 
+  test('embedder.baseUrl override flows through from the binding (G4)', async () => {
+    // Integration-style: the caller doesn't pre-build an embedder; the
+    // adapter factory has to resolve `binding.embedder.baseUrl` through
+    // `createEmbedderFromBinding` and hit the second fixture server
+    // directly. Proves the override bypasses kubeconfig resolution end
+    // to end — `freshConfig()` has no 'external-embedder' node, so
+    // resolution would otherwise explode.
+    const embedderCalls: Array<{ auth: string | null; body: string }> = [];
+    const embedFixture = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      async fetch(req) {
+        const url = new URL(req.url);
+        const body = await req.text();
+        embedderCalls.push({
+          auth: req.headers.get('authorization'),
+          body,
+        });
+        if (url.pathname.endsWith('/embeddings')) {
+          const parsed = JSON.parse(body) as { input: string[] };
+          return new Response(
+            JSON.stringify({
+              object: 'list',
+              model: 'stub',
+              data: parsed.input.map((_, i) => ({
+                object: 'embedding',
+                index: i,
+                embedding: [i + 0.5, i + 0.6, i + 0.7],
+              })),
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return new Response('{}', { status: 404 });
+      },
+    });
+    try {
+      const { freshConfig } = await import('../src/config/schema.js');
+      const cfg = freshConfig();
+      const adapter = (await createChromaAdapter(
+        httpBinding({
+          endpoint: fake.url,
+          embedder: {
+            node: 'external-embedder', // audit label only
+            model: 'nomic-embed-text-v1.5',
+            baseUrl: `http://127.0.0.1:${embedFixture.port}/v1`,
+            apiKeyRef: 'env:G4_TEST_TOKEN',
+          },
+        }),
+        { config: cfg, env: { G4_TEST_TOKEN: 'g4-secret' } as NodeJS.ProcessEnv },
+      )) as ChromaRagAdapter;
+
+      await adapter.store({
+        documents: [
+          { id: 'a', content: 'alpha' },
+          { id: 'b', content: 'beta' },
+        ],
+      });
+      expect(embedderCalls).toHaveLength(1);
+      expect(embedderCalls[0]!.auth).toBe('Bearer g4-secret');
+      const sent = JSON.parse(embedderCalls[0]!.body) as { input: string[] };
+      expect(sent.input).toEqual(['alpha', 'beta']);
+
+      // The chroma upsert received the embedder-produced vectors.
+      const upsertCall = fake.calls.find((c) => c.path.endsWith('/upsert'))!;
+      const upsertBody = JSON.parse(upsertCall.body) as { embeddings: number[][] };
+      expect(upsertBody.embeddings).toEqual([
+        [0.5, 0.6, 0.7],
+        [1.5, 1.6, 1.7],
+      ]);
+
+      await adapter.close();
+    } finally {
+      embedFixture.stop(true);
+    }
+  });
+
   test('5xx from chroma on upsert surfaces connect-failed', async () => {
     await fake.stop();
     fake = await startFakeChroma({

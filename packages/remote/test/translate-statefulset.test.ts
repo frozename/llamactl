@@ -414,6 +414,43 @@ describe('translateToStatefulSet — ports variations', () => {
   });
 });
 
+describe('translateToStatefulSet — serviceType override', () => {
+  test('default (undefined) → headless stays None, -client has no `type` (ClusterIP)', () => {
+    const { headlessService, service } = translateToStatefulSet(
+      pgvectorSpec(),
+      baseOpts,
+    );
+    expect(headlessService.spec?.clusterIP).toBe('None');
+    expect(service.spec?.type).toBeUndefined();
+  });
+
+  test('NodePort override → -client Service type=NodePort; headless ALWAYS clusterIP: None', () => {
+    const { headlessService, service } = translateToStatefulSet(
+      pgvectorSpec({ serviceType: 'NodePort' }),
+      baseOpts,
+    );
+    // Headless companion MUST stay headless — StatefulSet.serviceName
+    // contract depends on it.
+    expect(headlessService.spec?.clusterIP).toBe('None');
+    expect(headlessService.spec?.type).toBeUndefined();
+    // -client picks up the override.
+    expect(service.spec?.type).toBe('NodePort');
+    // nodePort is left for k8s to assign.
+    for (const p of service.spec?.ports ?? []) {
+      expect((p as { nodePort?: number }).nodePort).toBeUndefined();
+    }
+  });
+
+  test('LoadBalancer override → -client Service type=LoadBalancer; headless unaffected', () => {
+    const { headlessService, service } = translateToStatefulSet(
+      pgvectorSpec({ serviceType: 'LoadBalancer' }),
+      baseOpts,
+    );
+    expect(headlessService.spec?.clusterIP).toBe('None');
+    expect(service.spec?.type).toBe('LoadBalancer');
+  });
+});
+
 describe('translateToStatefulSet — no-empty-strings sanity', () => {
   test('every metadata.namespace is set from opts.namespace', () => {
     const { statefulSet, headlessService, service, secret } =

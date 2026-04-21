@@ -38,6 +38,24 @@ export const ServiceSpecSecretsSchema = z.record(
 export type ServiceSpecSecrets = z.infer<typeof ServiceSpecSecretsSchema>;
 
 /**
+ * How the k8s backend exposes a service. Mirrors k8s's
+ * `Service.spec.type` taxonomy; ignored by the docker backend (Docker
+ * services are reached via `hostPort` already).
+ *
+ *   - `ClusterIP` (default) — in-cluster DNS only
+ *     (`<svc>.<ns>.svc.cluster.local`). Operators still reach it via
+ *     `kubectl port-forward` for dev.
+ *   - `NodePort` — k8s auto-assigns a port in the 30000-32767 range
+ *     on every node. On Docker Desktop K8s that's `localhost:<port>`.
+ *   - `LoadBalancer` — cluster's external LB allocates an ingress; on
+ *     Docker Desktop K8s this transparently binds `localhost:<port>`.
+ */
+export const ServiceTypeSchema = z
+  .enum(['ClusterIP', 'NodePort', 'LoadBalancer'])
+  .default('ClusterIP');
+export type ServiceType = z.infer<typeof ServiceTypeSchema>;
+
+/**
  * Chroma vector store. Default image tag tracks the latest stable
  * as of the composite-infra plan; pin to an explicit tag in the
  * spec if reproducibility across hosts matters.
@@ -62,6 +80,8 @@ export const ChromaServiceSpecSchema = z.object({
   port: z.number().int().positive().default(8000),
   externalEndpoint: z.string().optional(),
   secrets: ServiceSpecSecretsSchema.optional(),
+  /** k8s-only; docker ignores. Defaults to ClusterIP. */
+  serviceType: ServiceTypeSchema.optional(),
 });
 
 /**
@@ -105,6 +125,8 @@ export const PgvectorServiceSpecSchema = z.object({
    * Keychain / file refs without hand-editing the generated Secret.
    */
   secrets: ServiceSpecSecretsSchema.optional(),
+  /** k8s-only; docker ignores. Defaults to ClusterIP. */
+  serviceType: ServiceTypeSchema.optional(),
 });
 
 /**
@@ -147,6 +169,8 @@ export const GenericContainerServiceSpecSchema = z.object({
     })
     .optional(),
   secrets: ServiceSpecSecretsSchema.optional(),
+  /** k8s-only; docker ignores. Defaults to ClusterIP. */
+  serviceType: ServiceTypeSchema.optional(),
 });
 
 export const ServiceSpecSchema = z.discriminatedUnion('kind', [

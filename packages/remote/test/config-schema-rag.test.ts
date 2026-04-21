@@ -154,4 +154,43 @@ describe('RAG schema', () => {
       }),
     ).toThrow();
   });
+
+  test('EmbedderBinding accepts an optional baseUrl override + apiKeyRef', () => {
+    const node = ClusterNodeSchema.parse({
+      name: 'kb-embedder-override',
+      endpoint: '',
+      kind: 'rag',
+      rag: {
+        provider: 'pgvector',
+        endpoint: 'postgres://kb@db.local:5432/kb_main',
+        embedder: {
+          node: 'nomic-local',
+          model: 'nomic-embed-text-v1.5',
+          baseUrl: 'http://127.0.0.1:8081/v1',
+          apiKeyRef: 'env:NOMIC_TOKEN',
+        },
+      },
+    });
+    expect(node.rag?.embedder?.baseUrl).toBe('http://127.0.0.1:8081/v1');
+    expect(node.rag?.embedder?.apiKeyRef).toBe('env:NOMIC_TOKEN');
+  });
+
+  test('EmbedderBinding rejects a non-URL baseUrl at parse time', () => {
+    expect(() =>
+      ClusterNodeSchema.parse({
+        name: 'kb-bad-baseurl',
+        endpoint: '',
+        kind: 'rag',
+        rag: {
+          provider: 'pgvector',
+          endpoint: 'postgres://kb@db.local:5432/kb_main',
+          embedder: {
+            node: 'n',
+            model: 'm',
+            baseUrl: 'not a url',
+          },
+        },
+      }),
+    ).toThrow();
+  });
 });

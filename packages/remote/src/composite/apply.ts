@@ -295,7 +295,33 @@ async function applyRagComponent(
     const handler = findServiceHandler(serviceSpec);
     const instance = serviceRecord?.serviceInstance ?? null;
     const resolved = handler.resolvedEndpoint(serviceSpec as ServiceSpec, instance);
-    bindingWithEndpoint = { ...entry.binding, endpoint: resolved.url };
+    // Default to the handler's in-cluster DNS endpoint. For k8s
+    // services with `serviceType: NodePort | LoadBalancer` we then
+    // swap in a host-reachable URL sourced from the live Service.
+    // Docker ignores serviceType entirely; the handler already
+    // emits `host:hostPort` which is reachable.
+    let endpointUrl = resolved.url;
+    const serviceType =
+      'serviceType' in serviceSpec && serviceSpec.serviceType
+        ? serviceSpec.serviceType
+        : undefined;
+    const external = opts.backend.resolveExternalServiceEndpoint;
+    if (
+      serviceType &&
+      serviceType !== 'ClusterIP' &&
+      typeof external === 'function' &&
+      serviceRecord?.serviceRef
+    ) {
+      const externalUrl = await external.call(
+        opts.backend,
+        serviceRecord.serviceRef,
+        { serviceType },
+      );
+      if (externalUrl) {
+        endpointUrl = externalUrl;
+      }
+    }
+    bindingWithEndpoint = { ...entry.binding, endpoint: endpointUrl };
   }
 
   const configPath = opts.configPath;
