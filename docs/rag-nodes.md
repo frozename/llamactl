@@ -376,6 +376,76 @@ soft — the turn still sends without context.
 
 ---
 
+## Server-side RAG chat endpoint (shipped)
+
+For plain OpenAI-compatible clients that can't run `ragSearch`
+themselves — shell scripts, third-party SDKs, curl — the llamactl
+agent exposes a thin wrapper at `POST /v1/chat/completions` that
+accepts two extension fields on top of the standard OpenAI body:
+
+| field | type | required | meaning |
+|---|---|---|---|
+| `via` | string | yes | llamactl node to route chat through (gateway / cloud / agent name) |
+| `rag` | object | no | retrieval spec — `{ node, topK?, collection?, system_prompt_prefix? }` |
+
+When `rag` is present the agent retrieves the top-K docs from the
+named RAG node, prepends them as a `system` message, and forwards
+the augmented request through `chatComplete`. When `rag` is absent
+but `via` is present, the request forwards unchanged through the
+same chat path. When neither field is present the endpoint falls
+through to the agent's plain OpenAI proxy (forwarding to the local
+`llama-server`) so vanilla clients keep working.
+
+Responses get an `x-llamactl-rag: retrieved=<N>` header when
+retrieval was applied, absent otherwise.
+
+### Example
+
+```
+curl -sS -X POST https://127.0.0.1:7843/v1/chat/completions \
+  -H "authorization: Bearer $LLAMACTL_TOKEN" \
+  -H 'content-type: application/json' \
+  --insecure \
+  -d '{
+    "model": "gpt-4o-mini",
+    "messages": [{"role":"user","content":"What is the magic number?"}],
+    "via": "sirius-gw",
+    "rag": { "node": "kb-pg", "topK": 3 }
+  }'
+```
+
+The body of the response is the standard OpenAI `chat.completion`
+JSON — same shape any OpenAI SDK expects.
+
+### When to reach for it
+
+- Shell one-liners against a host that has a llamactl agent running
+  locally or over the LAN.
+- Third-party tools that already speak `POST /v1/chat/completions`
+  but can't take a library dependency on the llamactl CLI.
+- Quick verification that a RAG node + gateway composite is wired up
+  end-to-end without dropping into the Chat module.
+
+For richer interactions — retrieved-passage disclosure, live rag
+toggles, citation rendering — use the Chat module (see ["From the
+Chat module"](#from-the-chat-module-auto-context)) or the
+`llamactl rag ask` CLI (`--cite`, `--json`, `--top-k`, etc.); both
+do the retrieval client-side and own the disclosure UX.
+
+### Errors
+
+- Missing `via` (with the `rag` extension present or fallback
+  disabled): `400 invalid_request_error`.
+- Retrieval failure: `502` with `{ error: { type: 'rag_error', ... }}`.
+  The chat call does not run when retrieval fails.
+- Chat failure: upstream status preserved when available (TRPCError
+  codes map to HTTP); otherwise `502 upstream_error`.
+
+Logs for each call capture `{ node, topK, received, elapsed_ms }`
+— retrieved document contents are never logged.
+
+---
+
 ## What's next (roadmap)
 
 - **Pipelines "retrieve" stage** — composable retrieval in the

@@ -20,6 +20,7 @@ import {
   type InstallScriptHandlerOptions,
 } from './install-script.js';
 import { handleArtifact, type ArtifactsHandlerOptions } from './artifacts.js';
+import { handleRagChatCompletions } from './rag-chat-endpoint.js';
 import { handleTunnelRelay } from './tunnel-relay.js';
 import {
   createTunnelClient,
@@ -239,6 +240,24 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
             headers: { 'content-type': metricsRegistry.contentType },
           }),
       );
+    }
+    // RAG-aware chat completions. Plain OpenAI clients can opt into
+    // retrieval by adding a `rag: {node, topK?}` extension field, and
+    // must include `via: <node>` to name the llamactl node to route
+    // chat through. When neither field is present the handler falls
+    // through to the legacy openai-proxy path below. Non-POST / other
+    // paths under /v1/* fall straight through to handleOpenAI.
+    if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
+      if (!verifyBearer(req, opts.tokenHash)) {
+        return new Response('unauthorized', {
+          status: 401,
+          headers: { 'www-authenticate': 'Bearer realm="llamactl-agent"' },
+        });
+      }
+      return handleRagChatCompletions(req, {
+        appRouter,
+        fallback: (forwarded) => handleOpenAI(forwarded, url),
+      });
     }
     // OpenAI-compatible gateway. Anything under /v1/* is bearer-auth'd
     // then either listed (GET /v1/models — static, no upstream call)
