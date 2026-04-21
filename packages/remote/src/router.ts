@@ -627,8 +627,16 @@ export const router = t.router({
             cloud: binding,
           });
           const health = await provider.healthCheck?.();
-          if (health && health.state === 'unhealthy') {
-            throw new Error(health.error ?? 'cloud node health check failed');
+          // Registration is a one-shot correctness check — any
+          // non-healthy result means the binding can't serve traffic
+          // right now, and operators should know immediately.
+          // `degraded` covers all 4xx including 401 (bad key) and 404
+          // (wrong base URL); `unhealthy` covers 5xx + network errors
+          // and thrown exceptions from the provider adapter.
+          if (health && health.state !== 'healthy') {
+            throw new Error(
+              health.error ?? `cloud node health check returned ${health.state}`,
+            );
           }
         } catch (err) {
           throw new TRPCError({
