@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { StoreRequest, StoreResponse } from '@nova/contracts';
+import type { DeleteRequest, DeleteResponse, StoreRequest, StoreResponse } from '@nova/contracts';
 
 import { runPipeline } from '../src/rag/pipeline/runtime.js';
 import { FETCHERS } from '../src/rag/pipeline/fetchers/registry.js';
@@ -56,13 +56,28 @@ interface StoreCall {
   count: number;
 }
 
-function makeMockAdapter(): {
-  open: () => Promise<{ store: (req: StoreRequest) => Promise<StoreResponse>; close: () => Promise<void> }>;
+interface DeleteCall {
+  collection: string | undefined;
+  ids: string[];
+}
+
+function makeMockAdapter(options: { withDelete?: boolean } = {}): {
+  open: () => Promise<{
+    store: (req: StoreRequest) => Promise<StoreResponse>;
+    delete?: (req: DeleteRequest) => Promise<DeleteResponse>;
+    close: () => Promise<void>;
+  }>;
   calls: StoreCall[];
+  deletes: DeleteCall[];
   closed: number;
 } {
   const calls: StoreCall[] = [];
+  const deletes: DeleteCall[] = [];
   let closed = 0;
+  // `withDelete` defaults true — most tests exercise the replace
+  // path. Pass false to assert graceful fallback when a custom
+  // adapter doesn't expose delete.
+  const withDelete = options.withDelete ?? true;
   return {
     open: async () => ({
       async store(req) {
@@ -73,11 +88,20 @@ function makeMockAdapter(): {
         });
         return { ids: req.documents.map((d) => d.id), collection: req.collection ?? 'docs' };
       },
+      ...(withDelete
+        ? {
+            async delete(req: DeleteRequest): Promise<DeleteResponse> {
+              deletes.push({ collection: req.collection, ids: [...req.ids] });
+              return { deleted: req.ids.length, collection: req.collection ?? 'docs' };
+            },
+          }
+        : {}),
       async close() {
         closed++;
       },
     }),
     calls,
+    deletes,
     get closed() {
       return closed;
     },
@@ -350,6 +374,163 @@ describe('runPipeline', () => {
       }
     }
     expect(mock.calls).toHaveLength(1);
+  });
+
+  test('on_duplicate=replace deletes prior chunks before storing new ones', async () => {
+    const journalPath = join(tmp, 'journal.jsonl');
+    const mock = makeMockAdapter();
+    // First run — two docs, both stored.
+    {
+      const restore = installStubFetcher({
+        docs: [
+          { id: 'a.md', content: 'alpha v1', metadata: {} },
+          { id: 'b.md', content: 'beta v1', metadata: {} },
+        ],
+      });
+      try {
+        await runPipeline({
+          manifest: baseManifest({ on_duplicate: 'replace' }),
+          journalPath,
+          openAdapter: mock.open,
+        });
+      } finally {
+        restore();
+      }
+    }
+    expect(mock.calls).toHaveLength(2);
+    expect(mock.deletes).toHaveLength(0);
+
+    // Second run — `a.md` content changed, `b.md` unchanged. Only
+    // `a.md` should trigger a delete-then-store; `b.md` is a no-op.
+    {
+      const restore = installStubFetcher({
+        docs: [
+          { id: 'a.md', content: 'alpha v2', metadata: {} },
+          { id: 'b.md', content: 'beta v1', metadata: {} },
+        ],
+      });
+      try {
+        const summary = await runPipeline({
+          manifest: baseManifest({ on_duplicate: 'replace' }),
+          journalPath,
+          openAdapter: mock.open,
+        });
+        expect(summary.total_docs).toBe(1);
+        expect(summary.skipped_docs).toBe(1);
+      } finally {
+        restore();
+      }
+    }
+    expect(mock.deletes).toHaveLength(1);
+    expect(mock.deletes[0]!.ids).toEqual(['a.md']);
+    // Total store calls: 2 from run 1 + 1 from run 2 (only a.md).
+    expect(mock.calls).toHaveLength(3);
+  });
+
+  test('on_duplicate=replace with no delete binding journals an error + still stores', async () => {
+    const journalPath = join(tmp, 'journal.jsonl');
+    const mock = makeMockAdapter({ withDelete: false });
+    // Seed an initial ingestion so the second run has priors.
+    {
+      const restore = installStubFetcher({
+        docs: [{ id: 'a.md', content: 'alpha v1', metadata: {} }],
+      });
+      try {
+        await runPipeline({
+          manifest: baseManifest({ on_duplicate: 'replace' }),
+          journalPath,
+          openAdapter: mock.open,
+        });
+      } finally {
+        restore();
+      }
+    }
+    expect(mock.calls).toHaveLength(1);
+
+    const restore = installStubFetcher({
+      docs: [{ id: 'a.md', content: 'alpha v2', metadata: {} }],
+    });
+    try {
+      const summary = await runPipeline({
+        manifest: baseManifest({ on_duplicate: 'replace' }),
+        journalPath,
+        openAdapter: mock.open,
+      });
+      expect(summary.total_docs).toBe(1);
+      expect(summary.errors).toBe(0); // Delete-binding-missing is logged but not counted as a run error.
+    } finally {
+      restore();
+    }
+    const lines = readJournalLines(journalPath);
+    const errs = lines.filter((l) => l.kind === 'error');
+    expect(errs.some((e) => (e.message as string).includes('no delete binding'))).toBe(true);
+    // Store still proceeded (no orphan-cleanup is worse than no ingest).
+    expect(mock.calls).toHaveLength(2);
+  });
+
+  test('on_duplicate=version suffixes chunk IDs so old + new coexist', async () => {
+    const journalPath = join(tmp, 'journal.jsonl');
+    const mock = makeMockAdapter();
+    // Long markdown so the chunker emits multiple chunks.
+    const v1 = [
+      '# Title',
+      '',
+      'Paragraph one. '.repeat(20),
+      '',
+      '## Section',
+      '',
+      'Paragraph two. '.repeat(20),
+    ].join('\n');
+    const v2 = `${v1}\n\nExtra paragraph.`;
+    const manifest = (): RagPipelineManifest => ({
+      ...baseManifest({ on_duplicate: 'version' }),
+      spec: {
+        ...baseManifest({ on_duplicate: 'version' }).spec,
+        transforms: [
+          {
+            kind: 'markdown-chunk',
+            chunk_size: 100,
+            overlap: 20,
+            preserve_headings: true,
+          },
+        ],
+      },
+    });
+    // First run — default chunk IDs.
+    {
+      const restore = installStubFetcher({ docs: [{ id: 'd.md', content: v1, metadata: {} }] });
+      try {
+        await runPipeline({ manifest: manifest(), journalPath, openAdapter: mock.open });
+      } finally {
+        restore();
+      }
+    }
+    const v1Ids = mock.calls.flatMap((c) => c.ids);
+    expect(v1Ids.every((id) => id.startsWith('d.md#'))).toBe(true);
+    expect(v1Ids.every((id) => !id.includes('@'))).toBe(true);
+
+    // Second run — content changed. IDs should include the sha suffix.
+    {
+      const restore = installStubFetcher({ docs: [{ id: 'd.md', content: v2, metadata: {} }] });
+      try {
+        await runPipeline({ manifest: manifest(), journalPath, openAdapter: mock.open });
+      } finally {
+        restore();
+      }
+    }
+    // No deletes — version mode is additive.
+    expect(mock.deletes).toHaveLength(0);
+    const allIds = mock.calls.flatMap((c) => c.ids);
+    const v2Ids = allIds.filter((id) => id.includes('@'));
+    expect(v2Ids.length).toBeGreaterThan(0);
+    // Versioned id shape: `d.md@<12-hex>#<n>`.
+    for (const id of v2Ids) {
+      expect(id).toMatch(/^d\.md@[0-9a-f]{12}#\d+$/);
+    }
+    // v1 IDs are still in the store (not deleted), coexisting.
+    for (const id of v1Ids) {
+      expect(allIds).toContain(id);
+    }
   });
 
   test('missing fetcher for a kind journals an error and continues', async () => {

@@ -12,7 +12,7 @@
  */
 import { createHash } from 'node:crypto';
 
-import type { StoreRequest, RetrievalProvider } from '@nova/contracts';
+import type { DeleteRequest, StoreRequest, RetrievalProvider } from '@nova/contracts';
 
 import { RagPipelineManifestSchema, type RagPipelineManifest } from './schema.js';
 import { openJournal, type Journal, type JournalEntry } from './journal.js';
@@ -24,6 +24,13 @@ import { createRagAdapter } from '../index.js';
 
 export interface OpenAdapterResult {
   store: RetrievalProvider['store'];
+  /**
+   * Optional — only required when the manifest's `on_duplicate` is
+   * `replace`. Tests that don't exercise that code path can omit it;
+   * the runtime logs a descriptive error and continues with the wet
+   * store if a replace is attempted without a delete binding.
+   */
+  delete?: RetrievalProvider['delete'];
   close(): Promise<void>;
 }
 
@@ -152,6 +159,7 @@ export async function runPipeline(
         signal,
         concurrency: manifest.spec.concurrency,
         dryRun: opts.dryRun ?? false,
+        onDuplicate: manifest.spec.on_duplicate,
       });
 
       summary.total_docs += perSource.docs;
@@ -201,6 +209,8 @@ interface PerSourceTally {
   errors: number;
 }
 
+type OnDuplicate = RagPipelineManifest['spec']['on_duplicate'];
+
 async function runSource(args: {
   label: string;
   fetcher: (typeof FETCHERS)[string];
@@ -213,6 +223,7 @@ async function runSource(args: {
   signal: AbortSignal;
   concurrency: number;
   dryRun: boolean;
+  onDuplicate: OnDuplicate;
 }): Promise<PerSourceTally> {
   const tally: PerSourceTally = { docs: 0, chunks: 0, skipped: 0, errors: 0 };
   const log = (event: Parameters<Parameters<typeof args.fetcher.fetch>[0]['log']>[0]) => {
@@ -255,6 +266,7 @@ async function runSource(args: {
             adapter: args.adapter,
             journal: args.journal,
             dryRun: args.dryRun,
+            onDuplicate: args.onDuplicate,
           });
           if (outcome.skipped) tally.skipped++;
           else {
@@ -285,9 +297,11 @@ async function processDoc(args: {
   adapter: OpenAdapterResult;
   journal: Journal;
   dryRun: boolean;
+  onDuplicate: OnDuplicate;
 }): Promise<{ skipped: boolean; errored: boolean; chunks: number }> {
-  const { rawDoc, label, transforms, collection, adapter, journal, dryRun } = args;
+  const { rawDoc, label, transforms, collection, adapter, journal, dryRun, onDuplicate } = args;
   const sha = sha256HexBytes(rawDoc.content);
+  // Exact re-ingest is always a no-op — every mode.
   if (await journal.seen(label, rawDoc.id, sha)) {
     await journal.append({
       kind: 'doc-skipped',
@@ -312,10 +326,65 @@ async function processDoc(args: {
     return { skipped: false, errored: true, chunks: 0 };
   }
 
+  // `version` mode rewrites chunk IDs for re-ingestions so both old
+  // and new coexist in the store. First-time ingestions stay bare
+  // (no `@sha` suffix) so the operator can start in `skip` and flip
+  // to `version` later without bifurcating the ID space unnecessarily.
+  // The orig id stays in metadata so retrieval can still attribute
+  // the chunk to its doc. `replace` and `skip` use the chunks as the
+  // transform emitted them.
+  let chunkIdSuffix = '';
+  if (onDuplicate === 'version') {
+    const prior = await journal.priorIngestions(label, rawDoc.id);
+    if (prior.length > 0) chunkIdSuffix = `@${sha.slice(0, 12)}`;
+  }
+  const storedChunks = chunkIdSuffix
+    ? chunks.map((c) => ({
+        ...c,
+        id: injectIdSuffix(c.id, rawDoc.id, chunkIdSuffix),
+        metadata: { ...c.metadata, orig_doc_id: rawDoc.id, version_sha: sha.slice(0, 12) },
+      }))
+    : chunks;
+  const chunkIds = storedChunks.map((c) => c.id);
+
   let errored = false;
   if (!dryRun) {
-    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-      const batch = chunks.slice(i, i + BATCH_SIZE);
+    // `replace`: union every prior ingestion's chunk_ids and delete
+    // them up front. Only relevant when this doc_id has been seen
+    // before with a different sha. No-ops for fresh docs.
+    if (onDuplicate === 'replace') {
+      const priorIds = await collectPriorChunkIds(journal, label, rawDoc.id);
+      if (priorIds.length > 0) {
+        if (!adapter.delete) {
+          await appendErrorEntry(
+            journal,
+            label,
+            `on_duplicate=replace requested but adapter has no delete binding — skipping pre-delete for ${rawDoc.id}`,
+            rawDoc.id,
+          );
+        } else {
+          try {
+            const deleteReq: DeleteRequest = { ids: priorIds, collection };
+            await adapter.delete(deleteReq);
+          } catch (err) {
+            errored = true;
+            await appendErrorEntry(
+              journal,
+              label,
+              `replace-delete failed for ${rawDoc.id}: ${toMessage(err)}`,
+              rawDoc.id,
+            );
+            // Surface but keep going — the store below will overwrite
+            // matching IDs in some adapters (pgvector upserts) and
+            // duplicate in others. Either outcome is still auditable
+            // via the journal.
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < storedChunks.length; i += BATCH_SIZE) {
+      const batch = storedChunks.slice(i, i + BATCH_SIZE);
       const storeReq: StoreRequest = {
         collection,
         documents: batch.map((c) => ({
@@ -347,10 +416,42 @@ async function processDoc(args: {
     source: label,
     doc_id: rawDoc.id,
     sha,
-    chunks: chunks.length,
+    chunks: storedChunks.length,
+    chunk_ids: chunkIds,
   });
 
-  return { skipped: false, errored, chunks: chunks.length };
+  return { skipped: false, errored, chunks: storedChunks.length };
+}
+
+async function collectPriorChunkIds(
+  journal: Journal,
+  source: string,
+  doc_id: string,
+): Promise<string[]> {
+  const prior = await journal.priorIngestions(source, doc_id);
+  if (prior.length === 0) return [];
+  // Union across every prior sha — operator may have toggled between
+  // `skip` (orphans pile up) and `replace` over time, so we clean up
+  // whatever's still addressable, not just the most recent version.
+  const dedup = new Set<string>();
+  for (const p of prior) {
+    for (const id of p.chunk_ids) dedup.add(id);
+  }
+  return Array.from(dedup);
+}
+
+/**
+ * Inject `suffix` between the doc_id prefix and any transform-added
+ * chunk marker (e.g. `#3`). Most transforms emit IDs shaped
+ * `<doc_id><marker>`; falling back to plain concatenation when the
+ * prefix isn't recognized keeps us safe for future transforms.
+ */
+function injectIdSuffix(chunkId: string, docId: string, suffix: string): string {
+  if (chunkId === docId) return `${docId}${suffix}`;
+  if (chunkId.startsWith(docId)) {
+    return `${docId}${suffix}${chunkId.slice(docId.length)}`;
+  }
+  return `${chunkId}${suffix}`;
 }
 
 /**
@@ -421,6 +522,7 @@ function defaultOpenAdapter(
     const adapter = await createRagAdapter(resolved.node, { env, config: cfg });
     return {
       store: adapter.store.bind(adapter),
+      delete: adapter.delete.bind(adapter),
       close: () => adapter.close(),
     };
   };

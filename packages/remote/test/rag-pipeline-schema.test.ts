@@ -130,6 +130,27 @@ describe('RagPipelineSpecSchema', () => {
     expect(parsed.on_duplicate).toBe('skip');
   });
 
+  test('accepts replace + version as on_duplicate values', () => {
+    for (const mode of ['skip', 'replace', 'version'] as const) {
+      const parsed = RagPipelineSpecSchema.parse({
+        destination: { ragNode: 'kb-pg', collection: 'docs' },
+        sources: [{ kind: 'filesystem', root: '/tmp' }],
+        on_duplicate: mode,
+      });
+      expect(parsed.on_duplicate).toBe(mode);
+    }
+  });
+
+  test('rejects unknown on_duplicate values', () => {
+    expect(() =>
+      RagPipelineSpecSchema.parse({
+        destination: { ragNode: 'kb-pg', collection: 'docs' },
+        sources: [{ kind: 'filesystem', root: '/tmp' }],
+        on_duplicate: 'overwrite',
+      }),
+    ).toThrow();
+  });
+
   test('requires at least one source', () => {
     expect(() =>
       RagPipelineSpecSchema.parse({

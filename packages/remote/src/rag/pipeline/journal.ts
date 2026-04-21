@@ -32,6 +32,14 @@ export type JournalEntry =
       doc_id: string;
       sha: string;
       chunks: number;
+      /**
+       * IDs of every chunk stored for this ingestion. Used by
+       * `on_duplicate: replace` to drive a targeted delete before
+       * re-ingesting an updated doc. Older journal lines may predate
+       * this field — consumers treat missing `chunk_ids` as "unknown"
+       * and fall back to a no-op delete.
+       */
+      chunk_ids?: string[];
     }
   | {
       // Dry-run variant — the doc was fetched + chunked but `adapter.store`
@@ -45,6 +53,7 @@ export type JournalEntry =
       doc_id: string;
       sha: string;
       chunks: number;
+      chunk_ids?: string[];
     }
   | {
       kind: 'source-complete';
@@ -69,6 +78,11 @@ export type JournalEntry =
       message: string;
     };
 
+export interface PriorIngestion {
+  sha: string;
+  chunk_ids: string[];
+}
+
 export interface Journal {
   /** Append a single entry as a single JSON line. */
   append(entry: JournalEntry): Promise<void>;
@@ -77,6 +91,16 @@ export interface Journal {
    * run recorded in this journal file.
    */
   seen(source: string, doc_id: string, sha: string): Promise<boolean>;
+  /**
+   * Every wet ingestion the journal has recorded for `{source, doc_id}`,
+   * regardless of sha. Callers use this to drive `on_duplicate: replace`
+   * (delete the union of all prior `chunk_ids` before storing) and
+   * `on_duplicate: version` (skip when the incoming sha already exists).
+   * Dry-run entries (`doc-would-ingest`) are intentionally excluded —
+   * they never wrote to the store so there's nothing to reconcile
+   * against. Ordered chronologically; most recent last.
+   */
+  priorIngestions(source: string, doc_id: string): Promise<PriorIngestion[]>;
   close(): Promise<void>;
 }
 
@@ -84,10 +108,14 @@ function key(source: string, doc_id: string, sha: string): string {
   return `${source}\u0000${doc_id}\u0000${sha}`;
 }
 
+function docKey(source: string, doc_id: string): string {
+  return `${source}\u0000${doc_id}`;
+}
+
 export async function openJournal(path: string): Promise<Journal> {
   await mkdir(dirname(path), { recursive: true });
 
-  const seenSet = await loadSeenSet(path);
+  const { seen: seenSet, prior } = await loadIndexes(path);
 
   return {
     async append(entry) {
@@ -100,10 +128,22 @@ export async function openJournal(path: string): Promise<Journal> {
       await appendFile(path, line, 'utf8');
       if (entry.kind === 'doc-ingested') {
         seenSet.add(key(entry.source, entry.doc_id, entry.sha));
+        const pk = docKey(entry.source, entry.doc_id);
+        const list = prior.get(pk) ?? [];
+        list.push({ sha: entry.sha, chunk_ids: entry.chunk_ids ?? [] });
+        prior.set(pk, list);
       }
     },
     async seen(source, doc_id, sha) {
       return seenSet.has(key(source, doc_id, sha));
+    },
+    async priorIngestions(source, doc_id) {
+      // Return a defensive copy so callers mutating the list can't
+      // corrupt the in-memory index.
+      return (prior.get(docKey(source, doc_id)) ?? []).map((p) => ({
+        sha: p.sha,
+        chunk_ids: [...p.chunk_ids],
+      }));
     },
     async close() {
       // No resources held between calls — appendFile opens/closes
@@ -113,7 +153,12 @@ export async function openJournal(path: string): Promise<Journal> {
   };
 }
 
-async function loadSeenSet(path: string): Promise<Set<string>> {
+interface JournalIndexes {
+  seen: Set<string>;
+  prior: Map<string, PriorIngestion[]>;
+}
+
+async function loadIndexes(path: string): Promise<JournalIndexes> {
   let raw: string;
   try {
     raw = await readFile(path, 'utf8');
@@ -123,11 +168,12 @@ async function loadSeenSet(path: string): Promise<Set<string>> {
       // take the happy path and the file shows up in `ls` for the
       // operator.
       await writeFile(path, '', 'utf8');
-      return new Set();
+      return { seen: new Set(), prior: new Map() };
     }
     throw err;
   }
-  const set = new Set<string>();
+  const seen = new Set<string>();
+  const prior = new Map<string, PriorIngestion[]>();
   for (const line of raw.split('\n')) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
@@ -146,12 +192,17 @@ async function loadSeenSet(path: string): Promise<Set<string>> {
     if (entry.kind !== 'doc-ingested') continue;
     const e = entry as Extract<JournalEntry, { kind: 'doc-ingested' }>;
     if (
-      typeof e.source === 'string' &&
-      typeof e.doc_id === 'string' &&
-      typeof e.sha === 'string'
+      typeof e.source !== 'string' ||
+      typeof e.doc_id !== 'string' ||
+      typeof e.sha !== 'string'
     ) {
-      set.add(key(e.source, e.doc_id, e.sha));
+      continue;
     }
+    seen.add(key(e.source, e.doc_id, e.sha));
+    const pk = docKey(e.source, e.doc_id);
+    const list = prior.get(pk) ?? [];
+    list.push({ sha: e.sha, chunk_ids: Array.isArray(e.chunk_ids) ? [...e.chunk_ids] : [] });
+    prior.set(pk, list);
   }
-  return set;
+  return { seen, prior };
 }

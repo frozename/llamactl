@@ -50,7 +50,23 @@ export const RagPipelineSpecSchema = z.object({
   sources: z.array(SourceSpecSchema).min(1),
   transforms: z.array(TransformSpecSchema).default([]),
   concurrency: z.number().int().min(1).max(32).default(4),
-  on_duplicate: z.enum(['skip']).default('skip'),
+  /**
+   * Re-ingestion policy when the same `doc_id` reappears with
+   * different content:
+   *   - `skip` (default): the new version is stored alongside the
+   *     old; prior chunks stay in the collection as orphans. Best
+   *     when the rag node handles its own cleanup or when the
+   *     collection is write-once.
+   *   - `replace`: before storing new chunks, delete every chunk
+   *     the journal recorded for the prior ingestion of this
+   *     `doc_id`. Guarantees "one version per doc" in the store.
+   *   - `version`: store the new chunks with IDs suffixed by the
+   *     content sha (`<orig>@<sha12>#<n>`) so both versions
+   *     coexist. Useful when historical retrieval matters.
+   * Identical re-ingestions (same `doc_id` AND same sha) are
+   * always no-ops, regardless of mode.
+   */
+  on_duplicate: z.enum(['skip', 'replace', 'version']).default('skip'),
 });
 
 export const RagPipelineManifestSchema = z.object({
