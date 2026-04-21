@@ -55,10 +55,18 @@ export async function executePlanStep(
       if (result.ok) return { ok: true, result };
       return { ok: false, error: result.error ?? 'runbook reported failure' };
     }
-    const raw = await opts.toolClient.callTool({
-      name: step.tool,
-      arguments: args,
-    });
+    // The MCP SDK's default request timeout is 60s. Composite-apply
+    // runs readiness polling against K8s (`readinessTimeoutMs`
+    // default 60s on the KubernetesBackend), so the two budgets
+    // collide exactly and the tool call times out client-side even
+    // when the apply itself is progressing. Healer remediations can't
+    // race these: bump the per-tool budget to 5m so slow image pulls
+    // and readiness waits don't mask successful recoveries.
+    const raw = await opts.toolClient.callTool(
+      { name: step.tool, arguments: args },
+      undefined,
+      { timeout: 300_000, resetTimeoutOnProgress: true },
+    );
     const envelope = raw as {
       isError?: boolean;
       content?: Array<{ type: string; text?: string }>;

@@ -36,7 +36,20 @@ export interface ToolCallInput {
  * without wiring a full server.
  */
 export interface RunbookToolClient {
-  callTool(input: ToolCallInput): Promise<unknown>;
+  /**
+   * Optional second argument is the MCP `resultSchema` (unused by
+   * llamactl — we parse envelopes ourselves); third argument is the
+   * SDK's `RequestOptions` bag (notably `timeout` in ms). Declared as
+   * `unknown` so callers don't depend on the SDK's exact types while
+   * still being able to pass `{ timeout }` through. The underlying
+   * MCP client's `callTool(params, resultSchema?, options?)` tolerates
+   * the extra args verbatim.
+   */
+  callTool(
+    input: ToolCallInput,
+    resultSchema?: unknown,
+    options?: { timeout?: number; resetTimeoutOnProgress?: boolean } & Record<string, unknown>,
+  ): Promise<unknown>;
 }
 
 export interface RunbookContext {

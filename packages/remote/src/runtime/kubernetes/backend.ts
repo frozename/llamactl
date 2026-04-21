@@ -1063,6 +1063,36 @@ export class KubernetesBackend implements RuntimeBackend {
       }
     }
     if (annotationHash(existing) === specHash) {
+      // Spec-hash matches, but actual state may have drifted (someone
+      // scaled the Deployment externally, the pod got evicted and the
+      // ReplicaSet lost ground, etc). When desired.spec.replicas
+      // exceeds what's on the cluster, patch the replicas field to
+      // reconcile — without this, the self-healing re-apply path
+      // polls readiness against zero pods and times out. Hash-match
+      // is a desired-spec check, not an actual-state check.
+      const desiredReplicas = desired.spec?.replicas ?? 1;
+      const existingReplicas = existing.spec?.replicas;
+      // Only act when the cluster explicitly reports fewer replicas
+      // than we want. `undefined` means the field was unset at read
+      // time (K8s server-side defaults to 1) — treat as matching so
+      // we never trip on a stub / elided field.
+      if (
+        typeof existingReplicas === 'number' &&
+        existingReplicas < desiredReplicas
+      ) {
+        try {
+          return await this.client.apps.replaceNamespacedDeployment({
+            name,
+            namespace,
+            body: {
+              ...existing,
+              spec: { ...existing.spec!, replicas: desiredReplicas },
+            },
+          });
+        } catch (err) {
+          throw wrapBackend(err, `reconcile-replicas deployment '${name}'`);
+        }
+      }
       return existing;
     }
     const body: V1Deployment = {
