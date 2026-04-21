@@ -99,6 +99,13 @@ export {
   openJournal,
   type Journal,
   type JournalEntry,
+  type PriorIngestion,
+  startPipelineScheduler,
+  nextRunAt,
+  type PipelineSchedulerHandle,
+  type PipelineSchedulerOptions,
+  type TickReport,
+  type SchedulerJournalEntry,
 } from './rag/pipeline/index.js';
 export {
   applyPipeline,

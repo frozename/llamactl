@@ -323,3 +323,78 @@ describe('rag pipeline logs', () => {
     expect(cap.err).toContain('no journal at');
   });
 });
+
+describe('rag pipeline scheduler', () => {
+  test('--once runs a single tick and exits 0', async () => {
+    let seenOpts: unknown = null;
+    __setRagPipelineTestSeams({
+      nodeClient: makeStubClient(),
+      startPipelineScheduler: (opts) => {
+        seenOpts = opts;
+        // Synchronously fire onTick before returning so --once
+        // verification can assert against a specific report.
+        opts.onTick?.({
+          ts: '2026-04-21T10:30:00.000Z',
+          considered: 2,
+          fired: ['p1'],
+          skippedInFlight: [],
+          unparseable: [],
+        });
+        return { stop: () => {}, done: Promise.resolve() };
+      },
+    });
+    const { result, cap } = await captureStdio(() =>
+      runRag(['pipeline', 'scheduler', '--once']),
+    );
+    expect(result).toBe(0);
+    expect((seenOpts as { once?: boolean }).once).toBe(true);
+    expect(cap.err).toContain('fired=1');
+    expect(cap.err).toContain('fired: p1');
+  });
+  test('--interval=30 clamps and passes 30000ms to the scheduler', async () => {
+    let seenOpts: unknown = null;
+    __setRagPipelineTestSeams({
+      nodeClient: makeStubClient(),
+      startPipelineScheduler: (opts) => {
+        seenOpts = opts;
+        return { stop: () => {}, done: Promise.resolve() };
+      },
+    });
+    const { result } = await captureStdio(() =>
+      runRag(['pipeline', 'scheduler', '--once', '--interval=30']),
+    );
+    expect(result).toBe(0);
+    expect((seenOpts as { tickIntervalMs?: number }).tickIntervalMs).toBe(30_000);
+  });
+  test('invalid --interval → exit 1', async () => {
+    __setRagPipelineTestSeams({
+      nodeClient: makeStubClient(),
+      startPipelineScheduler: () => ({ stop: () => {}, done: Promise.resolve() }),
+    });
+    const { result, cap } = await captureStdio(() =>
+      runRag(['pipeline', 'scheduler', '--interval=huh']),
+    );
+    expect(result).toBe(1);
+    expect(cap.err).toContain('Invalid --interval value');
+  });
+  test('--quiet suppresses tick output', async () => {
+    __setRagPipelineTestSeams({
+      nodeClient: makeStubClient(),
+      startPipelineScheduler: (opts) => {
+        opts.onTick?.({
+          ts: '2026-04-21T10:30:00.000Z',
+          considered: 1,
+          fired: ['loud'],
+          skippedInFlight: [],
+          unparseable: [],
+        });
+        return { stop: () => {}, done: Promise.resolve() };
+      },
+    });
+    const { result, cap } = await captureStdio(() =>
+      runRag(['pipeline', 'scheduler', '--once', '--quiet']),
+    );
+    expect(result).toBe(0);
+    expect(cap.err).toBe('');
+  });
+});

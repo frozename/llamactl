@@ -42,6 +42,20 @@ export const TransformSpecSchema = z.discriminatedUnion('kind', [
   MarkdownChunkTransformSchema,
 ]);
 
+/**
+ * Minimal schedule grammar accepted in v1 manifests:
+ *   @hourly   — every hour on the hour (boundary-aligned)
+ *   @daily    — every day at midnight UTC
+ *   @weekly   — every Sunday at midnight UTC
+ *   @every 5m / @every 2h / @every 1d — fixed-interval offset from
+ *                                       last run
+ * Anything else parses but is rejected at scheduler start so an
+ * operator fat-fingering `@monthly` gets a fast error instead of a
+ * silently-not-firing pipeline. Full cron syntax lands when an
+ * operator asks for it.
+ */
+const SCHEDULE_RE = /^(@hourly|@daily|@weekly|@every\s+\d+[mhd])$/;
+
 export const RagPipelineSpecSchema = z.object({
   destination: z.object({
     ragNode: z.string().min(1),
@@ -67,6 +81,17 @@ export const RagPipelineSpecSchema = z.object({
    * always no-ops, regardless of mode.
    */
   on_duplicate: z.enum(['skip', 'replace', 'version']).default('skip'),
+  /**
+   * Optional cadence for the scheduler loop. When absent, the
+   * pipeline is on-demand only (run via `llamactl rag pipeline run`).
+   */
+  schedule: z
+    .string()
+    .regex(SCHEDULE_RE, {
+      message:
+        "expected @hourly, @daily, @weekly, or @every <N>{m|h|d} (e.g. '@every 15m')",
+    })
+    .optional(),
 });
 
 export const RagPipelineManifestSchema = z.object({

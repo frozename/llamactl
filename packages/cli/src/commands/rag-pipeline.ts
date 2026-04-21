@@ -1,6 +1,12 @@
 import { existsSync, readFileSync, statSync, watchFile, unwatchFile } from 'node:fs';
 import { resolve } from 'node:path';
-import type { NodeClient } from '@llamactl/remote';
+import type {
+  NodeClient,
+  PipelineSchedulerHandle,
+  PipelineSchedulerOptions,
+  TickReport,
+} from '@llamactl/remote';
+import { startPipelineScheduler } from '@llamactl/remote';
 import { getNodeClient } from '../dispatcher.js';
 
 const USAGE = `Usage: llamactl rag pipeline <subcommand>
@@ -28,6 +34,12 @@ Subcommands:
   logs <name> [--follow] [--tail=<N>]
       Stream the ingest journal. Default --tail=50.
       --follow polls at 500ms intervals.
+
+  scheduler [--once] [--interval=<sec>] [--quiet]
+      Long-running loop that fires pipelines declaring a \`schedule:\`
+      field when their next-run time arrives. Runs until SIGINT /
+      SIGTERM. --once runs a single tick and exits (useful in cron).
+      Default --interval=60 seconds.
 `;
 
 export interface RagPipelineTestSeams {
@@ -35,6 +47,15 @@ export interface RagPipelineTestSeams {
   /** Override the journal file resolver for logs tests. Default maps
    *  through the remote package's `journalPathFor(name)`. */
   journalPathFor?: (name: string) => string;
+  /**
+   * Override the scheduler loop for tests. Return value must quack
+   * like the real `PipelineSchedulerHandle` (`{ stop(), done }`).
+   * Tests use this to avoid booting the real scheduler's in-proc
+   * listPipelines / runPipeline.
+   */
+  startPipelineScheduler?: (
+    opts: PipelineSchedulerOptions,
+  ) => PipelineSchedulerHandle;
 }
 
 let testSeams: RagPipelineTestSeams = {};
@@ -68,6 +89,8 @@ export async function runRagPipeline(argv: string[]): Promise<number> {
       return runRemove(rest);
     case 'logs':
       return runLogs(rest);
+    case 'scheduler':
+      return runScheduler(rest);
     case undefined:
     case '--help':
     case '-h':
@@ -368,5 +391,89 @@ async function runLogs(args: string[]): Promise<number> {
       lastSize = curr.size;
     });
   });
+  return 0;
+}
+
+// ---- scheduler ------------------------------------------------------
+
+interface SchedulerOpts {
+  once: boolean;
+  intervalSec: number;
+  quiet: boolean;
+}
+
+function parseSchedulerFlags(args: string[]): SchedulerOpts | { error: string } {
+  let once = false;
+  let intervalSec = 60;
+  let quiet = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--once') once = true;
+    else if (arg === '--quiet') quiet = true;
+    else if (arg === '--interval' || arg === '-i') {
+      const v = args[++i] ?? '';
+      const n = Number(v);
+      if (!Number.isFinite(n) || n <= 0) return { error: `Invalid --interval value: ${v}` };
+      intervalSec = n;
+    } else if (arg.startsWith('--interval=')) {
+      const v = arg.slice('--interval='.length);
+      const n = Number(v);
+      if (!Number.isFinite(n) || n <= 0) return { error: `Invalid --interval value: ${v}` };
+      intervalSec = n;
+    } else if (arg === '-h' || arg === '--help') return { error: 'help' };
+    else if (arg.startsWith('-')) return { error: `Unknown flag: ${arg}` };
+    else return { error: `Unexpected argument: ${arg}` };
+  }
+  return { once, intervalSec, quiet };
+}
+
+async function runScheduler(args: string[]): Promise<number> {
+  const parsed = parseSchedulerFlags(args);
+  if ('error' in parsed) {
+    if (parsed.error === 'help') {
+      process.stdout.write(USAGE);
+      return 0;
+    }
+    process.stderr.write(`${parsed.error}\n\n${USAGE}`);
+    return 1;
+  }
+
+  const loopOpts: PipelineSchedulerOptions = {
+    once: parsed.once,
+    tickIntervalMs: parsed.intervalSec * 1000,
+    onTick: (report: TickReport): void => {
+      if (parsed.quiet) return;
+      const line = `rag-pipeline-scheduler: tick ${report.ts} considered=${report.considered} fired=${report.fired.length}`;
+      process.stderr.write(`${line}\n`);
+      for (const name of report.fired) {
+        process.stderr.write(`  fired: ${name}\n`);
+      }
+      for (const name of report.skippedInFlight) {
+        process.stderr.write(`  skipped (in-flight): ${name}\n`);
+      }
+      for (const name of report.unparseable) {
+        process.stderr.write(`  skipped (bad schedule): ${name}\n`);
+      }
+    },
+  };
+
+  const starter = testSeams.startPipelineScheduler ?? startPipelineScheduler;
+  const handle: PipelineSchedulerHandle = starter(loopOpts);
+
+  // Graceful shutdown on SIGINT / SIGTERM — finish the current tick
+  // and the in-flight run before exiting.
+  const stopSignals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
+  const onSignal = (): void => {
+    handle.stop();
+    if (!parsed.quiet) {
+      process.stderr.write('rag-pipeline-scheduler: stop requested, finishing current tick…\n');
+    }
+  };
+  for (const sig of stopSignals) process.on(sig, onSignal);
+  try {
+    await handle.done;
+  } finally {
+    for (const sig of stopSignals) process.off(sig, onSignal);
+  }
   return 0;
 }

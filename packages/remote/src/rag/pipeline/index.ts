@@ -12,7 +12,16 @@ export {
   openJournal,
   type Journal,
   type JournalEntry,
+  type PriorIngestion,
 } from './journal.js';
+export {
+  startPipelineScheduler,
+  nextRunAt,
+  type PipelineSchedulerHandle,
+  type PipelineSchedulerOptions,
+  type TickReport,
+  type SchedulerJournalEntry,
+} from './scheduler.js';
 export {
   RagPipelineSpecSchema,
   RagPipelineManifestSchema,
