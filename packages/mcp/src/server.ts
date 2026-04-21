@@ -1014,6 +1014,139 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
     },
   );
 
+  // ---- RAG ingestion pipelines (R1.b) ---------------------------------
+  //
+  // `llamactl.rag.pipeline.{apply,run,list,get,remove}` expose the same
+  // operator surface as the CLI. `run` is tier-2 (mutation-dry-run-safe
+  // via `dryRun: true`); `apply` + `remove` are tier-2; list/get are
+  // read-only.
+
+  server.registerTool(
+    'llamactl.rag.pipeline.apply',
+    {
+      title: 'Apply a RagPipeline manifest',
+      description:
+        'Persist a RagPipeline manifest to disk under $DEV_STORAGE/rag-pipelines/<name>/spec.yaml. Does NOT execute — pair with llamactl.rag.pipeline.run. Input is the full YAML body (apiVersion: llamactl/v1, kind: RagPipeline).',
+      inputSchema: {
+        manifestYaml: z
+          .string()
+          .min(1)
+          .describe('Raw YAML body of the RagPipeline manifest.'),
+      },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      const result = await caller.ragPipelineApply(input);
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.rag.pipeline.apply',
+        input: { manifestBytes: input.manifestYaml.length },
+        dryRun: false,
+        result: { name: result.name, created: result.created },
+      });
+      return toTextContent(result);
+    },
+  );
+
+  server.registerTool(
+    'llamactl.rag.pipeline.run',
+    {
+      title: 'Execute a RagPipeline',
+      description:
+        'Run an applied RagPipeline: fetch sources, chunk, embed, store into the destination rag node. `dryRun: true` walks fetch + chunk without calling adapter.store — useful for previewing ingestion.',
+      inputSchema: {
+        name: z.string().min(1).describe('metadata.name of the pipeline.'),
+        dryRun: z.boolean().default(false),
+      },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      const result = await caller.ragPipelineRun(input);
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.rag.pipeline.run',
+        input,
+        dryRun: input.dryRun,
+        result: {
+          total_docs: result.summary.total_docs,
+          total_chunks: result.summary.total_chunks,
+          errors: result.summary.errors,
+        },
+      });
+      return toTextContent(result);
+    },
+  );
+
+  server.registerTool(
+    'llamactl.rag.pipeline.list',
+    {
+      title: 'List RagPipelines',
+      description:
+        'Enumerate every applied RagPipeline with its manifest + last-run summary (when available). Read-only.',
+      inputSchema: {},
+    },
+    async () => {
+      const caller = router.createCaller({});
+      const result = await caller.ragPipelineList();
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.rag.pipeline.list',
+        input: {},
+        dryRun: false,
+        result: { count: result.pipelines.length },
+      });
+      return toTextContent(result);
+    },
+  );
+
+  server.registerTool(
+    'llamactl.rag.pipeline.get',
+    {
+      title: 'Get one RagPipeline manifest',
+      description:
+        'Return a single RagPipeline manifest by name. Throws NOT_FOUND when absent. Read-only.',
+      inputSchema: {
+        name: z.string().min(1),
+      },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      const result = await caller.ragPipelineGet(input);
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.rag.pipeline.get',
+        input,
+        dryRun: false,
+        result: { found: true },
+      });
+      return toTextContent(result);
+    },
+  );
+
+  server.registerTool(
+    'llamactl.rag.pipeline.remove',
+    {
+      title: 'Remove a RagPipeline',
+      description:
+        'Delete the pipeline spec + journal + state. Does not touch already-stored documents in the destination rag node.',
+      inputSchema: {
+        name: z.string().min(1),
+      },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      const result = await caller.ragPipelineRemove(input);
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.rag.pipeline.remove',
+        input,
+        dryRun: false,
+        result,
+      });
+      return toTextContent(result);
+    },
+  );
+
   // M.1 — mount every PipelineTool emitted by the Electron
   // Pipelines module. Reads ~/.llamactl/mcp/pipelines/*.json unless
   // `LLAMACTL_MCP_PIPELINES_DIR` overrides the scan path (tests use

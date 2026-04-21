@@ -10,6 +10,9 @@ Subcommands:
       chat completion through the named gateway / cloud / agent node
       using the provided model id.
 
+  pipeline <sub>            Apply + run declarative RAG ingestion
+                            pipelines. See 'llamactl rag pipeline -h'.
+
 'ask' flags:
   --kb <name>              RAG node to retrieve from. Required when
                            the current context has more than one rag
@@ -57,6 +60,10 @@ export async function runRag(argv: string[]): Promise<number> {
   switch (sub) {
     case 'ask':
       return runAsk(rest);
+    case 'pipeline': {
+      const { runRagPipeline } = await import('./rag-pipeline.js');
+      return runRagPipeline(rest);
+    }
     case undefined:
     case '--help':
     case '-h':

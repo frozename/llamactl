@@ -1,0 +1,39 @@
+apiVersion: llamactl/v1
+kind: RagPipeline
+# Walks the llamactl repo's docs/ tree and ingests every markdown
+# file into the operator's kb-pg RAG node. Good first-pipeline sanity
+# check — after a successful run, `llamactl rag ask` against the
+# `llamactl_docs` collection will answer from the repo's own docs.
+#
+# Prereqs:
+#   - kb-pg rag node registered (from the composites-kubernetes full
+#     stack or a standalone pgvector composite).
+#   - A native embedder (nomic-embed-text-v1.5) reachable at
+#     http://127.0.0.1:8081; the rag node's embedder binding picks
+#     this up via baseUrl override.
+#   - PG_RAG_PASSWORD set in the env of whatever runs the pipeline.
+#
+# Apply + run:
+#   llamactl rag pipeline apply -f templates/rag-pipelines/llamactl-docs.yaml
+#   llamactl rag pipeline run llamactl-docs
+metadata:
+  name: llamactl-docs
+spec:
+  destination:
+    ragNode: kb-pg
+    collection: llamactl_docs
+  sources:
+    - kind: filesystem
+      # Adjust to wherever you checked out llamactl.
+      root: /Volumes/WorkSSD/repos/personal/llamactl/docs
+      glob: "**/*.md"
+      tag:
+        source: llamactl-docs
+        repo: llamactl
+  transforms:
+    - kind: markdown-chunk
+      chunk_size: 800
+      overlap: 150
+      preserve_headings: true
+  concurrency: 4
+  on_duplicate: skip

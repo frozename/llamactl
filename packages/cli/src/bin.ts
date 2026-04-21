@@ -153,6 +153,8 @@ Declarative workloads (Kubernetes-style):
       [--collection=<n>] [--max-tokens=<N>]     gateway/cloud/agent node.
       [--temperature=<f>] [--system-prompt=<s>] --cite prints passages; --json
       [--cite] [--json]                         emits a structured doc.
+  llamactl rag pipeline <subcommand>           Apply + run declarative RAG
+      apply | run | list | get | rm | logs     ingestion pipelines.
 
 Agentic operations:
   llamactl runbook list                       Enumerate operator runbooks

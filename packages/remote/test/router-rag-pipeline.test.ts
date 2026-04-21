@@ -1,0 +1,260 @@
+import { afterEach, beforeEach, describe, expect, test, mock } from 'bun:test';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { stringify as stringifyYaml } from 'yaml';
+
+import type { RetrievalProvider } from '@nova/contracts';
+
+import { router } from '../src/router.js';
+import { saveConfig, upsertNode } from '../src/config/kubeconfig.js';
+import { freshConfig } from '../src/config/schema.js';
+import { FETCHERS } from '../src/rag/pipeline/fetchers/registry.js';
+import {
+  applyPipeline,
+  pipelineDir,
+} from '../src/rag/pipeline/store.js';
+import type { RagPipelineManifest } from '../src/rag/pipeline/schema.js';
+import type { Fetcher } from '../src/rag/pipeline/types.js';
+
+/**
+ * tRPC surfaces for `rag pipeline *`. Covers:
+ *   - apply: YAML parse errors, schema errors, happy path (on-disk spec.yaml
+ *     after the call)
+ *   - run: NOT_FOUND when name isn't applied; dry vs wet summary; writeLastRun
+ *     only fires on wet runs
+ *   - list / get / remove: basic dispatch + error shapes
+ *
+ * We mock `../src/rag/index.js` so `createRagAdapter` returns a no-op
+ * provider — the runtime walks the real FETCHERS.filesystem (we override
+ * it to yield a known doc list), chunks via the real transforms, and
+ * hands the result to our fake adapter. That's enough to prove the
+ * router wires input/output correctly.
+ */
+
+let closeCount = 0;
+let storeCalls = 0;
+function makeFakeProvider(): RetrievalProvider {
+  return {
+    kind: 'fake',
+    async search() {
+      return { collection: 'default', results: [] };
+    },
+    async store(req) {
+      storeCalls++;
+      return { collection: req.collection ?? 'default', ids: req.documents.map((d) => d.id) };
+    },
+    async delete(req) {
+      return { collection: req.collection ?? 'default', deleted: req.ids.length };
+    },
+    async listCollections() {
+      return { collections: [] };
+    },
+    async close() {
+      closeCount++;
+    },
+  };
+}
+
+mock.module('../src/rag/index.js', () => ({
+  createRagAdapter: async () => makeFakeProvider(),
+}));
+
+const originalEnv = { ...process.env };
+let tmp = '';
+let pipelinesRoot = '';
+let restoreFetcher: (() => void) | null = null;
+
+function installStubFetcher(docs: Array<{ id: string; content: string }>): () => void {
+  const original = FETCHERS.filesystem;
+  const stub: Fetcher = {
+    kind: 'filesystem',
+    async *fetch() {
+      for (const d of docs) yield { id: d.id, content: d.content, metadata: {} };
+    },
+  };
+  (FETCHERS as Record<string, Fetcher>).filesystem = stub;
+  return () => {
+    if (original) (FETCHERS as Record<string, Fetcher>).filesystem = original;
+    else delete (FETCHERS as Record<string, Fetcher>).filesystem;
+  };
+}
+
+beforeEach(() => {
+  tmp = mkdtempSync(join(tmpdir(), 'llamactl-router-rag-pipeline-'));
+  pipelinesRoot = join(tmp, 'pipelines');
+  Object.assign(process.env, {
+    LLAMACTL_CONFIG: join(tmp, 'config'),
+    LLAMACTL_RAG_PIPELINES_DIR: pipelinesRoot,
+  });
+  closeCount = 0;
+  storeCalls = 0;
+  restoreFetcher = null;
+
+  let cfg = freshConfig();
+  cfg = upsertNode(cfg, 'home', {
+    name: 'kb-pg',
+    endpoint: '',
+    kind: 'rag',
+    rag: {
+      provider: 'pgvector',
+      endpoint: 'postgres://kb@db.local:5432/kb',
+      collection: 'docs',
+      extraArgs: [],
+    },
+  });
+  saveConfig(cfg, join(tmp, 'config'));
+});
+
+afterEach(() => {
+  if (restoreFetcher) restoreFetcher();
+  rmSync(tmp, { recursive: true, force: true });
+  for (const k of Object.keys(process.env)) delete process.env[k];
+  Object.assign(process.env, originalEnv);
+});
+
+function makeManifest(name = 'demo'): RagPipelineManifest {
+  return {
+    apiVersion: 'llamactl/v1',
+    kind: 'RagPipeline',
+    metadata: { name },
+    spec: {
+      destination: { ragNode: 'kb-pg', collection: 'docs' },
+      sources: [{ kind: 'filesystem', root: '/tmp/x', glob: '**/*' }],
+      transforms: [],
+      concurrency: 2,
+      on_duplicate: 'skip',
+    },
+  } as RagPipelineManifest;
+}
+
+describe('ragPipelineApply', () => {
+  test('happy path writes spec.yaml and reports created=true', async () => {
+    const caller = router.createCaller({});
+    const yaml = stringifyYaml(makeManifest('apply-hp'));
+    const res = await caller.ragPipelineApply({ manifestYaml: yaml });
+    expect(res.ok).toBe(true);
+    expect(res.name).toBe('apply-hp');
+    expect(res.created).toBe(true);
+    expect(existsSync(join(pipelinesRoot, 'apply-hp', 'spec.yaml'))).toBe(true);
+  });
+  test('re-apply reports created=false', async () => {
+    const caller = router.createCaller({});
+    const yaml = stringifyYaml(makeManifest('re'));
+    await caller.ragPipelineApply({ manifestYaml: yaml });
+    const res = await caller.ragPipelineApply({ manifestYaml: yaml });
+    expect(res.created).toBe(false);
+  });
+  test('invalid YAML → BAD_REQUEST', async () => {
+    const caller = router.createCaller({});
+    await expect(
+      caller.ragPipelineApply({ manifestYaml: 'not: [valid yaml\n' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+  test('schema-invalid (missing destination) → BAD_REQUEST', async () => {
+    const caller = router.createCaller({});
+    const bad = stringifyYaml({
+      apiVersion: 'llamactl/v1',
+      kind: 'RagPipeline',
+      metadata: { name: 'bad' },
+      spec: { sources: [], transforms: [] },
+    });
+    await expect(
+      caller.ragPipelineApply({ manifestYaml: bad }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+});
+
+describe('ragPipelineRun', () => {
+  test('NOT_FOUND when pipeline does not exist', async () => {
+    const caller = router.createCaller({});
+    await expect(
+      caller.ragPipelineRun({ name: 'ghost', dryRun: false }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+  test('wet run persists state.json with last summary', async () => {
+    applyPipeline(makeManifest('wet'));
+    restoreFetcher = installStubFetcher([
+      { id: 'a.md', content: 'alpha' },
+      { id: 'b.md', content: 'beta' },
+    ]);
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineRun({ name: 'wet', dryRun: false });
+    expect(res.ok).toBe(true);
+    expect(res.dryRun).toBe(false);
+    expect(res.summary.total_docs).toBe(2);
+    expect(res.summary.total_chunks).toBe(2);
+    expect(storeCalls).toBeGreaterThan(0);
+    expect(closeCount).toBe(1);
+    expect(existsSync(join(pipelineDir('wet'), 'state.json'))).toBe(true);
+  });
+  test('dry run does NOT write state.json', async () => {
+    applyPipeline(makeManifest('dry'));
+    restoreFetcher = installStubFetcher([
+      { id: 'a.md', content: 'alpha' },
+    ]);
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineRun({ name: 'dry', dryRun: true });
+    expect(res.ok).toBe(true);
+    expect(res.dryRun).toBe(true);
+    expect(res.summary.total_docs).toBe(1);
+    expect(existsSync(join(pipelineDir('dry'), 'state.json'))).toBe(false);
+  });
+  test('default dryRun is false', async () => {
+    // Input parser defaults dryRun to false — callers may omit it.
+    applyPipeline(makeManifest('defaulted'));
+    restoreFetcher = installStubFetcher([]);
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineRun({ name: 'defaulted' } as { name: string });
+    expect(res.dryRun).toBe(false);
+  });
+});
+
+describe('ragPipelineList', () => {
+  test('empty registry → pipelines: []', async () => {
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineList();
+    expect(res.pipelines).toEqual([]);
+  });
+  test('lists applied pipelines', async () => {
+    applyPipeline(makeManifest('one'));
+    applyPipeline(makeManifest('two'));
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineList();
+    const names = res.pipelines.map((p) => p.name).sort();
+    expect(names).toEqual(['one', 'two']);
+  });
+});
+
+describe('ragPipelineGet', () => {
+  test('NOT_FOUND when missing', async () => {
+    const caller = router.createCaller({});
+    await expect(
+      caller.ragPipelineGet({ name: 'missing' }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+  test('returns manifest when present', async () => {
+    applyPipeline(makeManifest('there'));
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineGet({ name: 'there' });
+    expect(res.manifest.metadata.name).toBe('there');
+    expect(res.manifest.spec.destination.ragNode).toBe('kb-pg');
+  });
+});
+
+describe('ragPipelineRemove', () => {
+  test('removed=false when absent', async () => {
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineRemove({ name: 'ghost' });
+    expect(res.ok).toBe(true);
+    expect(res.removed).toBe(false);
+  });
+  test('removed=true + dir gone when present', async () => {
+    applyPipeline(makeManifest('bye'));
+    expect(existsSync(pipelineDir('bye'))).toBe(true);
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineRemove({ name: 'bye' });
+    expect(res.removed).toBe(true);
+    expect(existsSync(pipelineDir('bye'))).toBe(false);
+  });
+});

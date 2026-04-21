@@ -38,6 +38,15 @@ export interface RunPipelineOptions {
   openAdapter?: (nodeName: string) => Promise<OpenAdapterResult>;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
+  /**
+   * Walk the pipeline through fetch + transform + journal without
+   * calling `adapter.store`. Every doc that would normally land as a
+   * `doc-ingested` entry becomes `doc-would-ingest` instead — the
+   * distinction keeps future dedupe logic honest (only wet writes
+   * count). Useful for "show me what this spec pulls + chunks
+   * without touching the store."
+   */
+  dryRun?: boolean;
 }
 
 export interface RunSummary {
@@ -142,6 +151,7 @@ export async function runPipeline(
         env,
         signal,
         concurrency: manifest.spec.concurrency,
+        dryRun: opts.dryRun ?? false,
       });
 
       summary.total_docs += perSource.docs;
@@ -202,6 +212,7 @@ async function runSource(args: {
   env: NodeJS.ProcessEnv;
   signal: AbortSignal;
   concurrency: number;
+  dryRun: boolean;
 }): Promise<PerSourceTally> {
   const tally: PerSourceTally = { docs: 0, chunks: 0, skipped: 0, errors: 0 };
   const log = (event: Parameters<Parameters<typeof args.fetcher.fetch>[0]['log']>[0]) => {
@@ -243,6 +254,7 @@ async function runSource(args: {
             collection: args.collection,
             adapter: args.adapter,
             journal: args.journal,
+            dryRun: args.dryRun,
           });
           if (outcome.skipped) tally.skipped++;
           else {
@@ -272,8 +284,9 @@ async function processDoc(args: {
   collection: string;
   adapter: OpenAdapterResult;
   journal: Journal;
+  dryRun: boolean;
 }): Promise<{ skipped: boolean; errored: boolean; chunks: number }> {
-  const { rawDoc, label, transforms, collection, adapter, journal } = args;
+  const { rawDoc, label, transforms, collection, adapter, journal, dryRun } = args;
   const sha = sha256HexBytes(rawDoc.content);
   if (await journal.seen(label, rawDoc.id, sha)) {
     await journal.append({
@@ -300,34 +313,36 @@ async function processDoc(args: {
   }
 
   let errored = false;
-  for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-    const batch = chunks.slice(i, i + BATCH_SIZE);
-    const storeReq: StoreRequest = {
-      collection,
-      documents: batch.map((c) => ({
-        id: c.id,
-        content: c.content,
-        metadata: c.metadata,
-      })),
-    };
-    try {
-      await adapter.store(storeReq);
-    } catch (err) {
-      errored = true;
-      await appendErrorEntry(
-        journal,
-        label,
-        `store failed for ${rawDoc.id} batch@${i}: ${toMessage(err)}`,
-        rawDoc.id,
-      );
-      // Surface the first batch failure and stop pushing the rest —
-      // partial doc in the store is a worse outcome than a retry.
-      break;
+  if (!dryRun) {
+    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+      const batch = chunks.slice(i, i + BATCH_SIZE);
+      const storeReq: StoreRequest = {
+        collection,
+        documents: batch.map((c) => ({
+          id: c.id,
+          content: c.content,
+          metadata: c.metadata,
+        })),
+      };
+      try {
+        await adapter.store(storeReq);
+      } catch (err) {
+        errored = true;
+        await appendErrorEntry(
+          journal,
+          label,
+          `store failed for ${rawDoc.id} batch@${i}: ${toMessage(err)}`,
+          rawDoc.id,
+        );
+        // Surface the first batch failure and stop pushing the rest —
+        // partial doc in the store is a worse outcome than a retry.
+        break;
+      }
     }
   }
 
   await journal.append({
-    kind: 'doc-ingested',
+    kind: dryRun ? 'doc-would-ingest' : 'doc-ingested',
     ts: new Date().toISOString(),
     source: label,
     doc_id: rawDoc.id,

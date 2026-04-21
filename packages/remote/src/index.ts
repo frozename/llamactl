@@ -84,3 +84,30 @@ export {
   RuntimeError,
   type RuntimeErrorCode,
 } from './runtime/errors.js';
+
+// ---- RAG ingestion pipelines (R1.a + R1.b) ----
+export {
+  runPipeline,
+  type RunPipelineOptions,
+  type RunSummary,
+  RagPipelineManifestSchema,
+  RagPipelineSpecSchema,
+  type RagPipelineManifest,
+  type RagPipelineSpec,
+  type SourceSpec,
+  type TransformSpec,
+  openJournal,
+  type Journal,
+  type JournalEntry,
+} from './rag/pipeline/index.js';
+export {
+  applyPipeline,
+  loadPipeline,
+  listPipelines,
+  removePipeline,
+  writeLastRun,
+  defaultPipelinesDir,
+  pipelineDir,
+  journalPathFor,
+  type PipelineRecord,
+} from './rag/pipeline/store.js';

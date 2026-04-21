@@ -285,6 +285,73 @@ describe('runPipeline', () => {
     }
   });
 
+  test('dryRun skips adapter.store and journals doc-would-ingest', async () => {
+    const docs: RawDoc[] = [
+      { id: 'a', content: 'alpha', metadata: {} },
+      { id: 'b', content: 'beta', metadata: {} },
+    ];
+    const restore = installStubFetcher({ docs });
+    try {
+      const mock = makeMockAdapter();
+      const journalPath = join(tmp, 'journal.jsonl');
+      const summary = await runPipeline({
+        manifest: baseManifest(),
+        journalPath,
+        openAdapter: mock.open,
+        dryRun: true,
+      });
+      expect(summary.total_docs).toBe(2);
+      expect(summary.total_chunks).toBe(2);
+      // The adapter is opened + closed, but never written to.
+      expect(mock.calls).toHaveLength(0);
+      expect(mock.closed).toBe(1);
+      const lines = readJournalLines(journalPath);
+      const would = lines.filter((l) => l.kind === 'doc-would-ingest');
+      const ingested = lines.filter((l) => l.kind === 'doc-ingested');
+      expect(would).toHaveLength(2);
+      expect(ingested).toHaveLength(0);
+    } finally {
+      restore();
+    }
+  });
+
+  test('dryRun then wet run: dry does not poison dedupe, wet still stores', async () => {
+    const docs: RawDoc[] = [{ id: 'a', content: 'alpha', metadata: {} }];
+    const journalPath = join(tmp, 'journal.jsonl');
+    const mock = makeMockAdapter();
+    // Dry run first.
+    {
+      const restore = installStubFetcher({ docs });
+      try {
+        await runPipeline({
+          manifest: baseManifest(),
+          journalPath,
+          openAdapter: mock.open,
+          dryRun: true,
+        });
+      } finally {
+        restore();
+      }
+    }
+    expect(mock.calls).toHaveLength(0);
+    // Wet run next — must still store (would-ingest doesn't count as dedupe).
+    {
+      const restore = installStubFetcher({ docs });
+      try {
+        const summary = await runPipeline({
+          manifest: baseManifest(),
+          journalPath,
+          openAdapter: mock.open,
+        });
+        expect(summary.total_docs).toBe(1);
+        expect(summary.skipped_docs).toBe(0);
+      } finally {
+        restore();
+      }
+    }
+    expect(mock.calls).toHaveLength(1);
+  });
+
   test('missing fetcher for a kind journals an error and continues', async () => {
     // Temporarily delete the registered filesystem fetcher to prove
     // the runtime doesn't crash when the registry lookup misses.

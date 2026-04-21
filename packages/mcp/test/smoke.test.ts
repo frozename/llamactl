@@ -108,6 +108,11 @@ describe('@llamactl/mcp read surface', () => {
       'llamactl.promotions.list',
       'llamactl.rag.delete',
       'llamactl.rag.listCollections',
+      'llamactl.rag.pipeline.apply',
+      'llamactl.rag.pipeline.get',
+      'llamactl.rag.pipeline.list',
+      'llamactl.rag.pipeline.remove',
+      'llamactl.rag.pipeline.run',
       'llamactl.rag.search',
       'llamactl.rag.store',
       'llamactl.server.status',
@@ -559,13 +564,14 @@ describe('@llamactl/mcp M.1 pipeline-tool pickup', () => {
 
   test('empty pipelines dir does not break tool registration', async () => {
     // No LLAMACTL_MCP_PIPELINES_DIR content; MCP server boots cleanly
-    // and the baseline 26 llamactl.* tools remain advertised (22 from
-    // before + 4 from the Phase 5 composite surface).
+    // and the baseline 31 llamactl.* tools remain advertised (22 from
+    // before + 4 from the Phase 5 composite surface + 5 from the R1
+    // rag-pipeline surface).
     const { client } = await connected();
     const list = await client.listTools();
     const llamactlTools = list.tools
       .map((t) => t.name)
       .filter((n) => n.startsWith('llamactl.') && !n.startsWith('llamactl.pipeline.'));
-    expect(llamactlTools.length).toBe(26);
+    expect(llamactlTools.length).toBe(31);
   });
 });

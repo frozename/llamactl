@@ -34,6 +34,19 @@ export type JournalEntry =
       chunks: number;
     }
   | {
+      // Dry-run variant — the doc was fetched + chunked but `adapter.store`
+      // was skipped. Distinct kind (rather than a flag on `doc-ingested`)
+      // so a single `grep kind=doc-ingested` counts only wet writes and
+      // downstream tooling (dedupe, retrieval-backfill) doesn't
+      // accidentally treat dry-run entries as source of truth.
+      kind: 'doc-would-ingest';
+      ts: string;
+      source: string;
+      doc_id: string;
+      sha: string;
+      chunks: number;
+    }
+  | {
       kind: 'source-complete';
       ts: string;
       source: string;

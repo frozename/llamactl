@@ -1,0 +1,33 @@
+apiVersion: llamactl/v1
+kind: RagPipeline
+# Small two-hop crawl of a public docs site. Use as a template —
+# swap the URL for your target, tune depth/rate-limit to be a good
+# neighbor, and consider `auth.tokenRef` for private endpoints.
+#
+# `ignore_robots: false` (default) means llamactl fetches /robots.txt
+# once per origin and honors its Disallow rules. Set to true only if
+# you own the site or have explicit permission.
+metadata:
+  name: example-docs-http
+spec:
+  destination:
+    ragNode: kb-pg
+    collection: example_docs
+  sources:
+    - kind: http
+      url: https://example.com/docs/
+      max_depth: 2
+      same_origin: true
+      ignore_robots: false
+      rate_limit_per_sec: 2
+      timeout_ms: 10000
+      # auth:
+      #   tokenRef: keychain:example-docs/apikey   # env: / keychain: / file:
+      tag:
+        source: example-docs-http
+  transforms:
+    - kind: markdown-chunk
+      chunk_size: 1000
+      overlap: 200
+  concurrency: 2
+  on_duplicate: skip

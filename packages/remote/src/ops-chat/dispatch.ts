@@ -39,6 +39,11 @@ export const KNOWN_OPS_CHAT_TOOLS = [
   'llamactl.promotions.list',
   'llamactl.rag.delete',
   'llamactl.rag.listCollections',
+  'llamactl.rag.pipeline.apply',
+  'llamactl.rag.pipeline.get',
+  'llamactl.rag.pipeline.list',
+  'llamactl.rag.pipeline.remove',
+  'llamactl.rag.pipeline.run',
   'llamactl.rag.search',
   'llamactl.rag.store',
   'llamactl.server.status',
@@ -62,11 +67,14 @@ export function toolTier(name: OpsChatToolName): ToolTier {
     case 'llamactl.workload.delete':
     case 'llamactl.catalog.promoteDelete':
     case 'llamactl.rag.delete':
+    case 'llamactl.rag.pipeline.remove':
     case 'llamactl.composite.destroy':
       return 'mutation-destructive';
     case 'llamactl.node.add':
     case 'llamactl.catalog.promote':
     case 'llamactl.rag.store':
+    case 'llamactl.rag.pipeline.apply':
+    case 'llamactl.rag.pipeline.run':
     case 'llamactl.composite.apply':
       return 'mutation-dry-run-safe';
     default:
@@ -234,6 +242,14 @@ export async function dispatchOpsChatTool(
           name: requireString(args, 'name'),
         });
         break;
+      case 'llamactl.rag.pipeline.list':
+        result = await caller.ragPipelineList();
+        break;
+      case 'llamactl.rag.pipeline.get':
+        result = await caller.ragPipelineGet({
+          name: requireString(args, 'name'),
+        });
+        break;
 
       /* ---------------- mutations (dry-run-safe) ---------------- */
       case 'llamactl.catalog.promote': {
@@ -317,6 +333,27 @@ export async function dispatchOpsChatTool(
         });
         break;
       }
+      case 'llamactl.rag.pipeline.apply': {
+        // Apply is idempotent — writing the spec.yaml is safe. Dry
+        // run only parses + validates without touching disk.
+        const manifestYaml = requireString(args, 'manifestYaml');
+        if (input.dryRun) {
+          result = { dryRun: true, wouldApply: { bytes: manifestYaml.length } };
+        } else {
+          result = await caller.ragPipelineApply({ manifestYaml });
+        }
+        break;
+      }
+      case 'llamactl.rag.pipeline.run': {
+        // The underlying procedure supports dry-run natively — it
+        // walks fetch + transform + journal without calling
+        // `adapter.store`. Forward the flag verbatim.
+        result = await caller.ragPipelineRun({
+          name: requireString(args, 'name'),
+          dryRun: input.dryRun,
+        });
+        break;
+      }
 
       /* ---------------- mutations (destructive) ---------------- */
       case 'llamactl.catalog.promoteDelete': {
@@ -384,6 +421,15 @@ export async function dispatchOpsChatTool(
           dryRun: input.dryRun,
           purgeVolumes: (args.purgeVolumes as boolean | undefined) ?? false,
         });
+        break;
+      }
+      case 'llamactl.rag.pipeline.remove': {
+        const payload = { name: requireString(args, 'name') };
+        if (input.dryRun) {
+          result = { dryRun: true, wouldRemove: payload };
+        } else {
+          result = await caller.ragPipelineRemove(payload);
+        }
         break;
       }
     }

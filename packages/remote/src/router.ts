@@ -2347,6 +2347,102 @@ export const router = t.router({
       }
     }),
 
+  // ---- RAG ingestion pipelines (declarative fetch → chunk → embed → store) ----
+  //
+  // Thin tRPC shims over the `rag/pipeline/` runtime + store. One
+  // directory per pipeline under $DEV_STORAGE/rag-pipelines/<name>/
+  // holds {spec.yaml, journal.jsonl, state.json}. The runtime is the
+  // source of truth; these procedures are the operator surfaces
+  // (CLI + MCP + Electron).
+
+  ragPipelineApply: t.procedure
+    .input(z.object({ manifestYaml: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const { parse: parseYaml } = await import('yaml');
+      const { RagPipelineManifestSchema } = await import('./rag/pipeline/index.js');
+      const { applyPipeline } = await import('./rag/pipeline/store.js');
+      let parsedYaml: unknown;
+      try {
+        parsedYaml = parseYaml(input.manifestYaml);
+      } catch (err) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `RagPipeline manifest is not valid YAML: ${(err as Error).message}`,
+        });
+      }
+      const parsed = RagPipelineManifestSchema.safeParse(parsedYaml);
+      if (!parsed.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `invalid RagPipeline manifest: ${JSON.stringify(parsed.error.issues)}`,
+        });
+      }
+      const { path, created } = applyPipeline(parsed.data);
+      return {
+        ok: true as const,
+        name: parsed.data.metadata.name,
+        path,
+        created,
+      };
+    }),
+
+  ragPipelineRun: t.procedure
+    .input(
+      z.object({
+        name: z.string().min(1),
+        dryRun: z.boolean().default(false),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { loadPipeline, writeLastRun, journalPathFor } = await import(
+        './rag/pipeline/store.js'
+      );
+      const { runPipeline } = await import('./rag/pipeline/index.js');
+      const manifest = loadPipeline(input.name);
+      if (!manifest) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: `rag pipeline '${input.name}' not found — run \`llamactl rag pipeline list\` to see registered names`,
+        });
+      }
+      const summary = await runPipeline({
+        manifest,
+        journalPath: journalPathFor(input.name),
+        dryRun: input.dryRun,
+      });
+      if (!input.dryRun) {
+        writeLastRun(input.name, summary);
+      }
+      return { ok: true as const, summary, dryRun: input.dryRun };
+    }),
+
+  ragPipelineList: t.procedure.query(async () => {
+    const { listPipelines } = await import('./rag/pipeline/store.js');
+    return { pipelines: listPipelines() };
+  }),
+
+  ragPipelineGet: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const { loadPipeline } = await import('./rag/pipeline/store.js');
+      const manifest = loadPipeline(input.name);
+      if (!manifest) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: `rag pipeline '${input.name}' not found`,
+        });
+      }
+      return { manifest };
+    }),
+
+  ragPipelineRemove: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const { removePipeline } = await import('./rag/pipeline/store.js');
+      const removed = removePipeline(input.name);
+      return { ok: true as const, removed };
+    }),
+
   // ---- Composite (multi-component apply) --------------------------------
   //
   // Phase 5 of composite-infra.md — tRPC surface for the composite
