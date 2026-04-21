@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useMemo, useState } from 'react';
 import { trpc } from '@/lib/trpc';
+import { PipelineWizardModal } from './pipeline-wizard';
 
 /**
  * Pipelines tab — the operator-facing view of the R1/R2 RAG
@@ -417,6 +418,7 @@ export function PipelinesTab(props: {
   const data = list.data as PipelineListResponse | undefined;
   const rows = data?.pipelines ?? [];
   const [logsOpen, setLogsOpen] = useState<string | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   // Show every pipeline; filter note if it targets a different node.
   // Operators often have a single rag node, but filtering would hide
@@ -428,7 +430,29 @@ export function PipelinesTab(props: {
 
   return (
     <div className="space-y-4" data-testid="pipelines-root">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setWizardOpen(true)}
+          data-testid="pipelines-new"
+          className="rounded bg-[var(--color-brand)] px-3 py-1 text-xs font-medium text-[color:var(--color-surface-0)] hover:opacity-90"
+        >
+          + New pipeline
+        </button>
+        <span className="text-xs text-[color:var(--color-fg-muted)]">
+          Step through destination → sources → transforms → review, then apply.
+        </span>
+      </div>
+
       <DraftPanel selectedNode={nodeName} availableNodes={availableNodes} />
+
+      <PipelineWizardModal
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onApplied={() => setWizardOpen(false)}
+        availableRagNodes={availableNodes}
+        defaultRagNode={nodeName}
+      />
 
       {list.isLoading && (
         <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-fg-muted)]">
