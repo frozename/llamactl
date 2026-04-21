@@ -142,6 +142,21 @@ three tabs:
 The picker filters `nodeList` to entries with `effectiveKind: 'rag'`;
 if none are registered, the UI points you at `llamactl node add ...`.
 
+### From the Chat module (auto-context)
+
+Each conversation can bind to a RAG node via the **rag** picker in the
+chat header. Once bound, every message you send triggers a background
+`ragSearch({ node, query: <your message>, topK })` call; the top
+results are trimmed to a per-turn character budget (~12k chars, tunable
+in the source) and prepended as a `system` message before your turn
+reaches the LLM. The user message shows a disclosure with the retrieved
+doc IDs + scores + content previews so you can verify what the model
+saw.
+
+Retrieval failures don't block the chat — the turn still sends, just
+without context. Check the activity-bar's Knowledge module for the
+same RAG node to confirm it's reachable independently.
+
 ### From ops-chat
 
 The operator console speaks the same tools natively:

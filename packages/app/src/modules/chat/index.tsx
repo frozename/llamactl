@@ -14,11 +14,48 @@ import { trpc } from '@/lib/trpc';
  * keys mean conversation logs stay on the laptop).
  */
 
+interface RetrievedDoc {
+  id: string;
+  score: number;
+  /** First ~200 chars of the doc so users can see what was pulled. */
+  contentPreview: string;
+}
+
+interface RetrievedContext {
+  sourceNode: string;
+  docs: RetrievedDoc[];
+  /** Total characters of doc content injected into the LLM request. */
+  totalChars: number;
+  /** True when docs were trimmed to fit the per-turn context budget. */
+  truncated: boolean;
+}
+
 interface Message {
   id: string;
   role: 'system' | 'user' | 'assistant' | 'error';
   content: string;
+  /**
+   * Auto-retrieval metadata. Attached to the user message that
+   * triggered retrieval so transparency-minded users can inspect
+   * what the LLM actually saw.
+   */
+  retrievedContext?: RetrievedContext;
 }
+
+/**
+ * Per-conversation RAG binding. Picks the knowledge base we consult
+ * before each turn plus how many top-K docs to fetch.
+ */
+const DEFAULT_RAG_TOP_K = 5;
+
+/**
+ * Per-turn context budget (character count). A rough 4-chars ≈ 1
+ * token rule gives us ~3000 tokens — under a typical 4K input window
+ * with headroom for the user message + prior turns. Tunable later.
+ */
+const MAX_CONTEXT_CHARS = 12000;
+
+const CONTENT_PREVIEW_CHARS = 200;
 
 /**
  * Capability vocabulary the chat input exposes. Mirrors nova's
@@ -57,6 +94,15 @@ interface Conversation {
    *  lives in `messagesB`. */
   compareWith?: CompareMeta | null;
   messagesB?: Message[];
+  /**
+   * Auto-context: when set, every send first queries this RAG node
+   * with the user's message, trims top-K docs to the per-turn
+   * budget, and prepends a system message carrying the snippets.
+   * Compare-mode side B is intentionally not RAG-aware in v1 — it's
+   * a model-comparison feature, not a knowledge one.
+   */
+  ragNode?: string;
+  ragTopK?: number;
 }
 
 interface ChatStore {
@@ -73,6 +119,8 @@ interface ChatStore {
   setCompareWith: (id: string, meta: CompareMeta | null) => void;
   updateCompareMeta: (id: string, patch: Partial<Pick<CompareMeta, 'node' | 'model'>>) => void;
   toggleCompareCapability: (id: string, tag: CapabilityTag) => void;
+  setRagBinding: (id: string, ragNode: string | null, ragTopK?: number) => void;
+  patchMessage: (convId: string, messageId: string, patch: Partial<Message>) => void;
   remove: (id: string) => void;
 }
 
@@ -223,6 +271,46 @@ const useChatStore = create<ChatStore>()(
             },
           };
         }),
+      patchMessage: (convId, messageId, patch) =>
+        set((s) => {
+          const conv = s.conversations[convId];
+          if (!conv) return s;
+          const idx = conv.messages.findIndex((m) => m.id === messageId);
+          if (idx < 0) return s;
+          const updated = { ...conv.messages[idx]!, ...patch };
+          return {
+            conversations: {
+              ...s.conversations,
+              [convId]: {
+                ...conv,
+                messages: [
+                  ...conv.messages.slice(0, idx),
+                  updated,
+                  ...conv.messages.slice(idx + 1),
+                ],
+              },
+            },
+          };
+        }),
+      setRagBinding: (id, ragNode, ragTopK) =>
+        set((s) => {
+          const conv = s.conversations[id];
+          if (!conv) return s;
+          const next: Conversation = { ...conv };
+          if (ragNode === null) {
+            delete next.ragNode;
+            delete next.ragTopK;
+          } else {
+            next.ragNode = ragNode;
+            next.ragTopK = ragTopK ?? conv.ragTopK ?? DEFAULT_RAG_TOP_K;
+          }
+          return {
+            conversations: {
+              ...s.conversations,
+              [id]: next,
+            },
+          };
+        }),
       remove: (id) =>
         set((s) => {
           const rest = { ...s.conversations };
@@ -298,7 +386,8 @@ function Sidebar(props: {
 }
 
 function MessageBubble(props: { message: Message }): React.JSX.Element {
-  const { role, content } = props.message;
+  const { role, content, retrievedContext } = props.message;
+  const [showContext, setShowContext] = useState(false);
   const align =
     role === 'user'
       ? 'items-end'
@@ -321,6 +410,42 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
       >
         {content || (role === 'assistant' ? '…' : '')}
       </div>
+      {retrievedContext && (
+        <div className="max-w-[80%] rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[10px] text-[color:var(--color-fg-muted)]">
+          <button
+            type="button"
+            onClick={() => setShowContext((v) => !v)}
+            className="flex items-center gap-2 font-mono"
+            data-testid="chat-rag-disclosure"
+          >
+            <span>{showContext ? '▾' : '▸'}</span>
+            <span>
+              retrieved {retrievedContext.docs.length} doc
+              {retrievedContext.docs.length === 1 ? '' : 's'} from
+              {' '}
+              <span className="text-[color:var(--color-fg)]">
+                {retrievedContext.sourceNode}
+              </span>
+              {' '}
+              · {retrievedContext.totalChars} chars
+              {retrievedContext.truncated ? ' (trimmed)' : ''}
+            </span>
+          </button>
+          {showContext && (
+            <ul className="mt-2 space-y-1">
+              {retrievedContext.docs.map((d) => (
+                <li key={d.id} className="flex flex-col gap-0.5 font-mono">
+                  <span>
+                    <span className="text-[color:var(--color-fg)]">{d.id}</span>
+                    <span className="ml-2">score={d.score.toFixed(3)}</span>
+                  </span>
+                  <span className="whitespace-pre-wrap">{d.contentPreview}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -430,9 +555,57 @@ function TranscriptColumn(props: {
   );
 }
 
+function RagPicker(props: {
+  nodes: Array<{ name: string; effectiveKind?: string }>;
+  ragNode: string | null;
+  ragTopK: number;
+  onChange: (node: string | null, topK: number) => void;
+}): React.JSX.Element | null {
+  const ragNodes = props.nodes.filter((n) => n.effectiveKind === 'rag');
+  if (ragNodes.length === 0) return null;
+  return (
+    <div className="flex items-center gap-1" data-testid="chat-rag-picker">
+      <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+        rag
+      </span>
+      <select
+        value={props.ragNode ?? ''}
+        onChange={(e) =>
+          props.onChange(e.target.value || null, props.ragTopK)
+        }
+        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)]"
+        title="Auto-retrieve context from this knowledge base on every turn"
+      >
+        <option value="">(off)</option>
+        {ragNodes.map((n) => (
+          <option key={n.name} value={n.name}>
+            {n.name}
+          </option>
+        ))}
+      </select>
+      {props.ragNode && (
+        <>
+          <span className="text-[10px] text-[color:var(--color-fg-muted)]">top</span>
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={props.ragTopK}
+            onChange={(e) =>
+              props.onChange(props.ragNode, Number.parseInt(e.target.value, 10) || DEFAULT_RAG_TOP_K)
+            }
+            className="w-10 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)]"
+            title="How many top docs to inject"
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
 function ComposerBar(props: {
   busy: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string) => void | Promise<void>;
 }): React.JSX.Element {
   const [input, setInput] = useState('');
   function submit(): void {
@@ -614,11 +787,16 @@ export default function Chat(): React.JSX.Element {
     text: string,
     model: string,
     capabilities: CapabilityTag[],
+    contextMessage?: { role: 'system'; content: string },
   ): StreamInput['request'] {
+    const priorTurns = history.filter(
+      (m) => m.role === 'user' || m.role === 'assistant',
+    );
     return {
       model,
       messages: [
-        ...history.filter((m) => m.role === 'user' || m.role === 'assistant'),
+        ...(contextMessage ? [contextMessage] : []),
+        ...priorTurns,
         { role: 'user', content: text },
       ].map((m) => ({ role: m.role, content: m.content })),
       // Carry capability hints via providerOptions so orchestrators
@@ -629,7 +807,72 @@ export default function Chat(): React.JSX.Element {
     };
   }
 
-  function send(text: string): void {
+  /**
+   * Auto-retrieval. Fetches top-K from `ragNode` via `ragSearch`,
+   * trims to the per-turn character budget, and shapes both the
+   * system-message content and the metadata we'll attach to the user
+   * message for UI transparency. Returns `null` when retrieval fails
+   * so the chat sends without context rather than erroring out the
+   * whole turn.
+   */
+  const utils = trpc.useUtils();
+  async function retrieveContext(
+    ragNode: string,
+    query: string,
+    topK: number,
+  ): Promise<{
+    systemMessage: { role: 'system'; content: string };
+    metadata: RetrievedContext;
+  } | null> {
+    let response;
+    try {
+      response = await utils.ragSearch.fetch({
+        node: ragNode,
+        query,
+        topK,
+      });
+    } catch {
+      return null;
+    }
+    const hits = response.results ?? [];
+    if (hits.length === 0) return null;
+
+    // Greedy budget-fill: keep adding docs to the system-message
+    // body until the next doc would blow the char budget, then stop.
+    const parts: string[] = [
+      `Relevant context from knowledge base "${ragNode}":`,
+    ];
+    const attachedDocs: RetrievedDoc[] = [];
+    let used = parts[0]!.length;
+    let truncated = false;
+    for (const hit of hits) {
+      const body = hit.document.content ?? '';
+      const chunk = `--- doc ${hit.document.id} (score=${hit.score.toFixed(3)}) ---\n${body}`;
+      if (used + chunk.length + 2 > MAX_CONTEXT_CHARS) {
+        truncated = true;
+        break;
+      }
+      parts.push(chunk);
+      used += chunk.length + 2;
+      attachedDocs.push({
+        id: hit.document.id,
+        score: hit.score,
+        contentPreview: body.slice(0, CONTENT_PREVIEW_CHARS),
+      });
+    }
+    if (attachedDocs.length === 0) return null;
+    return {
+      systemMessage: { role: 'system', content: parts.join('\n\n') },
+      metadata: {
+        sourceNode: ragNode,
+        docs: attachedDocs,
+        totalChars: used,
+        truncated,
+      },
+    };
+  }
+
+  async function send(text: string): Promise<void> {
     if (!active) return;
     const stamp = Date.now();
     const userMsg: Message = { id: `m-${stamp}-u`, role: 'user', content: text };
@@ -641,9 +884,34 @@ export default function Chat(): React.JSX.Element {
     }
     setBusyA(true);
     setStreamKeyA((k) => k + 1);
+
+    // Auto-retrieve context when the conversation names a RAG node.
+    // Failure is non-fatal — we send without context and let the
+    // chat surface a clear error if the whole request blows up.
+    let systemMessage: { role: 'system'; content: string } | undefined;
+    if (active.ragNode) {
+      const topK = active.ragTopK ?? DEFAULT_RAG_TOP_K;
+      const ctx = await retrieveContext(active.ragNode, text, topK);
+      if (ctx) {
+        systemMessage = ctx.systemMessage;
+        // Attach retrieval metadata to the user message that
+        // triggered the search so the UI can render a transparency
+        // disclosure under it.
+        store.patchMessage(active.id, userMsg.id, {
+          retrievedContext: ctx.metadata,
+        });
+      }
+    }
+
     setStreamInputA({
       node: active.node,
-      request: buildRequest(active.messages, text, active.model, active.capabilities ?? []),
+      request: buildRequest(
+        active.messages,
+        text,
+        active.model,
+        active.capabilities ?? [],
+        systemMessage,
+      ),
     });
 
     // Dispatch side B in parallel when compare mode is active. B's
@@ -701,21 +969,31 @@ export default function Chat(): React.JSX.Element {
               onToggleCapability={(tag) => store.toggleCapability(active.id, tag)}
               headerExtras={
                 !active.compareWith ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      store.setCompareWith(active.id, {
-                        node: active.node,
-                        model: active.model,
-                        capabilities: active.capabilities,
-                      })
-                    }
-                    data-testid="chat-compare"
-                    className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)]"
-                    title="Compare against another node/model — both panes stream the same prompt"
-                  >
-                    ⇄ Compare
-                  </button>
+                  <>
+                    <RagPicker
+                      nodes={nodes}
+                      ragNode={active.ragNode ?? null}
+                      ragTopK={active.ragTopK ?? DEFAULT_RAG_TOP_K}
+                      onChange={(node, topK) =>
+                        store.setRagBinding(active.id, node, topK)
+                      }
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        store.setCompareWith(active.id, {
+                          node: active.node,
+                          model: active.model,
+                          capabilities: active.capabilities,
+                        })
+                      }
+                      data-testid="chat-compare"
+                      className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)]"
+                      title="Compare against another node/model — both panes stream the same prompt"
+                    >
+                      ⇄ Compare
+                    </button>
+                  </>
                 ) : null
               }
             />
