@@ -191,12 +191,160 @@ function parseIndexInput(raw: string): {
  * want to assemble the input at submit time rather than binding it
  * to hook-render order.
  */
+/**
+ * Collection header — shows count / dimensions / embedder for the
+ * currently-targeted collection so the operator can see, BEFORE
+ * running a query, whether the collection is empty, what embedder
+ * produced the vectors, and whether the pgvector binding is missing
+ * its embedder (queries will fail otherwise). Surfaces CollectionInfo
+ * fields that the Collections tab already shows in a table form but
+ * were invisible from the Query tab.
+ */
+function CollectionHeader(props: {
+  nodeName: string;
+  collection: string;
+  embedder: EmbedderBinding | null;
+  provider: RagProviderKind | null;
+}): React.JSX.Element | null {
+  const { nodeName, collection, embedder, provider } = props;
+  const list = trpc.ragListCollections.useQuery(
+    { node: nodeName },
+    { enabled: !!nodeName, retry: false },
+  );
+  const data = list.data as ListCollectionsResponse | undefined;
+  const rows = data?.collections ?? [];
+  // Targeted collection: explicit `collection` if matches a row, else
+  // the first collection the node reports (matches the node-default
+  // adapters fall back to on search).
+  const targeted = collection.trim()
+    ? rows.find((c) => c.name === collection.trim()) ?? null
+    : rows[0] ?? null;
+  if (list.isLoading) {
+    return (
+      <div
+        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-fg-muted)]"
+        data-testid="knowledge-collection-header"
+      >
+        Loading collection info…
+      </div>
+    );
+  }
+  if (list.error) {
+    return null;
+  }
+  if (!targeted) {
+    return (
+      <div
+        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-fg-muted)]"
+        data-testid="knowledge-collection-header"
+      >
+        No collection picked yet — switch to the Collections tab to see what's
+        available on <span className="mono text-[color:var(--color-fg)]">{nodeName}</span>.
+      </div>
+    );
+  }
+  const count = typeof targeted.count === 'number' ? targeted.count : null;
+  const dims = typeof targeted.dimensions === 'number' ? targeted.dimensions : null;
+  const warnings: string[] = [];
+  if (count === 0) {
+    warnings.push(
+      'collection is empty — index documents in the Indexing tab before querying',
+    );
+  }
+  if (!embedder && provider === 'pgvector') {
+    warnings.push(
+      'no embedder bound on this pgvector node — queries will fail. Bind one in the panel above.',
+    );
+  }
+  const metaEntries = targeted.metadata
+    ? Object.entries(targeted.metadata as Record<string, unknown>)
+    : [];
+  return (
+    <div
+      className="space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
+      data-testid="knowledge-collection-header"
+    >
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-[color:var(--color-fg-muted)]">
+        <span>
+          collection{' '}
+          <span
+            className="mono text-[color:var(--color-fg)]"
+            data-testid="knowledge-collection-name"
+          >
+            {targeted.name}
+          </span>
+        </span>
+        <span>
+          count{' '}
+          <span
+            className="mono text-[color:var(--color-fg)]"
+            data-testid="knowledge-collection-count"
+          >
+            {count !== null ? count.toLocaleString() : '—'}
+          </span>
+        </span>
+        <span>
+          dims{' '}
+          <span
+            className="mono text-[color:var(--color-fg)]"
+            data-testid="knowledge-collection-dims"
+          >
+            {dims !== null ? dims : '—'}
+          </span>
+        </span>
+        <span>
+          embedder{' '}
+          {embedder ? (
+            <span
+              className="mono text-[color:var(--color-fg)]"
+              data-testid="knowledge-collection-embedder"
+            >
+              {embedder.node}/{embedder.model}
+            </span>
+          ) : (
+            <span
+              className="mono text-[color:var(--color-fg-muted)]"
+              data-testid="knowledge-collection-embedder"
+            >
+              none
+            </span>
+          )}
+        </span>
+      </div>
+      {metaEntries.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {metaEntries.map(([k, v]) => (
+            <span
+              key={k}
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 mono text-[10px] text-[color:var(--color-fg-muted)]"
+            >
+              {k}: {typeof v === 'string' ? v : JSON.stringify(v)}
+            </span>
+          ))}
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <ul
+          className="space-y-0.5 text-xs text-[color:var(--color-warning,var(--color-accent))]"
+          data-testid="knowledge-collection-warnings"
+        >
+          {warnings.map((w, i) => (
+            <li key={i}>⚠ {w}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function QueryTab(props: {
   nodeName: string;
   collection: string;
   onCollectionChange: (value: string) => void;
+  embedder: EmbedderBinding | null;
+  provider: RagProviderKind | null;
 }): React.JSX.Element {
-  const { nodeName, collection, onCollectionChange } = props;
+  const { nodeName, collection, onCollectionChange, embedder, provider } = props;
   const utils = trpc.useUtils();
   const [query, setQuery] = useState('');
   const [topK, setTopK] = useState(10);
@@ -257,6 +405,12 @@ function QueryTab(props: {
 
   return (
     <div className="space-y-4">
+      <CollectionHeader
+        nodeName={nodeName}
+        collection={collection}
+        embedder={embedder}
+        provider={provider}
+      />
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -1040,6 +1194,8 @@ export default function Knowledge(): React.JSX.Element {
                 nodeName={selected.name}
                 collection={queryCollection}
                 onCollectionChange={setQueryCollection}
+                embedder={selected.embedder}
+                provider={selected.provider}
               />
             )}
             {activeTab === 'collections' && (
