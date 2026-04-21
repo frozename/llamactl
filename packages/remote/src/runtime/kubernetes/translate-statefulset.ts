@@ -117,7 +117,7 @@ function commonLabels(
   spec: ServiceDeployment,
   compositeName: string,
 ): Record<string, string> {
-  return {
+  const labels: Record<string, string> = {
     [K8S_LABEL_KEYS.managedBy]: MANAGED_BY_VALUE,
     [K8S_LABEL_KEYS.instance]: `${compositeName}-${spec.name}`,
     [K8S_LABEL_KEYS.partOf]: compositeName,
@@ -127,8 +127,17 @@ function commonLabels(
     // short + conventional matches the examples in the upstream
     // StatefulSet docs.
     app: spec.name,
-    ...(spec.labels ?? {}),
   };
+  if (spec.labels) {
+    for (const [k, v] of Object.entries(spec.labels)) {
+      // K8s label values are capped at 63 chars; handler-emitted
+      // spec-hash is 64. Truncate so the PVC + StatefulSet apply
+      // doesn't 422 on metadata.labels. Same rationale as in
+      // translate-deployment.buildLabels.
+      labels[k] = v.length > 63 ? v.slice(0, 63) : v;
+    }
+  }
+  return labels;
 }
 
 /** Drift-detection annotation. Value can exceed 63 chars → annotation, not label. */

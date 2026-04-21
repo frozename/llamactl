@@ -280,12 +280,19 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
               fetch: fetchHandler,
               websocket: wsConfig,
               tls: { cert: loaded.certPem, key: loaded.keyPem },
+              // Composite applies (image pulls + pod readiness polling)
+              // routinely run well past Bun.serve's default 10s idle
+              // timeout. 255 is Bun.serve's hard ceiling; past that the
+              // caller polls compositeStatus subscriptions instead of
+              // waiting on the apply mutation.
+              idleTimeout: 255,
             })
           : Bun.serve({
               port,
               hostname: bindHost,
               fetch: fetchHandler,
               tls: { cert: loaded.certPem, key: loaded.keyPem },
+              idleTimeout: 255,
             });
       })()
     : wsConfig
@@ -294,8 +301,14 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
           hostname: bindHost,
           fetch: fetchHandler,
           websocket: wsConfig,
+          idleTimeout: 255,
         })
-      : Bun.serve({ port, hostname: bindHost, fetch: fetchHandler });
+      : Bun.serve({
+          port,
+          hostname: bindHost,
+          fetch: fetchHandler,
+          idleTimeout: 255,
+        });
 
   const scheme = opts.tls ? 'https' : 'http';
   const listenPort = server.port ?? port;

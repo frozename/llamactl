@@ -143,7 +143,13 @@ function buildLabels(
   };
   if (spec.labels) {
     for (const [k, v] of Object.entries(spec.labels)) {
-      base[k] = v;
+      // K8s label values are capped at 63 chars. Handler-emitted
+      // spec-hash labels are SHA-256 hex (64 chars), which violates
+      // the spec. Truncate at emission — the first 63 hex chars
+      // still carry ~252 bits of entropy, more than enough for drift
+      // detection. Docker has no such limit, so this only matters
+      // for the k8s translate path.
+      base[k] = v.length > 63 ? v.slice(0, 63) : v;
     }
   }
   return base;
