@@ -33,7 +33,23 @@ spec:
       node: local
       database: llamactl_kb
       user: llamactl
+      # Password ref: pick ONE of the three patterns below.
+      #
+      #   (1) env var (simplest, what `passwordEnv` names):
       passwordEnv: PG_PASSWORD
+      #
+      #   (2) macOS Keychain (no env-var plumbing; rotate in-place):
+      # secrets:
+      #   POSTGRES_PASSWORD: { ref: 'keychain:llamactl/pgvector-main' }
+      #
+      #   (3) file on disk (absolute or ~-relative):
+      # secrets:
+      #   POSTGRES_PASSWORD: { ref: 'file:~/.llamactl/secrets/pgvector' }
+      #
+      # The `secrets:` map lands as env entries on Docker and as
+      # `v1.Secret` + `secretKeyRef` on Kubernetes. Any keys beyond
+      # POSTGRES_PASSWORD (e.g., PG_SSL_PASSPHRASE) ride the same
+      # channel.
       persistence:
         volume: /var/lib/llamactl/pgvector-main
         mountPath: /var/lib/postgresql/data

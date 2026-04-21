@@ -217,8 +217,10 @@ schema sense. Create the table per **Schema convention** above.
 ### `invalid-request: pgvector search requires a query vector`
 
 Every pgvector `ragSearch` must pass the pre-computed query embedding
-in `filter.vector: number[]`. The dimension must match the
-collection's `vector(<dim>)`. Embed-on-search is a roadmap item.
+in `filter.vector: number[]` **OR** have a `binding.embedder` set so
+the adapter can auto-embed the free-text query. See "Delegated
+embedding" below for the one-time setup that removes this
+requirement.
 
 ### Scores look inverted
 
@@ -228,12 +230,43 @@ returns values outside `0..1`, that's a bug — file it.
 
 ---
 
+## Delegated embedding (shipped)
+
+pgvector's strict caller-supplied-vector requirement is lifted when
+the rag binding names an **embedder**:
+
+```yaml
+rag:
+  provider: pgvector
+  endpoint: postgres://kb@db.local:5432/kb_main
+  collection: documents
+  embedder:
+    node: sirius                   # any cluster node with createEmbeddings
+    model: text-embedding-3-small  # model the embedder node speaks
+```
+
+With `embedder` set:
+- `store({ documents: [{ id, content }] })` — missing vectors are
+  computed in one batch call per store.
+- `search({ query: "…" })` without `filter.vector` — the query is
+  embedded before the similarity scan.
+
+Caller-supplied vectors always win — if a doc carries `vector`, the
+embedder is skipped for that doc. Rotating the secret behind the
+embedder node's `apiKeyRef` does not recreate the pod; changing
+which env var / model the embedder uses does.
+
+## Chat auto-context (shipped)
+
+See ["From the Chat module"](#from-the-chat-module-auto-context)
+above. Each conversation can bind to a RAG node + topK; every send
+retrieves + injects a budget-trimmed system message. Failure is
+soft — the turn still sends without context.
+
+---
+
 ## What's next (roadmap)
 
-- **Delegated embedding** — pgvector auto-embeds through `sirius.embed`
-  so callers don't pre-compute vectors.
-- **Chat auto-context** — Chat module retrieves top-K from configured
-  RAG nodes before the LLM call.
 - **Pipelines "retrieve" stage** — composable retrieval in the
   workflow engine alongside "synthesize".
 - **Adapter pooling** — cache provider instances between calls.

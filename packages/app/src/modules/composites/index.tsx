@@ -108,6 +108,9 @@ kind: Composite
 metadata:
   name: my-stack
 spec:
+  # runtime: docker        # or 'kubernetes' — selects the backend.
+  #                        # Omit to inherit LLAMACTL_RUNTIME_BACKEND
+  #                        # (defaults to 'docker').
   services: []
   workloads: []
   ragNodes: []

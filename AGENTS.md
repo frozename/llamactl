@@ -315,9 +315,13 @@ handlers for new container kinds (nginx, redis, databases) the
 same way gateway-handlers plug into `workload/gateway-handlers/`.
 tRPC: `compositeApply` / `compositeDestroy` / `compositeList` /
 `compositeGet` / `compositeStatus`. MCP: `llamactl.composite.*`.
-Electron module: `Composites` (activity bar, `Boxes` icon). The
-planner prefers `llamactl.composite.apply` over multi-step plans
-when operators describe 3+ interacting components.
+Electron module: `Composites` (activity bar, `Boxes` icon) — YAML
+editor + dry-run preview + Apply/Destroy, plus a Detail tab that
+streams `compositeStatus` events. The editor is a plain textarea;
+runtime selection happens by editing `spec.runtime:` in the
+manifest (first-class picker is a UI follow-up). The planner
+prefers `llamactl.composite.apply` over multi-step plans when
+operators describe 3+ interacting components.
 
 **K8s backend (Phase K8s-1 through K8s-7 shipped)**: namespace-
 per-composite (`llamactl-<name>`), Deployment for stateless

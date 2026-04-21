@@ -221,16 +221,37 @@ the service may still have been destroyed. Rerun `composite destroy`
 
 ---
 
+## Shipped since v1
+
+- **Kubernetes backend** — `spec.runtime: 'kubernetes'` targets a
+  cluster via `@kubernetes/client-node`. See
+  `docs/composites-kubernetes.md`.
+- **Live event streaming on `compositeStatus`** — in-memory event
+  bus keyed by composite name. Subscribers get the full run buffer
+  on connect + live events until the applier emits `done`.
+- **CLI wrappers** — `llamactl composite {apply,destroy,list,get,status}`
+  land operator workflows in the shell without the UI or a curl
+  against the tRPC endpoint.
+- **`--purge-volumes` flag on destroy** — opt-in on the Docker
+  runtime; reaps anonymous volumes tied to the container. Named
+  volumes + bind mounts stay operator-owned. (k8s destroy always
+  cascades via namespace delete.)
+- **Unified secret management** — `env:` / `$VAR` /
+  `keychain:service/account` / `file:/path` all resolve through
+  one path. See AGENTS.md § "Secret references".
+- **Gateway upstream-threading** — composite gateway handlers
+  receive resolved upstream endpoints + providerConfig.
+- **`ServiceSpec.secrets` at spec level** — every service spec
+  (chroma, pgvector, generic container) can declare secret refs
+  that become env entries on Docker or `v1.Secret` + `secretKeyRef`
+  on Kubernetes.
+- **`llamactl init`** — wizard + three quickstart templates at
+  `templates/composites/`.
+- **`llamactl doctor`** — probes agent / docker / k8s / keychain
+  readiness.
+
 ## What's next (roadmap)
 
-- **Live event streaming on `compositeStatus`** — today the
-  subscription replays the persisted status once and closes.
-  Expand to in-memory event bus so the UI shows apply progress in
-  real time.
-- **Kubernetes backend** — swap the runtime backend behind the
-  same `RuntimeBackend` interface. `CompositeSpec` stays unchanged;
-  the executor translates to `Deployment` + `StatefulSet` +
-  `Service` + `PVC`.
 - **nginx handler** — `{ kind: 'nginx', routes: [{ path, upstream }]
   }` drives an nginx container with auto-generated config. Foundation
   for ingress patterns.
@@ -240,17 +261,14 @@ the service may still have been destroyed. Rerun `composite destroy`
   mongo, with env-driven init scripts.
 - **Pipelines → Composite bridge** — export a pipeline as a reusable
   composite.
-- **Upstream workloads + providerConfig** — today the gateway entry's
-  `upstreamWorkloads` + `providerConfig` fields are captured but not
-  threaded to the gateway handler. v2 wires them through so sirius /
-  embersynth configs auto-populate from the composite.
-- **Volume lifecycle** — destroy does NOT purge docker volumes in
-  v1 (safety). Add an explicit `--purge-volumes` flag.
-- **Secret management** — v1 uses env-var refs for passwords.
-  Integrate with macOS Keychain / HashiCorp Vault / k8s Secret once
-  the k8s backend lands.
+- **Upstream workloads + providerConfig wiring** — today the gateway
+  entry's `upstreamWorkloads` + `providerConfig` fields are captured
+  and threaded to the handler, but sirius/embersynth handlers don't
+  yet auto-populate their catalogs from the context. That last mile
+  is a follow-up.
 - **Cross-node service replicas** — v1 runs each service on one
-  node. Add `replicas` + node-affinity rules once the k8s backend
-  is available.
-- **CLI wrappers** — `llamactl composite {apply,destroy,list,get}`
-  so operators don't need to author through tRPC or the Electron UI.
+  node. Add `replicas` + node-affinity rules — now within reach on
+  the k8s backend.
+- **Healer → composite re-apply** — when a component flips to
+  Degraded, the self-healing loop could auto-trigger
+  `composite.apply` with the last-known good manifest.

@@ -12,7 +12,9 @@ Subcommands:
       without touching runtime state.
   destroy <name> [--dry-run] [--purge-volumes]
       Tear down a composite in reverse-topological order. --purge-volumes
-      also removes any backing docker volumes attached to its services.
+      also removes any anonymous docker volumes attached to its services
+      (docker runtime only — k8s runtimes always cascade via namespace
+      delete and honour the PVC lifecycle in that layer).
   list
       List every persisted composite with its phase and component count.
   get <name>
