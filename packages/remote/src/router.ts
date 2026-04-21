@@ -2462,6 +2462,44 @@ export const router = t.router({
       return { ok: true as const, yaml, manifest, warnings };
     }),
 
+  ragPipelineLogs: t.procedure
+    .input(
+      z.object({
+        name: z.string().min(1),
+        tail: z.number().int().min(1).max(10_000).default(200),
+      }),
+    )
+    .query(async ({ input }) => {
+      const { journalPathFor } = await import('./rag/pipeline/store.js');
+      const { existsSync, readFileSync } = await import('node:fs');
+      const path = journalPathFor(input.name);
+      if (!existsSync(path)) {
+        return { ok: true as const, path, entries: [] as Array<Record<string, unknown>> };
+      }
+      // Lines are ~hundreds of bytes each; for N=200 (default) we load
+      // the full file, split, tail. If journals grow to millions of
+      // lines we'll want a seek-to-tail reader; v1 is plenty.
+      const raw = readFileSync(path, 'utf8');
+      const all = raw
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+      const tail = all.slice(Math.max(0, all.length - input.tail));
+      const entries: Array<Record<string, unknown>> = [];
+      for (const line of tail) {
+        try {
+          const parsed = JSON.parse(line) as unknown;
+          if (parsed && typeof parsed === 'object') {
+            entries.push(parsed as Record<string, unknown>);
+          }
+        } catch {
+          // Malformed line — skip; runtime's dedupe tolerance is the
+          // guide.
+        }
+      }
+      return { ok: true as const, path, entries };
+    }),
+
   // ---- Composite (multi-component apply) --------------------------------
   //
   // Phase 5 of composite-infra.md — tRPC surface for the composite

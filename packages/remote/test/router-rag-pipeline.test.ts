@@ -271,6 +271,56 @@ describe('ragPipelineDraft', () => {
   });
 });
 
+describe('ragPipelineLogs', () => {
+  test('absent journal → entries: []', async () => {
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineLogs({ name: 'never-applied', tail: 50 });
+    expect(res.ok).toBe(true);
+    expect(res.entries).toEqual([]);
+    expect(res.path).toContain('never-applied');
+  });
+  test('tails the last N parseable entries', async () => {
+    applyPipeline(makeManifest('tailed'));
+    const journalPath = join(pipelinesRoot, 'tailed', 'journal.jsonl');
+    const lines: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      lines.push(
+        JSON.stringify({
+          kind: 'doc-ingested',
+          ts: new Date().toISOString(),
+          source: 'tailed:0:filesystem',
+          doc_id: `d${i}`,
+          sha: 'x',
+          chunks: 1,
+        }),
+      );
+    }
+    require('node:fs').writeFileSync(journalPath, `${lines.join('\n')}\n`);
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineLogs({ name: 'tailed', tail: 3 });
+    expect(res.entries).toHaveLength(3);
+    // Tail = last 3 entries (d7, d8, d9).
+    expect((res.entries[0] as { doc_id?: string }).doc_id).toBe('d7');
+    expect((res.entries[2] as { doc_id?: string }).doc_id).toBe('d9');
+  });
+  test('skips malformed lines', async () => {
+    applyPipeline(makeManifest('mixed'));
+    const journalPath = join(pipelinesRoot, 'mixed', 'journal.jsonl');
+    require('node:fs').writeFileSync(
+      journalPath,
+      [
+        JSON.stringify({ kind: 'doc-ingested', ts: 't', source: 's', doc_id: 'good', sha: 'x', chunks: 1 }),
+        '{not json',
+        '',
+        JSON.stringify({ kind: 'doc-ingested', ts: 't', source: 's', doc_id: 'also-good', sha: 'x', chunks: 1 }),
+      ].join('\n'),
+    );
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineLogs({ name: 'mixed', tail: 100 });
+    expect(res.entries).toHaveLength(2);
+  });
+});
+
 describe('ragPipelineRemove', () => {
   test('removed=false when absent', async () => {
     const caller = router.createCaller({});
