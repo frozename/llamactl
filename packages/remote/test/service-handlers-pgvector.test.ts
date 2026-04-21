@@ -63,15 +63,14 @@ describe('pgvectorHandler.validate', () => {
     }
   });
 
-  test('rejects passwordEnv pointing at unset env var', () => {
+  test('validate no longer probes env at translate time', () => {
+    // Handlers are pure. The missing-env error is surfaced by the
+    // backend's unified secret resolver at apply time; covered in
+    // runtime-docker-backend.test.ts.
     delete process.env[ENV_KEY];
-    try {
-      pgvectorHandler.validate(spec({ passwordEnv: ENV_KEY }));
-      throw new Error('expected throw');
-    } catch (err) {
-      expect(err).toBeInstanceOf(ServiceError);
-      expect((err as ServiceError).code).toBe('spec-invalid');
-    }
+    expect(() =>
+      pgvectorHandler.validate(spec({ passwordEnv: ENV_KEY })),
+    ).not.toThrow();
   });
 
   test('rejects external runtime without externalEndpoint', () => {
@@ -168,17 +167,21 @@ describe('pgvectorHandler.toDeployment', () => {
     expect(d.env).toEqual({
       POSTGRES_DB: 'postgres',
       POSTGRES_USER: 'postgres',
-      POSTGRES_PASSWORD: 'secret123',
     });
+    // POSTGRES_PASSWORD lives in `secrets` now — the backend resolves
+    // the ref at apply time (Docker → env entry; k8s → Secret +
+    // secretKeyRef).
+    expect(d.secrets?.POSTGRES_PASSWORD).toEqual({ ref: `env:${ENV_KEY}` });
+    expect(d.controllerKind).toBe('statefulset');
     // Exec form — no shell substitution at container runtime.
     expect(d.healthcheck?.test).toEqual(['CMD', 'pg_isready', '-U', 'postgres']);
     expect(d.restartPolicy).toBe('unless-stopped');
   });
 
-  test('omits POSTGRES_PASSWORD when passwordEnv unset', () => {
+  test('omits POSTGRES_PASSWORD secret when passwordEnv unset', () => {
     const d = pgvectorHandler.toDeployment(spec(), { compositeName: 'demo' });
     if (!d) throw new Error('expected deployment');
-    expect(d.env?.POSTGRES_PASSWORD).toBeUndefined();
+    expect(d.secrets?.POSTGRES_PASSWORD).toBeUndefined();
   });
 
   test('stamps llamactl labels including spec.hash', () => {
@@ -190,18 +193,17 @@ describe('pgvectorHandler.toDeployment', () => {
     expect(d.labels?.[LABEL_KEYS.specHash]).toBe(d.specHash);
   });
 
-  test('throws spec-invalid during translate if passwordEnv unset', () => {
+  test('translate emits a secret ref regardless of whether the env is currently set', () => {
+    // Handlers are pure: they don't read process.env at translate
+    // time. The backend's secret resolver handles the env lookup at
+    // apply time, so the missing-env error surfaces from the backend
+    // layer — covered in the runtime-docker-backend tests.
     delete process.env[ENV_KEY];
-    try {
-      pgvectorHandler.toDeployment(
-        spec({ passwordEnv: ENV_KEY }),
-        { compositeName: 'demo' },
-      );
-      throw new Error('expected throw');
-    } catch (err) {
-      expect(err).toBeInstanceOf(ServiceError);
-      expect((err as ServiceError).code).toBe('spec-invalid');
-    }
+    const d = pgvectorHandler.toDeployment(
+      spec({ passwordEnv: ENV_KEY }),
+      { compositeName: 'demo' },
+    );
+    expect(d?.secrets?.POSTGRES_PASSWORD).toEqual({ ref: `env:${ENV_KEY}` });
   });
 
   test('honors custom user in pg_isready test', () => {

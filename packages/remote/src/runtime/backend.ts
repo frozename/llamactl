@@ -49,6 +49,32 @@ export interface Healthcheck {
 
 export type RestartPolicy = 'no' | 'on-failure' | 'unless-stopped' | 'always';
 
+/**
+ * Pod-controller kind the k8s backend should emit. Docker ignores
+ * the field (containers have no such concept); k8s dispatches to
+ * Deployment or StatefulSet accordingly. Default is 'deployment' —
+ * stateless services are the common case; stateful backends
+ * (pgvector and future DBs) opt in via their handler.
+ */
+export type ControllerKind = 'deployment' | 'statefulset';
+
+/**
+ * Secret reference carried on a deployment. Docker resolves these
+ * to plain env vars at translate time (the container sees the value
+ * in its environment). k8s translates each to a `v1.Secret` + a
+ * `secretKeyRef` env entry so passwords never appear in the pod
+ * spec or audit trail.
+ *
+ * Keyed by the container env-var name the value should land in; the
+ * value names the operator-side source (env-var name, file path,
+ * keychain entry) — passed verbatim through the unified secret
+ * resolver at apply time.
+ */
+export interface DeploymentSecret {
+  /** Secret-ref string (env:VAR / keychain:svc/acct / file:/path). */
+  ref: string;
+}
+
 export interface ServiceDeployment {
   /** Deterministic name. Handlers pick it so drift detection works. */
   name: string;
@@ -61,6 +87,18 @@ export interface ServiceDeployment {
   command?: string[];
   healthcheck?: Healthcheck;
   restartPolicy?: RestartPolicy;
+  /**
+   * Which pod controller the k8s backend should emit. Ignored by
+   * Docker (which has no analogous concept). Default `'deployment'`.
+   */
+  controllerKind?: ControllerKind;
+  /**
+   * Secrets keyed by the container env-var name. k8s materializes a
+   * `v1.Secret` + `secretKeyRef`; Docker resolves to plain `env`
+   * entries via the unified resolver at translate time so the
+   * container still sees the value.
+   */
+  secrets?: Record<string, DeploymentSecret>;
   /**
    * Opaque caller-computed hash of the deployment's material fields.
    * Stored as the `llamactl.spec.hash` label; compared on the next

@@ -249,7 +249,7 @@ export class DockerBackend implements RuntimeBackend {
 
   // swagger: operationId=ContainerCreate (POST /containers/create)
   private async createContainer(spec: ServiceDeployment): Promise<string> {
-    const body = translateDeployment(spec);
+    const body = translateDeployment(spec, this.resolveSecrets(spec));
     const res = await this.client.request('/containers/create', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -273,6 +273,37 @@ export class DockerBackend implements RuntimeBackend {
     if (!res.ok && res.status !== 304) {
       throw await failWith('start-failed', res, `start ${id}`);
     }
+  }
+
+  /**
+   * Resolve every `spec.secrets[envName].ref` into a literal value
+   * via the unified secret resolver so the container sees plain env
+   * vars. Docker has no native secret surface at runtime — the
+   * translate-time resolution preserves the contract that operator
+   * secrets never round-trip through llamactl's config files.
+   *
+   * A missing secret throws `spec-invalid` so operators see the
+   * name of the ref that didn't resolve rather than a cryptic
+   * startup crash inside the container.
+   */
+  private resolveSecrets(spec: ServiceDeployment): Record<string, string> {
+    if (!spec.secrets) return {};
+    // Lazy import — the resolver lives in config/secret.ts which
+    // docker/backend.ts doesn't otherwise pull in. Keeps load order
+    // predictable when tests mock either side.
+    const { resolveSecret } = require('../../config/secret.js') as typeof import('../../config/secret.js');
+    const resolved: Record<string, string> = {};
+    for (const [envName, secret] of Object.entries(spec.secrets)) {
+      try {
+        resolved[envName] = resolveSecret(secret.ref);
+      } catch (err) {
+        throw new RuntimeError(
+          'spec-invalid',
+          `failed to resolve secret '${envName}' (ref='${secret.ref}'): ${(err as Error).message}`,
+        );
+      }
+    }
+    return resolved;
   }
 }
 
@@ -308,7 +339,10 @@ interface DockerMount {
   ReadOnly?: boolean;
 }
 
-function translateDeployment(spec: ServiceDeployment): DockerCreateBody {
+function translateDeployment(
+  spec: ServiceDeployment,
+  resolvedSecrets: Record<string, string>,
+): DockerCreateBody {
   const body: DockerCreateBody = {
     Image: `${spec.image.repository}:${spec.image.tag}`,
     Labels: {
@@ -319,7 +353,16 @@ function translateDeployment(spec: ServiceDeployment): DockerCreateBody {
     HostConfig: {},
   };
   if (spec.command) body.Cmd = spec.command;
-  if (spec.env) body.Env = Object.entries(spec.env).map(([k, v]) => `${k}=${v}`);
+  // Merge env + resolved secrets — secret values override plain env
+  // entries for the same key so a pgvector-style handler can leave
+  // POSTGRES_PASSWORD in secrets[] without colliding with an env entry.
+  const envEntries: Record<string, string> = {
+    ...(spec.env ?? {}),
+    ...resolvedSecrets,
+  };
+  if (Object.keys(envEntries).length > 0) {
+    body.Env = Object.entries(envEntries).map(([k, v]) => `${k}=${v}`);
+  }
   if (spec.ports && spec.ports.length > 0) {
     body.ExposedPorts = {};
     body.HostConfig.PortBindings = {};

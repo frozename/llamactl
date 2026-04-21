@@ -13,6 +13,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@kubernetes/client-node": "^1.4.0",
     "@llamactl/agents": "workspace:*",
     "@llamactl/core": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",

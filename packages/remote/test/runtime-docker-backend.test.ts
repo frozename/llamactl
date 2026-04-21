@@ -255,6 +255,80 @@ describe('DockerBackend.ensureService — validation', () => {
   });
 });
 
+describe('DockerBackend.ensureService — secrets', () => {
+  test('resolves env-ref secrets and merges them into the container env', async () => {
+    process.env.DOCKER_BACKEND_TEST_SECRET = 's3cr3t';
+    const recorded: Recorded[] = [];
+    let inspectCalls = 0;
+    const responder: Responder = (req) => {
+      if (req.url.includes('/containers/test-service/json')) {
+        inspectCalls++;
+        if (inspectCalls === 1) return { status: 404, body: '' };
+        return { status: 200, body: inspectBody({ specHash: 'hash-v1', hostPort: 8000 }) };
+      }
+      if (req.url.includes('/images/') && req.url.endsWith('/json')) {
+        return { status: 200, body: jsonBody({ Architecture: 'amd64', Os: 'linux' }) };
+      }
+      if (req.url.includes('/images/create')) return { status: 200, body: '{}' };
+      if (req.url.includes('/containers/create')) return { status: 201, body: jsonBody({ Id: 'c1' }) };
+      if (req.url.includes('/containers/c1/start')) return { status: 204, body: '' };
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    };
+    const backend = new DockerBackend({
+      fetch: makeMockFetch(responder, recorded),
+      hostArch: 'amd64',
+      hostOs: 'linux',
+    });
+
+    await backend.ensureService({
+      ...sampleSpec(),
+      env: { OTHER: 'plain' },
+      secrets: {
+        POSTGRES_PASSWORD: { ref: 'env:DOCKER_BACKEND_TEST_SECRET' },
+      },
+    });
+
+    const createCall = recorded.find(
+      (r) => r.method === 'POST' && r.url.includes('/containers/create'),
+    );
+    expect(createCall).toBeDefined();
+    const body = JSON.parse(createCall!.body ?? '{}') as { Env?: string[] };
+    expect(body.Env).toContain('OTHER=plain');
+    expect(body.Env).toContain('POSTGRES_PASSWORD=s3cr3t');
+    delete process.env.DOCKER_BACKEND_TEST_SECRET;
+  });
+
+  test('missing secret ref surfaces spec-invalid naming the env var', async () => {
+    delete process.env.DOCKER_BACKEND_TEST_MISSING;
+    const backend = new DockerBackend({
+      fetch: makeMockFetch(
+        (req) => {
+          if (req.url.includes('/containers/test-service/json')) {
+            return { status: 404, body: '' };
+          }
+          if (req.url.includes('/images/') && req.url.endsWith('/json')) {
+            return { status: 200, body: jsonBody({ Architecture: 'amd64', Os: 'linux' }) };
+          }
+          if (req.url.includes('/images/create')) return { status: 200, body: '{}' };
+          throw new Error(`unexpected ${req.method} ${req.url}`);
+        },
+        [],
+      ),
+      hostArch: 'amd64',
+      hostOs: 'linux',
+    });
+
+    await expect(
+      backend.ensureService({
+        ...sampleSpec(),
+        secrets: {
+          POSTGRES_PASSWORD: { ref: 'env:DOCKER_BACKEND_TEST_MISSING' },
+        },
+      }),
+    ).rejects.toThrow(/DOCKER_BACKEND_TEST_MISSING/);
+  });
+});
+
 describe('DockerBackend.pullImage — NDJSON parsing', () => {
   test('drains progress lines and completes', async () => {
     const backend = new DockerBackend({

@@ -53,16 +53,15 @@ function resolveMountPath(spec: PgvectorServiceSpec): string {
   return spec.persistence?.mountPath ?? DEFAULT_MOUNT_PATH;
 }
 
-function resolvePassword(spec: PgvectorServiceSpec): string | undefined {
+/**
+ * Format the password env var as a unified secret ref. The
+ * translate-time value goes through the backend's secret resolver at
+ * apply time — Docker materializes an env entry; k8s will emit a
+ * Secret + secretKeyRef.
+ */
+function passwordSecretRef(spec: PgvectorServiceSpec): string | undefined {
   if (!spec.passwordEnv) return undefined;
-  const v = process.env[spec.passwordEnv];
-  if (v === undefined || v === '') {
-    throw new ServiceError(
-      'spec-invalid',
-      `pgvector service '${spec.name}': passwordEnv references env var '${spec.passwordEnv}' but it is unset or empty`,
-    );
-  }
-  return v;
+  return `env:${spec.passwordEnv}`;
 }
 
 function hashMaterial(spec: PgvectorServiceSpec): Record<string, unknown> {
@@ -111,9 +110,10 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
         `pgvector service '${spec.name}': runtime='docker' cannot set externalEndpoint — remove it or switch runtime to 'external'`,
       );
     }
-    // Probe password-env resolution early so validation catches
-    // the obvious "I forgot to export FOO" case before apply.
-    resolvePassword(spec);
+    // Password resolution is deferred to backend apply time — the
+    // unified resolver handles env / keychain / file uniformly and
+    // surfaces the missing-ref error there. We validate only the
+    // spec shape here; keeping handlers pure.
   },
 
   computeSpecHash(spec) {
@@ -127,7 +127,7 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
     if (spec.runtime === 'external') return null;
 
     const image = resolveImage(spec);
-    const password = resolvePassword(spec);
+    const passwordRef = passwordSecretRef(spec);
     const hash = pgvectorHandler.computeSpecHash(spec);
     const name = `llamactl-pgvector-${opts.compositeName}-${spec.name}`;
     const mountPath = resolveMountPath(spec);
@@ -136,9 +136,6 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
       POSTGRES_DB: spec.database,
       POSTGRES_USER: spec.user,
     };
-    if (password !== undefined) {
-      env.POSTGRES_PASSWORD = password;
-    }
 
     const deployment: ServiceDeployment = {
       name,
@@ -163,8 +160,18 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
         retries: 10,
       },
       restartPolicy: 'unless-stopped',
+      // pgvector is stateful — the k8s backend translates to a
+      // StatefulSet + headless Service + volumeClaimTemplates so
+      // each pod gets sticky storage. Docker ignores the field.
+      controllerKind: 'statefulset',
       specHash: hash,
     };
+
+    if (passwordRef) {
+      deployment.secrets = {
+        POSTGRES_PASSWORD: { ref: passwordRef },
+      };
+    }
 
     if (spec.persistence?.volume) {
       deployment.volumes = [
