@@ -1,0 +1,87 @@
+name: cross-repo-smoke
+
+# Cross-repo schema + integration smoke. Checks out llamactl and its
+# three runtime siblings (nova, sirius-gateway, embersynth) side by
+# side, resolves the `file:` deps by symlinking ../nova into each
+# consumer, and runs scripts/smoke-cross-repo.sh. Catches the class
+# of bug where a `@nova/contracts` schema field gets renamed and only
+# one of the three consumers notices — the seam test in each repo
+# fails loudly instead of silent drift making it to operator-
+# visible behavior.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: cross-repo-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout llamactl
+        uses: actions/checkout@v4
+        with:
+          path: llamactl
+
+      - name: Checkout nova
+        uses: actions/checkout@v4
+        with:
+          repository: frozename/nova
+          path: nova
+          # Pin to main; bump deliberately when siblings ship a
+          # breaking schema change so the drift shows up in one PR
+          # instead of silently breaking every downstream repo.
+          ref: main
+
+      - name: Checkout sirius-gateway
+        uses: actions/checkout@v4
+        with:
+          repository: frozename/sirius-gateway
+          path: sirius-gateway
+          ref: main
+
+      - name: Checkout embersynth
+        uses: actions/checkout@v4
+        with:
+          repository: frozename/embersynth
+          path: embersynth
+          ref: main
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # `file:` deps in sirius-gateway and embersynth point at
+      # ../nova/packages/*. GitHub's actions/checkout parks each repo
+      # at ${{ github.workspace }}/<name>, which IS sibling layout —
+      # the file: URLs resolve correctly without symlinks.
+      - name: Install nova
+        working-directory: nova
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Install sirius-gateway
+        working-directory: sirius-gateway
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Install embersynth
+        working-directory: embersynth
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Install llamactl
+        working-directory: llamactl
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Run cross-repo smoke
+        working-directory: llamactl
+        env:
+          NOVA_DIR: ${{ github.workspace }}/nova
+          SIRIUS_DIR: ${{ github.workspace }}/sirius-gateway
+          EMBERSYNTH_DIR: ${{ github.workspace }}/embersynth
+        run: bash scripts/smoke-cross-repo.sh
