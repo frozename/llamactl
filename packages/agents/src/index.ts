@@ -59,6 +59,15 @@ export {
   type PlannerResult,
   type Transition,
 } from './healer/remediation.js';
+export {
+  fetchComposites,
+  shouldRemediateComposite,
+  formatCompositeReason,
+  type CompositeSummary,
+  type CompositeComponentSummary,
+  type CompositePhase,
+  type CompositeComponentState,
+} from './healer/composites.js';
 
 export {
   CostGuardianConfigSchema,

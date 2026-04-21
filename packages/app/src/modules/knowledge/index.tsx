@@ -20,11 +20,22 @@ import { trpc } from '@/lib/trpc';
 
 type RagProviderKind = 'chroma' | 'pgvector';
 
+interface EmbedderBinding {
+  node: string;
+  model: string;
+}
+
 type RagNodeSummary = {
   name: string;
   provider: RagProviderKind | null;
   kind: 'rag';
+  embedder: EmbedderBinding | null;
 };
+
+interface AgentNodeSummary {
+  name: string;
+  endpoint: string;
+}
 
 type TabId = 'query' | 'collections' | 'indexing';
 
@@ -636,6 +647,223 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
   );
 }
 
+/**
+ * Embedder binding panel. Shows the current binding under the
+ * selected RAG node and lets the operator swap or clear it. Chroma
+ * embeds internally and ignores the binding — we still render the
+ * panel for visibility, but explain the no-op inline.
+ *
+ * Optimistic update: flip the local state immediately, call
+ * `nodeUpdateRagBinding`, then revert on error. Persistence is a
+ * `nodeList` invalidation on success so the activity bar / other
+ * consumers observe the change.
+ */
+function EmbedderPanel(props: {
+  node: RagNodeSummary;
+  agentNodes: AgentNodeSummary[];
+}): React.JSX.Element {
+  const { node, agentNodes } = props;
+  const utils = trpc.useUtils();
+  const [editing, setEditing] = useState(false);
+  const [draftNode, setDraftNode] = useState(node.embedder?.node ?? '');
+  const [draftModel, setDraftModel] = useState(node.embedder?.model ?? '');
+  const [optimistic, setOptimistic] = useState<EmbedderBinding | null | undefined>(
+    undefined,
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    // Reset drafts when the selected node changes. The fresh selection
+    // is the source of truth; keep the form hydrated from it.
+    setDraftNode(node.embedder?.node ?? '');
+    setDraftModel(node.embedder?.model ?? '');
+    setOptimistic(undefined);
+    setEditing(false);
+    setError(null);
+  }, [node.name, node.embedder?.node, node.embedder?.model]);
+
+  const mutation = trpc.nodeUpdateRagBinding.useMutation({
+    onSuccess: async () => {
+      setError(null);
+      setEditing(false);
+      await utils.nodeList.invalidate();
+      setOptimistic(undefined);
+    },
+    onError: (err) => {
+      setError(err.message);
+      setOptimistic(undefined);
+    },
+  });
+
+  const shown = optimistic !== undefined ? optimistic : node.embedder;
+
+  function onSave(): void {
+    const n = draftNode.trim();
+    const m = draftModel.trim();
+    if (!n || !m) {
+      setError('Embedder node and model are both required.');
+      return;
+    }
+    setError(null);
+    const next: EmbedderBinding = { node: n, model: m };
+    setOptimistic(next);
+    mutation.mutate({ node: node.name, embedder: next });
+  }
+
+  function onClear(): void {
+    setError(null);
+    setOptimistic(null);
+    mutation.mutate({ node: node.name, embedder: null });
+  }
+
+  return (
+    <div
+      className="mb-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
+      data-testid="knowledge-embedder-panel"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-xs text-[color:var(--color-fg-muted)]">
+          <div className="mb-1 uppercase tracking-wider">Embedder</div>
+          {shown ? (
+            <div
+              className="text-[color:var(--color-fg)]"
+              data-testid="knowledge-embedder-current"
+            >
+              node{' '}
+              <span className="mono text-[color:var(--color-accent)]">
+                {shown.node}
+              </span>
+              <span> · model </span>
+              <span className="mono text-[color:var(--color-accent)]">
+                {shown.model}
+              </span>
+            </div>
+          ) : (
+            <div
+              className="text-[color:var(--color-fg-muted)]"
+              data-testid="knowledge-embedder-current"
+            >
+              none
+            </div>
+          )}
+          {node.provider === 'chroma' && (
+            <div className="mt-1 text-[10px] text-[color:var(--color-fg-muted)]">
+              Chroma embeds internally — this binding is ignored by chroma
+              nodes, but persists for operator visibility.
+            </div>
+          )}
+        </div>
+        <div className="flex gap-1">
+          {!editing ? (
+            <button
+              type="button"
+              onClick={() => {
+                setDraftNode(shown?.node ?? '');
+                setDraftModel(shown?.model ?? '');
+                setEditing(true);
+              }}
+              disabled={mutation.isPending}
+              data-testid="knowledge-embedder-edit"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Edit embedder
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(false);
+                setError(null);
+              }}
+              disabled={mutation.isPending}
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          )}
+          {shown && !editing && (
+            <button
+              type="button"
+              onClick={onClear}
+              disabled={mutation.isPending}
+              data-testid="knowledge-embedder-clear"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Clear embedder
+            </button>
+          )}
+        </div>
+      </div>
+
+      {editing && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSave();
+          }}
+          className="mt-3 grid grid-cols-12 gap-3"
+          data-testid="knowledge-embedder-form"
+        >
+          <label className="col-span-5 text-sm">
+            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+              Node
+            </span>
+            <select
+              value={draftNode}
+              onChange={(e) => setDraftNode(e.target.value)}
+              data-testid="knowledge-embedder-node-select"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-fg)]"
+            >
+              <option value="">(pick a node)</option>
+              {draftNode &&
+                !agentNodes.some((n) => n.name === draftNode) && (
+                  <option value={draftNode}>{draftNode} (current)</option>
+                )}
+              {agentNodes.map((n) => (
+                <option key={n.name} value={n.name}>
+                  {n.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="col-span-5 text-sm">
+            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+              Model
+            </span>
+            <input
+              type="text"
+              value={draftModel}
+              onChange={(e) => setDraftModel(e.target.value)}
+              placeholder="e.g. nomic-embed-text-v1.5"
+              data-testid="knowledge-embedder-model-input"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-fg)]"
+            />
+          </label>
+          <div className="col-span-2 flex items-end">
+            <button
+              type="submit"
+              disabled={mutation.isPending}
+              data-testid="knowledge-embedder-save"
+              className="w-full rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {mutation.isPending ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {error && (
+        <div
+          className="mt-2 text-xs text-[color:var(--color-danger)]"
+          data-testid="knowledge-embedder-error"
+        >
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Knowledge(): React.JSX.Element {
   const nodes = trpc.nodeList.useQuery();
   const ragNodes = useMemo<RagNodeSummary[]>(() => {
@@ -645,12 +873,31 @@ export default function Knowledge(): React.JSX.Element {
         const eff = (n as { effectiveKind?: string }).effectiveKind;
         return eff === 'rag';
       })
-      .map((n) => ({
-        name: n.name,
-        provider:
-          (n.rag?.provider as RagProviderKind | undefined) ?? null,
-        kind: 'rag' as const,
-      }));
+      .map((n) => {
+        const embedder = n.rag?.embedder;
+        return {
+          name: n.name,
+          provider:
+            (n.rag?.provider as RagProviderKind | undefined) ?? null,
+          kind: 'rag' as const,
+          embedder:
+            embedder && typeof embedder === 'object'
+              ? {
+                  node: String((embedder as EmbedderBinding).node),
+                  model: String((embedder as EmbedderBinding).model),
+                }
+              : null,
+        };
+      });
+  }, [nodes.data]);
+  const agentNodes = useMemo<AgentNodeSummary[]>(() => {
+    const rows = nodes.data?.nodes ?? [];
+    return rows
+      .filter((n) => {
+        const eff = (n as { effectiveKind?: string }).effectiveKind;
+        return eff === 'agent';
+      })
+      .map((n) => ({ name: n.name, endpoint: n.endpoint }));
   }, [nodes.data]);
 
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
@@ -752,6 +999,8 @@ export default function Knowledge(): React.JSX.Element {
               )}
             </div>
           </div>
+
+          <EmbedderPanel node={selected} agentNodes={agentNodes} />
 
           <div
             className="mb-4 flex gap-1 border-b border-[var(--color-border)]"

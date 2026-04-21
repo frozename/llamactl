@@ -9,7 +9,13 @@ import {
 } from './journal.js';
 import { askPlanner, buildGoal, proposalId, type Transition } from './remediation.js';
 import { executePlan } from './execute.js';
-import { gatePlan, type Tier } from './severity.js';
+import { gatePlan, type Tier, type PlanLike } from './severity.js';
+import {
+  fetchComposites,
+  formatCompositeReason,
+  shouldRemediateComposite,
+  type CompositeSummary,
+} from './composites.js';
 import type { RunbookToolClient } from '../types.js';
 
 /**
@@ -157,6 +163,20 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
             writeJournal: (entry) => writeJournal(entry, journalPath),
             onProposal: opts.onProposal,
           });
+          // Slice D — composite remediation. Runs on the same tick as
+          // probe remediation and shares the propose/auto gating. Any
+          // composite in Degraded/Failed (or with a Failed component)
+          // gets a hardcoded tier-2 `llamactl.composite.apply` plan
+          // emitted against the journal, with the same executePlan +
+          // severity-gate path as the planner-produced variants.
+          await remediateComposites({
+            toolClient: opts.toolClient,
+            source,
+            mode,
+            severityThreshold,
+            writeJournal: (entry) => writeJournal(entry, journalPath),
+            onProposal: opts.onProposal,
+          });
         } finally {
           tickInFlight = false;
         }
@@ -272,6 +292,128 @@ async function remediate(opts: RemediateOptions): Promise<void> {
     }
 
     const exec = await executePlan(ask.plan, {
+      toolClient: opts.toolClient,
+      dryRun: false,
+    });
+    const executed = {
+      kind: 'executed' as const,
+      ts: new Date().toISOString(),
+      proposalId: id,
+      steps: exec.steps,
+      ...(exec.stoppedAt !== undefined ? { stoppedAt: exec.stoppedAt } : {}),
+    };
+    opts.writeJournal(executed);
+  }
+}
+
+interface RemediateCompositesOptions {
+  toolClient: RunbookToolClient;
+  source: 'nova' | 'direct';
+  mode: 'propose' | 'auto';
+  severityThreshold: Tier;
+  writeJournal: (entry: JournalEntry) => void;
+  onProposal?: (entry: JournalProposalEntry) => void;
+}
+
+/**
+ * Build the hardcoded re-apply plan for a degraded composite. Tier-2
+ * by design (the severity classifier pins `.apply` at 2); we don't
+ * consult the planner here — the remediation is deterministic and the
+ * goal ("re-apply this named composite") doesn't benefit from LLM
+ * reasoning. `requiresConfirmation:false` because the operator opted
+ * into auto-execution by passing `--auto` (a.k.a. `--auto-tier-2`);
+ * without that flag the loop falls through to propose-only journaling.
+ */
+function buildCompositeApplyPlan(summary: CompositeSummary): PlanLike {
+  return {
+    steps: [
+      {
+        tool: 'llamactl.composite.apply',
+        args: {
+          manifestYaml: summary.manifestYaml,
+          dryRun: false,
+        },
+        annotation: `re-apply composite ${summary.name}`,
+      },
+    ],
+    reasoning: formatCompositeReason(summary),
+    requiresConfirmation: false,
+  };
+}
+
+async function remediateComposites(
+  opts: RemediateCompositesOptions,
+): Promise<void> {
+  let composites: CompositeSummary[];
+  try {
+    composites = await fetchComposites(opts.toolClient);
+  } catch (err) {
+    // Journal as a plan-failed entry keyed against a synthetic
+    // "composite-list" transition so the operator sees the loop
+    // tried + failed; then continue. Mirrors how the probe path
+    // journals its own fetch failures as `error` entries.
+    opts.writeJournal({
+      kind: 'plan-failed',
+      ts: new Date().toISOString(),
+      transition: {
+        name: '*',
+        resourceKind: 'composite',
+        from: 'unknown',
+        to: 'unknown',
+      },
+      reason: 'composite-list-failed',
+      message: (err as Error).message ?? String(err),
+    });
+    return;
+  }
+
+  for (const summary of composites) {
+    if (!shouldRemediateComposite(summary)) continue;
+    const snapshot: JournalTransitionSnapshot = {
+      name: summary.name,
+      resourceKind: 'composite',
+      // `from` isn't tracked across ticks for composites yet — the
+      // loop doesn't maintain a prev-phase cache the way it does for
+      // gateway/provider probes. Using the current phase on both
+      // sides keeps the snapshot honest (no synthetic transition) and
+      // still threads into the existing JournalTransitionSnapshot
+      // shape so proposal entries stay uniform.
+      from: summary.phase,
+      to: summary.phase,
+    };
+    const plan = buildCompositeApplyPlan(summary);
+    const id = proposalId(plan);
+    const proposal: JournalProposalEntry = {
+      kind: 'proposal',
+      ts: new Date().toISOString(),
+      transition: snapshot,
+      plan,
+      proposalId: id,
+      source: opts.source,
+    };
+    opts.writeJournal(proposal);
+    opts.onProposal?.(proposal);
+
+    if (opts.mode === 'propose') continue;
+
+    // Severity gate — tier-2 by construction, so the default
+    // threshold (2) allows it and `--severity-threshold=1` refuses
+    // it. The `requiresConfirmation:false` flag on the plan means
+    // the planner-confirmation short-circuit in `gatePlan` doesn't
+    // trip here.
+    const gate = gatePlan(plan, opts.severityThreshold);
+    if (!gate.allowed) {
+      opts.writeJournal({
+        kind: 'refused',
+        ts: new Date().toISOString(),
+        proposalId: id,
+        reason: 'severity-exceeded',
+        refusedSteps: gate.refusedSteps,
+      });
+      continue;
+    }
+
+    const exec = await executePlan(plan, {
       toolClient: opts.toolClient,
       dryRun: false,
     });

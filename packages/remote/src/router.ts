@@ -636,6 +636,64 @@ export const router = t.router({
       return { ok: true as const, name: input.name, baseUrl: binding.baseUrl };
     }),
 
+  /**
+   * Update the embedder binding on a RAG node in place. `embedder:
+   * null` clears the binding (pgvector falls back to caller-supplied
+   * vectors); `embedder: { node, model }` sets a new delegated
+   * embedder. `embedder: undefined` is a no-op — callers that want to
+   * leave the binding alone simply omit the field. The RAG adapter
+   * resolves the embedder lazily on each `ragSearch` / `ragStore`, so
+   * the next call after this mutation picks up the change without
+   * needing an adapter restart.
+   */
+  nodeUpdateRagBinding: t.procedure
+    .input(
+      z.object({
+        node: z.string().min(1),
+        embedder: z
+          .object({
+            node: z.string().min(1),
+            model: z.string().min(1),
+          })
+          .nullable()
+          .optional(),
+      }),
+    )
+    .mutation(({ input }) => {
+      const cfgPath = kubecfg.defaultConfigPath();
+      let cfg = kubecfg.loadConfig(cfgPath);
+      const ctx = kubecfg.currentContext(cfg);
+      const resolved = kubecfg.resolveNode(cfg, input.node);
+      if (!resolved.node.rag) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `node '${input.node}' is not a RAG node`,
+        });
+      }
+      const nextRag = { ...resolved.node.rag };
+      if (input.embedder === null) {
+        delete nextRag.embedder;
+      } else if (input.embedder !== undefined) {
+        nextRag.embedder = input.embedder;
+      } else {
+        return {
+          ok: true as const,
+          node: input.node,
+          embedder: nextRag.embedder ?? null,
+        };
+      }
+      cfg = kubecfg.upsertNode(cfg, ctx.cluster, {
+        ...resolved.node,
+        rag: nextRag,
+      });
+      kubecfg.saveConfig(cfg, cfgPath);
+      return {
+        ok: true as const,
+        node: input.node,
+        embedder: nextRag.embedder ?? null,
+      };
+    }),
+
   // ---- chat (Nova-typed) ---------------------------------------------
 
   /**

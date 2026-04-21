@@ -29,7 +29,7 @@ export interface JournalTransitionEntry {
   kind: 'transition';
   ts: string;
   name: string;
-  resourceKind: 'gateway' | 'provider';
+  resourceKind: 'gateway' | 'provider' | 'composite';
   from: string;
   to: string;
 }
@@ -45,10 +45,21 @@ export interface JournalErrorEntry {
  * of `stateTransitions` so downstream tooling (and `--execute
  * <proposal-id>`) can reconstruct the context that triggered the
  * plan.
+ *
+ * `resourceKind` widens with every new class of signal the loop
+ * grows. Today:
+ *   - `gateway`   → sirius / embersynth / cloud gateways from kubeconfig
+ *   - `provider`  → sirius-providers.yaml OpenAI-compatible backends
+ *   - `composite` → Slice-D — `llamactl.composite.list` entries whose
+ *                   phase is Degraded/Failed or have a Failed component
+ *
+ * For composite entries the `from/to` strings carry the composite's
+ * phase snapshot (e.g. from `'Ready'` to `'Degraded'`) so the journal
+ * trail still reads consistently with gateway/provider transitions.
  */
 export interface JournalTransitionSnapshot {
   name: string;
-  resourceKind: 'gateway' | 'provider';
+  resourceKind: 'gateway' | 'provider' | 'composite';
   from: string;
   to: string;
 }

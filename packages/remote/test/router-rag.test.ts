@@ -329,3 +329,85 @@ describe('router ragX → createRagAdapter options passthrough', () => {
     // must be passed so the factory CAN resolve — verified above.
   });
 });
+
+describe('router nodeUpdateRagBinding', () => {
+  test('sets an embedder binding on a RAG node and persists to kubeconfig', async () => {
+    const caller = router.createCaller({});
+    const res = await caller.nodeUpdateRagBinding({
+      node: 'kb-pg',
+      embedder: { node: 'sirius', model: 'text-embedding-3-small' },
+    });
+    expect(res.ok).toBe(true);
+    expect(res.embedder).toEqual({
+      node: 'sirius',
+      model: 'text-embedding-3-small',
+    });
+    const { loadConfig } = await import('../src/config/kubeconfig.js');
+    const cfg = loadConfig(join(tmp, 'config'));
+    const node = cfg.clusters
+      .find((c) => c.name === 'home')!
+      .nodes.find((n) => n.name === 'kb-pg')!;
+    expect(node.rag?.embedder).toEqual({
+      node: 'sirius',
+      model: 'text-embedding-3-small',
+    });
+    // Sibling fields on the binding survive.
+    expect(node.rag?.provider).toBe('pgvector');
+    expect(node.rag?.collection).toBe('docs');
+  });
+
+  test('clears the embedder binding when passed null', async () => {
+    // Seed an existing embedder so the clear is observable.
+    const { loadConfig, saveConfig, upsertNode: upsert } = await import(
+      '../src/config/kubeconfig.js'
+    );
+    const cfgPath = join(tmp, 'config');
+    const seeded = upsert(loadConfig(cfgPath), 'home', {
+      name: 'kb-pg',
+      endpoint: '',
+      kind: 'rag',
+      rag: {
+        provider: 'pgvector',
+        endpoint: 'postgres://kb@db.local:5432/kb',
+        collection: 'docs',
+        embedder: { node: 'sirius', model: 'text-embedding-3-small' },
+        extraArgs: [],
+      },
+    });
+    saveConfig(seeded, cfgPath);
+
+    const caller = router.createCaller({});
+    const res = await caller.nodeUpdateRagBinding({
+      node: 'kb-pg',
+      embedder: null,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.embedder).toBeNull();
+    const cfg = loadConfig(cfgPath);
+    const node = cfg.clusters
+      .find((c) => c.name === 'home')!
+      .nodes.find((n) => n.name === 'kb-pg')!;
+    expect(node.rag?.embedder).toBeUndefined();
+  });
+
+  test('unknown node rejected', async () => {
+    const caller = router.createCaller({});
+    await expect(
+      caller.nodeUpdateRagBinding({
+        node: 'nope',
+        embedder: { node: 'sirius', model: 'text-embedding-3-small' },
+      }),
+    ).rejects.toThrow(/not found/);
+  });
+
+  test('non-RAG node rejected with BAD_REQUEST', async () => {
+    // `local` is an inproc agent — not a RAG node.
+    const caller = router.createCaller({});
+    await expect(
+      caller.nodeUpdateRagBinding({
+        node: 'local',
+        embedder: { node: 'sirius', model: 'text-embedding-3-small' },
+      }),
+    ).rejects.toThrow(/not a RAG node/);
+  });
+});
