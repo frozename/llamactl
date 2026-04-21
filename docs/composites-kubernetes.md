@@ -229,6 +229,25 @@ rather than at apply. Prefer multi-arch image tags (e.g.,
 Pinning an amd64-only tag on an arm64 kubelet fails at runtime with
 `exec format error`.
 
+### pgvector StatefulSet crashloops with "unused mount/volume"
+
+The default `persistence.mountPath` is `/var/lib/postgresql` to
+match pg18's expected data-directory layout. When you pin
+`image.tag` to a pg16/pg17 variant, override the mount path to
+restore the legacy location:
+
+```yaml
+services:
+  - kind: pgvector
+    image: { repository: pgvector/pgvector, tag: '0.7.4-pg17-trixie' }
+    persistence:
+      volume: pgdata
+      mountPath: /var/lib/postgresql/data
+```
+
+pg18+ requires a single mount at `/var/lib/postgresql` and manages
+`data/` as an image-owned subpath.
+
 ### Readiness timeout after 60 s
 
 `llamactl` polls the controller's `status.readyReplicas` up to 60 s

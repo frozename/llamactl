@@ -197,20 +197,55 @@ is not wired in v1.
 
 Chroma's `chroma-mcp` binary isn't running inside the container by
 default — the `chromadb/chroma` image exposes the *HTTP* API on
-port 8000, not MCP over stdio. The v1 RAG chroma adapter speaks MCP;
-plug a `chroma-mcp` process at the operator side, or use an external
-chroma deployment and point `binding.endpoint` at the HTTP URL.
+port 8000. The chroma RAG adapter branches on the binding's endpoint
+shape:
 
-This gap is a follow-up: a packaged MCP-over-HTTP shim for chroma
-is tracked in the roadmap.
+- `endpoint: http://...` / `https://...` → native REST v2 client
+  (`/api/v2/tenants/default_tenant/databases/default_database/...`).
+  Verified against `chromadb/chroma:1.5.8`.
+- anything else → legacy stdio `chroma-mcp` subprocess (still useful
+  for local dev without a running container).
+
+The HTTP path requires `query_embeddings` for search and
+`embeddings` for upsert — chroma v2 no longer auto-embeds at the
+transport layer. Attach an embedder by setting
+`rag.embedder: { node: <embedder-node>, model: <model-name> }` on
+the binding; the adapter reuses the same delegation helper as
+pgvector so operators can swap vector stores without swapping
+embedders. If the binding has no embedder and the caller doesn't
+pass `filter.vector` (search) / `doc.vector` (store), the adapter
+surfaces `invalid-request` with a clear message.
 
 ### pgvector `CREATE EXTENSION vector` missing after first boot
 
 The `pgvector/pgvector` image ships the extension but does not
-auto-enable it. Operator prereq: `psql -c 'CREATE EXTENSION IF NOT
-EXISTS vector;'` after the first container boot, or mount an init
-script at `/docker-entrypoint-initdb.d/00-pgvector.sql`. A post-start
-hook from the composite applier is a planned follow-up.
+auto-enable it. The llamactl pgvector adapter now runs
+`CREATE EXTENSION IF NOT EXISTS vector` + the per-collection
+`CREATE TABLE IF NOT EXISTS` automatically on the first `rag.store`
+for a given collection, so a fresh pgvector service is usable
+without `psql -c 'CREATE EXTENSION …'`. Operators who prefer to
+drive schema out-of-band can still mount an init script at
+`/docker-entrypoint-initdb.d/*.sql`.
+
+### pgvector crashloop: "unused mount/volume"
+
+The default `persistence.mountPath` changed to `/var/lib/postgresql`
+to match pg18's expected data-directory layout. If you pinned
+`image.tag` to a pg16 or pg17 variant, re-add the pre-18 default
+explicitly:
+
+```yaml
+persistence:
+  volume: /var/lib/llamactl/pgvector-main
+  mountPath: /var/lib/postgresql/data   # pg16/pg17 only
+```
+
+The pg18+ image moves `data/` to an image-managed subpath under
+`/var/lib/postgresql`; mounting directly at the `data` path on pg18
+triggers the "This is usually the result of upgrading the Docker
+image without upgrading the underlying database using pg_upgrade"
+crashloop with the suggestion to mount a single volume at
+`/var/lib/postgresql`.
 
 ### Destroy removed the container but the kubeconfig still shows the rag node
 

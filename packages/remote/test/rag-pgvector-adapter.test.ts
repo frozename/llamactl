@@ -30,6 +30,8 @@ interface MockCall {
   values: readonly unknown[];
   /** Marker for helper invocations like `sql(identifier)` or `sql(rows, ...cols)`. */
   helper?: { first: unknown; rest: unknown[] };
+  /** Marker for `sql.unsafe(raw)` fragment calls — only records the payload; postgres.js treats the return as a fragment that composes inside tagged templates. */
+  unsafe?: { raw: string };
 }
 
 type QueueEntry =
@@ -99,6 +101,17 @@ function createMockSql(): MockSql {
     mock.endCalled = true;
     mock.endOptions = opts;
     return Promise.resolve();
+  };
+
+  // Attach `unsafe()`. Records the raw SQL and returns a sentinel the
+  // tagged-template path will carry along without parametrization —
+  // we don't need to reconstruct the composition here because the
+  // bootstrap SQL we care about is asserted on the `raw` payload.
+  (callable as unknown as {
+    unsafe: (raw: string) => { __unsafe: true; raw: string };
+  }).unsafe = (raw) => {
+    mock.calls.push({ strings: [], values: [], unsafe: { raw } });
+    return { __unsafe: true, raw };
   };
 
   mock.fn = callable as unknown as postgres.Sql;
@@ -189,23 +202,44 @@ describe('PgvectorRagAdapter.search', () => {
     }
   });
 
-  test('maps missing-table Postgres error to tool-missing', async () => {
+  test('missing-table (42P01) returns empty results (operator-friendly)', async () => {
+    // The adapter's store() path bootstraps the table on first write.
+    // A search() that arrives before any store() hits an empty
+    // collection — surface an empty result rather than the raw SQL
+    // error so callers don't have to handle a distinct "not
+    // bootstrapped yet" code.
     const mock = createMockSql();
     queueError(mock, Object.assign(new Error('relation does not exist'), { code: '42P01' }));
     const adapter = new PgvectorRagAdapter({
       sql: mock.fn,
       defaultCollection: 'knowledge',
     });
+    const res = await adapter.search({
+      query: 'whatever',
+      topK: 5,
+      filter: { vector: [0.1, 0.2] },
+    });
+    expect(res.collection).toBe('knowledge');
+    expect(res.results).toEqual([]);
+  });
+
+  test('non-42P01 Postgres errors still surface through wrapDbError', async () => {
+    const mock = createMockSql();
+    queueError(mock, Object.assign(new Error('syntax error'), { code: '42601' }));
+    const adapter = new PgvectorRagAdapter({
+      sql: mock.fn,
+      defaultCollection: 'knowledge',
+    });
     try {
       await adapter.search({
-        query: 'whatever',
+        query: 'x',
         topK: 5,
         filter: { vector: [0.1, 0.2] },
       });
       throw new Error('expected throw');
     } catch (err) {
       expect(err).toBeInstanceOf(RagError);
-      expect((err as RagError).code).toBe('tool-missing');
+      expect((err as RagError).code).toBe('tool-error');
     }
   });
 
@@ -285,15 +319,20 @@ describe('PgvectorRagAdapter.store', () => {
     });
     expect(res.ids).toEqual(['a', 'b']);
     expect(res.collection).toBe('knowledge');
-    // Two helper calls (collection identifier + values helper) and one
-    // tagged-template call for the INSERT.
-    const helperCalls = mock.calls.filter((c) => c.helper);
-    expect(helperCalls).toHaveLength(2);
-    // values helper receives the prepared rows shape.
-    const valuesHelper = helperCalls[1]!.helper!;
-    expect(Array.isArray(valuesHelper.first)).toBe(true);
-    expect(valuesHelper.rest).toEqual(['id', 'content', 'metadata', 'embedding']);
-    const rows = valuesHelper.first as Array<{ id: string; embedding: string }>;
+    // Post-bootstrap: the helper call whose `rest` is the column list
+    // is the VALUES helper for the INSERT. Everything before it is
+    // the CREATE EXTENSION + CREATE TABLE bootstrap.
+    const valuesHelper = mock.calls
+      .map((c) => c.helper)
+      .find((h): h is NonNullable<typeof h> =>
+        !!h &&
+        Array.isArray((h as { rest: unknown[] }).rest) &&
+        (h as { rest: unknown[] }).rest.length > 0,
+      );
+    expect(valuesHelper).toBeDefined();
+    expect(Array.isArray(valuesHelper!.first)).toBe(true);
+    expect(valuesHelper!.rest).toEqual(['id', 'content', 'metadata', 'embedding']);
+    const rows = valuesHelper!.first as Array<{ id: string; embedding: string }>;
     expect(rows[0]!.id).toBe('a');
     // Embedding is formatted as the pgvector literal string.
     expect(rows[0]!.embedding).toBe('[0.1,0.2]');
@@ -361,7 +400,13 @@ describe('PgvectorRagAdapter.store', () => {
     expect(embedCalls).toHaveLength(1);
     expect(embedCalls[0]).toEqual(['bbb', 'ccc']);
     // Rows landed with supplied-then-computed vectors.
-    const valuesHelper = mock.calls.filter((c) => c.helper)[1]!.helper!;
+    const valuesHelper = mock.calls
+      .map((c) => c.helper)
+      .find((h): h is NonNullable<typeof h> =>
+        !!h &&
+        Array.isArray((h as { rest: unknown[] }).rest) &&
+        (h as { rest: unknown[] }).rest.length > 0,
+      )!;
     const rows = valuesHelper.first as Array<{ id: string; embedding: string }>;
     expect(rows[0]!.embedding).toBe('[0.7,0.8]');
     expect(rows[1]!.embedding).toBe('[0.1,0.2]');
@@ -400,6 +445,183 @@ describe('PgvectorRagAdapter.store', () => {
       expect(err).toBeInstanceOf(RagError);
       expect((err as RagError).code).toBe('invalid-response');
     }
+  });
+});
+
+describe('PgvectorRagAdapter.store — auto-schema bootstrap', () => {
+  /**
+   * Scan the ordered call log for the CREATE EXTENSION + CREATE TABLE
+   * tagged-templates the adapter emits before the INSERT. We match on
+   * literal SQL fragments in `strings[0]` because the tagged-template
+   * first string carries the statement's leading text verbatim.
+   */
+  function countBootstrapCalls(mock: ReturnType<typeof createMockSql>): {
+    extension: number;
+    createTable: number;
+  } {
+    let extension = 0;
+    let createTable = 0;
+    for (const c of mock.calls) {
+      const head = c.strings[0] ?? '';
+      if (head.includes('CREATE EXTENSION')) extension++;
+      if (head.includes('CREATE TABLE IF NOT EXISTS')) createTable++;
+    }
+    return { extension, createTable };
+  }
+
+  test('first store() issues CREATE EXTENSION + CREATE TABLE before INSERT', async () => {
+    const mock = createMockSql();
+    const adapter = new PgvectorRagAdapter({
+      sql: mock.fn,
+      defaultCollection: 'kb',
+    });
+    await adapter.store({
+      documents: [{ id: 'a', content: 'hello', vector: [0.1, 0.2, 0.3] }],
+    });
+    const counts = countBootstrapCalls(mock);
+    expect(counts.extension).toBe(1);
+    expect(counts.createTable).toBe(1);
+    // The CREATE TABLE landed the probed dim (3) as an unsafe fragment.
+    const unsafeCalls = mock.calls
+      .map((c) => c.unsafe)
+      .filter((u): u is NonNullable<typeof u> => !!u);
+    expect(unsafeCalls).toHaveLength(1);
+    expect(unsafeCalls[0]!.raw).toBe('3');
+    // Relative ordering: extension → table → insert.
+    const indices = mock.calls
+      .map((c, i) => ({ c, i }))
+      .filter(({ c }) => {
+        const head = c.strings[0] ?? '';
+        return (
+          head.includes('CREATE EXTENSION') ||
+          head.includes('CREATE TABLE') ||
+          head.includes('INSERT INTO')
+        );
+      })
+      .map(({ c, i }) => ({
+        i,
+        kind:
+          (c.strings[0] ?? '').match(/CREATE EXTENSION|CREATE TABLE|INSERT INTO/)?.[0] ?? '',
+      }));
+    expect(indices.map((x) => x.kind)).toEqual([
+      'CREATE EXTENSION',
+      'CREATE TABLE',
+      'INSERT INTO',
+    ]);
+  });
+
+  test('second store() to the same collection skips both bootstrap statements', async () => {
+    const mock = createMockSql();
+    const adapter = new PgvectorRagAdapter({
+      sql: mock.fn,
+      defaultCollection: 'kb',
+    });
+    await adapter.store({
+      documents: [{ id: 'a', content: 'x', vector: [0.1, 0.2, 0.3] }],
+    });
+    await adapter.store({
+      documents: [{ id: 'b', content: 'y', vector: [0.4, 0.5, 0.6] }],
+    });
+    const counts = countBootstrapCalls(mock);
+    expect(counts.extension).toBe(1);
+    expect(counts.createTable).toBe(1);
+  });
+
+  test('different collections each trigger CREATE TABLE once, CREATE EXTENSION still once', async () => {
+    const mock = createMockSql();
+    const adapter = new PgvectorRagAdapter({
+      sql: mock.fn,
+      defaultCollection: 'kb',
+    });
+    await adapter.store({
+      collection: 'kb',
+      documents: [{ id: 'a', content: 'x', vector: [0.1, 0.2, 0.3] }],
+    });
+    await adapter.store({
+      collection: 'notes',
+      documents: [{ id: 'b', content: 'y', vector: [0.1, 0.2, 0.3] }],
+    });
+    const counts = countBootstrapCalls(mock);
+    // CREATE EXTENSION is cached across collections.
+    expect(counts.extension).toBe(1);
+    // CREATE TABLE fires once per collection.
+    expect(counts.createTable).toBe(2);
+  });
+
+  test('dimension mismatch on second store surfaces dimension-mismatch with embedder label', async () => {
+    const mock = createMockSql();
+    const adapter = new PgvectorRagAdapter({
+      sql: mock.fn,
+      defaultCollection: 'kb',
+      embedderLabel: 'nomic-embed',
+    });
+    // First store establishes vector(3).
+    await adapter.store({
+      documents: [{ id: 'a', content: 'x', vector: [0.1, 0.2, 0.3] }],
+    });
+    // Second store arrives with a 4-dim vector.
+    try {
+      await adapter.store({
+        documents: [{ id: 'b', content: 'y', vector: [0.1, 0.2, 0.3, 0.4] }],
+      });
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(RagError);
+      expect((err as RagError).code).toBe('dimension-mismatch');
+      expect((err as RagError).message).toContain("collection 'kb'");
+      expect((err as RagError).message).toContain('vector(3)');
+      expect((err as RagError).message).toContain('4-dim');
+      expect((err as RagError).message).toContain("embedder 'nomic-embed'");
+    }
+  });
+
+  test('dimension mismatch without an embedderLabel still throws the typed error', async () => {
+    const mock = createMockSql();
+    const adapter = new PgvectorRagAdapter({
+      sql: mock.fn,
+      defaultCollection: 'kb',
+    });
+    await adapter.store({
+      documents: [{ id: 'a', content: 'x', vector: [0.1, 0.2] }],
+    });
+    try {
+      await adapter.store({
+        documents: [{ id: 'b', content: 'y', vector: [0.1, 0.2, 0.3] }],
+      });
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(RagError);
+      expect((err as RagError).code).toBe('dimension-mismatch');
+      expect((err as RagError).message).toContain('the configured embedder');
+    }
+  });
+
+  test('bootstrap failure lets a later store() retry', async () => {
+    const mock = createMockSql();
+    // Queue an error on the first call (CREATE EXTENSION), then
+    // rows for everything else.
+    queueError(
+      mock,
+      Object.assign(new Error('connection terminated'), { code: 'ECONNRESET' }),
+    );
+    const adapter = new PgvectorRagAdapter({
+      sql: mock.fn,
+      defaultCollection: 'kb',
+    });
+    await expect(
+      adapter.store({
+        documents: [{ id: 'a', content: 'x', vector: [0.1, 0.2] }],
+      }),
+    ).rejects.toBeInstanceOf(RagError);
+    // Retry — no queued error this time; bootstrap runs fresh.
+    await adapter.store({
+      documents: [{ id: 'a', content: 'x', vector: [0.1, 0.2] }],
+    });
+    const counts = countBootstrapCalls(mock);
+    // CREATE EXTENSION ran twice (initial fail + retry); CREATE TABLE
+    // only runs on the successful path (after extension succeeds).
+    expect(counts.extension).toBe(2);
+    expect(counts.createTable).toBe(1);
   });
 });
 

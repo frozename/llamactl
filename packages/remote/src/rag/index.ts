@@ -47,8 +47,14 @@ export async function createRagAdapter(
   const env = opts.env ?? process.env;
   switch (node.rag.provider) {
     case 'chroma':
-      // Chroma embeds internally; ignore any embedder binding.
-      return createChromaAdapter(node.rag, env);
+      // HTTP-mode chroma honors a delegated embedder the same way
+      // pgvector does; MCP-mode ignores it (chroma-mcp embeds via
+      // the collection's embedding function).
+      return createChromaAdapter(node.rag, {
+        env,
+        ...(opts.config && { config: opts.config }),
+        ...(opts.embedder && { embedder: opts.embedder }),
+      });
     case 'pgvector':
       return createPgvectorAdapter(node.rag, {
         env,

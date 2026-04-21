@@ -65,11 +65,18 @@ export async function createPgvectorAdapter(
     });
   }
 
+  // Surface the embedder node name in any dimension-mismatch errors
+  // so operators know which binding is producing the bad-shape
+  // vectors. Falls back to a generic label when no binding was
+  // threaded through (tests, direct-embedder injection).
+  const embedderLabel = binding.embedder?.node;
+
   return new PgvectorRagAdapter({
     sql: client.sql,
     defaultCollection: binding.collection,
     safeLabel: client.safeLabel ?? redactPostgresUrl(binding.endpoint),
     ...(embedder && { embedder }),
+    ...(embedderLabel && { embedderLabel }),
   });
 }
 

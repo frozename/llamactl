@@ -36,7 +36,12 @@ import type {
 
 const DEFAULT_IMAGE_REPOSITORY = 'pgvector/pgvector';
 const DEFAULT_IMAGE_TAG = '0.8.2-pg18-trixie';
-const DEFAULT_MOUNT_PATH = '/var/lib/postgresql/data';
+// pg18+ expects the volume rooted at /var/lib/postgresql with `data/`
+// as an image-managed subpath. Mounting directly at
+// /var/lib/postgresql/data triggers a crashloop on pg18. Callers
+// pinning pg16/pg17 must pass an explicit
+// `persistence.mountPath: /var/lib/postgresql/data` override.
+const DEFAULT_MOUNT_PATH = '/var/lib/postgresql';
 const CONTAINER_PORT = 5432;
 
 function resolveImage(spec: PgvectorServiceSpec): {

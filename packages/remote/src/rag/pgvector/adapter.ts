@@ -55,6 +55,13 @@ interface PgvectorAdapterOptions {
    * caller-supplied vectors only, missing vector → invalid-request.
    */
   embedder?: Embedder;
+  /**
+   * Human-readable label for the embedder — used only in error
+   * messages (e.g. dimension-mismatch) to point operators at the
+   * binding responsible. The factory populates this from
+   * `binding.embedder.node` when a binding was threaded through.
+   */
+  embedderLabel?: string;
 }
 
 /**
@@ -121,12 +128,29 @@ export class PgvectorRagAdapter implements RetrievalProvider {
   private readonly defaultCollection: string;
   private readonly safeLabel: string | undefined;
   private readonly embedder: Embedder | undefined;
+  private readonly embedderLabel: string | undefined;
+  /**
+   * Memoized `CREATE EXTENSION IF NOT EXISTS vector` — we only want
+   * to issue it once per adapter lifetime even when N concurrent
+   * stores race to be the first writer. Storing the promise (not a
+   * bool) lets concurrent callers await the same in-flight statement.
+   */
+  private extensionEnsured: Promise<void> | null = null;
+  /**
+   * Collection → established embedding dimension. Populated the first
+   * time a store() succeeds (or a CREATE TABLE IF NOT EXISTS runs)
+   * for each table. Subsequent stores check incoming vector length
+   * against this map and surface `dimension-mismatch` if the caller
+   * swapped embedders.
+   */
+  private readonly schemaReady = new Map<string, number>();
 
   constructor(opts: PgvectorAdapterOptions) {
     this.sql = opts.sql;
     this.defaultCollection = opts.defaultCollection ?? DEFAULT_TABLE;
     this.safeLabel = opts.safeLabel;
     this.embedder = opts.embedder;
+    this.embedderLabel = opts.embedderLabel;
   }
 
   async search(req: SearchRequest): Promise<SearchResponse> {
@@ -164,6 +188,17 @@ export class PgvectorRagAdapter implements RetrievalProvider {
         LIMIT ${topK}
       `;
     } catch (err) {
+      // Operator-friendly: a search against a collection nothing has
+      // stored into yet returns an empty result instead of the raw
+      // Postgres 42P01. The bootstrap path (CREATE TABLE on first
+      // write) means there's a legitimate window where the caller
+      // probes before any store() has run; don't make them handle
+      // a distinct error code for that. Any other SQL error (bad
+      // vector dim, connection loss, missing `vector` extension on
+      // the column cast) still surfaces through wrapDbError.
+      if (isUndefinedTable(err)) {
+        return { collection, results: [] };
+      }
       throw wrapDbError(err, this.safeLabel);
     }
 
@@ -184,11 +219,33 @@ export class PgvectorRagAdapter implements RetrievalProvider {
   async store(req: StoreRequest): Promise<StoreResponse> {
     const collection = req.collection ?? this.defaultCollection;
 
+    // Empty docs: short-circuit to a no-op response. Skipping the
+    // bootstrap for a zero-doc call means we don't probe a dimension
+    // we don't have, and callers that conditionally batch can pass
+    // through an empty array without tripping a DB round-trip.
+    if (req.documents.length === 0) {
+      return { ids: [], collection };
+    }
+
     // Delegated embedding: for docs arriving without a vector, ask
     // the configured embedder to compute one. We batch all missing
     // ones into a single embed call so the provider only eats one
     // round-trip per store() regardless of how many docs are missing.
     const docsWithVectors = await this.ensureDocumentVectors(req.documents);
+
+    // Probe the embedding dimension from the first resolved vector.
+    // All docs in a single store() are assumed to share a dim (they
+    // come from one embedder batch or one caller's vectorization);
+    // the ensureSchemaForStore cache below guarantees cross-call
+    // consistency per collection.
+    const firstVector = docsWithVectors[0]?.vector;
+    if (!firstVector || firstVector.length === 0) {
+      throw new RagError(
+        'invalid-request',
+        `pgvector store: resolved vector has zero length for collection '${collection}'`,
+      );
+    }
+    await this.ensureSchemaForStore(collection, firstVector.length);
 
     // JSON-encode metadata so postgres.js routes it into the `jsonb`
     // column as a string literal the server casts. Sidesteps the
@@ -270,6 +327,97 @@ export class PgvectorRagAdapter implements RetrievalProvider {
   }
 
   /**
+   * Idempotent schema bootstrap for a given collection. Runs
+   * `CREATE EXTENSION IF NOT EXISTS vector;` (once per adapter
+   * lifetime) plus `CREATE TABLE IF NOT EXISTS <collection> (...)` on
+   * the caller's first write to that collection. Subsequent calls are
+   * a single Map lookup + dim-equality check.
+   *
+   * Dimension mismatch semantics: if a caller stored 768-dim vectors
+   * earlier and now arrives with 1536-dim vectors, we surface
+   * `dimension-mismatch` before issuing the INSERT so the INSERT's
+   * pgvector cast doesn't explode with a cryptic
+   * `expected N dimensions, not M` from the server. We do NOT
+   * auto-migrate — reshaping an existing column is a destructive op
+   * that belongs in an explicit operator workflow.
+   */
+  private async ensureSchemaForStore(
+    collection: string,
+    dim: number,
+  ): Promise<void> {
+    const known = this.schemaReady.get(collection);
+    if (known !== undefined) {
+      if (known !== dim) {
+        const label = this.embedderLabel
+          ? `embedder '${this.embedderLabel}'`
+          : 'the configured embedder';
+        throw new RagError(
+          'dimension-mismatch',
+          `pgvector store: collection '${collection}' was created with vector(${known}) but received a ${dim}-dim vector from ${label}. ` +
+            `Rebind the rag node to an embedder whose dimension matches, or drop and recreate the collection.`,
+        );
+      }
+      return;
+    }
+
+    // First write against this collection: ensure the extension and
+    // the table exist. Both are idempotent; concurrent adapters racing
+    // the same CREATE TABLE IF NOT EXISTS is safe.
+    if (!this.extensionEnsured) {
+      this.extensionEnsured = this.runCreateExtension();
+    }
+    try {
+      await this.extensionEnsured;
+    } catch (err) {
+      // Don't let a connection-time extension failure poison the
+      // cache — null it so a later call can retry once the DB is
+      // reachable.
+      this.extensionEnsured = null;
+      throw wrapDbError(err, this.safeLabel);
+    }
+
+    // Dim is probed from a Number[] length — must be a positive
+    // integer. Defensive: reject anything else before baking it into
+    // the SQL (we're about to cross the tagged-template boundary
+    // where the value lands inside `vector(N)` as a raw fragment).
+    if (!Number.isInteger(dim) || dim <= 0) {
+      throw new RagError(
+        'invalid-request',
+        `pgvector store: refusing to create collection '${collection}' with non-positive-integer dim ${dim}`,
+      );
+    }
+
+    try {
+      // Both pieces flow through postgres.js fragment interpolation
+      // so neither is parametrized:
+      //   - the collection name uses `sql(ident)` for quoted-ident
+      //     escaping;
+      //   - the vector dim uses `sql.unsafe(String(dim))` to land as
+      //     a literal integer inside `vector(N)` — the type
+      //     constructor needs a compile-time literal, not a `$1`
+      //     bind parameter, so parametrization would be a syntax
+      //     error here. The input is a validated positive integer,
+      //     so the unsafe fragment is truly safe.
+      await this.sql`
+        CREATE TABLE IF NOT EXISTS ${this.sql(collection)} (
+          id text PRIMARY KEY,
+          content text,
+          metadata jsonb,
+          embedding vector(${this.sql.unsafe(String(dim))})
+        )
+      `;
+    } catch (err) {
+      throw wrapDbError(err, this.safeLabel);
+    }
+
+    this.schemaReady.set(collection, dim);
+  }
+
+  private async runCreateExtension(): Promise<void> {
+    await this.sql`CREATE EXTENSION IF NOT EXISTS vector`;
+  }
+
+  /**
    * Fill missing `vector` fields on incoming documents by batching a
    * single embedder call. Caller-supplied vectors are passed through
    * unchanged. Without an embedder, missing vectors surface as
@@ -336,4 +484,18 @@ export function extractQueryVector(req: SearchRequest): number[] | null {
   if (!Array.isArray(v) || v.length === 0) return null;
   if (!v.every((n) => typeof n === 'number' && Number.isFinite(n))) return null;
   return v as number[];
+}
+
+/**
+ * Narrow check for the Postgres "undefined_table" code used by the
+ * search() path to turn a missing-table error into an empty-results
+ * response. Kept local (rather than extending wrapDbError) because
+ * the search path specifically wants to distinguish this one code
+ * from the broader `tool-missing` bucket wrapDbError maps it into.
+ */
+function isUndefinedTable(err: unknown): boolean {
+  if (err && typeof err === 'object' && 'code' in err) {
+    return (err as { code?: string }).code === '42P01';
+  }
+  return false;
 }

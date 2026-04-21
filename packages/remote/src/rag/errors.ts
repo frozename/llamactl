@@ -14,13 +14,17 @@
  *     schema.
  *   - `invalid-request`   — caller-supplied input is unusable for this
  *     backend (e.g. pgvector search without a vector).
+ *   - `dimension-mismatch` — incoming vectors don't match the
+ *     collection's established embedding dimension (pgvector cast
+ *     would fail; auto-migration is intentionally out of scope).
  */
 export type RagErrorCode =
   | 'connect-failed'
   | 'tool-missing'
   | 'tool-error'
   | 'invalid-response'
-  | 'invalid-request';
+  | 'invalid-request'
+  | 'dimension-mismatch';
 
 export class RagError extends Error {
   readonly code: RagErrorCode;

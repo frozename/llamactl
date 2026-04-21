@@ -7,9 +7,10 @@
 #
 # Prereqs:
 #   - Postgres with the `vector` extension. pgvector/pgvector:
-#     0.8.2-pg18-trixie ships the extension but does NOT auto-run
-#     `CREATE EXTENSION vector;` — run it against the target
-#     database after first boot (see docs/rag-nodes.md).
+#     0.8.2-pg18-trixie ships the extension; the llamactl pgvector
+#     adapter runs `CREATE EXTENSION IF NOT EXISTS vector` plus the
+#     per-collection `CREATE TABLE IF NOT EXISTS` automatically on
+#     first write.
 #   - An embedder node in your kubeconfig: replace
 #     `embedder.node: sirius` with a node that implements
 #     createEmbeddings. `llamactl node ls` shows current nodes.
@@ -52,7 +53,8 @@ spec:
       # channel.
       persistence:
         volume: /var/lib/llamactl/pgvector-main
-        mountPath: /var/lib/postgresql/data
+        # mountPath defaults to /var/lib/postgresql (pg18+). Override to
+        # /var/lib/postgresql/data when pinning pg16/pg17.
       port: 15432
 
   ragNodes:

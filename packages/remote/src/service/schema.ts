@@ -66,9 +66,15 @@ export const ChromaServiceSpecSchema = z.object({
 
 /**
  * pgvector Postgres. The image ships the `vector` extension but does
- * not auto-run `CREATE EXTENSION vector;` — the operator (or a
- * later phase's post-start hook) must run it against each fresh
- * database. Documented as a deferred item on the pgvector handler.
+ * not auto-run `CREATE EXTENSION vector;` — the adapter's auto-
+ * bootstrap now runs it on first write, so operators don't have to
+ * `psql -c 'CREATE EXTENSION vector'` after boot. Documented on the
+ * pgvector adapter.
+ *
+ * Default `mountPath` targets the pg18+ layout (`/var/lib/postgresql`
+ * with `data/` as an image-managed subpath). pg16/pg17-pinned tags
+ * expect the volume rooted at `/var/lib/postgresql/data`; override
+ * `persistence.mountPath` explicitly when pinning an older major.
  */
 export const PgvectorServiceSpecSchema = z.object({
   kind: z.literal('pgvector'),
@@ -87,7 +93,7 @@ export const PgvectorServiceSpecSchema = z.object({
   persistence: z
     .object({
       volume: z.string().optional(),
-      mountPath: z.string().default('/var/lib/postgresql/data'),
+      mountPath: z.string().default('/var/lib/postgresql'),
     })
     .optional(),
   port: z.number().int().positive().default(5432),

@@ -25,9 +25,17 @@ replace them.
 
 ## Supported providers (v1)
 
-- **`chroma`** — proxied through [chroma-mcp](https://github.com/chroma-core/chroma-mcp).
-  Chroma embeds internally; callers store raw text and search with a
-  natural-language query.
+- **`chroma`** — two transport modes, picked automatically from the
+  binding's `endpoint` shape:
+  - `http://...` / `https://...` → native REST v2 client against the
+    `chromadb/chroma` container's `/api/v2` surface (verified against
+    `chromadb/chroma:1.5.8`). Chroma 1.5's v2 API requires embeddings
+    for upsert and `query_embeddings` for search; callers either pass
+    pre-computed vectors or configure `rag.embedder` so the adapter
+    fills them in via the same delegation path pgvector uses.
+  - anything else → proxied through
+    [chroma-mcp](https://github.com/chroma-core/chroma-mcp) over
+    stdio. Useful for local dev without a running container.
 - **`pgvector`** — native SQL adapter against Postgres + the
   [pgvector](https://github.com/pgvector/pgvector) extension. Callers
   supply pre-computed embedding vectors on every store + search. No
@@ -46,6 +54,53 @@ need one.
 
 ## Register a Chroma node
 
+### HTTP mode (containerized chroma)
+
+**Prereq**: a running `chromadb/chroma` container reachable from the
+llamactl agent — the composite applier stands one up automatically
+for `kind: chroma` services. A standalone `docker run` works too:
+
+```sh
+docker run -d --rm -p 8000:8000 chromadb/chroma:1.5.8
+```
+
+Register the node with an `http://` endpoint. The adapter pings
+`/api/v2/heartbeat` at adapter-creation time so a wrong URL surfaces
+at apply-time rather than deep in the first query.
+
+```sh
+llamactl node add kb-chroma \
+  --rag=chroma \
+  --endpoint='http://chroma.local:8000' \
+  --collection=default
+```
+
+Chroma v2 requires embeddings on the wire. Either pre-compute
+vectors on every `store` (pass `doc.vector: number[]`) and `search`
+(pass `filter.vector: number[]`), or attach a delegated embedder:
+
+```yaml
+nodes:
+  - name: kb-chroma
+    kind: rag
+    rag:
+      provider: chroma
+      endpoint: http://chroma.local:8000
+      collection: docs
+      embedder:
+        node: nomic-embed-local
+        model: nomic-embed-text-v1.5
+```
+
+The embedder binding mirrors pgvector's — the adapter batches all
+missing vectors into a single embed call per request, so swapping
+vector stores doesn't change the embedder round-trip count.
+
+Tenant and database default to chroma's `default_tenant` /
+`default_database`. A custom tenant/database pair is a roadmap item.
+
+### Stdio MCP mode (local dev)
+
 **Prereq**: install chroma-mcp on a box the llamactl agent can reach:
 
 ```sh
@@ -60,7 +115,7 @@ spawns over stdio; `collection` is the default collection name used
 when search/store requests omit it.
 
 ```sh
-llamactl node add kb-chroma \
+llamactl node add kb-chroma-dev \
   --rag=chroma \
   --endpoint='chroma-mcp run --persist-directory /var/lib/chroma-data' \
   --collection=default
@@ -68,6 +123,8 @@ llamactl node add kb-chroma \
 
 The adapter opens a fresh chroma-mcp subprocess per tRPC call and
 tears it down in `finally`. Pooling is a follow-up (see roadmap).
+chroma-mcp embeds internally via the collection's embedding function,
+so the `embedder` binding is ignored in this mode.
 
 ---
 
