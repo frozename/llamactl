@@ -53,6 +53,10 @@ function hashMaterial(spec: ChromaServiceSpec): Record<string, unknown> {
     port: spec.port,
     persistence,
     externalEndpoint: spec.externalEndpoint,
+    // Hash the secret refs, not their resolved values — rotating a
+    // keychain secret behind the ref shouldn't recreate the pod,
+    // but changing which ref is bound is a material change.
+    secrets: spec.secrets,
   };
 }
 
@@ -130,6 +134,10 @@ export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
       deployment.volumes = [
         { hostPath: spec.persistence.volume, containerPath: mountPath },
       ];
+    }
+
+    if (spec.secrets && Object.keys(spec.secrets).length > 0) {
+      deployment.secrets = spec.secrets;
     }
 
     return deployment;

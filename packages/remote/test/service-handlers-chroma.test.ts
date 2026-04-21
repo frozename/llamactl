@@ -188,6 +188,33 @@ describe('chromaHandler.toDeployment', () => {
     expect(d.image.repository).toBe('ghcr.io/me/chroma');
     expect(d.image.tag).toBe('2.0.0');
   });
+
+  test('spec.secrets propagates to ServiceDeployment.secrets', () => {
+    const d = chromaHandler.toDeployment(
+      spec({
+        secrets: {
+          CHROMA_AUTH_TOKEN: { ref: 'keychain:llamactl/chroma-main' },
+        },
+      }),
+      { compositeName: 'kb' },
+    );
+    if (!d) throw new Error('expected deployment');
+    expect(d.secrets).toEqual({
+      CHROMA_AUTH_TOKEN: { ref: 'keychain:llamactl/chroma-main' },
+    });
+  });
+
+  test('specHash changes when secret refs change', () => {
+    const h1 = chromaHandler.computeSpecHash(spec());
+    const h2 = chromaHandler.computeSpecHash(
+      spec({ secrets: { X: { ref: 'env:FOO' } } }),
+    );
+    const h3 = chromaHandler.computeSpecHash(
+      spec({ secrets: { X: { ref: 'env:BAR' } } }),
+    );
+    expect(h1).not.toBe(h2);
+    expect(h2).not.toBe(h3);
+  });
 });
 
 describe('chromaHandler.resolvedEndpoint', () => {

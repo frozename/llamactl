@@ -224,6 +224,35 @@ describe('genericContainerHandler.toDeployment', () => {
     if (!d) throw new Error('expected deployment');
     expect(d.env).toEqual({ FOO: 'bar', BAR: 'baz' });
   });
+
+  test('spec.secrets propagate to ServiceDeployment.secrets', () => {
+    const d = genericContainerHandler.toDeployment(
+      spec({
+        secrets: {
+          API_KEY: { ref: 'env:MY_API_KEY' },
+          DB_PASSWORD: { ref: 'keychain:llamactl/db-main' },
+        },
+      }),
+      { compositeName: 'demo' },
+    );
+    if (!d) throw new Error('expected deployment');
+    expect(d.secrets).toEqual({
+      API_KEY: { ref: 'env:MY_API_KEY' },
+      DB_PASSWORD: { ref: 'keychain:llamactl/db-main' },
+    });
+  });
+
+  test('specHash reflects secret-ref changes', () => {
+    const h1 = genericContainerHandler.computeSpecHash(spec());
+    const h2 = genericContainerHandler.computeSpecHash(
+      spec({ secrets: { A: { ref: 'env:X' } } }),
+    );
+    const h3 = genericContainerHandler.computeSpecHash(
+      spec({ secrets: { A: { ref: 'env:Y' } } }),
+    );
+    expect(h1).not.toBe(h2);
+    expect(h2).not.toBe(h3);
+  });
 });
 
 describe('genericContainerHandler.resolvedEndpoint', () => {

@@ -238,6 +238,40 @@ describe('pgvectorHandler.toDeployment', () => {
       },
     ]);
   });
+
+  test('spec.secrets merge alongside POSTGRES_PASSWORD', () => {
+    const d = pgvectorHandler.toDeployment(
+      spec({
+        passwordEnv: ENV_KEY,
+        secrets: {
+          PG_SSL_CERT_PASSPHRASE: { ref: 'keychain:llamactl/pg-ssl' },
+        },
+      }),
+      { compositeName: 'kb' },
+    );
+    if (!d) throw new Error('expected deployment');
+    expect(d.secrets?.POSTGRES_PASSWORD).toEqual({ ref: `env:${ENV_KEY}` });
+    expect(d.secrets?.PG_SSL_CERT_PASSPHRASE).toEqual({
+      ref: 'keychain:llamactl/pg-ssl',
+    });
+  });
+
+  test('spec.secrets.POSTGRES_PASSWORD overrides passwordEnv', () => {
+    const d = pgvectorHandler.toDeployment(
+      spec({
+        passwordEnv: ENV_KEY,
+        secrets: {
+          POSTGRES_PASSWORD: { ref: 'keychain:llamactl/pg-main' },
+        },
+      }),
+      { compositeName: 'kb' },
+    );
+    if (!d) throw new Error('expected deployment');
+    // Operator's explicit secrets entry wins.
+    expect(d.secrets?.POSTGRES_PASSWORD).toEqual({
+      ref: 'keychain:llamactl/pg-main',
+    });
+  });
 });
 
 describe('pgvectorHandler.resolvedEndpoint', () => {

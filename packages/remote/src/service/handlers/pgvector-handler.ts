@@ -82,6 +82,7 @@ function hashMaterial(spec: PgvectorServiceSpec): Record<string, unknown> {
     passwordEnv: spec.passwordEnv,
     persistence,
     externalEndpoint: spec.externalEndpoint,
+    secrets: spec.secrets,
   };
 }
 
@@ -167,10 +168,23 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
       specHash: hash,
     };
 
+    // Merge domain-specific password ref with operator-supplied
+    // secrets so callers can add extras (SSL cert passwords, replica
+    // tokens) alongside POSTGRES_PASSWORD. Explicit spec.secrets keys
+    // override the domain default so an operator can route
+    // POSTGRES_PASSWORD through a different ref without losing the
+    // other entries.
+    const secrets: Record<string, { ref: string }> = {};
     if (passwordRef) {
-      deployment.secrets = {
-        POSTGRES_PASSWORD: { ref: passwordRef },
-      };
+      secrets.POSTGRES_PASSWORD = { ref: passwordRef };
+    }
+    if (spec.secrets) {
+      for (const [k, v] of Object.entries(spec.secrets)) {
+        secrets[k] = v;
+      }
+    }
+    if (Object.keys(secrets).length > 0) {
+      deployment.secrets = secrets;
     }
 
     if (spec.persistence?.volume) {

@@ -176,7 +176,9 @@ function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
  * RAG node — every ragX procedure uses this up-front so callers get
  * a predictable error shape instead of an adapter-layer exception.
  */
-function resolveRagNode(nodeName: string): { node: ClusterNode } {
+function resolveRagNode(
+  nodeName: string,
+): { node: ClusterNode; cfg: Config } {
   const cfg = kubecfg.loadConfig();
   const resolved = kubecfg.resolveNode(cfg, nodeName);
   if (!resolved.node.rag) {
@@ -185,7 +187,7 @@ function resolveRagNode(nodeName: string): { node: ClusterNode } {
       message: `node '${nodeName}' is not a RAG node`,
     });
   }
-  return { node: resolved.node };
+  return { node: resolved.node, cfg };
 }
 
 /**
@@ -2182,9 +2184,9 @@ export const router = t.router({
       }),
     )
     .query(async ({ input }) => {
-      const { node } = resolveRagNode(input.node);
+      const { node, cfg } = resolveRagNode(input.node);
       const { createRagAdapter } = await import('./rag/index.js');
-      const adapter = await createRagAdapter(node);
+      const adapter = await createRagAdapter(node, { config: cfg });
       try {
         return await adapter.search({
           query: input.query,
@@ -2215,9 +2217,9 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      const { node } = resolveRagNode(input.node);
+      const { node, cfg } = resolveRagNode(input.node);
       const { createRagAdapter } = await import('./rag/index.js');
-      const adapter = await createRagAdapter(node);
+      const adapter = await createRagAdapter(node, { config: cfg });
       try {
         return await adapter.store({
           documents: input.documents,
@@ -2237,9 +2239,9 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      const { node } = resolveRagNode(input.node);
+      const { node, cfg } = resolveRagNode(input.node);
       const { createRagAdapter } = await import('./rag/index.js');
-      const adapter = await createRagAdapter(node);
+      const adapter = await createRagAdapter(node, { config: cfg });
       try {
         return await adapter.delete({
           ids: input.ids,
@@ -2253,9 +2255,9 @@ export const router = t.router({
   ragListCollections: t.procedure
     .input(z.object({ node: z.string().min(1) }))
     .query(async ({ input }) => {
-      const { node } = resolveRagNode(input.node);
+      const { node, cfg } = resolveRagNode(input.node);
       const { createRagAdapter } = await import('./rag/index.js');
-      const adapter = await createRagAdapter(node);
+      const adapter = await createRagAdapter(node, { config: cfg });
       try {
         return await adapter.listCollections();
       } finally {

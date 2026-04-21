@@ -19,6 +19,25 @@
 import { z } from 'zod';
 
 /**
+ * Spec-level secret declaration. Keys are container env-var names;
+ * values carry a secret-ref string that flows through the unified
+ * resolver at apply time. Supported ref syntax:
+ *   - `env:VAR_NAME` / `$VAR_NAME`      (environment)
+ *   - `keychain:service/account`         (macOS Keychain)
+ *   - `file:/abs/path` / `file:~/path`  (filesystem)
+ *   - legacy bare `/abs/path` / `~/...` (treated as file)
+ *
+ * Docker resolves each ref at translate time and merges into the
+ * container env. k8s emits a `v1.Secret` + `secretKeyRef` so the
+ * value never lands in the pod spec.
+ */
+export const ServiceSpecSecretsSchema = z.record(
+  z.string().min(1),
+  z.object({ ref: z.string().min(1) }),
+);
+export type ServiceSpecSecrets = z.infer<typeof ServiceSpecSecretsSchema>;
+
+/**
  * Chroma vector store. Default image tag tracks the latest stable
  * as of the composite-infra plan; pin to an explicit tag in the
  * spec if reproducibility across hosts matters.
@@ -42,6 +61,7 @@ export const ChromaServiceSpecSchema = z.object({
     .optional(),
   port: z.number().int().positive().default(8000),
   externalEndpoint: z.string().optional(),
+  secrets: ServiceSpecSecretsSchema.optional(),
 });
 
 /**
@@ -72,6 +92,13 @@ export const PgvectorServiceSpecSchema = z.object({
     .optional(),
   port: z.number().int().positive().default(5432),
   externalEndpoint: z.string().optional(),
+  /**
+   * Extra secret env vars beyond the domain-specific POSTGRES_PASSWORD
+   * (which rides `passwordEnv`). Useful for operators who want to
+   * inject, say, an SSL cert password or a pg_basebackup token via
+   * Keychain / file refs without hand-editing the generated Secret.
+   */
+  secrets: ServiceSpecSecretsSchema.optional(),
 });
 
 /**
@@ -113,6 +140,7 @@ export const GenericContainerServiceSpecSchema = z.object({
       retries: z.number().int().optional(),
     })
     .optional(),
+  secrets: ServiceSpecSecretsSchema.optional(),
 });
 
 export const ServiceSpecSchema = z.discriminatedUnion('kind', [

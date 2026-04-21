@@ -36,6 +36,7 @@ function hashMaterial(
     ports: spec.ports,
     volumes: spec.volumes,
     healthcheck: spec.healthcheck,
+    secrets: spec.secrets,
   };
 }
 
@@ -129,6 +130,10 @@ export const genericContainerHandler: ServiceHandler<GenericContainerServiceSpec
             ? { retries: spec.healthcheck.retries }
             : {}),
         };
+      }
+
+      if (spec.secrets && Object.keys(spec.secrets).length > 0) {
+        deployment.secrets = spec.secrets;
       }
 
       return deployment;
