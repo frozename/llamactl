@@ -121,7 +121,7 @@ async function defaultBuildProvider(
     return createOpenAICompatProvider({
       name: binding.node,
       displayName: binding.node,
-      baseUrl: binding.baseUrl,
+      baseUrl: normalizeOpenAICompatBaseUrl(binding.baseUrl),
       apiKey,
     });
   }
@@ -152,4 +152,23 @@ async function defaultBuildProvider(
 
 function toMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Nova's OpenAI-compat provider calls `/embeddings` and
+ * `/chat/completions` relative to `baseUrl` (no `/v1` prepended).
+ * Operators naturally write `baseUrl: http://embedder:8081` (i.e.
+ * the service root) — if we don't append `/v1`, the provider hits
+ * llama-server's native `/embeddings` endpoint instead of
+ * `/v1/embeddings` and receives a flat list (not the OpenAI
+ * envelope), which then confuses the response parser.
+ *
+ * Append `/v1` when it's not already there. Preserve any
+ * explicit suffix (`/v2`, a proxy prefix, etc.) untouched so the
+ * escape hatch stays available.
+ */
+function normalizeOpenAICompatBaseUrl(url: string): string {
+  const trimmed = url.endsWith('/') ? url.slice(0, -1) : url;
+  if (/\/v\d+$/.test(trimmed)) return trimmed;
+  return `${trimmed}/v1`;
 }

@@ -625,23 +625,28 @@ export class KubernetesBackend implements RuntimeBackend {
     const ip = ingress?.ip;
     const hostname = ingress?.hostname;
     const port = svc.spec?.ports?.[0]?.port;
-    if (typeof ip === 'string' && ip.length > 0 && typeof port === 'number') {
-      return `http://${ip}:${port}`;
-    }
+    if (typeof port !== 'number') return null;
+
+    // On Docker Desktop K8s and kind, the status block often reports
+    // a VM-internal address (e.g., 172.19.0.x) that's unreachable
+    // from the operator's host — but the service port is also bound
+    // on localhost via the Docker Desktop port forwarder. Prefer
+    // localhost whenever the ingress IP is in RFC1918 private space
+    // (or absent), since the llamactl CLI runs on the same host as
+    // the cluster in every local-dev scenario we support. Public
+    // hostnames / IPs still win — a real cloud LoadBalancer reports
+    // those and they're what operators want.
     if (
       typeof hostname === 'string' &&
       hostname.length > 0 &&
-      typeof port === 'number'
+      !isLocalHostname(hostname)
     ) {
       return `http://${hostname}:${port}`;
     }
-    if (typeof port === 'number') {
-      // Docker Desktop K8s binds LoadBalancer services at
-      // localhost:<servicePort> but doesn't populate the status
-      // ingress block. Fall back accordingly.
-      return `http://localhost:${port}`;
+    if (typeof ip === 'string' && ip.length > 0 && !isPrivateIpv4(ip)) {
+      return `http://${ip}:${port}`;
     }
-    return null;
+    return `http://localhost:${port}`;
   }
 
   // Consumed by Phase 3+ translators; exposed here so tests can
@@ -1179,6 +1184,33 @@ function annotationHash(resource: {
 
 function isReady(controller: V1Deployment | V1StatefulSet): boolean {
   return (controller.status?.readyReplicas ?? 0) >= 1;
+}
+
+function isPrivateIpv4(ip: string): boolean {
+  // Rough RFC1918 / CGNAT / loopback / link-local check. Used to
+  // decide whether an ingress IP reported by the cluster is
+  // internal-only (LOAD_BALANCER reported from Docker Desktop /
+  // kind / k3s local setups) vs public (cloud LoadBalancers).
+  const parts = ip.split('.').map((n) => Number.parseInt(n, 10));
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n) || n < 0 || n > 255)) {
+    return false;
+  }
+  const [a, b] = parts as [number, number, number, number];
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
+}
+
+function isLocalHostname(host: string): boolean {
+  const lower = host.toLowerCase();
+  return (
+    lower === 'localhost' ||
+    lower.endsWith('.local') ||
+    lower.endsWith('.internal')
+  );
 }
 
 function delay(ms: number): Promise<void> {

@@ -318,7 +318,14 @@ async function applyRagComponent(
         { serviceType },
       );
       if (externalUrl) {
-        endpointUrl = externalUrl;
+        // The external resolver returns host:port (wrapped as
+        // http://host:port) since it works at the Service level and
+        // doesn't know the rag provider's protocol. Splice those
+        // coordinates into the handler-resolved URL so pgvector
+        // keeps its `postgres://user:REDACTED@...` scheme + path +
+        // userinfo — only host + port flip to the host-reachable
+        // pair.
+        endpointUrl = swapUrlHost(resolved.url, externalUrl);
       }
     }
     bindingWithEndpoint = { ...entry.binding, endpoint: endpointUrl };
@@ -657,6 +664,38 @@ function buildGatewayDispatch(
 function toErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+/**
+ * Splice host + port from `externalUrl` into `baseUrl`, preserving
+ * scheme, userinfo, path, query, and fragment from `baseUrl`. Used
+ * by the rag-binding auto-wire so pgvector's
+ * `postgres://user:REDACTED@<dns>:5432/rag` keeps its scheme + auth
+ * + path when swapped to the host-reachable coordinates the backend
+ * reported for a NodePort / LoadBalancer Service.
+ *
+ * When either URL fails to parse, return `externalUrl` unchanged —
+ * callers get the host-reachable URL even if we can't merge.
+ */
+function swapUrlHost(baseUrl: string, externalUrl: string): string {
+  let base: URL;
+  let ext: URL;
+  try {
+    base = new URL(baseUrl);
+    ext = new URL(externalUrl);
+  } catch {
+    return externalUrl;
+  }
+  base.hostname = ext.hostname;
+  base.port = ext.port;
+  const out = base.toString();
+  // URL.toString() normalizes an empty path to '/'. Strip the
+  // trailing slash so `http://host:port` stays terse (consumers
+  // and our pre-shim tests expect the shorter form).
+  if (out.endsWith('/') && base.pathname === '/' && !base.search && !base.hash) {
+    return out.slice(0, -1);
+  }
+  return out;
 }
 
 /**
