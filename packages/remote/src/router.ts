@@ -2443,6 +2443,25 @@ export const router = t.router({
       return { ok: true as const, removed };
     }),
 
+  ragPipelineDraft: t.procedure
+    .input(
+      z.object({
+        description: z.string().default(''),
+        availableRagNodes: z.array(z.string()).optional(),
+        defaultRagNode: z.string().optional(),
+        nameOverride: z.string().optional(),
+      }),
+    )
+    .query(async ({ input }) => {
+      const { draftPipeline } = await import('./rag/pipeline/index.js');
+      const ctx: Parameters<typeof draftPipeline>[1] = {};
+      if (input.availableRagNodes) ctx.availableRagNodes = input.availableRagNodes;
+      if (input.defaultRagNode !== undefined) ctx.defaultRagNode = input.defaultRagNode;
+      if (input.nameOverride !== undefined) ctx.nameOverride = input.nameOverride;
+      const { yaml, manifest, warnings } = draftPipeline(input.description, ctx);
+      return { ok: true as const, yaml, manifest, warnings };
+    }),
+
   // ---- Composite (multi-component apply) --------------------------------
   //
   // Phase 5 of composite-infra.md — tRPC surface for the composite

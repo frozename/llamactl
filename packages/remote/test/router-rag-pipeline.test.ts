@@ -242,6 +242,35 @@ describe('ragPipelineGet', () => {
   });
 });
 
+describe('ragPipelineDraft', () => {
+  test('returns yaml + manifest + warnings', async () => {
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineDraft({
+      description: 'crawl https://docs.example.com into kb-pg every 30 minutes',
+    });
+    expect(res.ok).toBe(true);
+    expect(res.yaml).toContain('kind: RagPipeline');
+    expect(res.yaml).toContain('@every 30m');
+    expect(res.manifest.spec.destination.ragNode).toBe('kb-pg');
+    expect(Array.isArray(res.warnings)).toBe(true);
+  });
+  test('threads availableRagNodes + nameOverride', async () => {
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineDraft({
+      description: 'ingest https://x.dev into kb-chroma',
+      availableRagNodes: ['kb-pg', 'kb-chroma'],
+      nameOverride: 'my-pipe',
+    });
+    expect(res.manifest.metadata.name).toBe('my-pipe');
+    expect(res.manifest.spec.destination.ragNode).toBe('kb-chroma');
+  });
+  test('empty description surfaces as a warning', async () => {
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineDraft({ description: '' });
+    expect(res.warnings.some((w) => w.includes('empty'))).toBe(true);
+  });
+});
+
 describe('ragPipelineRemove', () => {
   test('removed=false when absent', async () => {
     const caller = router.createCaller({});

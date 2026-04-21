@@ -23,6 +23,11 @@ export {
   type SchedulerJournalEntry,
 } from './scheduler.js';
 export {
+  draftPipeline,
+  type DraftContext,
+  type DraftResult,
+} from './draft.js';
+export {
   RagPipelineSpecSchema,
   RagPipelineManifestSchema,
   SourceSpecSchema,

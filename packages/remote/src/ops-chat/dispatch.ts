@@ -40,6 +40,7 @@ export const KNOWN_OPS_CHAT_TOOLS = [
   'llamactl.rag.delete',
   'llamactl.rag.listCollections',
   'llamactl.rag.pipeline.apply',
+  'llamactl.rag.pipeline.draft',
   'llamactl.rag.pipeline.get',
   'llamactl.rag.pipeline.list',
   'llamactl.rag.pipeline.remove',
@@ -250,6 +251,22 @@ export async function dispatchOpsChatTool(
           name: requireString(args, 'name'),
         });
         break;
+      case 'llamactl.rag.pipeline.draft': {
+        const payload: Parameters<Caller['ragPipelineDraft']>[0] = {
+          description: typeof args.description === 'string' ? args.description : '',
+        };
+        if (Array.isArray(args.availableRagNodes)) {
+          payload.availableRagNodes = args.availableRagNodes as string[];
+        }
+        if (typeof args.defaultRagNode === 'string') {
+          payload.defaultRagNode = args.defaultRagNode;
+        }
+        if (typeof args.nameOverride === 'string') {
+          payload.nameOverride = args.nameOverride;
+        }
+        result = await caller.ragPipelineDraft(payload);
+        break;
+      }
 
       /* ---------------- mutations (dry-run-safe) ---------------- */
       case 'llamactl.catalog.promote': {

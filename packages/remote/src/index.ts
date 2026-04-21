@@ -106,6 +106,9 @@ export {
   type PipelineSchedulerOptions,
   type TickReport,
   type SchedulerJournalEntry,
+  draftPipeline,
+  type DraftContext,
+  type DraftResult,
 } from './rag/pipeline/index.js';
 export {
   applyPipeline,

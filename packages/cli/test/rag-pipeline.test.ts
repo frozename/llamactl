@@ -90,6 +90,23 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
       },
     }),
     ragPipelineRemove: async () => ({ ok: true, removed: true }),
+    ragPipelineDraft: async (i) => ({
+      ok: true,
+      yaml: `apiVersion: llamactl/v1\nkind: RagPipeline\nmetadata:\n  name: ${i.nameOverride ?? 'drafted'}\nspec: {}\n`,
+      manifest: {
+        apiVersion: 'llamactl/v1',
+        kind: 'RagPipeline',
+        metadata: { name: i.nameOverride ?? 'drafted' },
+        spec: {
+          destination: { ragNode: i.defaultRagNode ?? 'kb-pg', collection: 'docs' },
+          sources: [{ kind: 'filesystem', root: '/tmp/x', glob: '**/*' }],
+          transforms: [],
+          concurrency: 4,
+          on_duplicate: 'skip',
+        },
+      },
+      warnings: i.description === '' ? ['description was empty'] : [],
+    }),
     ...overrides,
   };
   return {
@@ -98,6 +115,7 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
     ragPipelineList: { query: stubs.ragPipelineList },
     ragPipelineGet: { query: stubs.ragPipelineGet },
     ragPipelineRemove: { mutate: stubs.ragPipelineRemove },
+    ragPipelineDraft: { query: stubs.ragPipelineDraft },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any as NodeClient;
 }
@@ -113,6 +131,13 @@ interface StubProcs {
   ragPipelineGet: (i: { name: string }) => Promise<any>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ragPipelineRemove: (i: { name: string }) => Promise<any>;
+  ragPipelineDraft: (i: {
+    description: string;
+    availableRagNodes?: string[];
+    defaultRagNode?: string;
+    nameOverride?: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) => Promise<any>;
 }
 
 let tmp = '';
@@ -321,6 +346,71 @@ describe('rag pipeline logs', () => {
     );
     expect(result).toBe(1);
     expect(cap.err).toContain('no journal at');
+  });
+});
+
+describe('rag pipeline draft', () => {
+  test('missing description → exit 1', async () => {
+    const { result, cap } = await captureStdio(() => runRag(['pipeline', 'draft']));
+    expect(result).toBe(1);
+    expect(cap.err).toContain('<description> is required');
+  });
+  test('happy path prints YAML to stdout, empty stderr when no warnings', async () => {
+    const { result, cap } = await captureStdio(() =>
+      runRag(['pipeline', 'draft', 'ingest', 'https://site.io']),
+    );
+    expect(result).toBe(0);
+    expect(cap.out).toContain('apiVersion: llamactl/v1');
+    expect(cap.out).toContain('kind: RagPipeline');
+    expect(cap.err).toBe('');
+  });
+  test('--name threads nameOverride', async () => {
+    let seen: unknown = null;
+    __setRagPipelineTestSeams({
+      nodeClient: makeStubClient({
+        ragPipelineDraft: async (i) => {
+          seen = i;
+          return {
+            ok: true,
+            yaml: 'apiVersion: llamactl/v1\n',
+            manifest: {
+              apiVersion: 'llamactl/v1',
+              kind: 'RagPipeline',
+              metadata: { name: 'x' },
+              spec: {},
+            },
+            warnings: [],
+          };
+        },
+      }),
+    });
+    const { result } = await captureStdio(() =>
+      runRag(['pipeline', 'draft', 'foo', '--name', 'my-pipeline']),
+    );
+    expect(result).toBe(0);
+    expect((seen as { nameOverride?: string }).nameOverride).toBe('my-pipeline');
+  });
+  test('warnings are surfaced on stderr', async () => {
+    __setRagPipelineTestSeams({
+      nodeClient: makeStubClient({
+        ragPipelineDraft: async () => ({
+          ok: true,
+          yaml: 'apiVersion: llamactl/v1\n',
+          manifest: {
+            apiVersion: 'llamactl/v1',
+            kind: 'RagPipeline',
+            metadata: { name: 'd' },
+            spec: {},
+          },
+          warnings: ['something ambiguous', 'also check the glob'],
+        }),
+      }),
+    });
+    const { cap } = await captureStdio(() =>
+      runRag(['pipeline', 'draft', 'something']),
+    );
+    expect(cap.err).toContain('warning: something ambiguous');
+    expect(cap.err).toContain('warning: also check the glob');
   });
 });
 

@@ -1147,6 +1147,35 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
     },
   );
 
+  server.registerTool(
+    'llamactl.rag.pipeline.draft',
+    {
+      title: 'Draft a RagPipeline from a description',
+      description:
+        'Scaffold a schema-valid RagPipeline YAML from a natural-language description. Deterministic: extracts URLs / filesystem paths / schedule aliases / rag node hints and emits a manifest the operator can review before `rag pipeline apply`. Returns `{ yaml, manifest, warnings }`. Read-only (no disk writes).',
+      inputSchema: {
+        description: z.string().default(''),
+        availableRagNodes: z.array(z.string()).optional(),
+        defaultRagNode: z.string().optional(),
+        nameOverride: z.string().optional(),
+      },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      const result = await caller.ragPipelineDraft(input);
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.rag.pipeline.draft',
+        input,
+        dryRun: false,
+        // Don't log the full YAML — it can be long. A pointer to
+        // name + warning count is enough for audit.
+        result: { name: result.manifest.metadata.name, warnings: result.warnings.length },
+      });
+      return toTextContent(result);
+    },
+  );
+
   // M.1 — mount every PipelineTool emitted by the Electron
   // Pipelines module. Reads ~/.llamactl/mcp/pipelines/*.json unless
   // `LLAMACTL_MCP_PIPELINES_DIR` overrides the scan path (tests use

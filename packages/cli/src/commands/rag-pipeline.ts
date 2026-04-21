@@ -40,6 +40,12 @@ Subcommands:
       field when their next-run time arrives. Runs until SIGINT /
       SIGTERM. --once runs a single tick and exits (useful in cron).
       Default --interval=60 seconds.
+
+  draft "<description>" [--name <name>] [--node <ragNode>]
+      Emit a schema-valid RagPipeline YAML derived from a natural-
+      language description. Deterministic — no LLM. Writes YAML to
+      stdout and warnings to stderr. Pipe into \`apply -f -\` (once
+      supported) or redirect to a file and edit before applying.
 `;
 
 export interface RagPipelineTestSeams {
@@ -91,6 +97,8 @@ export async function runRagPipeline(argv: string[]): Promise<number> {
       return runLogs(rest);
     case 'scheduler':
       return runScheduler(rest);
+    case 'draft':
+      return runDraft(rest);
     case undefined:
     case '--help':
     case '-h':
@@ -476,4 +484,74 @@ async function runScheduler(args: string[]): Promise<number> {
     for (const sig of stopSignals) process.off(sig, onSignal);
   }
   return 0;
+}
+
+// ---- draft ----------------------------------------------------------
+
+interface DraftOpts {
+  description: string;
+  nameOverride: string | undefined;
+  nodeOverride: string | undefined;
+}
+
+function parseDraftFlags(args: string[]): DraftOpts | { error: string } {
+  let nameOverride: string | undefined;
+  let nodeOverride: string | undefined;
+  const positional: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--name') {
+      nameOverride = args[++i] ?? '';
+    } else if (arg.startsWith('--name=')) {
+      nameOverride = arg.slice('--name='.length);
+    } else if (arg === '--node') {
+      nodeOverride = args[++i] ?? '';
+    } else if (arg.startsWith('--node=')) {
+      nodeOverride = arg.slice('--node='.length);
+    } else if (arg === '-h' || arg === '--help') {
+      return { error: 'help' };
+    } else if (arg.startsWith('-')) {
+      return { error: `Unknown flag: ${arg}` };
+    } else {
+      positional.push(arg);
+    }
+  }
+  if (positional.length === 0) {
+    return { error: 'rag pipeline draft: <description> is required' };
+  }
+  return {
+    description: positional.join(' '),
+    nameOverride,
+    nodeOverride,
+  };
+}
+
+async function runDraft(args: string[]): Promise<number> {
+  const parsed = parseDraftFlags(args);
+  if ('error' in parsed) {
+    if (parsed.error === 'help') {
+      process.stdout.write(USAGE);
+      return 0;
+    }
+    process.stderr.write(`${parsed.error}\n\n${USAGE}`);
+    return 1;
+  }
+  try {
+    const input: {
+      description: string;
+      nameOverride?: string;
+      defaultRagNode?: string;
+    } = { description: parsed.description };
+    if (parsed.nameOverride !== undefined) input.nameOverride = parsed.nameOverride;
+    if (parsed.nodeOverride !== undefined) input.defaultRagNode = parsed.nodeOverride;
+    const res = await client().ragPipelineDraft.query(input);
+    process.stdout.write(res.yaml.endsWith('\n') ? res.yaml : `${res.yaml}\n`);
+    for (const w of res.warnings) {
+      process.stderr.write(`warning: ${w}\n`);
+    }
+    return 0;
+  } catch (err) {
+    process.stderr.write(`rag pipeline draft: ${(err as Error).message}\n`);
+    return 1;
+  }
 }
