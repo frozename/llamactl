@@ -64,13 +64,45 @@ export function createDockerBackend(
 export class DockerBackend implements RuntimeBackend {
   readonly kind = 'docker';
   private readonly client: DockerClient;
-  private readonly hostArch: string;
-  private readonly hostOs: string;
+  private readonly hostArchOverride: string | undefined;
+  private readonly hostOsOverride: string | undefined;
+  private daemonPlatformCache: { os: string; arch: string } | null = null;
 
   constructor(opts: DockerBackendOptions = {}) {
     this.client = createDockerClient(opts);
-    this.hostArch = opts.hostArch ?? normalizeArch(nodeArch());
-    this.hostOs = opts.hostOs ?? normalizeOs(nodePlatform());
+    this.hostArchOverride =
+      opts.hostArch !== undefined ? normalizeArch(opts.hostArch) : undefined;
+    this.hostOsOverride =
+      opts.hostOs !== undefined ? normalizeOs(opts.hostOs) : undefined;
+  }
+
+  /**
+   * Query the Docker daemon's reported OS/Arch (memoized). Compared
+   * against image manifests so platform validation reflects what the
+   * daemon can actually run — not the Node host's `process.platform`,
+   * which misreports Docker Desktop (linux VM) as `darwin`/`win32`.
+   * Explicit constructor opts still win for tests.
+   */
+  private async getDaemonPlatform(): Promise<{ os: string; arch: string }> {
+    if (this.daemonPlatformCache) return this.daemonPlatformCache;
+    if (this.hostOsOverride !== undefined && this.hostArchOverride !== undefined) {
+      this.daemonPlatformCache = {
+        os: this.hostOsOverride,
+        arch: this.hostArchOverride,
+      };
+      return this.daemonPlatformCache;
+    }
+    const res = await this.client.request('/info');
+    const info = await parseJsonOrThrow<{ OSType?: string; Architecture?: string }>(
+      res,
+      'backend-unreachable',
+      'docker info',
+    );
+    this.daemonPlatformCache = {
+      os: this.hostOsOverride ?? normalizeOs(info.OSType ?? nodePlatform()),
+      arch: this.hostArchOverride ?? normalizeArch(info.Architecture ?? nodeArch()),
+    };
+    return this.daemonPlatformCache;
   }
 
   // swagger: operationId=SystemPing (GET /_ping)
@@ -215,10 +247,10 @@ export class DockerBackend implements RuntimeBackend {
           `pull of ${ref.repository}:${ref.tag} succeeded but image not found post-pull`,
         );
       }
-      this.checkPlatform(ref, afterPull);
+      await this.checkPlatform(ref, afterPull);
       return;
     }
-    this.checkPlatform(ref, inspected);
+    await this.checkPlatform(ref, inspected);
   }
 
   // swagger: operationId=ImageInspect (GET /images/{name}/json)
@@ -235,14 +267,15 @@ export class DockerBackend implements RuntimeBackend {
     );
   }
 
-  private checkPlatform(ref: ImageRef, image: ImageInspectResponse): void {
+  private async checkPlatform(ref: ImageRef, image: ImageInspectResponse): Promise<void> {
     if (!image.Architecture || !image.Os) return; // older daemons omit
     const imageArch = normalizeArch(image.Architecture);
     const imageOs = normalizeOs(image.Os);
-    if (imageArch !== this.hostArch || imageOs !== this.hostOs) {
+    const { os: hostOs, arch: hostArch } = await this.getDaemonPlatform();
+    if (imageArch !== hostArch || imageOs !== hostOs) {
       throw new RuntimeError(
         'platform-mismatch',
-        `image ${ref.repository}:${ref.tag} is ${imageOs}/${imageArch}, host is ${this.hostOs}/${this.hostArch}`,
+        `image ${ref.repository}:${ref.tag} is ${imageOs}/${imageArch}, docker daemon is ${hostOs}/${hostArch}`,
       );
     }
   }
@@ -471,8 +504,10 @@ function trimContainerName(name: string): string {
 }
 
 function normalizeArch(a: string): string {
-  // node 'x64' ↔ docker 'amd64'; 'arm64' is identical.
+  // node 'x64' ↔ docker 'amd64'; docker daemon /info reports 'aarch64'
+  // while image manifests use 'arm64'.
   if (a === 'x64') return 'amd64';
+  if (a === 'aarch64') return 'arm64';
   return a;
 }
 

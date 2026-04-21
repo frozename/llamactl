@@ -131,8 +131,11 @@ export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
     };
 
     if (spec.persistence?.volume) {
+      const v = spec.persistence.volume;
       deployment.volumes = [
-        { hostPath: spec.persistence.volume, containerPath: mountPath },
+        v.startsWith('/')
+          ? { hostPath: v, containerPath: mountPath }
+          : { name: v, containerPath: mountPath },
       ];
     }
 
