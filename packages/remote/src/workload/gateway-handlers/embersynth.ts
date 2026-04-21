@@ -46,6 +46,14 @@ export const embersynthHandler: GatewayHandler = {
     }
     const synthetic = target.startsWith('fusion-') ? target : `fusion-${target}`;
 
+    // Best-effort host-side validation. When `embersynth.yaml` lives
+    // on the operator's host (from `llamactl embersynth init`), we
+    // cross-check the requested synthetic before calling the gateway
+    // so typos surface with a clear error. When the config lives
+    // only inside the embersynth pod (ConfigMap mount pattern —
+    // file absent on host), skip the host check and defer to
+    // embersynth's /config/reload, which authoritatively answers
+    // whether the synthetic exists.
     let cfg;
     try {
       cfg = loadEmbersynthConfig(defaultEmbersynthConfigPath());
@@ -58,14 +66,11 @@ export const embersynthHandler: GatewayHandler = {
       );
     }
     if (!cfg) {
-      return pending(
-        opts,
-        'EmbersynthConfigMissing',
-        `embersynth.yaml not found; run \`llamactl embersynth init\` first`,
-        now,
-      );
-    }
-    if (!(synthetic in cfg.syntheticModels)) {
+      opts.onEvent?.({
+        type: 'gateway-pending',
+        message: `${opts.manifest.metadata.name}: host-side embersynth.yaml absent — deferring synthetic-model validation to embersynth /config/reload`,
+      });
+    } else if (!(synthetic in cfg.syntheticModels)) {
       return pending(
         opts,
         'EmbersynthSyntheticMissing',

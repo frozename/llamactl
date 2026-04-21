@@ -79,11 +79,15 @@ describe('dispatchGatewayApply', () => {
     throw new Error('should not be called in dispatch tests');
   };
 
-  test('routes sirius-kind node to siriusHandler; no upstream = Pending + SiriusUpstreamMissing', async () => {
-    // `target.value` is `openai/gpt-4o`. With no sirius-providers.yaml
-    // (or an empty one) the handler cannot resolve the `openai`
-    // upstream and returns Pending so the operator can
-    // `llamactl sirius add-provider` first.
+  test('routes sirius-kind node to siriusHandler; defers to /providers/reload when host YAML is empty', async () => {
+    // With no sirius-providers.yaml in the test sandbox the handler
+    // now skips host-side validation — ConfigMap-in-pod deployments
+    // leave the YAML absent on the host — and posts to the gateway's
+    // /providers/reload. The fake `sirius.example` hostname can't
+    // resolve, so we land on Failed + SiriusReloadUnreachable
+    // (dispatcher routed to the right handler, which is what this
+    // test asserts; the host-validation path is covered by the
+    // handler-specific suite in a separate file).
     const node = siriusNode();
     const manifest = gatewayManifest(node.name);
     const result = await dispatchGatewayApply({
@@ -92,14 +96,19 @@ describe('dispatchGatewayApply', () => {
       resolveNode: () => node,
     });
     expect(result).not.toBeNull();
-    expect(result!.action).toBe('pending');
-    expect(result!.statusSection.phase).toBe('Pending');
-    expect(result!.statusSection.conditions[0]?.reason).toBe('SiriusUpstreamMissing');
+    const reason = result!.statusSection.conditions[0]?.reason;
+    expect(
+      reason === 'SiriusReloadUnreachable' || reason === 'SiriusReloadFailed',
+    ).toBe(true);
   });
 
-  test('routes embersynth-kind node to embersynthHandler; missing config = Pending', async () => {
-    // No embersynth.yaml in the test's sandbox, so the handler halts
-    // at the "load config" step with a clear actionable reason.
+  test('routes embersynth-kind node to embersynthHandler; defers to /config/reload when host YAML is absent', async () => {
+    // Same shape as the sirius test above — absent host-side
+    // embersynth.yaml now defers to the gateway's /config/reload
+    // rather than short-circuiting with EmbersynthConfigMissing. The
+    // fake `embersynth.example` host isn't reachable, so we verify
+    // the dispatcher routed to the right handler by matching on an
+    // embersynth-specific failure reason.
     const node = embersynthNode();
     const manifest = gatewayManifest(node.name, 'fusion-vision');
     const result = await dispatchGatewayApply({
@@ -109,7 +118,9 @@ describe('dispatchGatewayApply', () => {
     });
     const reason = result!.statusSection.conditions[0]?.reason;
     expect(
-      reason === 'EmbersynthConfigMissing' || reason === 'EmbersynthSyntheticMissing',
+      reason === 'EmbersynthReloadUnreachable' ||
+        reason === 'EmbersynthReloadFailed' ||
+        reason === 'EmbersynthSyntheticMissing',
     ).toBe(true);
   });
 

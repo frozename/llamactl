@@ -46,8 +46,16 @@ export const siriusHandler: GatewayHandler = {
     const upstream = targetValue.slice(0, slash);
     const modelId = targetValue.slice(slash + 1);
 
-    // Confirm the upstream exists. We read the same YAML sirius does,
-    // so a "not found" here matches what sirius would report itself.
+    // Best-effort host-side validation. We read the same YAML sirius
+    // does, so a "not found" here matches what sirius would report
+    // itself. When the file is absent or empty — typical for
+    // containerized sirius deployments where the providers config
+    // lives in a ConfigMap mount inside the pod — skip the check and
+    // defer to sirius's /providers/reload response, which returns the
+    // authoritative error if the upstream is truly missing. Eager
+    // host-side validation stays the first line of defense whenever
+    // the operator maintains their own `sirius-providers.yaml` via
+    // `llamactl sirius add-provider`.
     let providers;
     try {
       providers = loadSiriusProviders();
@@ -59,14 +67,21 @@ export const siriusHandler: GatewayHandler = {
         now,
       );
     }
-    const match = providers.find((p) => p.name === upstream);
-    if (!match) {
-      return pending(
-        opts,
-        'SiriusUpstreamMissing',
-        `upstream '${upstream}' not found in sirius-providers.yaml; run \`llamactl sirius add-provider ${upstream} …\` first`,
-        now,
-      );
+    if (providers.length === 0) {
+      opts.onEvent?.({
+        type: 'gateway-pending',
+        message: `${opts.manifest.metadata.name}: host-side sirius-providers.yaml empty/absent — deferring upstream validation to sirius /providers/reload`,
+      });
+    } else {
+      const match = providers.find((p) => p.name === upstream);
+      if (!match) {
+        return pending(
+          opts,
+          'SiriusUpstreamMissing',
+          `upstream '${upstream}' not found in sirius-providers.yaml; run \`llamactl sirius add-provider ${upstream} …\` first`,
+          now,
+        );
+      }
     }
 
     const baseUrl = opts.node.cloud?.baseUrl;
