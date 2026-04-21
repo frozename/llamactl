@@ -1,0 +1,178 @@
+apiVersion: llamactl/v1
+kind: Composite
+# Full containerized stack — chroma + pgvector as K8s services + sirius
+# and embersynth as containerized HTTP gateways fronting a native
+# llama-server on the operator's host.
+#
+# Prereqs (see docs/composites-kubernetes.md for the full walk-through):
+#
+#   1. Build the two sibling images once:
+#        cd $(dirname sirius-gateway)
+#        docker build -f sirius-gateway/apps/sirius-api/Dockerfile \
+#          -t llamactl/sirius-api:dev .
+#        docker build -f embersynth/Dockerfile \
+#          -t llamactl/embersynth:dev .
+#
+#   2. Start a native llama-server for the reasoning model + an
+#      embedder (Metal / GPU acceleration stays on the host):
+#        llama-server -m <qwen>.gguf --host 127.0.0.1 --port 8080
+#        llama-server -m <nomic-embed>.gguf --host 127.0.0.1 --port 8081 --embeddings
+#
+#   3. Register the gateway services as cloud nodes so the app + CLI
+#      can aim chat/embed traffic at them:
+#        llamactl node add-cloud sirius-gw \
+#          --provider sirius --base-url http://localhost:3000 --force
+#        llamactl node add-cloud embersynth-gw \
+#          --provider embersynth --base-url http://localhost:7777 --force
+#
+#   4. Apply this composite (LLAMACTL_RUNTIME_BACKEND env forces k8s
+#      if the manifest's `spec.runtime:` is omitted):
+#        PG_RAG_PASSWORD=<your-pw> llamactl composite apply -f full-stack.yaml
+#
+# Wiring notes:
+#   - Services use `serviceType: LoadBalancer` so Docker Desktop K8s
+#     (and kind, if configured) bind the service port on localhost,
+#     removing any need for `kubectl port-forward` from operator code.
+#   - Sirius + embersynth pods reach the Mac host's native llama-server
+#     via `host.docker.internal` (Docker Desktop's hostname for the
+#     gateway IP). Their configs reference that hostname inside the
+#     ConfigMap data.
+#   - RAG nodes auto-wire their `binding.endpoint` from the backing
+#     service's LoadBalancer address (see composite auto-wire).
+#   - Gateway nodes are registered via CLI (step 3 above) rather than
+#     declared in the composite's `gateways:` block — the gateway
+#     handlers expect a host-side `sirius-providers.yaml` today, which
+#     conflicts with the ConfigMap-in-pod config model.
+metadata:
+  name: full-stack
+spec:
+  runtime: kubernetes
+  services:
+    # --- chroma (k8s Deployment + LoadBalancer) -------------------
+    - kind: chroma
+      name: chroma-main
+      node: local
+      port: 8000
+      serviceType: LoadBalancer
+      persistence:
+        volume: chroma-data
+
+    # --- pgvector (k8s StatefulSet + headless + client LoadBalancer)
+    - kind: pgvector
+      name: pg-main
+      node: local
+      port: 5433
+      database: rag
+      user: rag
+      passwordEnv: PG_RAG_PASSWORD
+      serviceType: LoadBalancer
+      persistence:
+        volume: pg-data
+
+    # --- sirius-api (generic container, ConfigMap-mounted) --------
+    - kind: container
+      name: sirius-main
+      node: local
+      image:
+        repository: llamactl/sirius-api
+        tag: dev
+      ports:
+        - containerPort: 3000
+      serviceType: LoadBalancer
+      env:
+        SIRIUS_HOST: "0.0.0.0"
+        SIRIUS_PORT: "3000"
+        LLAMACTL_PROVIDERS_FILE: "/config/sirius-providers.yaml"
+        LOCAL_LLM_API_KEY: "placeholder-llama-cpp-accepts-anything"
+        # Bearer tokens accepted at the sirius /v1 surface. Comma-
+        # separated list — rotate or add tenants without restart via
+        # `POST /providers/reload`. Clients call with
+        # `Authorization: Bearer sk-dev`.
+        SIRIUS_API_KEYS: "sk-dev"
+      volumes:
+        - containerPath: /config
+          configMap:
+            name: sirius-config
+            data:
+              sirius-providers.yaml: |
+                apiVersion: llamactl/v1
+                kind: SiriusProviderList
+                providers:
+                  - name: local-llm
+                    kind: openai-compatible
+                    baseUrl: http://host.docker.internal:8080/v1
+                    apiKeyRef: $LOCAL_LLM_API_KEY
+
+    # --- embersynth (generic container, ConfigMap-mounted) --------
+    - kind: container
+      name: embersynth-main
+      node: local
+      image:
+        repository: llamactl/embersynth
+        tag: dev
+      ports:
+        - containerPort: 7777
+      serviceType: LoadBalancer
+      env:
+        EMBERSYNTH_HOST: "0.0.0.0"
+        EMBERSYNTH_PORT: "7777"
+      volumes:
+        - containerPath: /config
+          configMap:
+            name: embersynth-config
+            data:
+              embersynth.yaml: |
+                server:
+                  host: "0.0.0.0"
+                  port: 7777
+                nodes:
+                  - id: reasoning-primary
+                    label: "Native Qwen (host)"
+                    endpoint: "http://host.docker.internal:8080"
+                    transport: http
+                    enabled: true
+                    capabilities: [reasoning]
+                    tags: [local, primary]
+                    providerType: openai-compatible
+                    modelId: "qwen2.5-0.5b-instruct"
+                    priority: 1
+                    auth:
+                      type: none
+                    health:
+                      endpoint: /health
+                      intervalMs: 30000
+                profiles:
+                  - id: fast
+                    label: "Fast"
+                    capabilities: [reasoning]
+                    preferences:
+                      - reasoning-primary
+
+  ragNodes:
+    - name: kb-chroma
+      node: local
+      backingService: chroma-main
+      binding:
+        provider: chroma
+        endpoint: "http://placeholder:8000"
+        collection: docs
+        # Chroma embeds internally — embedder binding is optional for
+        # chroma but required for pgvector (delegated embedding).
+        embedder:
+          node: local
+          model: nomic-embed-text-v1.5
+          baseUrl: http://127.0.0.1:8081
+
+    - name: kb-pg
+      node: local
+      backingService: pg-main
+      binding:
+        provider: pgvector
+        endpoint: "postgresql://placeholder"
+        collection: docs
+        auth:
+          tokenEnv: PG_RAG_PASSWORD
+        embedder:
+          node: local
+          model: nomic-embed-text-v1.5
+          baseUrl: http://127.0.0.1:8081
