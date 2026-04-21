@@ -51,18 +51,27 @@ describe('genericContainerHandler.validate', () => {
     expect(() => genericContainerHandler.validate(spec())).not.toThrow();
   });
 
-  test('rejects volume with both hostPath and name', () => {
-    const s = spec({
-      volumes: [
-        {
-          hostPath: '/var/data',
-          name: 'mydata',
-          containerPath: '/data',
-          readOnly: false,
-        },
-      ],
-    });
-    expect(() => genericContainerHandler.validate(s)).toThrow(ServiceError);
+  test('rejects volume with both hostPath and name at schema parse', () => {
+    // Schema refine now enforces exactly-one-of so the invalid spec
+    // never even reaches the handler. The original per-handler check
+    // stays in place as defense-in-depth for programmatic callers
+    // bypassing the schema.
+    expect(() =>
+      GenericContainerServiceSpecSchema.parse({
+        kind: 'container',
+        name: 'nginx',
+        node: 'gpu1',
+        image: { repository: 'nginx', tag: 'alpine' },
+        volumes: [
+          {
+            hostPath: '/var/data',
+            name: 'mydata',
+            containerPath: '/data',
+            readOnly: false,
+          },
+        ],
+      }),
+    ).toThrow(/exactly one of/);
   });
 
   test('accepts volume with only hostPath', () => {

@@ -584,6 +584,13 @@ export const router = t.router({
         // Authorization header.
         apiKeyRef: z.string().optional(),
         displayName: z.string().optional(),
+        /**
+         * Skip the `/v1/models` reachability probe and persist the
+         * binding unverified. Useful when registering a node that
+         * isn't online yet (e.g. composite plan authored before the
+         * backing container is up). Mirrors `nodeAdd`'s `--force`.
+         */
+        skipProbe: z.boolean().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -608,23 +615,27 @@ export const router = t.router({
         });
       }
       // Probe the binding — empty apiKeyRef or wrong URL fails here
-      // rather than silently later.
-      try {
-        const provider = providerForCloudNode({
-          name: input.name,
-          endpoint: '',
-          kind: 'gateway',
-          cloud: binding,
-        });
-        const health = await provider.healthCheck?.();
-        if (health && health.state === 'unhealthy') {
-          throw new Error(health.error ?? 'cloud node health check failed');
+      // rather than silently later. Callers can pass `skipProbe: true`
+      // to persist the binding without exercising the upstream (the
+      // binding is still structurally validated above).
+      if (!input.skipProbe) {
+        try {
+          const provider = providerForCloudNode({
+            name: input.name,
+            endpoint: '',
+            kind: 'gateway',
+            cloud: binding,
+          });
+          const health = await provider.healthCheck?.();
+          if (health && health.state === 'unhealthy') {
+            throw new Error(health.error ?? 'cloud node health check failed');
+          }
+        } catch (err) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `cloud node probe failed: ${(err as Error).message}`,
+          });
         }
-      } catch (err) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: `cloud node probe failed: ${(err as Error).message}`,
-        });
       }
       cfg = kubecfg.upsertNode(cfg, ctx.cluster, {
         name: input.name,

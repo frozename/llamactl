@@ -357,3 +357,89 @@ describe('translateToDeployment — PVC + volumes', () => {
     expect(mount?.readOnly).toBe(true);
   });
 });
+
+describe('translateToDeployment — ConfigMap volumes', () => {
+  test('configMap volume → pod volume references configMap name; mount binds containerPath', () => {
+    const { deployment, pvc } = translateToDeployment(
+      sampleSpec({
+        volumes: [
+          {
+            configMap: {
+              name: 'sirius-config',
+              data: { 'providers.yaml': 'entries: []' },
+            },
+            containerPath: '/config',
+          },
+        ],
+      }),
+      { namespace: 'ns', compositeName: 'demo', resolvedSecrets: {} },
+    );
+    const podVolumes = deployment.spec?.template.spec?.volumes ?? [];
+    expect(podVolumes).toHaveLength(1);
+    expect(podVolumes[0]?.configMap?.name).toBe('sirius-config');
+    // hostPath / PVC branches must not fire.
+    expect(podVolumes[0]?.hostPath).toBeUndefined();
+    expect(podVolumes[0]?.persistentVolumeClaim).toBeUndefined();
+
+    // Container mount binds `containerPath` under the synthetic
+    // pod-volume name.
+    const mount =
+      deployment.spec?.template.spec?.containers[0]?.volumeMounts?.[0];
+    expect(mount?.name).toBe(podVolumes[0]?.name);
+    expect(mount?.mountPath).toBe('/config');
+
+    // No PVC materializes for configMap-only volume sets.
+    expect(pvc).toBeNull();
+  });
+
+  test('two configMap volumes → two distinct pod volumes + two mounts', () => {
+    const { deployment } = translateToDeployment(
+      sampleSpec({
+        volumes: [
+          {
+            configMap: { name: 'cfg-a', data: { 'a.conf': 'x' } },
+            containerPath: '/config/a',
+          },
+          {
+            configMap: { name: 'cfg-b', data: { 'b.conf': 'y' } },
+            containerPath: '/config/b',
+          },
+        ],
+      }),
+      { namespace: 'ns', compositeName: 'demo', resolvedSecrets: {} },
+    );
+    const podVolumes = deployment.spec?.template.spec?.volumes ?? [];
+    expect(podVolumes).toHaveLength(2);
+    const names = podVolumes.map((v) => v.name);
+    // Distinct synthetic names so the kubelet can disambiguate the
+    // mounts.
+    expect(new Set(names).size).toBe(2);
+    expect(podVolumes[0]?.configMap?.name).toBe('cfg-a');
+    expect(podVolumes[1]?.configMap?.name).toBe('cfg-b');
+
+    const mounts =
+      deployment.spec?.template.spec?.containers[0]?.volumeMounts ?? [];
+    expect(mounts).toHaveLength(2);
+    expect(mounts.map((m) => m.mountPath)).toEqual(['/config/a', '/config/b']);
+  });
+
+  test('defaultMode propagates onto the pod-volume configMap source', () => {
+    const { deployment } = translateToDeployment(
+      sampleSpec({
+        volumes: [
+          {
+            configMap: {
+              name: 'cfg',
+              data: { 'secret.conf': 'shh' },
+              defaultMode: 0o400,
+            },
+            containerPath: '/etc/cfg',
+          },
+        ],
+      }),
+      { namespace: 'ns', compositeName: 'demo', resolvedSecrets: {} },
+    );
+    const podVolume = deployment.spec?.template.spec?.volumes?.[0];
+    expect(podVolume?.configMap?.defaultMode).toBe(0o400);
+  });
+});

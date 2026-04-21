@@ -6,6 +6,7 @@ import {
   createNodeClient,
   createRemoteNodeClient,
 } from '@llamactl/remote';
+import { getNodeClient } from '../dispatcher.js';
 
 const USAGE = `Usage: llamactl node <subcommand>
 
@@ -23,6 +24,14 @@ Subcommands:
       [--extra-arg <a>]...
       Register a RAG-kind node. --password-ref accepts any unified-
       resolver ref: env:VAR / keychain:service/account / file:/path.
+  add-cloud <name> --provider <sirius|embersynth|openai-compatible|openai|anthropic>
+      --base-url <url> [--api-key-ref <ref>] [--display-name <friendly>]
+      [--force]
+      Register a gateway/cloud-kind node (sirius-gateway, embersynth,
+      raw OpenAI-compat, or a managed provider). --api-key-ref accepts
+      any unified-resolver ref: env:VAR / keychain:service/account /
+      file:/path (resolved at call time, never at register time).
+      --force skips the /v1/models reachability probe.
   rm <name>
       Remove a node (refuses to remove 'local').
   test <name>
@@ -44,6 +53,8 @@ export async function runNode(args: string[]): Promise<number> {
       return runAdd(rest);
     case 'add-rag':
       return runAddRag(rest);
+    case 'add-cloud':
+      return runAddCloud(rest);
     case 'rm':
       return runRm(rest);
     case 'test':
@@ -455,4 +466,140 @@ function runAddRag(args: string[]): number {
     `added rag node '${name}' (${provider}) to context '${ctx.name}'\n`,
   );
   return 0;
+}
+
+/**
+ * `llamactl node add-cloud` — registers a gateway/cloud-kind node
+ * (sirius-gateway, embersynth, raw OpenAI-compatible, or a managed
+ * provider such as openai/anthropic). Shape-translates CLI flags
+ * into `nodeAddCloud`'s tRPC input; resolution of `apiKeyRef`
+ * happens at call time, never at register time. Operators who
+ * containerize sirius/embersynth hit this after `docker run` /
+ * `composite apply` to register the running gateway under a name
+ * the composite's `gateways:` block can reference.
+ */
+const CLOUD_PROVIDERS = [
+  'openai',
+  'anthropic',
+  'together',
+  'groq',
+  'mistral',
+  'openai-compatible',
+  'sirius',
+  'embersynth',
+] as const;
+type CloudProviderFlag = (typeof CLOUD_PROVIDERS)[number];
+
+async function runAddCloud(args: string[]): Promise<number> {
+  let name: string | undefined;
+  let provider: CloudProviderFlag | undefined;
+  let baseUrl: string | undefined;
+  let apiKeyRef: string | undefined;
+  let displayName: string | undefined;
+  let force = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    const [flag, inline] = splitFlag(arg);
+    const takeValue = (): string | undefined =>
+      inline ?? (args[i + 1] && !args[i + 1]!.startsWith('-') ? args[++i] : undefined);
+    if (!flag.startsWith('-')) {
+      if (name === undefined) {
+        name = flag;
+        continue;
+      }
+      process.stderr.write(`node add-cloud: unexpected positional ${flag}\n`);
+      return 1;
+    }
+    switch (flag) {
+      case '--provider': {
+        const v = takeValue();
+        if (!v || !CLOUD_PROVIDERS.includes(v as CloudProviderFlag)) {
+          process.stderr.write(
+            `node add-cloud: --provider must be one of ${CLOUD_PROVIDERS.join('|')} (got ${v ?? '<empty>'})\n`,
+          );
+          return 1;
+        }
+        provider = v as CloudProviderFlag;
+        break;
+      }
+      case '--base-url':
+        baseUrl = takeValue();
+        break;
+      case '--api-key-ref':
+        apiKeyRef = takeValue();
+        break;
+      case '--display-name':
+        displayName = takeValue();
+        break;
+      case '--force':
+        force = true;
+        break;
+      case '-h':
+      case '--help':
+        process.stdout.write(USAGE);
+        return 0;
+      default:
+        process.stderr.write(`node add-cloud: unknown flag ${flag}\n`);
+        return 1;
+    }
+  }
+
+  if (!name) {
+    process.stderr.write('node add-cloud: missing <name>\n');
+    return 1;
+  }
+  if (!provider) {
+    process.stderr.write('node add-cloud: --provider is required\n');
+    return 1;
+  }
+  if (!baseUrl) {
+    process.stderr.write('node add-cloud: --base-url is required\n');
+    return 1;
+  }
+
+  const input: {
+    name: string;
+    provider: CloudProviderFlag;
+    baseUrl: string;
+    apiKeyRef?: string;
+    displayName?: string;
+    skipProbe?: boolean;
+  } = { name, provider, baseUrl };
+  if (apiKeyRef) input.apiKeyRef = apiKeyRef;
+  if (displayName) input.displayName = displayName;
+  if (force) input.skipProbe = true;
+
+  const client = getNodeClient();
+  try {
+    const result = await client.nodeAddCloud.mutate(input);
+    const cfgPath = kubecfg.defaultConfigPath();
+    const cfg = kubecfg.loadConfig(cfgPath);
+    const ctx = kubecfg.currentContext(cfg);
+    const lines = [
+      `added cloud node '${result.name}' (${provider} @ ${result.baseUrl})`,
+      `  context:     ${ctx.name}`,
+    ];
+    if (apiKeyRef) {
+      lines.push(`  apiKey:      ${apiKeyRef} (not resolved at register time)`);
+    } else {
+      lines.push('  apiKey:      (anonymous — no Authorization header sent)');
+    }
+    if (displayName) lines.push(`  displayName: ${displayName}`);
+    if (force) lines.push('  [unverified — probe skipped via --force]');
+    process.stdout.write(`${lines.join('\n')}\n`);
+    return 0;
+  } catch (err) {
+    const message = (err as Error).message ?? String(err);
+    // The router wraps probe failures as `cloud node probe failed: …`.
+    // Mirror add-rag's error UX: surface the message, suggest --force
+    // when we're confident the failure is reachability-flavoured.
+    process.stderr.write(`node add-cloud: ${message}\n`);
+    if (!force && /probe failed|health check|unhealthy|ECONNREFUSED|fetch failed|ENOTFOUND|timeout/i.test(message)) {
+      process.stderr.write(
+        '  hint: pass --force to persist without the /v1/models probe\n',
+      );
+    }
+    return 1;
+  }
 }

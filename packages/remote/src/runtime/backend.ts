@@ -30,10 +30,21 @@ export interface PortMapping {
 }
 
 export interface VolumeMount {
-  /** Host path (bind mount). Mutually exclusive with `name`. */
+  /** Host path (bind mount). Mutually exclusive with `name` / `configMap`. */
   hostPath?: string;
-  /** Named docker volume. Mutually exclusive with `hostPath`. */
+  /** Named docker volume / k8s PVC claim. Mutually exclusive with `hostPath` / `configMap`. */
   name?: string;
+  /**
+   * k8s-only ConfigMap volume source. Docker runtime rejects this
+   * variant at apply time with `spec-invalid`. Inline `data` only for
+   * this slice — `items` / `fromFile` / `optional` / `namespace`
+   * projections are deferred.
+   */
+  configMap?: {
+    name: string;
+    data: Record<string, string>;
+    defaultMode?: number;
+  };
   containerPath: string;
   readOnly?: boolean;
 }

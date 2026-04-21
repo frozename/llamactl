@@ -410,12 +410,24 @@ function translateDeployment(
     }
   }
   if (spec.volumes && spec.volumes.length > 0) {
-    body.HostConfig.Mounts = spec.volumes.map((v) => ({
-      Type: v.hostPath ? 'bind' : 'volume',
-      Source: v.hostPath ?? v.name ?? '',
-      Target: v.containerPath,
-      ReadOnly: v.readOnly,
-    }));
+    body.HostConfig.Mounts = spec.volumes.map((v, i) => {
+      // ConfigMap is a k8s-only projection — there's no Docker
+      // equivalent (Docker has no native key-file materialization at
+      // runtime). Reject at translate time with a clear redirect so
+      // operators can pick hostPath / name instead.
+      if (v.configMap !== undefined) {
+        throw new RuntimeError(
+          'spec-invalid',
+          `volumes[${i}]: configMap mounts require runtime: kubernetes; use hostPath or name for docker`,
+        );
+      }
+      return {
+        Type: v.hostPath ? 'bind' : 'volume',
+        Source: v.hostPath ?? v.name ?? '',
+        Target: v.containerPath,
+        ReadOnly: v.readOnly,
+      };
+    });
   }
   if (spec.healthcheck) {
     body.Healthcheck = {

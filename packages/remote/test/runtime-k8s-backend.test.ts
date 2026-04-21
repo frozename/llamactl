@@ -425,6 +425,99 @@ describe('KubernetesBackend.ensureService — Deployment happy path', () => {
   });
 });
 
+describe('KubernetesBackend.ensureService — configMap volumes', () => {
+  test('configMap volume → createNamespacedConfigMap runs once before the Deployment apply', async () => {
+    const spec = sampleSpec({
+      volumes: [
+        {
+          configMap: {
+            name: 'sirius-config',
+            data: { 'providers.yaml': 'entries: []' },
+          },
+          containerPath: '/config',
+        },
+      ],
+    });
+    const configMapsCreated: Array<{ body: unknown; order: number }> = [];
+    const deploymentsCreated: Array<{ body: unknown; order: number }> = [];
+    let tick = 0;
+    const stub = stubKubeConfig({
+      handlers: {
+        'core.readNamespace': () => ({ metadata: { name: 'llamactl-kb' } }),
+        'core.readNamespacedConfigMap': () => {
+          throw notFound();
+        },
+        'core.createNamespacedConfigMap': (p) => {
+          configMapsCreated.push({ body: p.body, order: ++tick });
+          return p.body;
+        },
+        'core.readNamespacedService': () => {
+          throw notFound();
+        },
+        'core.createNamespacedService': (p) => p.body,
+        'apps.readNamespacedDeployment': () => {
+          if (deploymentsCreated.length === 0) throw notFound();
+          return readyDeployment(spec);
+        },
+        'apps.createNamespacedDeployment': (p) => {
+          deploymentsCreated.push({ body: p.body, order: ++tick });
+          return readyDeployment(spec);
+        },
+      },
+    });
+    const backend = new KubernetesBackend({
+      kubeConfig: stub.kubeConfig,
+      readinessPollMs: 1,
+      readinessTimeoutMs: 500,
+    });
+
+    await backend.ensureService(spec);
+
+    // Exactly one ConfigMap created; before the Deployment.
+    expect(configMapsCreated).toHaveLength(1);
+    expect(deploymentsCreated).toHaveLength(1);
+    expect(configMapsCreated[0]?.order).toBeLessThan(
+      deploymentsCreated[0]!.order,
+    );
+
+    // ConfigMap body carries inline data + composite labels + spec-hash annotation.
+    const cm = configMapsCreated[0]?.body as {
+      metadata?: {
+        name?: string;
+        labels?: Record<string, string>;
+        annotations?: Record<string, string>;
+      };
+      data?: Record<string, string>;
+    };
+    expect(cm.metadata?.name).toBe('sirius-config');
+    expect(cm.data).toEqual({ 'providers.yaml': 'entries: []' });
+    expect(cm.metadata?.labels?.[K8S_LABEL_KEYS.composite]).toBe('kb');
+    expect(cm.metadata?.annotations?.[K8S_ANNOTATION_KEYS.specHash]).toBe(
+      'hash-v1',
+    );
+
+    // Deployment pod template references the configMap via its pod
+    // volume source — not hostPath, not PVC.
+    const depBody = deploymentsCreated[0]?.body as {
+      spec?: {
+        template?: {
+          spec?: {
+            volumes?: Array<{
+              configMap?: { name?: string };
+              hostPath?: unknown;
+              persistentVolumeClaim?: unknown;
+            }>;
+          };
+        };
+      };
+    };
+    const podVolume = depBody.spec?.template?.spec?.volumes?.[0];
+    expect(podVolume?.configMap?.name).toBe('sirius-config');
+    expect(podVolume?.hostPath).toBeUndefined();
+    expect(podVolume?.persistentVolumeClaim).toBeUndefined();
+  });
+});
+
 describe('KubernetesBackend.ensureService — idempotency + drift', () => {
   test('spec-hash match → no create/replace on deployment, returns running instance', async () => {
     const spec = sampleSpec();

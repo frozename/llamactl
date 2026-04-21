@@ -25,6 +25,7 @@
  * doesn't care which backend it's driving.
  */
 import type {
+  V1ConfigMap,
   V1Deployment,
   V1PersistentVolumeClaim,
   V1Secret,
@@ -506,6 +507,10 @@ export class KubernetesBackend implements RuntimeBackend {
     if (translated.secret) {
       await this.upsertSecret(translated.secret, namespace);
     }
+    // ConfigMaps referenced by pod-volume sources must exist before
+    // the StatefulSet is applied so the kubelet resolves the mount on
+    // the first scheduling pass.
+    await this.ensureConfigMapsForSpec(spec, namespace, compositeName);
     // Headless Service must exist before the StatefulSet — its
     // `serviceName` points at it; k8s rejects the apply otherwise.
     await this.upsertService(translated.headlessService, namespace, spec.specHash);
@@ -748,13 +753,17 @@ export class KubernetesBackend implements RuntimeBackend {
       resolvedSecrets,
     });
 
-    // Creation order: Secret → PVC → Service → Deployment. The
-    // Deployment's env references the Secret; the pod mounts the
-    // PVC. Placing them last means the kubelet never fails to
-    // resolve one of our dependencies on the first scheduling pass.
+    // Creation order: Secret → ConfigMap → PVC → Service → Deployment.
+    // Secrets + ConfigMaps materialize first because the pod template
+    // references both via volume / env sources; the kubelet would
+    // otherwise fail the first scheduling pass with "volume not found"
+    // / "secret not found". PVC is sized inline and comes next; Service
+    // before the Deployment so clients dialing the resolved DNS name
+    // never observe a stale endpoint between creation windows.
     if (translated.secret) {
       await this.upsertSecret(translated.secret, namespace);
     }
+    await this.ensureConfigMapsForSpec(spec, namespace, compositeName);
     if (translated.pvc) {
       await this.upsertPvc(translated.pvc, namespace);
     }
@@ -822,6 +831,114 @@ export class KubernetesBackend implements RuntimeBackend {
       });
     } catch (err) {
       throw wrapBackend(err, `replace secret '${name}'`);
+    }
+  }
+
+  /**
+   * Idempotent ConfigMap upsert. Mirrors `upsertSecret` — read by
+   * name, create on 404, replace on spec-hash mismatch, skip when the
+   * annotation matches. Labels + `llamactl.io/spec-hash` annotation
+   * are identical to the Secret variant so destroy (by label
+   * selector) reaps ConfigMaps alongside everything else.
+   *
+   * Called from the deployment + statefulset apply paths, iterating
+   * `spec.volumes[].configMap` entries and upserting each unique
+   * ConfigMap name once BEFORE the controller is created/updated so
+   * the pod's volume mount never resolves to a missing object.
+   */
+  private async ensureConfigMap(
+    name: string,
+    data: Record<string, string>,
+    labels: Record<string, string>,
+    specHash: string,
+    namespace: string,
+  ): Promise<void> {
+    const desired: V1ConfigMap = {
+      apiVersion: 'v1',
+      kind: 'ConfigMap',
+      metadata: {
+        name,
+        namespace,
+        labels,
+        annotations: { [K8S_ANNOTATION_KEYS.specHash]: specHash },
+      },
+      data,
+    };
+    let existing: V1ConfigMap | null = null;
+    try {
+      existing = await this.client.core.readNamespacedConfigMap({
+        name,
+        namespace,
+      });
+    } catch (err) {
+      if (!isNotFound(err)) {
+        throw wrapBackend(err, `read configmap '${name}'`);
+      }
+    }
+    if (existing === null) {
+      try {
+        await this.client.core.createNamespacedConfigMap({
+          namespace,
+          body: desired,
+        });
+      } catch (err) {
+        throw wrapBackend(err, `create configmap '${name}'`);
+      }
+      return;
+    }
+    if (annotationHash(existing) === specHash) {
+      return;
+    }
+    const body: V1ConfigMap = {
+      ...desired,
+      metadata: {
+        ...desired.metadata,
+        resourceVersion: existing.metadata?.resourceVersion,
+      },
+    };
+    try {
+      await this.client.core.replaceNamespacedConfigMap({
+        name,
+        namespace,
+        body,
+      });
+    } catch (err) {
+      throw wrapBackend(err, `replace configmap '${name}'`);
+    }
+  }
+
+  /**
+   * Materialize every ConfigMap named by a `spec.volumes[].configMap`
+   * entry. Dedupes by ConfigMap name — an operator can mount the same
+   * ConfigMap at multiple paths without triggering redundant API
+   * calls. Called before the controller (Deployment/StatefulSet)
+   * apply so pod scheduling never races ahead of ConfigMap creation.
+   */
+  private async ensureConfigMapsForSpec(
+    spec: ServiceDeployment,
+    namespace: string,
+    compositeName: string,
+  ): Promise<void> {
+    if (!spec.volumes || spec.volumes.length === 0) return;
+    const labels: Record<string, string> = {
+      [K8S_LABEL_KEYS.managedBy]: MANAGED_BY_VALUE,
+      [K8S_LABEL_KEYS.instance]: `${compositeName}-${spec.name}`,
+      [K8S_LABEL_KEYS.partOf]: compositeName,
+      [K8S_LABEL_KEYS.composite]: compositeName,
+      [K8S_LABEL_KEYS.component]: 'service',
+    };
+    const seen = new Set<string>();
+    for (const v of spec.volumes) {
+      if (!v.configMap) continue;
+      if (seen.has(v.configMap.name)) continue;
+      seen.add(v.configMap.name);
+      await this.ensureConfigMap(
+        v.configMap.name,
+        v.configMap.data,
+        labels,
+        spec.specHash,
+        namespace,
+      );
     }
   }
 

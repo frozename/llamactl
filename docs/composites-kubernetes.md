@@ -215,6 +215,52 @@ headless companion at `clusterIP: None` regardless of the override;
 only the accompanying `-client` ClusterIP Service takes on the
 override type.
 
+### ConfigMap volumes
+
+Generic `kind: container` services on the k8s runtime can mount a
+`v1.ConfigMap` as an inline-data volume. Keys under `data` become
+files inside the container, one file per key.
+
+```yaml
+services:
+  - kind: container
+    name: sirius-main
+    image: { repository: sirius/gateway, tag: '1.4.0' }
+    volumes:
+      - containerPath: /config
+        configMap:
+          name: sirius-config
+          data:
+            providers.yaml: |
+              - name: openai
+                baseUrl: https://api.openai.com/v1
+            routes.yaml: |
+              - path: /v1/chat/completions
+                upstream: primary
+          defaultMode: 0o444          # optional; k8s default is 0644
+```
+
+- `name` is the `v1.ConfigMap` object name created in the composite
+  namespace. llamactl upserts the ConfigMap (create on first apply,
+  replace on spec-hash drift) before the Deployment/StatefulSet
+  apply so the pod schedules cleanly on the first pass.
+- `data` is a literal key→string map. Each entry lands as
+  `/config/<key>` inside the container.
+- `defaultMode` (octal) sets the file permission bits. Omit for the
+  k8s default of `0644`.
+- Docker runtime **rejects** this variant at apply time with
+  `spec-invalid: volumes[N]: configMap mounts require runtime:
+  kubernetes; use hostPath or name for docker`. Pick a bind mount
+  or a named volume on the Docker path.
+- `configMap`, `hostPath`, and `name` are mutually exclusive — the
+  schema requires exactly one.
+
+Updating the `data` block on the next apply replaces the ConfigMap
+in place; llamactl deliberately does not restart pods on ConfigMap
+change. Operators whose workloads need an immediate mount refresh
+should either `kubectl rollout restart` the Deployment or use
+projections (follow-up slice).
+
 ---
 
 ## Destroy

@@ -329,6 +329,44 @@ describe('DockerBackend.ensureService — secrets', () => {
   });
 });
 
+describe('DockerBackend.ensureService — configMap mounts rejected', () => {
+  test('configMap volume → spec-invalid pointing operators at hostPath / name', async () => {
+    const recorded: Recorded[] = [];
+    const responder: Responder = (req) => {
+      if (req.url.includes('/containers/test-service/json')) {
+        return { status: 404, body: '' };
+      }
+      if (req.url.includes('/images/') && req.url.endsWith('/json')) {
+        return {
+          status: 200,
+          body: jsonBody({ Architecture: 'amd64', Os: 'linux' }),
+        };
+      }
+      if (req.url.includes('/images/create')) return { status: 200, body: '{}' };
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    };
+    const backend = new DockerBackend({
+      fetch: makeMockFetch(responder, recorded),
+      hostArch: 'amd64',
+      hostOs: 'linux',
+    });
+
+    await expect(
+      backend.ensureService({
+        ...sampleSpec(),
+        volumes: [
+          {
+            configMap: { name: 'sirius-config', data: { 'a.yaml': 'x' } },
+            containerPath: '/config',
+          },
+        ],
+      }),
+    ).rejects.toThrow(
+      /volumes\[0\]: configMap mounts require runtime: kubernetes; use hostPath or name for docker/,
+    );
+  });
+});
+
 describe('DockerBackend.pullImage — NDJSON parsing', () => {
   test('drains progress lines and completes', async () => {
     const backend = new DockerBackend({

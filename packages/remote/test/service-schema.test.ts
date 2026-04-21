@@ -127,9 +127,63 @@ describe('GenericContainerServiceSpecSchema', () => {
       name: 'nginx',
       node: 'gpu1',
       image: { repository: 'nginx', tag: 'alpine' },
-      volumes: [{ containerPath: '/data' }],
+      // One of { hostPath, name, configMap } is required by the
+      // schema refine; `name` keeps this test focused on the default.
+      volumes: [{ name: 'scratch', containerPath: '/data' }],
     });
     expect(parsed.volumes[0]?.readOnly).toBe(false);
+  });
+
+  test('volumes refine: both hostPath and configMap → rejected', () => {
+    expect(() =>
+      GenericContainerServiceSpecSchema.parse({
+        kind: 'container',
+        name: 'nginx',
+        node: 'gpu1',
+        image: { repository: 'nginx', tag: 'alpine' },
+        volumes: [
+          {
+            hostPath: '/etc/conflict',
+            configMap: { name: 'cfg', data: { 'a.conf': 'x' } },
+            containerPath: '/config',
+          },
+        ],
+      }),
+    ).toThrow(
+      /volumes\[N\]: exactly one of \{ hostPath, name, configMap \} is required/,
+    );
+  });
+
+  test('volumes refine: configMap-only entry parses cleanly', () => {
+    const parsed = GenericContainerServiceSpecSchema.parse({
+      kind: 'container',
+      name: 'sirius',
+      node: 'local',
+      image: { repository: 'sirius', tag: '1.0.0' },
+      volumes: [
+        {
+          configMap: { name: 'sirius-config', data: { 'providers.yaml': 'x' } },
+          containerPath: '/config',
+        },
+      ],
+    });
+    expect(parsed.volumes[0]?.configMap?.name).toBe('sirius-config');
+    expect(parsed.volumes[0]?.hostPath).toBeUndefined();
+    expect(parsed.volumes[0]?.name).toBeUndefined();
+  });
+
+  test('volumes refine: zero of the three sources → rejected', () => {
+    expect(() =>
+      GenericContainerServiceSpecSchema.parse({
+        kind: 'container',
+        name: 'nginx',
+        node: 'gpu1',
+        image: { repository: 'nginx', tag: 'alpine' },
+        volumes: [{ containerPath: '/data' }],
+      }),
+    ).toThrow(
+      /volumes\[N\]: exactly one of \{ hostPath, name, configMap \} is required/,
+    );
   });
 });
 

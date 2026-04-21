@@ -104,6 +104,11 @@ Notes:
   through `hostPort` already and ignores the field. See
   [`composites-kubernetes.md`](./composites-kubernetes.md) for the
   external-exposure options.
+- `services[].volumes[].configMap` (inline-data ConfigMap source) is
+  k8s-only — the Docker runtime rejects it with `spec-invalid`. Use
+  `hostPath` or `name` on Docker. See
+  [`composites-kubernetes.md`](./composites-kubernetes.md#configmap-volumes)
+  for the spec shape.
 - `dependencies[]` is the explicit DAG. The applier also infers edges
   (rag→service via `backingService`, gateway→workload via
   `upstreamWorkloads`), so you usually don't need to declare those.

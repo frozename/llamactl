@@ -152,12 +152,37 @@ export const GenericContainerServiceSpecSchema = z.object({
     .default([]),
   volumes: z
     .array(
-      z.object({
-        hostPath: z.string().optional(),
-        name: z.string().optional(),
-        containerPath: z.string().min(1),
-        readOnly: z.boolean().default(false),
-      }),
+      z
+        .object({
+          hostPath: z.string().optional(),
+          name: z.string().optional(),
+          /**
+           * k8s-only ConfigMap volume source. Docker runtime rejects
+           * a spec carrying `configMap` at apply time — use `hostPath`
+           * or `name` for Docker. Inline `data` only; `items` /
+           * `fromFile` / `optional` / `namespace` projections are
+           * deferred to a future slice.
+           */
+          configMap: z
+            .object({
+              name: z.string().min(1),
+              data: z.record(z.string(), z.string()).default({}),
+              defaultMode: z.number().int().optional(),
+            })
+            .optional(),
+          containerPath: z.string().min(1),
+          readOnly: z.boolean().default(false),
+        })
+        .refine(
+          (v) =>
+            [v.hostPath, v.name, v.configMap].filter(
+              (x) => x !== undefined && x !== null && x !== '',
+            ).length === 1,
+          {
+            message:
+              'volumes[N]: exactly one of { hostPath, name, configMap } is required',
+          },
+        ),
     )
     .default([]),
   healthcheck: z

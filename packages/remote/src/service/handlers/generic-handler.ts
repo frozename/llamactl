@@ -89,6 +89,10 @@ export const genericContainerHandler: ServiceHandler<GenericContainerServiceSpec
         };
         if (v.hostPath !== undefined) mount.hostPath = v.hostPath;
         if (v.name !== undefined) mount.name = v.name;
+        // k8s-only ConfigMap projection — the docker backend throws
+        // `spec-invalid` at translate time so operators see a clear
+        // "use hostPath / name" redirect instead of a silent mount.
+        if (v.configMap !== undefined) mount.configMap = v.configMap;
         return mount;
       });
 

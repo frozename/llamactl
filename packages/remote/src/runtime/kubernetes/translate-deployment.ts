@@ -210,8 +210,11 @@ function buildContainerEnv(spec: ServiceDeployment): V1EnvVar[] {
 function buildVolumeMounts(spec: ServiceDeployment): V1VolumeMount[] {
   if (!spec.volumes || spec.volumes.length === 0) return [];
   return spec.volumes.map((v, i) => {
+    // Keep the synthetic pod-volume name in lockstep with
+    // `buildPodVolumes` so the kubelet resolves the mount reference.
+    const fallback = v.configMap ? `cfg-${i}` : `data-${i}`;
     const mount: V1VolumeMount = {
-      name: v.name ?? `data-${i}`,
+      name: v.name ?? fallback,
       mountPath: v.containerPath,
     };
     if (v.readOnly !== undefined) mount.readOnly = v.readOnly;
@@ -223,6 +226,22 @@ function buildPodVolumes(spec: ServiceDeployment): V1Volume[] {
   if (!spec.volumes || spec.volumes.length === 0) return [];
   const pvcName = pvcNameFor(spec);
   return spec.volumes.map((v, i): V1Volume => {
+    // ConfigMap branch must come BEFORE hostPath/name so a volume
+    // carrying only `configMap` (no name) gets a synthetic pod-volume
+    // name + a v1 `configMap` source. The backend's `ensureConfigMap`
+    // materializes the referenced ConfigMap object before the
+    // Deployment apply.
+    if (v.configMap) {
+      return {
+        name: v.name ?? `cfg-${i}`,
+        configMap: {
+          name: v.configMap.name,
+          ...(v.configMap.defaultMode !== undefined && {
+            defaultMode: v.configMap.defaultMode,
+          }),
+        },
+      };
+    }
     const name = v.name ?? `data-${i}`;
     if (v.hostPath) {
       // Bind-style volumes. `DirectoryOrCreate` mirrors the docker
@@ -303,6 +322,11 @@ function buildPvc(
   labels: Record<string, string>,
 ): V1PersistentVolumeClaim | null {
   if (!spec.volumes || spec.volumes.length === 0) return null;
+  // ConfigMap volumes don't back storage — if every declared volume
+  // is a configMap source, skip the PVC entirely (there's nothing
+  // for a claim to provision).
+  const needsPvc = spec.volumes.some((v) => v.configMap === undefined);
+  if (!needsPvc) return null;
   // v1 simplification: ONE PVC per service regardless of how many
   // `spec.volumes[]` entries there are. Mixed bind + named volumes
   // bind to the same PVC's claim; follow-up slice will split per

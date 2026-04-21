@@ -46,6 +46,7 @@ import type {
   V1Service,
   V1ServicePort,
   V1StatefulSet,
+  V1Volume,
   V1VolumeMount,
 } from '@kubernetes/client-node';
 
@@ -219,11 +220,34 @@ function buildVolumeClaimTemplates(
 ): {
   templates: V1PersistentVolumeClaim[];
   mounts: V1VolumeMount[];
+  podVolumes: V1Volume[];
 } {
   const volumes = spec.volumes ?? [];
   const templates: V1PersistentVolumeClaim[] = [];
   const mounts: V1VolumeMount[] = [];
+  const podVolumes: V1Volume[] = [];
   volumes.forEach((v, i) => {
+    // ConfigMap volumes don't map onto a `volumeClaimTemplates`
+    // entry — they need a pod-level `volumes[]` source referencing
+    // the composite-scoped ConfigMap that the backend materializes.
+    if (v.configMap) {
+      const cfgName = v.name ?? `cfg-${i}`;
+      podVolumes.push({
+        name: cfgName,
+        configMap: {
+          name: v.configMap.name,
+          ...(v.configMap.defaultMode !== undefined && {
+            defaultMode: v.configMap.defaultMode,
+          }),
+        },
+      });
+      mounts.push({
+        name: cfgName,
+        mountPath: v.containerPath,
+        ...(v.readOnly !== undefined && { readOnly: v.readOnly }),
+      });
+      return;
+    }
     const name = v.name ?? `data-${i}`;
     const pvcSpec: V1PersistentVolumeClaim['spec'] = {
       accessModes: ['ReadWriteOnce'],
@@ -245,7 +269,7 @@ function buildVolumeClaimTemplates(
       ...(v.readOnly !== undefined && { readOnly: v.readOnly }),
     });
   });
-  return { templates, mounts };
+  return { templates, mounts, podVolumes };
 }
 
 /**
@@ -301,7 +325,7 @@ export function translateToStatefulSet(
   const hasSecrets = secretNames.length > 0;
   const secretObjectName = `${spec.name}${SECRET_SUFFIX}`;
 
-  const { templates, mounts } = buildVolumeClaimTemplates(
+  const { templates, mounts, podVolumes } = buildVolumeClaimTemplates(
     spec,
     storageClassName,
   );
@@ -336,7 +360,10 @@ export function translateToStatefulSet(
       selector: { matchLabels: { app: spec.name } },
       template: {
         metadata: { labels, annotations },
-        spec: { containers: [container] },
+        spec: {
+          containers: [container],
+          ...(podVolumes.length > 0 && { volumes: podVolumes }),
+        },
       },
       ...(templates.length > 0 && { volumeClaimTemplates: templates }),
     },

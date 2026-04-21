@@ -95,6 +95,10 @@ Remote node management (Kubernetes-style):
   llamactl node add <name> --server <url>
       --fingerprint <sha256:...> --token <tok>
                                               Register a node explicitly
+  llamactl node add-cloud <name>              Register a gateway/cloud node
+      --provider <sirius|openai|...>          (sirius, embersynth, openai,
+      --base-url <url> [--api-key-ref <r>]     anthropic, openai-compatible).
+      [--display-name <n>] [--force]          --force skips the probe.
   llamactl node rm <name>                     Remove a node (not 'local')
   llamactl node test <name>                   Call nodeFacts() against a node
   llamactl ctx current                        Print the current-context name

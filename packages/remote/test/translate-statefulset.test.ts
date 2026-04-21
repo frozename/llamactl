@@ -386,6 +386,30 @@ describe('translateToStatefulSet — volumes variations', () => {
       statefulSet.spec?.template.spec?.containers?.[0]?.volumeMounts ?? [];
     expect(mounts[0]?.readOnly).toBe(true);
   });
+
+  test('configMap volume → pod-level volume (not a volumeClaimTemplate) with mount', () => {
+    const spec = pgvectorSpec({
+      volumes: [
+        {
+          configMap: { name: 'pg-config', data: { 'pg.conf': 'max_connections=20' } },
+          containerPath: '/etc/pg',
+        },
+      ],
+    });
+    const { statefulSet } = translateToStatefulSet(spec, baseOpts);
+    // No volumeClaimTemplates — configMap doesn't back storage.
+    expect(statefulSet.spec?.volumeClaimTemplates ?? []).toHaveLength(0);
+    // Pod template exposes the configMap at the expected source.
+    const podVolumes = statefulSet.spec?.template.spec?.volumes ?? [];
+    expect(podVolumes).toHaveLength(1);
+    expect(podVolumes[0]?.configMap?.name).toBe('pg-config');
+    // Container mounts it at the declared containerPath.
+    const mounts =
+      statefulSet.spec?.template.spec?.containers?.[0]?.volumeMounts ?? [];
+    expect(mounts).toHaveLength(1);
+    expect(mounts[0]?.mountPath).toBe('/etc/pg');
+    expect(mounts[0]?.name).toBe(podVolumes[0]?.name);
+  });
 });
 
 describe('translateToStatefulSet — ports variations', () => {
