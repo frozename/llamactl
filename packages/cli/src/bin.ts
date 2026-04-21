@@ -12,6 +12,7 @@ import { runPull } from './commands/pull.js';
 import { runUninstall } from './commands/uninstall.js';
 import { runAgent } from './commands/agent.js';
 import { runNode } from './commands/node.js';
+import { runRag } from './commands/rag.js';
 import { runCtx } from './commands/ctx.js';
 import { runApply, runDelete, runDescribe, runGet } from './commands/workload.js';
 import { runComposite } from './commands/composite.js';
@@ -146,6 +147,12 @@ Declarative workloads (Kubernetes-style):
   llamactl sirius export                       Emit LLAMACTL_NODES config for
       [--format json|yaml|env]                 a sirius-gateway deployment.
       [--token-inline]
+  llamactl rag ask <question>                  Retrieve top-k passages from a
+      --kb <rag-node> --via <node>              RAG node and route a chat
+      --model <id> [--top-k=<N>]                completion through the named
+      [--collection=<n>] [--max-tokens=<N>]     gateway/cloud/agent node.
+      [--temperature=<f>] [--system-prompt=<s>] --cite prints passages; --json
+      [--cite] [--json]                         emits a structured doc.
 
 Agentic operations:
   llamactl runbook list                       Enumerate operator runbooks
@@ -218,6 +225,8 @@ async function main(argv: string[]): Promise<number> {
       return runAgent(rest);
     case 'node':
       return runNode(rest);
+    case 'rag':
+      return runRag(rest);
     case 'ctx':
       return runCtx(rest);
     case 'apply':

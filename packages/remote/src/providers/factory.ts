@@ -36,10 +36,31 @@ export function providerForCloudNode(
   return createOpenAICompatProvider({
     name: node.name,
     displayName: node.cloud.displayName ?? node.name,
-    baseUrl: node.cloud.baseUrl,
+    baseUrl: normalizeOpenAICompatBaseUrl(node.cloud.baseUrl),
     apiKey,
     ...(fetchImpl ? { fetch: fetchImpl } : {}),
   });
+}
+
+/**
+ * Nova's OpenAI-compat adapter assumes `baseUrl` already terminates
+ * at `/v1` (or another explicit API version) and appends paths like
+ * `/chat/completions`, `/embeddings`, `/models` verbatim. Operators
+ * registering cloud nodes naturally type `http://host:port` or
+ * `https://host` without the `/v1` — append it when absent so
+ * `node add-cloud` + `llamactl rag ask` + every downstream chat /
+ * embed path hit the right URL. Mirrors the same rule already
+ * applied to `embedder.baseUrl` in rag/embedding.ts; lives here too
+ * so cloud-node registrations go through it.
+ *
+ * Skip the append when the URL already ends in `/v<n>` — keeps the
+ * escape hatch for operators with a proxy that exposes a different
+ * versioned prefix (or none) open.
+ */
+function normalizeOpenAICompatBaseUrl(url: string): string {
+  const trimmed = url.endsWith('/') ? url.slice(0, -1) : url;
+  if (/\/v\d+$/.test(trimmed)) return trimmed;
+  return `${trimmed}/v1`;
 }
 
 /**
