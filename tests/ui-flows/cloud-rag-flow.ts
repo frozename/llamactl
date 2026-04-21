@@ -240,6 +240,66 @@ async function main(): Promise<void> {
     `  Chat pane got a real assistant response in ${attempts}s (got: "${assistantText.slice(0, 180)}")`,
   );
 
+  // === Chat with RAG toggle =========================================
+  console.log('\n== Chat + RAG ==');
+  // Toggle the rag picker to kb-pg (invented-fact corpus ingested
+  // earlier in this session into the 'docs' collection).
+  await evalDOM(sessionId, `(() => {
+    var picker = document.querySelector('[data-testid="chat-rag-picker"]');
+    if (!picker) return { missing: true };
+    var sel = picker.querySelector('select');
+    var setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+    setter.call(sel, 'kb-pg');
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    return { ok: true };
+  })()`);
+  await sleep(400);
+
+  // Send a question that only the ingested corpus knows the answer to.
+  const ragQuestion = 'What is the llamactl Phase 3 magic number?';
+  await tool('electron_fill', {
+    sessionId,
+    selector: 'textarea[placeholder*="Message"]',
+    value: ragQuestion,
+  });
+  await sleep(200);
+  await click(sessionId, 'form button[type="submit"]');
+
+  // Poll for the assistant bubble + the retrieval-disclosure on the
+  // user bubble. The rag path goes renderer → ipcLink → main's
+  // `wrapQueryOrMutation(ragSearch)` (query, already schema'd) →
+  // agent tRPC → rag adapter, then pipes the retrieved docs into
+  // the system message before `chatStream` fires.
+  let ragAnswer = '';
+  let disclosureSeen = false;
+  let ragAttempts = 0;
+  for (let i = 0; i < 40; i++) {
+    await sleep(1000);
+    ragAttempts = i + 1;
+    const snap = await evalDOM<{ answer: string; disclosure: boolean; userCount: number; asstCount: number }>(
+      sessionId,
+      `(() => {
+        var pane = document.querySelector('[data-testid="chat-pane-a"]');
+        if (!pane) return { answer: '', disclosure: false, userCount: 0, asstCount: 0 };
+        var asst = pane.querySelectorAll('[data-role="assistant"]');
+        var last = asst[asst.length - 1];
+        var contentDiv = last ? last.querySelectorAll('div')[0] : null;
+        return {
+          answer: (contentDiv && contentDiv.textContent) || '',
+          disclosure: !!pane.querySelector('[data-testid="chat-rag-disclosure"]'),
+          userCount: pane.querySelectorAll('[data-role="user"]').length,
+          asstCount: asst.length,
+        };
+      })()`,
+    );
+    ragAnswer = (snap?.answer ?? '').trim();
+    disclosureSeen = disclosureSeen || !!snap?.disclosure;
+    if (disclosureSeen && /4823/.test(ragAnswer)) break;
+  }
+  check(disclosureSeen, `  Retrieval disclosure appears on the user bubble`);
+  check(/4823/.test(ragAnswer), `  RAG-augmented answer contains the invented fact (got: "${ragAnswer.slice(0, 180)}")`);
+  console.log(`  (${ragAttempts}s polled)`);
+
   await tool('electron_close', { sessionId });
   proc.kill();
 
