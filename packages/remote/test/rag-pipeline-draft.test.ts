@@ -104,6 +104,39 @@ describe('draftPipeline', () => {
     expect(r.manifest.spec.destination.collection).toBe('my_collection');
   });
 
+  test('git https URL → git source + repo/slug-derived name', () => {
+    const r = draftPipeline('ingest https://github.com/pytorch/docs.git into kb-pg');
+    expect(r.manifest.spec.sources).toHaveLength(1);
+    const src = r.manifest.spec.sources[0]!;
+    expect(src.kind).toBe('git');
+    if (src.kind === 'git') {
+      expect(src.repo).toBe('https://github.com/pytorch/docs.git');
+      expect(src.glob).toBe('**/*.md');
+    }
+    expect(r.manifest.metadata.name).toBe('pytorch-docs');
+  });
+
+  test('git SSH URL → git source', () => {
+    const r = draftPipeline('pull git@github.com:acme/notes.git');
+    expect(r.manifest.spec.sources).toHaveLength(1);
+    const src = r.manifest.spec.sources[0]!;
+    expect(src.kind).toBe('git');
+    if (src.kind === 'git') {
+      expect(src.repo).toBe('git@github.com:acme/notes.git');
+    }
+    expect(r.manifest.metadata.name).toBe('acme-notes');
+  });
+
+  test('mixed git + docs-site URLs: both sources emitted once each', () => {
+    const r = draftPipeline(
+      'crawl https://docs.example.com and clone https://github.com/acme/repo.git',
+    );
+    expect(r.manifest.spec.sources).toHaveLength(2);
+    // Git sources come first (ordered in source-discovery order).
+    expect(r.manifest.spec.sources[0]!.kind).toBe('git');
+    expect(r.manifest.spec.sources[1]!.kind).toBe('http');
+  });
+
   test('emitted yaml round-trips through the schema', () => {
     const r = draftPipeline('crawl https://x.dev every 30 minutes');
     // The yaml is what a caller would hand to `rag pipeline apply`.

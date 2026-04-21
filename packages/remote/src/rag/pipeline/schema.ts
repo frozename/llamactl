@@ -26,9 +26,39 @@ export const HttpSourceSpecSchema = z.object({
   tag: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const GitSourceSpecSchema = z.object({
+  kind: z.literal('git'),
+  /**
+   * Anything `git clone` accepts — https://host/org/repo.git,
+   * git@host:org/repo.git, or a bare path to a local checkout. The
+   * fetcher shallow-clones to a tmpdir, walks the tree, and removes
+   * the checkout when the source completes.
+   */
+  repo: z.string().min(1),
+  /**
+   * Branch, tag, or commit SHA. Omitted → the remote's default
+   * branch (typically `main`/`master`). Shallow clone depth is
+   * forced to 1; callers wanting full history should stage through
+   * a filesystem source instead.
+   */
+  ref: z.string().optional(),
+  /** Restrict the walk to a subtree of the repo (e.g. `docs/`). */
+  subpath: z.string().optional(),
+  /** Glob applied under `root = clone/subpath`. Defaults to markdown. */
+  glob: z.string().default('**/*.md'),
+  /**
+   * Optional token reference. Resolved via the same env:/keychain:/file:
+   * grammar as the http source; injected as `https://x-access-token:
+   * <token>@...` for GitHub-style auth. Omitted → public repo.
+   */
+  auth: z.object({ tokenRef: z.string().min(1) }).optional(),
+  tag: z.record(z.string(), z.unknown()).optional(),
+});
+
 export const SourceSpecSchema = z.discriminatedUnion('kind', [
   FilesystemSourceSpecSchema,
   HttpSourceSpecSchema,
+  GitSourceSpecSchema,
 ]);
 
 export const MarkdownChunkTransformSchema = z.object({
@@ -103,6 +133,7 @@ export const RagPipelineManifestSchema = z.object({
 
 export type FilesystemSourceSpec = z.infer<typeof FilesystemSourceSpecSchema>;
 export type HttpSourceSpec = z.infer<typeof HttpSourceSpecSchema>;
+export type GitSourceSpec = z.infer<typeof GitSourceSpecSchema>;
 export type MarkdownChunkTransform = z.infer<typeof MarkdownChunkTransformSchema>;
 export type SourceSpec = z.infer<typeof SourceSpecSchema>;
 export type TransformSpec = z.infer<typeof TransformSpecSchema>;

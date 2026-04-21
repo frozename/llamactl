@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   FilesystemSourceSpecSchema,
+  GitSourceSpecSchema,
   HttpSourceSpecSchema,
   MarkdownChunkTransformSchema,
   RagPipelineManifestSchema,
@@ -67,8 +68,39 @@ describe('HttpSourceSpecSchema', () => {
   });
 });
 
+describe('GitSourceSpecSchema', () => {
+  test('applies glob default and accepts tag', () => {
+    const parsed = GitSourceSpecSchema.parse({
+      kind: 'git',
+      repo: 'https://github.com/acme/docs.git',
+      tag: { repo: 'docs' },
+    });
+    expect(parsed.glob).toBe('**/*.md');
+    expect(parsed.tag).toEqual({ repo: 'docs' });
+  });
+
+  test('accepts optional ref + subpath + auth', () => {
+    const parsed = GitSourceSpecSchema.parse({
+      kind: 'git',
+      repo: 'https://github.com/acme/docs.git',
+      ref: 'main',
+      subpath: 'docs',
+      auth: { tokenRef: 'env:GITHUB_TOKEN' },
+    });
+    expect(parsed.ref).toBe('main');
+    expect(parsed.subpath).toBe('docs');
+    expect(parsed.auth?.tokenRef).toBe('env:GITHUB_TOKEN');
+  });
+
+  test('rejects empty repo', () => {
+    expect(() =>
+      GitSourceSpecSchema.parse({ kind: 'git', repo: '' }),
+    ).toThrow();
+  });
+});
+
 describe('SourceSpecSchema discriminated union', () => {
-  test('routes by kind', () => {
+  test('routes by kind (filesystem / http / git)', () => {
     const fs = SourceSpecSchema.parse({
       kind: 'filesystem',
       root: '/tmp',
@@ -79,11 +111,16 @@ describe('SourceSpecSchema discriminated union', () => {
       url: 'https://example.com',
     });
     expect(http.kind).toBe('http');
+    const git = SourceSpecSchema.parse({
+      kind: 'git',
+      repo: 'https://github.com/acme/docs.git',
+    });
+    expect(git.kind).toBe('git');
   });
 
   test('rejects unknown kinds', () => {
     expect(() =>
-      SourceSpecSchema.parse({ kind: 'git', url: 'https://example.com' }),
+      SourceSpecSchema.parse({ kind: 's3', bucket: 'foo' }),
     ).toThrow();
   });
 });

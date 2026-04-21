@@ -1,0 +1,37 @@
+apiVersion: llamactl/v1
+kind: RagPipeline
+# Shallow-clones a git repo and ingests its markdown tree. Use when
+# the docs you care about live in a repo, not on a docs site — the
+# git fetcher walks the working tree exactly like the filesystem
+# fetcher would, but without requiring you to check the repo out by
+# hand first. Each run starts from a fresh clone; no persistent state
+# lives in `$DEV_STORAGE` beyond the pipeline's own journal.
+#
+# Auth: for private repos, set `auth.tokenRef` to env: / keychain: /
+# file: grammar — the fetcher rewrites https clone URLs to embed the
+# token as `x-access-token`. SSH URLs bypass the rewrite (use your
+# user's SSH agent).
+metadata:
+  name: rag-plan-repo
+spec:
+  destination:
+    ragNode: kb-pg
+    collection: rag_plan_repo
+  sources:
+    - kind: git
+      repo: https://github.com/anthropics/claude-code.git
+      ref: main
+      subpath: docs
+      glob: "**/*.md"
+      # auth:
+      #   tokenRef: env:GITHUB_TOKEN     # for private repos
+      tag:
+        source: claude-code-docs
+        repo: anthropics/claude-code
+  transforms:
+    - kind: markdown-chunk
+      chunk_size: 800
+      overlap: 150
+      preserve_headings: true
+  concurrency: 4
+  on_duplicate: replace

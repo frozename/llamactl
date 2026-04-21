@@ -53,6 +53,11 @@ export interface DraftResult {
 }
 
 const URL_RE = /\b(https?:\/\/[^\s"'<>`]+)/g;
+// GitHub / GitLab / Gitea: any https URL ending in `.git`, or a bare
+// `git@host:org/repo.git` SSH remote. Matches are narrower than the
+// general URL_RE so a plain https link to a docs site doesn't become
+// a git source.
+const GIT_URL_RE = /\b(https?:\/\/[^\s"'<>`]+\.git|git@[\w.-]+:[^\s"'<>`]+\.git)/g;
 // Loose "looks like a path" heuristic: leading `/`, `./`, `~/`, or a
 // drive-letter. Windows-style backslashes are intentionally ignored
 // — llamactl is macOS/Linux-first and `~\foo\bar` would be far more
@@ -74,11 +79,25 @@ export function draftPipeline(
     warnings.push('description was empty — draft is a bare skeleton');
   }
 
-  const urls = uniq(matchAll(desc, URL_RE));
+  const gitUrls = uniq(matchAll(desc, GIT_URL_RE));
+  const allUrls = uniq(matchAll(desc, URL_RE));
+  // Any URL that's also a git URL gets routed to the git fetcher
+  // only — otherwise a `.git` URL would get double-emitted as both
+  // http (crawl) and git (clone). The bare SSH form never matches
+  // URL_RE (no scheme) so we treat it as git-only by construction.
+  const gitUrlSet = new Set(gitUrls);
+  const httpUrls = allUrls.filter((u) => !gitUrlSet.has(u));
   const paths = uniq(matchAll(desc, PATH_RE));
 
   const sources: SourceSpec[] = [];
-  for (const url of urls) {
+  for (const repo of gitUrls) {
+    sources.push({
+      kind: 'git',
+      repo,
+      glob: '**/*.md',
+    });
+  }
+  for (const url of httpUrls) {
     sources.push({
       kind: 'http',
       url,
@@ -106,9 +125,14 @@ export function draftPipeline(
   }
 
   const ragNode = pickRagNode(desc, ctx, warnings);
-  const collection = pickCollection(desc, urls, paths, warnings);
-  const name = ctx.nameOverride?.trim() || inferName(desc, urls, paths);
-  if (!ctx.nameOverride && !inferName(desc, urls, paths)) {
+  // Collection / name inference considers every source URL (git or
+  // http) plus filesystem paths — git clone URLs produce a cleaner
+  // inferred name (`pytorch-docs` from `.../pytorch/docs.git`) than
+  // a plain docs-site URL.
+  const unifiedUrls = [...gitUrls, ...httpUrls];
+  const collection = pickCollection(desc, unifiedUrls, paths, warnings);
+  const name = ctx.nameOverride?.trim() || inferName(desc, unifiedUrls, paths);
+  if (!ctx.nameOverride && !inferName(desc, unifiedUrls, paths)) {
     warnings.push('could not infer a pipeline name — defaulted to "draft"');
   }
 
@@ -174,14 +198,17 @@ function pickCollection(
 ): string {
   const m = desc.match(COLLECTION_RE);
   if (m) return m[1]!;
-  // Infer from the first source: host for URLs, last path segment
-  // for filesystem. Collapses to snake_case.
+  // Infer from the first source: host for URLs (incl. git clone
+  // URLs), last path segment for filesystem. Collapses to snake_case.
   if (urls.length > 0) {
     try {
       const url = new URL(urls[0]!);
       return snakeCase(url.hostname.replace(/^www\./, ''));
     } catch {
-      /* fallthrough */
+      // Bare SSH git URLs (`git@host:org/repo.git`) don't parse as
+      // URLs. Split on `:` to get the host, then snake_case it.
+      const ssh = urls[0]!.match(/^git@([\w.-]+):/);
+      if (ssh) return snakeCase(ssh[1]!);
     }
   }
   if (paths.length > 0) {
@@ -214,8 +241,18 @@ function pickSchedule(desc: string): string | null {
 
 function inferName(desc: string, urls: string[], paths: string[]): string {
   if (urls.length > 0) {
+    const first = urls[0]!;
+    // Git clone URLs: pull the repo slug out of the path so
+    // `https://github.com/pytorch/docs.git` becomes `pytorch-docs`
+    // rather than `github-com`.
+    if (first.endsWith('.git')) {
+      const slugFromHttps = first.match(/\/([^/\s]+?)\/([^/\s]+?)\.git$/);
+      if (slugFromHttps) return kebabCase(`${slugFromHttps[1]!}-${slugFromHttps[2]!}`);
+      const slugFromSsh = first.match(/:([^/\s]+?)\/([^/\s]+?)\.git$/);
+      if (slugFromSsh) return kebabCase(`${slugFromSsh[1]!}-${slugFromSsh[2]!}`);
+    }
     try {
-      const host = new URL(urls[0]!).hostname.replace(/^www\./, '');
+      const host = new URL(first).hostname.replace(/^www\./, '');
       return kebabCase(host);
     } catch {
       /* fallthrough */
