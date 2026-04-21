@@ -485,6 +485,26 @@ Electron modules against baselines at `tests/ui-audit-baselines/`. See
 failures, reseed baselines after intentional UI changes
 (`bun run audit:update`), and run the gate locally (`bun run audit`).
 
+## Secret references
+
+Every `apiKeyRef`, `User.tokenRef`, and `RagBinding.auth.tokenRef`
+flows through a unified resolver in
+`packages/remote/src/config/secret.ts`. Four reference syntaxes are
+supported everywhere:
+
+- `env:VAR_NAME` or `$VAR_NAME` — read from `process.env`
+- `keychain:service/account` — read macOS Keychain via
+  `/usr/bin/security find-generic-password -w`. macOS only; the
+  resolver throws a clear platform error on other hosts.
+- `file:/abs/path` or `file:~/home-relative` — read file contents
+- legacy bare `/abs/path` or `~/home-relative` — same as `file:`
+
+Values are trimmed on read. The resolver's error messages name what
+couldn't be found without echoing the value itself. Add new backends
+(Vault, k8s Secret) by extending `classify()` + adding a
+`resolveX(body, ctx)` helper — existing call sites inherit the
+backend for free via `resolveSecret(ref, env)`.
+
 ## Cross-repo discipline
 
 **After a non-trivial slice, verify four repos still green:**

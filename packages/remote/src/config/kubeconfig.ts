@@ -11,6 +11,7 @@ import {
   type Context,
   type User,
 } from './schema.js';
+import { resolveSecret } from './secret.js';
 
 export function defaultConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_CONFIG?.trim();
@@ -91,17 +92,18 @@ export function resolveToken(
 ): string {
   if (user.token) return user.token;
   if (!user.tokenRef) throw new Error(`user '${user.name}' has neither token nor tokenRef`);
-  const path = user.tokenRef.replace(/^~(?=$|\/)/, env.HOME ?? homedir());
-  if (!existsSync(path)) throw new Error(`tokenRef '${path}' does not exist`);
-  return readFileSync(path, 'utf8').trim();
+  // Delegate through the unified secret resolver so tokens can live
+  // in macOS Keychain / env / file without widening this function.
+  return resolveSecret(user.tokenRef, env);
 }
 
 /**
- * Resolve a cloud node's API key from its `apiKeyRef`. Supports three
- * forms:
- *   - `$VAR_NAME`       → read from `env[VAR_NAME]`
- *   - `~/.path/to/file` → read file contents (home-dir expansion)
- *   - `/abs/path`       → read file contents as-is
+ * Resolve a cloud node's API key from its `apiKeyRef`. Thin wrapper
+ * around the unified secret resolver — the explicit `apiKeyRef` name
+ * stays on the public surface so existing call sites keep reading
+ * cleanly. See `config/secret.ts` for the supported reference
+ * syntax (`env:` / `$VAR` / `keychain:service/account` / `file:` /
+ * legacy bare path).
  *
  * The control plane calls this at request time — the renderer never
  * handles cloud keys, and tokens don't live in kubeconfig YAML
@@ -111,18 +113,7 @@ export function resolveApiKeyRef(
   apiKeyRef: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const trimmed = apiKeyRef.trim();
-  if (trimmed.startsWith('$')) {
-    const varName = trimmed.slice(1);
-    const value = env[varName];
-    if (!value) throw new Error(`env var '${varName}' is not set`);
-    return value.trim();
-  }
-  const path = trimmed.replace(/^~(?=$|\/)/, env.HOME ?? homedir());
-  if (!existsSync(path)) {
-    throw new Error(`apiKeyRef '${apiKeyRef}' resolves to nothing — env var unset or path missing`);
-  }
-  return readFileSync(path, 'utf8').trim();
+  return resolveSecret(apiKeyRef, env);
 }
 
 export function upsertCluster(config: Config, cluster: Config['clusters'][number]): Config {

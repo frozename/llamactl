@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
 import type { RagBinding } from '../../config/schema.js';
+import { resolveSecret } from '../../config/secret.js';
 import { RagError } from '../errors.js';
 
 /**
@@ -35,6 +35,13 @@ export function redactPostgresUrl(url: string): string {
   }
 }
 
+/**
+ * Resolve the pgvector password. `tokenEnv` is the legacy env-only
+ * shape (it names the env var directly — no scheme prefix). `tokenRef`
+ * rides the unified secret resolver so `keychain:`, `env:`, `file:`,
+ * and legacy bare paths all work. We prefer `tokenEnv` when set so
+ * that legacy configs continue resolving identically.
+ */
 function resolveToken(
   binding: RagBinding,
   env: NodeJS.ProcessEnv,
@@ -47,11 +54,11 @@ function resolveToken(
   }
   if (auth.tokenRef) {
     try {
-      return readFileSync(auth.tokenRef, 'utf8').trim();
+      return resolveSecret(auth.tokenRef, env);
     } catch (cause) {
       throw new RagError(
         'connect-failed',
-        `pgvector: unable to read tokenRef (${auth.tokenRef})`,
+        `pgvector: unable to resolve auth.tokenRef (${auth.tokenRef})`,
         cause,
       );
     }
