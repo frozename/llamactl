@@ -164,25 +164,317 @@ export class KubernetesBackend implements RuntimeBackend {
     );
   }
 
-  async removeService(_ref: ServiceRef): Promise<void> {
-    throw new RuntimeError(
-      'backend-unreachable',
-      'KubernetesBackend.removeService is not implemented yet (Phase 5)',
+  /**
+   * Locate + delete a managed service by name. Because the k8s
+   * backend doesn't always know which namespace the service lives
+   * in (composite-scoped namespaces are implicit), we search via
+   * the managed-by label selector across all namespaces and pick
+   * the first Deployment or StatefulSet whose `metadata.name`
+   * matches.
+   *
+   * When found, the delete cascade is:
+   *   Controller (Deployment / StatefulSet) → Services (by label)
+   *   → Secret (by conventional name) → PVCs (label-scoped; gated
+   *   behind `opts.purgeVolumes`). Missing resources at each step
+   *   are 404-tolerant — treated as already-gone.
+   *
+   * A not-found service is a no-op (matches Docker backend's
+   * 404-tolerant semantics).
+   */
+  async removeService(
+    ref: ServiceRef,
+    opts?: import('../backend.js').RemoveServiceOptions,
+  ): Promise<void> {
+    const located = await this.locateService(ref.name);
+    if (!located) return;
+    const { namespace, controllerKind } = located;
+    const purgeVolumes = opts?.purgeVolumes ?? false;
+
+    // 1. Controller first — removing it stops the pods before we
+    //    drop the Service that points at them, so clients see a
+    //    clean "gone" instead of a stale endpoint.
+    try {
+      if (controllerKind === 'deployment') {
+        await this.client.apps.deleteNamespacedDeployment({
+          name: ref.name,
+          namespace,
+        });
+      } else {
+        await this.client.apps.deleteNamespacedStatefulSet({
+          name: ref.name,
+          namespace,
+        });
+      }
+    } catch (err) {
+      if (!isNotFound(err)) {
+        throw wrapBackend(err, `delete ${controllerKind} '${ref.name}'`);
+      }
+    }
+
+    // 2. Services — both the ClusterIP service and, for StatefulSet,
+    //    the headless companion + the `-client` ClusterIP. Look them
+    //    up via label selector so we pick up every variant without
+    //    hard-coding name suffixes.
+    const serviceSelector = `${K8S_LABEL_KEYS.managedBy}=${MANAGED_BY_VALUE},${K8S_LABEL_KEYS.component}=service,app=${ref.name}`;
+    try {
+      const services = await this.client.core.listNamespacedService({
+        namespace,
+        labelSelector: serviceSelector,
+      });
+      for (const svc of services.items ?? []) {
+        if (!svc.metadata?.name) continue;
+        try {
+          await this.client.core.deleteNamespacedService({
+            name: svc.metadata.name,
+            namespace,
+          });
+        } catch (err) {
+          if (!isNotFound(err)) {
+            throw wrapBackend(err, `delete service '${svc.metadata.name}'`);
+          }
+        }
+      }
+    } catch (err) {
+      if (!isNotFound(err)) {
+        throw wrapBackend(err, `list services for '${ref.name}'`);
+      }
+    }
+
+    // 3. Secret (both translators use the same naming convention).
+    try {
+      await this.client.core.deleteNamespacedSecret({
+        name: `${ref.name}-secrets`,
+        namespace,
+      });
+    } catch (err) {
+      if (!isNotFound(err)) {
+        throw wrapBackend(err, `delete secret for '${ref.name}'`);
+      }
+    }
+
+    // 4. PVCs — opt-in only. Deployment path emits a standalone PVC;
+    //    StatefulSet's volumeClaimTemplates materialize as
+    //    PVCs named `<template>-<statefulset>-<ordinal>` which carry
+    //    no managed-by label (k8s generates them). Scope by name
+    //    prefix when the controller is a StatefulSet; Deployment
+    //    path deletes the named PVC directly.
+    if (purgeVolumes) {
+      try {
+        const pvcs = await this.client.core.listNamespacedPersistentVolumeClaim({
+          namespace,
+        });
+        for (const pvc of pvcs.items ?? []) {
+          const n = pvc.metadata?.name;
+          if (!n) continue;
+          // Deployment case: exactly `${name}-data`.
+          // StatefulSet case: `*-${name}-<ordinal>` (k8s convention).
+          if (n === `${ref.name}-data` || n.endsWith(`-${ref.name}-0`) || n.includes(`-${ref.name}-`)) {
+            try {
+              await this.client.core.deleteNamespacedPersistentVolumeClaim({
+                name: n,
+                namespace,
+              });
+            } catch (err) {
+              if (!isNotFound(err)) {
+                throw wrapBackend(err, `delete pvc '${n}'`);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if (!isNotFound(err)) {
+          throw wrapBackend(err, `list pvcs for '${ref.name}'`);
+        }
+      }
+    }
+  }
+
+  /**
+   * Lookup by name across all managed namespaces. Returns null when
+   * nothing matches — same semantics as the docker backend so the
+   * Composite applier can write uniform not-found handling.
+   */
+  async inspectService(ref: ServiceRef): Promise<ServiceInstance | null> {
+    const located = await this.locateService(ref.name);
+    if (!located) return null;
+    const { namespace, controllerKind, controller } = located;
+
+    // Pair the controller with its ClusterIP service so we can
+    // surface the cluster-DNS endpoint. StatefulSet exposes both a
+    // headless + a `-client` ClusterIP; prefer the ClusterIP for
+    // the endpoint (external consumers can't use headless DNS
+    // directly).
+    let service: V1Service | null = null;
+    try {
+      const candidateName =
+        controllerKind === 'statefulset' ? `${ref.name}-client` : ref.name;
+      service = await this.client.core.readNamespacedService({
+        name: candidateName,
+        namespace,
+      });
+    } catch (err) {
+      if (!isNotFound(err)) {
+        throw wrapBackend(err, `read service '${ref.name}'`);
+      }
+    }
+
+    return this.buildServiceInstance(
+      {
+        name: ref.name,
+        image: { repository: '', tag: '' },
+        specHash: annotationHash(controller) ?? '',
+      },
+      controller,
+      service,
+      namespace,
     );
   }
 
-  async inspectService(_ref: ServiceRef): Promise<ServiceInstance | null> {
-    throw new RuntimeError(
-      'backend-unreachable',
-      'KubernetesBackend.inspectService is not implemented yet (Phase 5)',
-    );
+  /**
+   * List every managed service across every composite-scoped
+   * namespace, optionally narrowed to one composite. Fans out over
+   * both Deployments and StatefulSets, then resolves each to its
+   * ServiceInstance — the endpoint resolution runs the same cluster-
+   * DNS lookup as `inspectService`.
+   */
+  async listServices(filter?: ServiceFilter): Promise<ServiceInstance[]> {
+    const selectorParts = [
+      `${K8S_LABEL_KEYS.managedBy}=${MANAGED_BY_VALUE}`,
+      `${K8S_LABEL_KEYS.component}=service`,
+    ];
+    if (filter?.composite) {
+      selectorParts.push(`${K8S_LABEL_KEYS.composite}=${filter.composite}`);
+    }
+    const labelSelector = selectorParts.join(',');
+
+    const out: ServiceInstance[] = [];
+    let deployments: V1Deployment[] = [];
+    let statefulSets: V1StatefulSet[] = [];
+    try {
+      const res = await this.client.apps.listDeploymentForAllNamespaces({
+        labelSelector,
+      });
+      deployments = res.items ?? [];
+    } catch (err) {
+      throw wrapBackend(err, 'list Deployments');
+    }
+    try {
+      const res = await this.client.apps.listStatefulSetForAllNamespaces({
+        labelSelector,
+      });
+      statefulSets = res.items ?? [];
+    } catch (err) {
+      throw wrapBackend(err, 'list StatefulSets');
+    }
+
+    for (const d of deployments) {
+      const name = d.metadata?.name;
+      const namespace = d.metadata?.namespace;
+      if (!name || !namespace) continue;
+      let service: V1Service | null = null;
+      try {
+        service = await this.client.core.readNamespacedService({
+          name,
+          namespace,
+        });
+      } catch (err) {
+        if (!isNotFound(err)) {
+          throw wrapBackend(err, `read service '${name}'`);
+        }
+      }
+      out.push(
+        this.buildServiceInstance(
+          {
+            name,
+            image: { repository: '', tag: '' },
+            specHash: annotationHash(d) ?? '',
+          },
+          d,
+          service,
+          namespace,
+        ),
+      );
+    }
+
+    for (const ss of statefulSets) {
+      const name = ss.metadata?.name;
+      const namespace = ss.metadata?.namespace;
+      if (!name || !namespace) continue;
+      let service: V1Service | null = null;
+      try {
+        service = await this.client.core.readNamespacedService({
+          name: `${name}-client`,
+          namespace,
+        });
+      } catch (err) {
+        if (!isNotFound(err)) {
+          throw wrapBackend(err, `read service '${name}-client'`);
+        }
+      }
+      out.push(
+        this.buildServiceInstance(
+          {
+            name,
+            image: { repository: '', tag: '' },
+            specHash: annotationHash(ss) ?? '',
+          },
+          ss,
+          service,
+          namespace,
+        ),
+      );
+    }
+
+    return out;
   }
 
-  async listServices(_filter?: ServiceFilter): Promise<ServiceInstance[]> {
-    throw new RuntimeError(
-      'backend-unreachable',
-      'KubernetesBackend.listServices is not implemented yet (Phase 5)',
-    );
+  /**
+   * Shared lookup for removeService / inspectService. Searches
+   * managed Deployments first, then StatefulSets. Returns the first
+   * name match across all namespaces.
+   */
+  private async locateService(name: string): Promise<{
+    namespace: string;
+    controllerKind: 'deployment' | 'statefulset';
+    controller: V1Deployment | V1StatefulSet;
+  } | null> {
+    const labelSelector = `${K8S_LABEL_KEYS.managedBy}=${MANAGED_BY_VALUE},${K8S_LABEL_KEYS.component}=service`;
+    try {
+      const deployments = await this.client.apps.listDeploymentForAllNamespaces({
+        labelSelector,
+      });
+      const match = (deployments.items ?? []).find(
+        (d) => d.metadata?.name === name,
+      );
+      if (match?.metadata?.namespace) {
+        return {
+          namespace: match.metadata.namespace,
+          controllerKind: 'deployment',
+          controller: match,
+        };
+      }
+    } catch (err) {
+      throw wrapBackend(err, `locate '${name}' among Deployments`);
+    }
+    try {
+      const statefulSets =
+        await this.client.apps.listStatefulSetForAllNamespaces({
+          labelSelector,
+        });
+      const match = (statefulSets.items ?? []).find(
+        (s) => s.metadata?.name === name,
+      );
+      if (match?.metadata?.namespace) {
+        return {
+          namespace: match.metadata.namespace,
+          controllerKind: 'statefulset',
+          controller: match,
+        };
+      }
+    } catch (err) {
+      throw wrapBackend(err, `locate '${name}' among StatefulSets`);
+    }
+    return null;
   }
 
   /**

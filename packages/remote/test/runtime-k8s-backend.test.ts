@@ -757,14 +757,327 @@ describe('KubernetesBackend.ensureService — StatefulSet happy path', () => {
   });
 });
 
-describe('KubernetesBackend — remaining stubs throw cleanly', () => {
-  test('removeService, inspectService, listServices all throw not-implemented', async () => {
-    const backend = new KubernetesBackend({
-      kubeConfig: stubKubeConfig({ pingBehavior: 'ok' }).kubeConfig,
+describe('KubernetesBackend.removeService', () => {
+  test('deletes Deployment + Services + Secret; no-op on missing', async () => {
+    const deploymentDeletes: string[] = [];
+    const serviceDeletes: string[] = [];
+    const secretDeletes: string[] = [];
+    const pvcDeletes: string[] = [];
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({
+          items: [
+            {
+              apiVersion: 'apps/v1',
+              kind: 'Deployment',
+              metadata: {
+                name: 'chroma-main',
+                namespace: 'llamactl-kb',
+                annotations: { [K8S_ANNOTATION_KEYS.specHash]: 'hash-v1' },
+              },
+            },
+          ],
+        }),
+        'apps.deleteNamespacedDeployment': (p) => {
+          deploymentDeletes.push(p.name as string);
+          return { kind: 'Status', status: 'Success' };
+        },
+        'core.listNamespacedService': () => ({
+          items: [
+            { metadata: { name: 'chroma-main', namespace: 'llamactl-kb' } },
+          ],
+        }),
+        'core.deleteNamespacedService': (p) => {
+          serviceDeletes.push(p.name as string);
+          return { kind: 'Status', status: 'Success' };
+        },
+        'core.deleteNamespacedSecret': (p) => {
+          secretDeletes.push(p.name as string);
+          return { kind: 'Status', status: 'Success' };
+        },
+        'core.deleteNamespacedPersistentVolumeClaim': (p) => {
+          pvcDeletes.push(p.name as string);
+          return { kind: 'Status', status: 'Success' };
+        },
+      },
     });
-    await expect(backend.removeService({ name: 'x' })).rejects.toThrow(/not implemented/);
-    await expect(backend.inspectService({ name: 'x' })).rejects.toThrow(/not implemented/);
-    await expect(backend.listServices()).rejects.toThrow(/not implemented/);
+    const backend = new KubernetesBackend({
+      kubeConfig: stub.kubeConfig,
+      readinessPollMs: 5,
+      readinessTimeoutMs: 500,
+    });
+    await backend.removeService({ name: 'chroma-main' });
+    expect(deploymentDeletes).toEqual(['chroma-main']);
+    expect(serviceDeletes).toEqual(['chroma-main']);
+    expect(secretDeletes).toEqual(['chroma-main-secrets']);
+    // purgeVolumes off by default → no PVC deletes
+    expect(pvcDeletes).toEqual([]);
+  });
+
+  test('purgeVolumes=true deletes matching PVCs', async () => {
+    const pvcDeletes: string[] = [];
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({
+          items: [
+            {
+              apiVersion: 'apps/v1',
+              kind: 'Deployment',
+              metadata: {
+                name: 'chroma-main',
+                namespace: 'llamactl-kb',
+              },
+            },
+          ],
+        }),
+        'apps.deleteNamespacedDeployment': () => ({}),
+        'core.listNamespacedService': () => ({ items: [] }),
+        'core.deleteNamespacedSecret': () => {
+          throw notFound();
+        },
+        'core.listNamespacedPersistentVolumeClaim': () => ({
+          items: [
+            { metadata: { name: 'chroma-main-data', namespace: 'llamactl-kb' } },
+            { metadata: { name: 'unrelated-data', namespace: 'llamactl-kb' } },
+          ],
+        }),
+        'core.deleteNamespacedPersistentVolumeClaim': (p) => {
+          pvcDeletes.push(p.name as string);
+          return {};
+        },
+      },
+    });
+    const backend = new KubernetesBackend({
+      kubeConfig: stub.kubeConfig,
+      readinessPollMs: 5,
+      readinessTimeoutMs: 500,
+    });
+    await backend.removeService(
+      { name: 'chroma-main' },
+      { purgeVolumes: true },
+    );
+    // Only the matching PVC deleted; unrelated PVC ignored.
+    expect(pvcDeletes).toEqual(['chroma-main-data']);
+  });
+
+  test('falls back to StatefulSet when no Deployment matches', async () => {
+    const ssDeletes: string[] = [];
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({ items: [] }),
+        'apps.listStatefulSetForAllNamespaces': () => ({
+          items: [
+            {
+              apiVersion: 'apps/v1',
+              kind: 'StatefulSet',
+              metadata: {
+                name: 'pg-main',
+                namespace: 'llamactl-kb',
+              },
+            },
+          ],
+        }),
+        'apps.deleteNamespacedStatefulSet': (p) => {
+          ssDeletes.push(p.name as string);
+          return {};
+        },
+        'core.listNamespacedService': () => ({ items: [] }),
+        'core.deleteNamespacedSecret': () => {
+          throw notFound();
+        },
+      },
+    });
+    const backend = new KubernetesBackend({
+      kubeConfig: stub.kubeConfig,
+      readinessPollMs: 5,
+      readinessTimeoutMs: 500,
+    });
+    await backend.removeService({ name: 'pg-main' });
+    expect(ssDeletes).toEqual(['pg-main']);
+  });
+
+  test('missing service is a no-op', async () => {
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({ items: [] }),
+        'apps.listStatefulSetForAllNamespaces': () => ({ items: [] }),
+      },
+    });
+    const backend = new KubernetesBackend({
+      kubeConfig: stub.kubeConfig,
+      readinessPollMs: 5,
+      readinessTimeoutMs: 500,
+    });
+    await backend.removeService({ name: 'does-not-exist' });
+    // No delete calls issued.
+    expect(
+      stub.calls.filter((c) => c.method.startsWith('delete')),
+    ).toHaveLength(0);
+  });
+});
+
+describe('KubernetesBackend.inspectService', () => {
+  test('returns running instance for a matched Deployment', async () => {
+    const spec = sampleSpec();
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({
+          items: [readyDeployment(spec)],
+        }),
+        'core.readNamespacedService': () => ({
+          apiVersion: 'v1',
+          kind: 'Service',
+          metadata: {
+            name: 'chroma-main',
+            namespace: 'llamactl-kb',
+          },
+          spec: { ports: [{ port: 8000 }] },
+        }),
+      },
+    });
+    const backend = new KubernetesBackend({
+      kubeConfig: stub.kubeConfig,
+      readinessPollMs: 5,
+      readinessTimeoutMs: 500,
+    });
+    const res = await backend.inspectService({ name: 'chroma-main' });
+    expect(res).not.toBeNull();
+    expect(res?.running).toBe(true);
+    expect(res?.health).toBe('healthy');
+    expect(res?.specHash).toBe('hash-v1');
+    expect(res?.endpoint?.host).toBe('chroma-main.llamactl-kb.svc.cluster.local');
+    expect(res?.endpoint?.port).toBe(8000);
+  });
+
+  test('returns null for unknown name', async () => {
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({ items: [] }),
+        'apps.listStatefulSetForAllNamespaces': () => ({ items: [] }),
+      },
+    });
+    const backend = new KubernetesBackend({
+      kubeConfig: stub.kubeConfig,
+      readinessPollMs: 5,
+      readinessTimeoutMs: 500,
+    });
+    expect(await backend.inspectService({ name: 'nope' })).toBeNull();
+  });
+
+  test('StatefulSet inspect reads the -client ClusterIP service', async () => {
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({ items: [] }),
+        'apps.listStatefulSetForAllNamespaces': () => ({
+          items: [
+            {
+              apiVersion: 'apps/v1',
+              kind: 'StatefulSet',
+              metadata: {
+                name: 'pg-main',
+                namespace: 'llamactl-kb',
+                annotations: { [K8S_ANNOTATION_KEYS.specHash]: 'pg-hash' },
+                creationTimestamp: new Date('2026-04-21T10:00:00Z'),
+              },
+              status: { readyReplicas: 1, replicas: 1 },
+            },
+          ],
+        }),
+        'core.readNamespacedService': (p) => {
+          expect(p.name).toBe('pg-main-client');
+          return {
+            apiVersion: 'v1',
+            kind: 'Service',
+            metadata: { name: 'pg-main-client', namespace: 'llamactl-kb' },
+            spec: { ports: [{ port: 5432 }] },
+          };
+        },
+      },
+    });
+    const backend = new KubernetesBackend({
+      kubeConfig: stub.kubeConfig,
+      readinessPollMs: 5,
+      readinessTimeoutMs: 500,
+    });
+    const res = await backend.inspectService({ name: 'pg-main' });
+    expect(res?.endpoint?.host).toBe(
+      'pg-main-client.llamactl-kb.svc.cluster.local',
+    );
+    expect(res?.endpoint?.port).toBe(5432);
+    expect(res?.specHash).toBe('pg-hash');
+  });
+});
+
+describe('KubernetesBackend.listServices', () => {
+  test('merges Deployments + StatefulSets from all namespaces', async () => {
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': () => ({
+          items: [
+            {
+              apiVersion: 'apps/v1',
+              kind: 'Deployment',
+              metadata: {
+                name: 'chroma-main',
+                namespace: 'llamactl-kb',
+                annotations: { [K8S_ANNOTATION_KEYS.specHash]: 'h1' },
+              },
+              status: { readyReplicas: 1, replicas: 1 },
+            },
+          ],
+        }),
+        'apps.listStatefulSetForAllNamespaces': () => ({
+          items: [
+            {
+              apiVersion: 'apps/v1',
+              kind: 'StatefulSet',
+              metadata: {
+                name: 'pg-main',
+                namespace: 'llamactl-other',
+                annotations: { [K8S_ANNOTATION_KEYS.specHash]: 'h2' },
+              },
+              status: { readyReplicas: 0, replicas: 1 },
+            },
+          ],
+        }),
+        'core.readNamespacedService': (p) => ({
+          metadata: { name: p.name, namespace: p.namespace },
+          spec: { ports: [{ port: 8000 }] },
+        }),
+      },
+    });
+    const backend = new KubernetesBackend({
+      kubeConfig: stub.kubeConfig,
+      readinessPollMs: 5,
+      readinessTimeoutMs: 500,
+    });
+    const list = await backend.listServices();
+    expect(list).toHaveLength(2);
+    const byName = Object.fromEntries(list.map((l) => [l.ref.name, l]));
+    expect(byName['chroma-main']?.running).toBe(true);
+    expect(byName['chroma-main']?.health).toBe('healthy');
+    expect(byName['pg-main']?.running).toBe(false);
+    expect(byName['pg-main']?.health).toBe('starting');
+  });
+
+  test('filter.composite narrows the label selector', async () => {
+    let capturedSelector: string | undefined;
+    const stub = stubKubeConfig({
+      handlers: {
+        'apps.listDeploymentForAllNamespaces': (p) => {
+          capturedSelector = p.labelSelector as string;
+          return { items: [] };
+        },
+        'apps.listStatefulSetForAllNamespaces': () => ({ items: [] }),
+      },
+    });
+    const backend = new KubernetesBackend({
+      kubeConfig: stub.kubeConfig,
+      readinessPollMs: 5,
+      readinessTimeoutMs: 500,
+    });
+    await backend.listServices({ composite: 'kb' });
+    expect(capturedSelector).toContain('llamactl.io/composite=kb');
   });
 });
 
