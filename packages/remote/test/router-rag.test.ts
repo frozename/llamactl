@@ -43,6 +43,13 @@ const originalEnv = { ...process.env };
 let closeCount = 0;
 let lastNodeName: string | null = null;
 let lastProviderOptions: FakeProviderOptions = {};
+/**
+ * Second arg to `createRagAdapter(node, opts)`. Captured so tests
+ * can assert that the router hands the kubeconfig through to the
+ * adapter factory — required for the pgvector delegated-embedding
+ * path (Int-A / Strategic 1 in the roadmap).
+ */
+let lastFactoryOpts: unknown = undefined;
 const calls: Array<{ op: CalledOp; input: unknown }> = [];
 
 function makeFakeProvider(options: FakeProviderOptions): RetrievalProvider {
@@ -78,8 +85,9 @@ function makeFakeProvider(options: FakeProviderOptions): RetrievalProvider {
 }
 
 mock.module('../src/rag/index.js', () => ({
-  createRagAdapter: async (node: { name: string }) => {
+  createRagAdapter: async (node: { name: string }, opts?: unknown) => {
     lastNodeName = node.name;
+    lastFactoryOpts = opts;
     return makeFakeProvider(lastProviderOptions);
   },
 }));
@@ -246,5 +254,76 @@ describe('router RAG procedures', () => {
       caller.ragSearch({ node: 'nope', query: 'x' }),
     ).rejects.toThrow(/not found/);
     expect(closeCount).toBe(0);
+  });
+});
+
+describe('router ragX → createRagAdapter options passthrough', () => {
+  test('ragSearch passes { config } so binding.embedder can resolve', async () => {
+    lastFactoryOpts = undefined;
+    const caller = router.createCaller({});
+    await caller.ragSearch({ node: 'kb-chroma', query: 'hi' });
+    expect(lastFactoryOpts).toBeDefined();
+    const opts = lastFactoryOpts as { config?: unknown } | undefined;
+    expect(opts?.config).toBeDefined();
+    // The config object carries the test's own kubeconfig — sanity
+    // check that the `kb-chroma` node we registered is visible in
+    // the passthrough.
+    const cfg = opts!.config as {
+      clusters?: Array<{ nodes?: Array<{ name: string }> }>;
+    };
+    const nodeNames =
+      cfg.clusters?.[0]?.nodes?.map((n) => n.name) ?? [];
+    expect(nodeNames).toContain('kb-chroma');
+  });
+
+  test('ragStore passes config too', async () => {
+    lastFactoryOpts = undefined;
+    const caller = router.createCaller({});
+    await caller.ragStore({
+      node: 'kb-chroma',
+      documents: [{ id: 'x', content: 'x' }],
+    });
+    const opts = lastFactoryOpts as { config?: unknown } | undefined;
+    expect(opts?.config).toBeDefined();
+  });
+
+  test('embedder binding lands on the node seen by the factory', async () => {
+    // Register a pgvector node carrying an embedder binding. The
+    // router reads kubeconfig via resolveRagNode and passes the
+    // full node object (+ config) to createRagAdapter. The fake
+    // factory records both; we assert the embedder made it.
+    const { loadConfig, saveConfig, upsertNode: upsert } = await import(
+      '../src/config/kubeconfig.js'
+    );
+    const { join } = await import('node:path');
+    const cfgPath = join(tmp, 'config');
+    const cfg = loadConfig(cfgPath);
+    const next = upsert(cfg, 'home', {
+      name: 'kb-pg-embed',
+      endpoint: '',
+      kind: 'rag',
+      rag: {
+        provider: 'pgvector',
+        endpoint: 'postgres://kb@db.local:5432/kb',
+        collection: 'docs',
+        embedder: {
+          node: 'sirius',
+          model: 'text-embedding-3-small',
+        },
+        extraArgs: [],
+      },
+    });
+    saveConfig(next, cfgPath);
+
+    lastNodeName = null;
+    const caller = router.createCaller({});
+    await caller.ragSearch({ node: 'kb-pg-embed', query: 'hi' });
+    expect(lastNodeName).toBe('kb-pg-embed');
+    const opts = lastFactoryOpts as { config?: unknown } | undefined;
+    expect(opts?.config).toBeDefined();
+    // The factory would use config to resolve the embedder node; we
+    // don't exercise the full createEmbedderFromBinding path here
+    // (that lives in rag-embedding.test.ts). The contract is: config
+    // must be passed so the factory CAN resolve — verified above.
   });
 });

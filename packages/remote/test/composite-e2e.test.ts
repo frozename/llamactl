@@ -250,4 +250,115 @@ describe.skipIf(!K8S_RUN_GATE)('Composite E2E — kubernetes round-trip', () => 
     },
     10 * 60_000,
   );
+
+  test(
+    'composite with ServiceSpec.secrets materializes v1.Secret + secretKeyRef',
+    async () => {
+      if (!k8sReachable) {
+        console.warn('[composite-e2e] skipping k8s secrets: cluster unreachable');
+        return;
+      }
+      // The test sets an env var the composite references via
+      // `secrets: { SIDEBAND_TOKEN: { ref: 'env:TEST_E2E_SECRET' } }`.
+      // The k8s backend resolves it at apply time and materializes a
+      // v1.Secret; the container env gets a secretKeyRef pointing at
+      // the same key. We don't need to READ the value back — the
+      // assertion is structural: the Secret exists with the right
+      // key + the Deployment's env references it.
+      process.env.TEST_E2E_SECRET = 'structural-only';
+      const backend = createKubernetesBackend({
+        readinessPollMs: 2_000,
+        readinessTimeoutMs: 5 * 60_000,
+      });
+      const manifest: Composite = {
+        apiVersion: 'llamactl/v1',
+        kind: 'Composite',
+        metadata: { name: 'composite-e2e-k8s-secrets' },
+        spec: {
+          runtime: 'kubernetes',
+          services: [
+            {
+              kind: 'chroma',
+              name: 'chroma-secret',
+              node: 'local',
+              runtime: 'docker',
+              port: 8000,
+              image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+              secrets: {
+                SIDEBAND_TOKEN: { ref: 'env:TEST_E2E_SECRET' },
+              },
+            },
+          ],
+          workloads: [],
+          ragNodes: [],
+          gateways: [],
+          dependencies: [],
+          onFailure: 'rollback',
+        },
+      };
+
+      const applyResult = await applyComposite({
+        manifest,
+        backend,
+        getWorkloadClient: () => failingWorkloadClient(),
+        configPath,
+        compositesDir,
+      });
+      expect(applyResult.ok).toBe(true);
+
+      // Pull the namespace's Secret + Deployment via a direct client
+      // call (the backend surface doesn't expose a "read Secret"
+      // method — by design, callers shouldn't round-trip secret
+      // values through llamactl).
+      const { createKubernetesClient } = await import(
+        '../src/runtime/kubernetes/client.js'
+      );
+      const client = createKubernetesClient();
+      const namespace = 'llamactl-composite-e2e-k8s-secrets';
+      const secret = await client.core.readNamespacedSecret({
+        name: 'chroma-secret-secrets',
+        namespace,
+      });
+      expect(secret.data?.SIDEBAND_TOKEN).toBeDefined();
+      // Base64 decode matches the env var we set.
+      const decoded = Buffer.from(
+        secret.data!.SIDEBAND_TOKEN!,
+        'base64',
+      ).toString('utf8');
+      expect(decoded).toBe('structural-only');
+
+      const dep = await client.apps.readNamespacedDeployment({
+        name: 'chroma-secret',
+        namespace,
+      });
+      const env = dep.spec?.template?.spec?.containers?.[0]?.env ?? [];
+      const secretEnv = env.find(
+        (e: { name: string }) => e.name === 'SIDEBAND_TOKEN',
+      );
+      expect(secretEnv).toBeDefined();
+      // Important: the plain `value` field must NOT be set — we want
+      // secretKeyRef only so the cluster audit log never sees the
+      // value.
+      expect(
+        (secretEnv as { value?: string }).value,
+      ).toBeUndefined();
+      expect(
+        (secretEnv as {
+          valueFrom?: { secretKeyRef?: { name: string; key: string } };
+        }).valueFrom?.secretKeyRef,
+      ).toEqual({ name: 'chroma-secret-secrets', key: 'SIDEBAND_TOKEN' });
+
+      // Destroy — namespace cascade reaps the Secret, Deployment, Service.
+      const destroyResult = await destroyComposite({
+        manifest,
+        backend,
+        getWorkloadClient: () => failingWorkloadClient(),
+        configPath,
+        compositesDir,
+      });
+      expect(destroyResult.ok).toBe(true);
+      delete process.env.TEST_E2E_SECRET;
+    },
+    10 * 60_000,
+  );
 });
