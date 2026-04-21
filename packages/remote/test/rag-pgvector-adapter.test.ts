@@ -228,6 +228,45 @@ describe('PgvectorRagAdapter.search', () => {
     const helper = mock.calls.find((c) => c.helper)?.helper;
     expect(helper?.first).toBe('custom-table');
   });
+
+  test('embedder computes query vector when filter.vector absent', async () => {
+    const mock = createMockSql();
+    queueRows(mock, [
+      { id: 'h', content: 'hit', metadata: null, score: 0.9, distance: 0.1 },
+    ]);
+    const embedCalls: string[][] = [];
+    const adapter = new PgvectorRagAdapter({
+      sql: mock.fn,
+      defaultCollection: 'docs',
+      embedder: async (texts) => {
+        embedCalls.push(texts);
+        return [[0.5, 0.5]];
+      },
+    });
+    const res = await adapter.search({ query: 'look for me', topK: 1 });
+    expect(res.results).toHaveLength(1);
+    expect(embedCalls).toEqual([['look for me']]);
+  });
+
+  test('caller-supplied filter.vector wins over the embedder', async () => {
+    const mock = createMockSql();
+    queueRows(mock, []);
+    let embedderCalled = false;
+    const adapter = new PgvectorRagAdapter({
+      sql: mock.fn,
+      defaultCollection: 'docs',
+      embedder: async () => {
+        embedderCalled = true;
+        return [[0.5, 0.5]];
+      },
+    });
+    await adapter.search({
+      query: 'x',
+      topK: 1,
+      filter: { vector: [0.1, 0.9] },
+    });
+    expect(embedderCalled).toBe(false);
+  });
 });
 
 describe('PgvectorRagAdapter.store', () => {
@@ -295,6 +334,71 @@ describe('PgvectorRagAdapter.store', () => {
     } catch (err) {
       expect(err).toBeInstanceOf(RagError);
       expect((err as RagError).code).toBe('invalid-request');
+    }
+  });
+
+  test('delegated embedder fills missing vectors in one batch', async () => {
+    const mock = createMockSql();
+    queueRows(mock, []);
+    const embedCalls: string[][] = [];
+    const adapter = new PgvectorRagAdapter({
+      sql: mock.fn,
+      defaultCollection: 'knowledge',
+      embedder: async (texts) => {
+        embedCalls.push(texts);
+        return texts.map((_, i) => [i + 0.1, i + 0.2]);
+      },
+    });
+    const res = await adapter.store({
+      documents: [
+        { id: 'a', content: 'aaa', vector: [0.7, 0.8] }, // supplied
+        { id: 'b', content: 'bbb' },                      // auto
+        { id: 'c', content: 'ccc' },                      // auto
+      ],
+    });
+    expect(res.ids).toEqual(['a', 'b', 'c']);
+    // Embedder called once with the two missing texts in order.
+    expect(embedCalls).toHaveLength(1);
+    expect(embedCalls[0]).toEqual(['bbb', 'ccc']);
+    // Rows landed with supplied-then-computed vectors.
+    const valuesHelper = mock.calls.filter((c) => c.helper)[1]!.helper!;
+    const rows = valuesHelper.first as Array<{ id: string; embedding: string }>;
+    expect(rows[0]!.embedding).toBe('[0.7,0.8]');
+    expect(rows[1]!.embedding).toBe('[0.1,0.2]');
+    expect(rows[2]!.embedding).toBe('[1.1,1.2]');
+  });
+
+  test('no embedder + missing vector → invalid-request (back-compat)', async () => {
+    const mock = createMockSql();
+    const adapter = new PgvectorRagAdapter({
+      sql: mock.fn,
+      defaultCollection: 'knowledge',
+    });
+    await expect(
+      adapter.store({
+        documents: [{ id: 'a', content: 'aaa' }],
+      }),
+    ).rejects.toThrow(/configure a rag\.embedder/);
+  });
+
+  test('embedder mismatch (wrong count) surfaces invalid-response', async () => {
+    const mock = createMockSql();
+    const adapter = new PgvectorRagAdapter({
+      sql: mock.fn,
+      defaultCollection: 'knowledge',
+      embedder: async () => [[0.1, 0.2]], // only one vector for two missing
+    });
+    try {
+      await adapter.store({
+        documents: [
+          { id: 'a', content: 'aaa' },
+          { id: 'b', content: 'bbb' },
+        ],
+      });
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(RagError);
+      expect((err as RagError).code).toBe('invalid-response');
     }
   });
 });

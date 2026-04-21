@@ -103,6 +103,21 @@ export type RagProviderKind = z.infer<typeof RagProviderKindSchema>;
  * keep credentials out of the persisted config; the adapter resolves
  * them at call time.
  */
+/**
+ * Embedder binding. Names a cluster node (any gateway / provider /
+ * agent that implements `AiProvider.createEmbeddings`) plus the
+ * model name the adapter should request. When set on a pgvector
+ * rag node, the adapter auto-computes vectors for docs that arrive
+ * without them (store) and for free-text queries on search.
+ *
+ * Chroma ignores the embedder — it embeds internally.
+ */
+export const EmbedderBindingSchema = z.object({
+  node: z.string().min(1),
+  model: z.string().min(1),
+});
+export type EmbedderBinding = z.infer<typeof EmbedderBindingSchema>;
+
 export const RagBindingSchema = z.object({
   provider: RagProviderKindSchema,
   endpoint: z.string().min(1),
@@ -118,6 +133,11 @@ export const RagBindingSchema = z.object({
     .optional(),
   /** Optional embedding-model override — when the backend supports it. */
   embedModel: z.string().optional(),
+  /**
+   * Optional delegated embedder. pgvector uses this to auto-embed
+   * docs/queries without caller-supplied vectors. Ignored by chroma.
+   */
+  embedder: EmbedderBindingSchema.optional(),
   /** Extra arguments forwarded to the backend subprocess / driver. */
   extraArgs: z.array(z.string()).default([]),
 });

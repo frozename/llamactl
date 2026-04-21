@@ -120,4 +120,38 @@ describe('RAG schema', () => {
     });
     expect(resolveNodeKind(node)).toBe('rag');
   });
+
+  test('RagBindingSchema accepts an optional embedder binding', () => {
+    const node = ClusterNodeSchema.parse({
+      name: 'kb-with-embedder',
+      endpoint: '',
+      kind: 'rag',
+      rag: {
+        provider: 'pgvector',
+        endpoint: 'postgres://kb@db.local:5432/kb_main',
+        collection: 'docs',
+        embedder: {
+          node: 'sirius-gateway',
+          model: 'text-embedding-3-small',
+        },
+      },
+    });
+    expect(node.rag?.embedder?.node).toBe('sirius-gateway');
+    expect(node.rag?.embedder?.model).toBe('text-embedding-3-small');
+  });
+
+  test('RagBindingSchema rejects an embedder missing its model', () => {
+    expect(() =>
+      ClusterNodeSchema.parse({
+        name: 'kb-broken-embedder',
+        endpoint: '',
+        kind: 'rag',
+        rag: {
+          provider: 'pgvector',
+          endpoint: 'postgres://kb@db.local:5432/kb_main',
+          embedder: { node: 'sirius-gateway' },
+        },
+      }),
+    ).toThrow();
+  });
 });

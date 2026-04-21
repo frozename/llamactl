@@ -11,6 +11,7 @@ import type {
   StoreResponse,
 } from '@nova/contracts';
 import { RagError } from '../errors.js';
+import type { Embedder } from '../embedding.js';
 
 /**
  * Native pgvector adapter. Talks directly to Postgres over SQL via the
@@ -46,6 +47,14 @@ interface PgvectorAdapterOptions {
   defaultCollection?: string;
   /** Safe label (host:port/db) used in error messages; never the raw URL. */
   safeLabel?: string;
+  /**
+   * Optional delegated embedder. When set, the adapter auto-embeds:
+   *   - `store` docs that arrive without a pre-computed `vector`.
+   *   - `search` queries that arrive without `filter.vector`.
+   * When unset, the adapter falls back to its v1 strict behavior —
+   * caller-supplied vectors only, missing vector → invalid-request.
+   */
+  embedder?: Embedder;
 }
 
 /**
@@ -111,20 +120,34 @@ export class PgvectorRagAdapter implements RetrievalProvider {
   private readonly sql: postgres.Sql;
   private readonly defaultCollection: string;
   private readonly safeLabel: string | undefined;
+  private readonly embedder: Embedder | undefined;
 
   constructor(opts: PgvectorAdapterOptions) {
     this.sql = opts.sql;
     this.defaultCollection = opts.defaultCollection ?? DEFAULT_TABLE;
     this.safeLabel = opts.safeLabel;
+    this.embedder = opts.embedder;
   }
 
   async search(req: SearchRequest): Promise<SearchResponse> {
     const collection = req.collection ?? this.defaultCollection;
-    const vector = extractQueryVector(req);
+    let vector = extractQueryVector(req);
+    if (!vector && this.embedder) {
+      // Delegated embedding: embed the free-text `query` so operators
+      // don't have to pre-compute vectors for search either.
+      const [embedded] = await this.embedder([req.query]);
+      if (!embedded) {
+        throw new RagError(
+          'invalid-response',
+          'pgvector search: embedder returned no vector for the query',
+        );
+      }
+      vector = embedded;
+    }
     if (!vector) {
       throw new RagError(
         'invalid-request',
-        'pgvector search requires a pre-computed query vector via filter.vector (number[])',
+        'pgvector search requires a pre-computed query vector via filter.vector (number[]) or an embedder on the rag binding',
       );
     }
     const literal = vectorLiteral(vector);
@@ -160,29 +183,23 @@ export class PgvectorRagAdapter implements RetrievalProvider {
 
   async store(req: StoreRequest): Promise<StoreResponse> {
     const collection = req.collection ?? this.defaultCollection;
-    // v1: every doc must carry a pre-computed vector. pgvector itself
-    // has no embedding facility; delegating to sirius.embed is a
-    // follow-up (see rag-nodes.md Phase 3).
-    const missing = req.documents.find(
-      (d) => !d.vector || d.vector.length === 0,
-    );
-    if (missing) {
-      throw new RagError(
-        'invalid-request',
-        `pgvector store requires doc.vector on every document (missing on id=${missing.id})`,
-      );
-    }
+
+    // Delegated embedding: for docs arriving without a vector, ask
+    // the configured embedder to compute one. We batch all missing
+    // ones into a single embed call so the provider only eats one
+    // round-trip per store() regardless of how many docs are missing.
+    const docsWithVectors = await this.ensureDocumentVectors(req.documents);
 
     // JSON-encode metadata so postgres.js routes it into the `jsonb`
     // column as a string literal the server casts. Sidesteps the
     // library's `ParameterOrJSON` typing (which rejects arbitrary
     // `Record<string, unknown>`) while staying safe against injection
     // — values go through `${…}` placeholders either way.
-    const values = req.documents.map((d: Document) => ({
+    const values = docsWithVectors.map((d) => ({
       id: d.id,
       content: d.content,
       metadata: d.metadata ? JSON.stringify(d.metadata) : null,
-      embedding: vectorLiteral(d.vector as number[]),
+      embedding: vectorLiteral(d.vector),
     }));
 
     try {
@@ -250,6 +267,61 @@ export class PgvectorRagAdapter implements RetrievalProvider {
     } catch {
       // end() always resolves; ignore teardown errors.
     }
+  }
+
+  /**
+   * Fill missing `vector` fields on incoming documents by batching a
+   * single embedder call. Caller-supplied vectors are passed through
+   * unchanged. Without an embedder, missing vectors surface as
+   * `invalid-request` same as the v1 strict behavior.
+   */
+  private async ensureDocumentVectors(
+    documents: readonly Document[],
+  ): Promise<Array<{ id: string; content: string; metadata?: Record<string, unknown>; vector: number[] }>> {
+    const missingIdx: number[] = [];
+    for (let i = 0; i < documents.length; i++) {
+      const d = documents[i]!;
+      if (!d.vector || d.vector.length === 0) missingIdx.push(i);
+    }
+    if (missingIdx.length > 0 && !this.embedder) {
+      const firstMissing = documents[missingIdx[0]!]!;
+      throw new RagError(
+        'invalid-request',
+        `pgvector store requires doc.vector on every document (missing on id=${firstMissing.id}) — configure a rag.embedder to auto-compute`,
+      );
+    }
+
+    let computed: number[][] = [];
+    if (missingIdx.length > 0 && this.embedder) {
+      const texts = missingIdx.map((i) => documents[i]!.content);
+      computed = await this.embedder(texts);
+      if (computed.length !== missingIdx.length) {
+        throw new RagError(
+          'invalid-response',
+          `embedder returned ${computed.length} vectors for ${missingIdx.length} docs`,
+        );
+      }
+    }
+
+    return documents.map((d, i) => {
+      const supplied = d.vector && d.vector.length > 0 ? (d.vector as number[]) : null;
+      const computedIdx = missingIdx.indexOf(i);
+      const vector = supplied ?? (computedIdx >= 0 ? computed[computedIdx]! : null);
+      if (!vector) {
+        // Unreachable — if we reach here, the earlier check should
+        // have thrown. Defensive.
+        throw new RagError(
+          'invalid-request',
+          `pgvector store: no vector resolved for doc id=${d.id}`,
+        );
+      }
+      return {
+        id: d.id,
+        content: d.content,
+        ...(d.metadata !== undefined && { metadata: d.metadata }),
+        vector,
+      };
+    });
   }
 }
 
