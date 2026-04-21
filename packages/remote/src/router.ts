@@ -2421,6 +2421,25 @@ export const router = t.router({
     return { pipelines: listPipelines() };
   }),
 
+  ragPipelineRunning: t.procedure.query(async () => {
+    // Liveness signal for the Electron Pipelines tab. Mirrors the
+    // composites module's `currentRun()` pattern — in-memory event
+    // bus, no disk persistence. If the agent crashes mid-run the
+    // signal is lost; the journal's `run-started` entry is the
+    // forensic fallback.
+    const { pipelineEvents } = await import('./rag/pipeline/event-bus.js');
+    const names = pipelineEvents.allRunning();
+    const running = names
+      .map((name) => pipelineEvents.currentRun(name))
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+      .map((r) => ({
+        name: r.name,
+        startedAt: r.startedAt,
+        sources: r.sources,
+      }));
+    return { ok: true as const, running };
+  }),
+
   ragPipelineGet: t.procedure
     .input(z.object({ name: z.string().min(1) }))
     .query(async ({ input }) => {

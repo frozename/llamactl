@@ -271,6 +271,48 @@ describe('ragPipelineDraft', () => {
   });
 });
 
+describe('ragPipelineRunning', () => {
+  test('returns empty running[] when no pipeline is in flight', async () => {
+    const { _resetPipelineEventsForTests } = await import(
+      '../src/rag/pipeline/event-bus.js'
+    );
+    _resetPipelineEventsForTests();
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineRunning();
+    expect(res.running).toEqual([]);
+  });
+  test('includes a pipeline between startRun and endRun', async () => {
+    const { pipelineEvents, _resetPipelineEventsForTests } = await import(
+      '../src/rag/pipeline/event-bus.js'
+    );
+    _resetPipelineEventsForTests();
+    pipelineEvents.startRun('live', {
+      sources: ['live:0:filesystem', 'live:1:http'],
+    });
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineRunning();
+    expect(res.running).toHaveLength(1);
+    expect(res.running[0]!.name).toBe('live');
+    expect(res.running[0]!.sources).toEqual(['live:0:filesystem', 'live:1:http']);
+    expect(typeof res.running[0]!.startedAt).toBe('string');
+    pipelineEvents.endRun('live');
+    const after = await caller.ragPipelineRunning();
+    expect(after.running).toEqual([]);
+  });
+  test('distinguishes multiple in-flight pipelines', async () => {
+    const { pipelineEvents, _resetPipelineEventsForTests } = await import(
+      '../src/rag/pipeline/event-bus.js'
+    );
+    _resetPipelineEventsForTests();
+    pipelineEvents.startRun('a', { sources: [] });
+    pipelineEvents.startRun('b', { sources: [] });
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineRunning();
+    const names = res.running.map((r) => r.name).sort();
+    expect(names).toEqual(['a', 'b']);
+  });
+});
+
 describe('ragPipelineLogs', () => {
   test('absent journal → entries: []', async () => {
     const caller = router.createCaller({});

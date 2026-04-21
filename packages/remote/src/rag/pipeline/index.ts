@@ -28,6 +28,13 @@ export {
   type DraftResult,
 } from './draft.js';
 export {
+  pipelineEvents,
+  createPipelineEventBus,
+  PIPELINE_RETENTION_MS,
+  type PipelineRun,
+  type PipelineEventBus,
+} from './event-bus.js';
+export {
   RagPipelineSpecSchema,
   RagPipelineManifestSchema,
   SourceSpecSchema,

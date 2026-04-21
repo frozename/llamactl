@@ -57,6 +57,47 @@ interface LogsResponse {
   entries: Array<Record<string, unknown>>;
 }
 
+interface RunningEntry {
+  name: string;
+  startedAt: string;
+  sources: string[];
+}
+
+interface RunningResponse {
+  running: RunningEntry[];
+}
+
+function formatElapsed(startIso: string, now: number = Date.now()): string {
+  const ms = now - Date.parse(startIso);
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem === 0 ? `${m}m` : `${m}m${rem}s`;
+}
+
+function RunningBadge(props: { entry: RunningEntry }): React.JSX.Element {
+  const { entry } = props;
+  // Tick the display every second so the elapsed counter doesn't
+  // look frozen between polls. State-only, no fetch.
+  const [now, setNow] = useState<number>(() => Date.now());
+  React.useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-surface-0)]"
+      data-testid={`pipelines-running-${entry.name}`}
+      title={`started ${entry.startedAt} · sources: ${entry.sources.join(', ')}`}
+    >
+      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--color-surface-0)]" />
+      running · {formatElapsed(entry.startedAt, now)}
+    </span>
+  );
+}
+
 function formatRelative(iso: string, now: number = Date.now()): string {
   const ms = now - Date.parse(iso);
   if (!Number.isFinite(ms) || ms < 0) return iso;
@@ -159,8 +200,9 @@ function PipelineRow(props: {
   rec: PipelineRecord;
   onLogsToggle: () => void;
   logsOpen: boolean;
+  running: RunningEntry | null;
 }): React.JSX.Element {
-  const { rec, onLogsToggle, logsOpen } = props;
+  const { rec, onLogsToggle, logsOpen, running } = props;
   const utils = trpc.useUtils();
   const [dryRun, setDryRun] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -215,7 +257,7 @@ function PipelineRow(props: {
           {schedule}
         </td>
         <td className="px-3 py-2">
-          <LastRunBadge rec={rec} />
+          {running ? <RunningBadge entry={running} /> : <LastRunBadge rec={rec} />}
         </td>
         <td className="px-3 py-2 text-right">
           <div className="flex items-center justify-end gap-1">
@@ -225,17 +267,19 @@ function PipelineRow(props: {
                 checked={dryRun}
                 onChange={(e) => setDryRun(e.target.checked)}
                 data-testid={`pipelines-dryrun-${rec.name}`}
+                disabled={!!running}
               />
               dry
             </label>
             <button
               type="button"
               onClick={onRun}
-              disabled={runMut.isPending}
+              disabled={runMut.isPending || !!running}
               data-testid={`pipelines-run-${rec.name}`}
+              title={running ? 'run in progress' : undefined}
               className="rounded bg-[var(--color-brand)] px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {runMut.isPending ? '…' : 'Run'}
+              {runMut.isPending ? '…' : running ? 'Running' : 'Run'}
             </button>
             <button
               type="button"
@@ -417,8 +461,36 @@ export function PipelinesTab(props: {
   const list = trpc.ragPipelineList.useQuery(undefined, { retry: false });
   const data = list.data as PipelineListResponse | undefined;
   const rows = data?.pipelines ?? [];
+  const running = trpc.ragPipelineRunning.useQuery(undefined, {
+    refetchInterval: 2000,
+    retry: false,
+  });
+  const runningData = running.data as RunningResponse | undefined;
+  const runningByName = useMemo(() => {
+    const m = new Map<string, RunningEntry>();
+    for (const r of runningData?.running ?? []) m.set(r.name, r);
+    return m;
+  }, [runningData]);
   const [logsOpen, setLogsOpen] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+
+  // When a pipeline transitions from running → not-running, the
+  // scheduler has just written state.json. Invalidate the list query
+  // so the "last run" badge flips without waiting for the 2s poll.
+  const prevRunningRef = React.useRef<Set<string>>(new Set());
+  React.useEffect(() => {
+    const prev = prevRunningRef.current;
+    const curr = new Set(Array.from(runningByName.keys()));
+    let changed = false;
+    for (const name of prev) {
+      if (!curr.has(name)) {
+        changed = true;
+        break;
+      }
+    }
+    prevRunningRef.current = curr;
+    if (changed) void list.refetch();
+  }, [runningByName, list]);
 
   // Show every pipeline; filter note if it targets a different node.
   // Operators often have a single rag node, but filtering would hide
@@ -506,6 +578,7 @@ export function PipelinesTab(props: {
                     setLogsOpen((cur) => (cur === rec.name ? null : rec.name))
                   }
                   logsOpen={logsOpen === rec.name}
+                  running={runningByName.get(rec.name) ?? null}
                 />
               ))}
             </tbody>

@@ -18,6 +18,7 @@ import { RagPipelineManifestSchema, type RagPipelineManifest } from './schema.js
 import { openJournal, type Journal, type JournalEntry } from './journal.js';
 import { FETCHERS } from './fetchers/registry.js';
 import { TRANSFORMS } from './transforms/registry.js';
+import { pipelineEvents } from './event-bus.js';
 import type { RawDoc } from './types.js';
 import { loadConfig, resolveNode, defaultConfigPath } from '../../config/kubeconfig.js';
 import { createRagAdapter } from '../index.js';
@@ -93,113 +94,126 @@ export async function runPipeline(
     spec_hash: specHash,
     sources: sourceLabels,
   });
+  // Running-state signal for the Electron Pipelines tab + ops-chat.
+  // Paired with `pipelineEvents.endRun(...)` in the outer finally
+  // below so UI pollers see the run go live and then back to
+  // `lastRun` regardless of the code path (success, openAdapter
+  // throw, fetcher throw, abort).
+  pipelineEvents.startRun(manifest.metadata.name, { sources: sourceLabels });
 
-  const openAdapter = opts.openAdapter ?? defaultOpenAdapter(env);
-  let adapter: OpenAdapterResult;
   try {
-    adapter = await openAdapter(manifest.spec.destination.ragNode);
-  } catch (err) {
-    await journal.append({
-      kind: 'error',
-      ts: new Date().toISOString(),
-      message: `openAdapter failed: ${toMessage(err)}`,
-    });
+    const openAdapter = opts.openAdapter ?? defaultOpenAdapter(env);
+    let adapter: OpenAdapterResult;
+    try {
+      adapter = await openAdapter(manifest.spec.destination.ragNode);
+    } catch (err) {
+      await journal.append({
+        kind: 'error',
+        ts: new Date().toISOString(),
+        message: `openAdapter failed: ${toMessage(err)}`,
+      });
+      await journal.append({
+        kind: 'run-complete',
+        ts: new Date().toISOString(),
+        total_docs: 0,
+        total_chunks: 0,
+        elapsed_ms: Date.now() - startedAt,
+      });
+      await journal.close();
+      throw err;
+    }
+
+    const summary: RunSummary = {
+      total_docs: 0,
+      total_chunks: 0,
+      skipped_docs: 0,
+      errors: 0,
+      elapsed_ms: 0,
+      per_source: [],
+    };
+
+    try {
+      for (let i = 0; i < manifest.spec.sources.length; i++) {
+        const src = manifest.spec.sources[i]!;
+        const label = sourceLabels[i]!;
+        const fetcher = FETCHERS[src.kind];
+        if (!fetcher) {
+          await journal.append({
+            kind: 'error',
+            ts: new Date().toISOString(),
+            source: label,
+            message: `unknown source kind '${src.kind}'`,
+          });
+          summary.errors++;
+          summary.per_source.push({ source: label, docs: 0, chunks: 0, errors: 1 });
+          continue;
+        }
+
+        await journal.append({
+          kind: 'source-started',
+          ts: new Date().toISOString(),
+          source: label,
+        });
+
+        const perSource = await runSource({
+          label,
+          fetcher,
+          sourceSpec: src,
+          transforms: manifest.spec.transforms,
+          collection: manifest.spec.destination.collection,
+          adapter,
+          journal,
+          env,
+          signal,
+          concurrency: manifest.spec.concurrency,
+          dryRun: opts.dryRun ?? false,
+          onDuplicate: manifest.spec.on_duplicate,
+        });
+
+        summary.total_docs += perSource.docs;
+        summary.total_chunks += perSource.chunks;
+        summary.skipped_docs += perSource.skipped;
+        summary.errors += perSource.errors;
+        summary.per_source.push({
+          source: label,
+          docs: perSource.docs,
+          chunks: perSource.chunks,
+          errors: perSource.errors,
+        });
+
+        await journal.append({
+          kind: 'source-complete',
+          ts: new Date().toISOString(),
+          source: label,
+          docs: perSource.docs,
+          chunks: perSource.chunks,
+          errors: perSource.errors,
+        });
+      }
+    } finally {
+      try {
+        await adapter.close();
+      } catch {
+        // Close errors are noisy but non-fatal — the run already ended.
+      }
+    }
+
+    summary.elapsed_ms = Date.now() - startedAt;
     await journal.append({
       kind: 'run-complete',
       ts: new Date().toISOString(),
-      total_docs: 0,
-      total_chunks: 0,
-      elapsed_ms: Date.now() - startedAt,
+      total_docs: summary.total_docs,
+      total_chunks: summary.total_chunks,
+      elapsed_ms: summary.elapsed_ms,
     });
     await journal.close();
-    throw err;
-  }
-
-  const summary: RunSummary = {
-    total_docs: 0,
-    total_chunks: 0,
-    skipped_docs: 0,
-    errors: 0,
-    elapsed_ms: 0,
-    per_source: [],
-  };
-
-  try {
-    for (let i = 0; i < manifest.spec.sources.length; i++) {
-      const src = manifest.spec.sources[i]!;
-      const label = sourceLabels[i]!;
-      const fetcher = FETCHERS[src.kind];
-      if (!fetcher) {
-        await journal.append({
-          kind: 'error',
-          ts: new Date().toISOString(),
-          source: label,
-          message: `unknown source kind '${src.kind}'`,
-        });
-        summary.errors++;
-        summary.per_source.push({ source: label, docs: 0, chunks: 0, errors: 1 });
-        continue;
-      }
-
-      await journal.append({
-        kind: 'source-started',
-        ts: new Date().toISOString(),
-        source: label,
-      });
-
-      const perSource = await runSource({
-        label,
-        fetcher,
-        sourceSpec: src,
-        transforms: manifest.spec.transforms,
-        collection: manifest.spec.destination.collection,
-        adapter,
-        journal,
-        env,
-        signal,
-        concurrency: manifest.spec.concurrency,
-        dryRun: opts.dryRun ?? false,
-        onDuplicate: manifest.spec.on_duplicate,
-      });
-
-      summary.total_docs += perSource.docs;
-      summary.total_chunks += perSource.chunks;
-      summary.skipped_docs += perSource.skipped;
-      summary.errors += perSource.errors;
-      summary.per_source.push({
-        source: label,
-        docs: perSource.docs,
-        chunks: perSource.chunks,
-        errors: perSource.errors,
-      });
-
-      await journal.append({
-        kind: 'source-complete',
-        ts: new Date().toISOString(),
-        source: label,
-        docs: perSource.docs,
-        chunks: perSource.chunks,
-        errors: perSource.errors,
-      });
-    }
+    return summary;
   } finally {
-    try {
-      await adapter.close();
-    } catch {
-      // Close errors are noisy but non-fatal — the run already ended.
-    }
+    // Runs paired with `startRun` above. Fires regardless of how the
+    // run ended (success, adapter-throw, fetcher-throw, caller abort)
+    // so the Pipelines tab always sees the row flip back to lastRun.
+    pipelineEvents.endRun(manifest.metadata.name);
   }
-
-  summary.elapsed_ms = Date.now() - startedAt;
-  await journal.append({
-    kind: 'run-complete',
-    ts: new Date().toISOString(),
-    total_docs: summary.total_docs,
-    total_chunks: summary.total_chunks,
-    elapsed_ms: summary.elapsed_ms,
-  });
-  await journal.close();
-  return summary;
 }
 
 interface PerSourceTally {
