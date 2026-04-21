@@ -1,0 +1,42 @@
+# chroma-only — the smallest meaningful composite.
+#
+# Spawns one Chroma vector store on the `local` llamactl node +
+# registers a RAG node (`kb`) pointing at it. Enough to test the
+# Knowledge UI, ops-chat ragSearch, and the cross-repo wiring
+# without any model or gateway moving parts.
+#
+# Apply:
+#   llamactl composite apply -f ~/.llamactl/composites/quickstart.yaml
+#
+# Clean up:
+#   llamactl composite destroy quickstart
+apiVersion: llamactl/v1
+kind: Composite
+metadata:
+  name: quickstart
+spec:
+  runtime: docker
+
+  services:
+    - kind: chroma
+      name: chroma-main
+      node: local
+      port: 8001
+      persistence:
+        volume: /var/lib/llamactl/chroma-main
+        mountPath: /data
+
+  ragNodes:
+    - name: kb
+      node: local
+      binding:
+        provider: chroma
+        endpoint: ''                     # resolved from backingService at apply time
+        extraArgs: []
+      backingService: chroma-main
+
+  dependencies:
+    - from: { kind: rag, name: kb }
+      to:   { kind: service, name: chroma-main }
+
+  onFailure: rollback

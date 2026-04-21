@@ -16,6 +16,7 @@ import { runCtx } from './commands/ctx.js';
 import { runApply, runDelete, runDescribe, runGet } from './commands/workload.js';
 import { runComposite } from './commands/composite.js';
 import { runDoctor } from './commands/doctor.js';
+import { runInit } from './commands/init.js';
 import { runController } from './commands/controller.js';
 import { runExpose } from './commands/expose.js';
 import { runSirius } from './commands/sirius.js';
@@ -132,6 +133,9 @@ Declarative workloads (Kubernetes-style):
   llamactl doctor [--verbose]                 Probe agent + docker + k8s +
       [--timeout=<s>]                          keychain readiness and print
                                               an actionable status table.
+  llamactl init [--yes] [--runtime=auto]      First-run wizard: pick a
+      [--template=<k>] [--name=<n>]            runtime, seed a quickstart
+      [--no-apply] [--force]                   composite, optionally apply.
   llamactl expose <target> [--node <n>]       Deploy a model as a workload
       [--name <w>] [--extra-args="..."]       and print the OpenAI URL
       [--timeout=<s>] [--json]                external clients should use.
@@ -224,6 +228,8 @@ async function main(argv: string[]): Promise<number> {
       return runComposite(rest);
     case 'doctor':
       return runDoctor(rest);
+    case 'init':
+      return runInit(rest);
     case 'controller':
       return runController(rest);
     case 'expose':

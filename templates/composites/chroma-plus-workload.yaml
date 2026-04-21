@@ -1,0 +1,57 @@
+# chroma-plus-workload — Chroma alongside a llama-server workload.
+#
+# Adds a ModelRunSpec so a local llama-server is started on the same
+# node as Chroma. Use this when you want both a knowledge base and a
+# local model available from a single composite.
+#
+# Prereqs:
+#   - A GGUF in your catalog. `llamactl catalog list` to see options;
+#     edit the `target.value` below to match what you have locally.
+#   - LLAMA_CPP_BIN pointing at a directory containing `llama-server`.
+#     `llamactl doctor` will flag this if missing.
+#
+# Workloads still ride the llamactl agent path even when
+# `spec.runtime: kubernetes` — the agent spawns llama-server directly.
+# Only services (chroma, pgvector, generic containers) go through the
+# Docker / k8s backend.
+apiVersion: llamactl/v1
+kind: Composite
+metadata:
+  name: quickstart
+spec:
+  runtime: docker
+
+  services:
+    - kind: chroma
+      name: chroma-main
+      node: local
+      port: 8001
+      persistence:
+        volume: /var/lib/llamactl/chroma-main
+        mountPath: /data
+
+  workloads:
+    - node: local
+      target:
+        kind: rel
+        value: qwen2.5-7b.Q4_K_M.gguf    # CHANGE ME — any GGUF from `llamactl catalog list`
+      extraArgs: ['--ctx-size', '8192']
+      workers: []
+      restartPolicy: OnFailure
+      gateway: false
+      timeoutSeconds: 60
+
+  ragNodes:
+    - name: kb
+      node: local
+      binding:
+        provider: chroma
+        endpoint: ''
+        extraArgs: []
+      backingService: chroma-main
+
+  dependencies:
+    - from: { kind: rag, name: kb }
+      to:   { kind: service, name: chroma-main }
+
+  onFailure: rollback

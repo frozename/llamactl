@@ -1,0 +1,59 @@
+# pgvector-with-embedder — end-to-end RAG on Postgres.
+#
+# pgvector doesn't embed internally, so the rag binding names an
+# embedder: any cluster node with an AiProvider.createEmbeddings
+# surface. The adapter auto-embeds caller-free-text queries (search)
+# and any documents that arrive without a pre-computed vector (store).
+#
+# Prereqs:
+#   - Postgres with the `vector` extension. pgvector/pgvector:
+#     0.8.2-pg18-trixie ships the extension but does NOT auto-run
+#     `CREATE EXTENSION vector;` — run it against the target
+#     database after first boot (see docs/rag-nodes.md).
+#   - An embedder node in your kubeconfig: replace
+#     `embedder.node: sirius` with a node that implements
+#     createEmbeddings. `llamactl node ls` shows current nodes.
+#   - Export the DB password as an env var and name it in
+#     `passwordEnv`. Or route it through macOS Keychain via
+#     `secrets: { POSTGRES_PASSWORD: { ref: 'keychain:svc/acct' } }`.
+#
+# Apply:
+#   export PG_PASSWORD='...'
+#   llamactl composite apply -f ~/.llamactl/composites/quickstart.yaml
+apiVersion: llamactl/v1
+kind: Composite
+metadata:
+  name: quickstart
+spec:
+  runtime: docker
+
+  services:
+    - kind: pgvector
+      name: pg-main
+      node: local
+      database: llamactl_kb
+      user: llamactl
+      passwordEnv: PG_PASSWORD
+      persistence:
+        volume: /var/lib/llamactl/pgvector-main
+        mountPath: /var/lib/postgresql/data
+      port: 15432
+
+  ragNodes:
+    - name: kb
+      node: local
+      binding:
+        provider: pgvector
+        endpoint: ''                     # resolved from backingService
+        collection: documents
+        embedder:
+          node: sirius                   # CHANGE ME — any node exposing createEmbeddings
+          model: text-embedding-3-small  # CHANGE ME — model the embedder node speaks
+        extraArgs: []
+      backingService: pg-main
+
+  dependencies:
+    - from: { kind: rag, name: kb }
+      to:   { kind: service, name: pg-main }
+
+  onFailure: rollback
