@@ -303,10 +303,14 @@ the Knowledge module.
 For **Composites** (declarative multi-component infra — model +
 gateway + RAG + supporting services applied as one atomic unit
 with dependency DAG + rollback), see `docs/composites.md`.
-`RuntimeBackend` interface in `packages/remote/src/runtime/` wires
-a Docker backend today and is designed for a k8s backend swap
-later. `ServiceHandler` registry at `packages/remote/src/service/`
-covers chroma, pgvector, and a generic-container escape hatch; add
+`RuntimeBackend` interface in `packages/remote/src/runtime/` has
+two implementations: Docker (v1 default, `runtime/docker/`) and
+Kubernetes (`runtime/kubernetes/`, selectable per composite via
+`spec.runtime: kubernetes` — see `docs/composites-kubernetes.md`).
+The factory at `runtime/factory.ts` routes on the declared kind;
+the router caches one backend per kind for the process lifetime.
+`ServiceHandler` registry at `packages/remote/src/service/` covers
+chroma, pgvector, and a generic-container escape hatch; add
 handlers for new container kinds (nginx, redis, databases) the
 same way gateway-handlers plug into `workload/gateway-handlers/`.
 tRPC: `compositeApply` / `compositeDestroy` / `compositeList` /
@@ -314,6 +318,21 @@ tRPC: `compositeApply` / `compositeDestroy` / `compositeList` /
 Electron module: `Composites` (activity bar, `Boxes` icon). The
 planner prefers `llamactl.composite.apply` over multi-step plans
 when operators describe 3+ interacting components.
+
+**K8s backend (Phase K8s-1 through K8s-7 shipped)**: namespace-
+per-composite (`llamactl-<name>`), Deployment for stateless
+services (chroma, generic) and StatefulSet + headless Service +
+`-client` ClusterIP + volumeClaimTemplates for stateful (pgvector).
+All resources stamp Helm common-labels (`app.kubernetes.io/*`) +
+llamactl-namespaced labels (`llamactl.io/composite/component`);
+drift detection uses the `llamactl.io/spec-hash` annotation.
+Secrets map to `v1.Secret` + `secretKeyRef` so values never land
+in the pod spec. Destroy short-circuits through
+`backend.destroyCompositeBoundary` — a single `DELETE namespace`
+that cascades via k8s GC. Workloads (llama-server) still ride the
+agent path; running them as k8s Deployments is a multi-quarter
+follow-up. Opt-in E2E at `packages/remote/test/composite-e2e.test.ts`
+behind `LLAMACTL_COMPOSITE_E2E_K8S=1` + reachable cluster.
 
 ## Cost guardian (`llamactl cost-guardian`, N.3)
 

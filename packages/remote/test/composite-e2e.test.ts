@@ -8,6 +8,7 @@ import type { Composite } from '../src/composite/schema.js';
 import { saveConfig } from '../src/config/kubeconfig.js';
 import { freshConfig } from '../src/config/schema.js';
 import { createDockerBackend } from '../src/runtime/docker/backend.js';
+import { createKubernetesBackend } from '../src/runtime/kubernetes/backend.js';
 import type { WorkloadClient } from '../src/workload/apply.js';
 
 /**
@@ -85,6 +86,20 @@ function failingWorkloadClient(): WorkloadClient {
   };
 }
 
+const K8S_RUN_GATE = process.env.LLAMACTL_COMPOSITE_E2E_K8S === '1';
+let k8sReachable = false;
+
+beforeAll(async () => {
+  if (!K8S_RUN_GATE) return;
+  try {
+    const backend = createKubernetesBackend();
+    await backend.ping();
+    k8sReachable = true;
+  } catch {
+    k8sReachable = false;
+  }
+});
+
 describe.skipIf(!SHOULD_RUN)('Composite E2E — docker round-trip', () => {
   test(
     'apply + inspect + destroy against a real chroma container',
@@ -150,5 +165,89 @@ describe.skipIf(!SHOULD_RUN)('Composite E2E — docker round-trip', () => {
     },
     // Pulling chromadb/chroma on a cold machine can take a while.
     5 * 60_000,
+  );
+});
+
+describe.skipIf(!K8S_RUN_GATE)('Composite E2E — kubernetes round-trip', () => {
+  test(
+    'apply + list + inspect + destroy against a real cluster',
+    async () => {
+      if (!k8sReachable) {
+        console.warn('[composite-e2e] skipping k8s: cluster unreachable');
+        return;
+      }
+      const backend = createKubernetesBackend({
+        readinessPollMs: 2_000,
+        readinessTimeoutMs: 5 * 60_000,
+      });
+      const manifest: Composite = {
+        apiVersion: 'llamactl/v1',
+        kind: 'Composite',
+        metadata: { name: 'composite-e2e-k8s' },
+        spec: {
+          runtime: 'kubernetes',
+          services: [
+            {
+              kind: 'chroma',
+              name: 'chroma-smoke',
+              node: 'local',
+              runtime: 'docker',       // image runtime — k8s emits a Pod regardless
+              port: 8000,
+              image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+            },
+          ],
+          workloads: [],
+          ragNodes: [],
+          gateways: [],
+          dependencies: [],
+          onFailure: 'rollback',
+        },
+      };
+
+      const applyResult = await applyComposite({
+        manifest,
+        backend,
+        getWorkloadClient: () => failingWorkloadClient(),
+        configPath,
+        compositesDir,
+      });
+      expect(applyResult.ok).toBe(true);
+
+      const listed = await backend.listServices({ composite: 'composite-e2e-k8s' });
+      expect(listed.length).toBeGreaterThan(0);
+
+      const instance = await backend.inspectService({
+        name: 'llamactl-chroma-composite-e2e-k8s-chroma-smoke',
+      });
+      expect(instance).not.toBeNull();
+      expect(instance?.running).toBe(true);
+
+      const destroyResult = await destroyComposite({
+        manifest,
+        backend,
+        getWorkloadClient: () => failingWorkloadClient(),
+        configPath,
+        compositesDir,
+      });
+      expect(destroyResult.ok).toBe(true);
+
+      // Namespace cascade GC is async; poll for a short window so the
+      // assertion isn't flaky. 30 s ceiling is generous — Docker
+      // Desktop's k8s is the slowest realistic target.
+      const deadline = Date.now() + 30_000;
+      let stillThere = true;
+      while (Date.now() < deadline) {
+        const after = await backend.inspectService({
+          name: 'llamactl-chroma-composite-e2e-k8s-chroma-smoke',
+        });
+        if (after === null) {
+          stillThere = false;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2_000));
+      }
+      expect(stillThere).toBe(false);
+    },
+    10 * 60_000,
   );
 });
