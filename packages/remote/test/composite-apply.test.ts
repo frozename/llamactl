@@ -135,11 +135,15 @@ function makeFakeWorkloadClient(): {
             endpoint: 'http://127.0.0.1:8080',
             model: 'test',
           });
+          // applyOne extracts StartDone from `e.result` on the done
+          // event — not the event itself. Mirror the real shape.
           callbacks.onData?.({
             type: 'done',
-            ok: true,
-            pid: 12345,
-            endpoint: 'http://127.0.0.1:8080',
+            result: {
+              ok: true,
+              pid: 12345,
+              endpoint: 'http://127.0.0.1:8080',
+            },
           });
           callbacks.onComplete?.();
         });
@@ -710,5 +714,201 @@ describe('applyComposite — external-runtime service short-circuits', () => {
     // No ensureService call — external runtime short-circuits.
     const ensureCalls = backend.calls.filter((c) => c.op === 'ensureService');
     expect(ensureCalls).toHaveLength(0);
+  });
+});
+
+describe('applyComposite — gateway upstream threading', () => {
+  test('resolved upstream endpoints + providerConfig reach the gateway handler', async () => {
+    const backend = new FakeRuntimeBackend();
+    const { client } = makeFakeWorkloadClient();
+
+    // Register the gateway node so dispatchGatewayApply resolves it.
+    const { loadConfig, saveConfig: saveCfg, upsertNode } = await import(
+      '../src/config/kubeconfig.js'
+    );
+    const cfg0 = loadConfig(configPath);
+    saveCfg(
+      upsertNode(cfg0, 'home', {
+        name: 'sirius-gw',
+        endpoint: '',
+        kind: 'gateway',
+        cloud: {
+          provider: 'sirius',
+          baseUrl: 'http://127.0.0.1:3000/v1',
+        },
+      }),
+      configPath,
+    );
+
+    // Fake gateway handler records every apply call. `canHandle`
+    // matches the gateway-kind sirius node.
+    const recorded: Array<{
+      compositeName: string;
+      upstreams: ReadonlyArray<{ name: string; endpoint: string; nodeName: string }>;
+      providerConfig: Readonly<Record<string, unknown>>;
+    }> = [];
+    const fakeSirius = {
+      kind: 'sirius',
+      canHandle: (node: { cloud?: { provider: string } }) =>
+        node.cloud?.provider === 'sirius',
+      apply: async (o: {
+        composite?: {
+          compositeName: string;
+          upstreams: ReadonlyArray<{ name: string; endpoint: string; nodeName: string }>;
+          providerConfig: Readonly<Record<string, unknown>>;
+        };
+      }) => {
+        if (o.composite) recorded.push({ ...o.composite });
+        const now = new Date().toISOString();
+        return {
+          action: 'started' as const,
+          statusSection: {
+            phase: 'Running' as const,
+            serverPid: null,
+            endpoint: 'http://127.0.0.1:3000/v1',
+            lastTransitionTime: now,
+            conditions: [],
+          },
+        };
+      },
+    };
+
+    const manifest: Composite = {
+      apiVersion: 'llamactl/v1',
+      kind: 'Composite',
+      metadata: { name: 'stack' },
+      spec: {
+        services: [],
+        workloads: [
+          {
+            node: 'local',
+            target: { kind: 'rel', value: 'llama-7b.gguf' },
+            extraArgs: [],
+            workers: [],
+            restartPolicy: 'OnFailure',
+            gateway: false,
+            timeoutSeconds: 60,
+          },
+        ],
+        ragNodes: [],
+        gateways: [
+          {
+            name: 'sirius-entry',
+            node: 'sirius-gw',
+            provider: 'sirius',
+            upstreamWorkloads: ['local'],
+            providerConfig: { routing: 'latency-aware', maxQps: 42 },
+          },
+        ],
+        dependencies: [],
+        onFailure: 'rollback',
+      },
+    };
+
+    const result = await applyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+      gatewayHandlers: [fakeSirius as never],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(recorded).toHaveLength(1);
+    const ctx = recorded[0]!;
+    expect(ctx.compositeName).toBe('stack');
+    expect(ctx.upstreams).toHaveLength(1);
+    expect(ctx.upstreams[0]?.name).toBe('local');
+    expect(ctx.upstreams[0]?.nodeName).toBe('local');
+    // The fake workload client's started event resolves endpoint to
+    // http://127.0.0.1:8080 (see makeFakeWorkloadClient above).
+    expect(ctx.upstreams[0]?.endpoint).toBe('http://127.0.0.1:8080');
+    expect(ctx.providerConfig).toEqual({ routing: 'latency-aware', maxQps: 42 });
+  });
+
+  test('upstreamWorkloads=[] still emits empty composite context', async () => {
+    const backend = new FakeRuntimeBackend();
+    const { client } = makeFakeWorkloadClient();
+
+    const { loadConfig, saveConfig: saveCfg, upsertNode } = await import(
+      '../src/config/kubeconfig.js'
+    );
+    const cfg0 = loadConfig(configPath);
+    saveCfg(
+      upsertNode(cfg0, 'home', {
+        name: 'empty-gw',
+        endpoint: '',
+        kind: 'gateway',
+        cloud: {
+          provider: 'embersynth',
+          baseUrl: 'http://127.0.0.1:7777/v1',
+        },
+      }),
+      configPath,
+    );
+
+    let ctxSeen: { upstreams?: unknown; providerConfig?: unknown } | null = null;
+    const fakeEmber = {
+      kind: 'embersynth',
+      canHandle: (node: { cloud?: { provider: string } }) =>
+        node.cloud?.provider === 'embersynth',
+      apply: async (o: {
+        composite?: { upstreams: unknown; providerConfig: unknown };
+      }) => {
+        ctxSeen = o.composite ?? null;
+        const now = new Date().toISOString();
+        return {
+          action: 'started' as const,
+          statusSection: {
+            phase: 'Running' as const,
+            serverPid: null,
+            endpoint: 'http://127.0.0.1:7777/v1',
+            lastTransitionTime: now,
+            conditions: [],
+          },
+        };
+      },
+    };
+
+    const manifest: Composite = {
+      apiVersion: 'llamactl/v1',
+      kind: 'Composite',
+      metadata: { name: 'empty' },
+      spec: {
+        services: [],
+        workloads: [],
+        ragNodes: [],
+        gateways: [
+          {
+            name: 'ember-entry',
+            node: 'empty-gw',
+            provider: 'embersynth',
+            upstreamWorkloads: [],
+            providerConfig: {},
+          },
+        ],
+        dependencies: [],
+        onFailure: 'rollback',
+      },
+    };
+
+    const result = await applyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+      gatewayHandlers: [fakeEmber as never],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(ctxSeen).not.toBeNull();
+    const seen = ctxSeen as unknown as {
+      upstreams: unknown[];
+      providerConfig: Record<string, unknown>;
+    };
+    expect(seen.upstreams).toHaveLength(0);
+    expect(seen.providerConfig).toEqual({});
   });
 });

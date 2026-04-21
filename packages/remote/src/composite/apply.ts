@@ -82,6 +82,11 @@ interface AppliedRecord {
   // Service-specific
   serviceInstance?: ServiceInstance | null;
   serviceRef?: ServiceRef; // set when a docker service was spawned
+  // Workload-specific — captured for the gateway upstream-threading
+  // slice so gateways can see the live endpoint of each upstream
+  // workload in composite-declaration order.
+  workloadEndpoint?: string;
+  workloadNodeName?: string;
   // Rag-specific
   ragNodeCreated?: boolean;
   // Rollback hint: only components we actually started need teardown.
@@ -187,7 +192,7 @@ async function applyComponent(
     case 'rag':
       return applyRagComponent(ref, manifest, opts, applied);
     case 'gateway':
-      return applyGatewayComponent(ref, manifest, opts);
+      return applyGatewayComponent(ref, manifest, opts, applied);
     default: {
       const exhaustive: never = ref.kind;
       throw new Error(`unknown component kind: ${String(exhaustive)}`);
@@ -255,7 +260,13 @@ async function applyWorkloadComponent(
   if (result.error) {
     throw new Error(`workload '${ref.name}' failed: ${result.error}`);
   }
-  return { ref, started: result.action !== 'unchanged' };
+  const endpoint = result.statusSection.endpoint;
+  return {
+    ref,
+    started: result.action !== 'unchanged',
+    ...(endpoint && { workloadEndpoint: endpoint }),
+    workloadNodeName: spec.node,
+  };
 }
 
 async function applyRagComponent(
@@ -310,14 +321,35 @@ async function applyGatewayComponent(
   ref: ComponentRef,
   manifest: Composite,
   opts: CompositeApplyOptions,
+  applied: AppliedRecord[],
 ): Promise<AppliedRecord> {
   const entry = manifest.spec.gateways.find((g) => g.name === ref.name);
   if (!entry) throw new Error(`gateway '${ref.name}' not found in composite`);
 
+  // Resolve each declared upstream workload to its live endpoint. The
+  // composite applier ran those workloads earlier in topo order; their
+  // AppliedRecord carries workloadEndpoint + workloadNodeName. Missing
+  // endpoints are allowed (the workload was unchanged, so we don't
+  // have a fresh statusSection — handlers treat these as "use existing
+  // registration"); pass them through with an empty endpoint string
+  // so the handler can distinguish "declared but no live endpoint".
+  const upstreams = entry.upstreamWorkloads.map((upstreamName) => {
+    const rec = applied.find(
+      (r) => r.ref.kind === 'workload' && r.ref.name === upstreamName,
+    );
+    return {
+      name: upstreamName,
+      endpoint: rec?.workloadEndpoint ?? '',
+      nodeName: rec?.workloadNodeName ?? upstreamName,
+    };
+  });
+
   // Synthesize the gateway-trigger ModelRun. The existing
   // dispatchGatewayApply path reloads the target gateway's config;
-  // upstreamWorkloads + providerConfig are NOT yet threaded through
-  // (v1 limitation — documented in composite-infra.md Phase 4 notes).
+  // the optional `composite` context carries the composite-scoped
+  // upstreams + providerConfig so sirius / embersynth handlers can
+  // auto-populate their catalogs instead of relying on out-of-band
+  // config editing.
   const modelRun: ModelRun = {
     apiVersion: 'llamactl/v1',
     kind: 'ModelRun',
@@ -346,6 +378,11 @@ async function applyGatewayComponent(
       }
     },
     handlers,
+    composite: {
+      compositeName: manifest.metadata.name,
+      upstreams,
+      providerConfig: entry.providerConfig,
+    },
   });
   if (result === null) {
     // agent-gateway fallthrough sentinel — treat as no-op. Composite

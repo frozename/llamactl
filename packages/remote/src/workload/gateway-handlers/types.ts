@@ -3,6 +3,44 @@ import type { ApplyEvent, ApplyResult, WorkloadClient } from '../apply.js';
 import type { ModelRun } from '../schema.js';
 
 /**
+ * Composite-authored context passed to gateway handlers when the
+ * gateway originated from a `CompositeSpec`. Plain ModelRun gateways
+ * (authored outside a composite) receive `composite: undefined` and
+ * handlers behave exactly as before.
+ *
+ * `upstreams` carries the resolved endpoints of any workloads the
+ * composite named in `gateway.upstreamWorkloads[]` — the composite
+ * applier runs those workloads first and captures their live
+ * endpoint, then threads the resolved list through to the handler.
+ * Handlers can use this to auto-populate their provider catalogs
+ * (sirius-providers.yaml, embersynth profile routes) instead of
+ * asking the operator to edit those files by hand.
+ *
+ * `providerConfig` is the composite entry's opaque per-provider
+ * overrides block. Handlers interpret the shape — v1 sirius /
+ * embersynth ignore it (no auto-population); reserving the field
+ * in the contract now keeps the wire stable for the follow-up
+ * slice that wires handlers to consume it.
+ */
+export interface CompositeGatewayUpstream {
+  /** Component name within the composite (workload's spec.node). */
+  name: string;
+  /** Resolved llama-server endpoint after the workload is up. */
+  endpoint: string;
+  /** Cluster node the upstream runs on. */
+  nodeName: string;
+}
+
+export interface CompositeGatewayContext {
+  /** metadata.name of the containing composite. */
+  compositeName: string;
+  /** Resolved upstream workloads in composite-declaration order. */
+  upstreams: readonly CompositeGatewayUpstream[];
+  /** Opaque per-provider overrides from the composite entry. */
+  providerConfig: Readonly<Record<string, unknown>>;
+}
+
+/**
  * Gateway-kind workload handler. Each gateway flavour (sirius,
  * embersynth, an llamactl agent acting as a gateway) ships its own
  * handler implementing this interface.
@@ -34,6 +72,12 @@ export interface GatewayApplyOptions {
    *  don't need it. */
   getClient: (nodeName: string) => WorkloadClient;
   onEvent?: (e: ApplyEvent) => void;
+  /**
+   * Set by the composite applier when this gateway apply originates
+   * from a CompositeSpec entry. Undefined for plain ModelRun-driven
+   * gateway applies.
+   */
+  composite?: CompositeGatewayContext;
 }
 
 /**
@@ -48,4 +92,5 @@ export type GatewayDispatch = (opts: {
   manifest: ModelRun;
   getClient: (nodeName: string) => WorkloadClient;
   onEvent?: (e: ApplyEvent) => void;
+  composite?: CompositeGatewayContext;
 }) => Promise<ApplyResult | null>;

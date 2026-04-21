@@ -28,6 +28,13 @@ export interface DispatchGatewayApplyOptions {
   resolveNode: (nodeName: string) => ClusterNode | undefined;
   onEvent?: (e: ApplyEvent) => void;
   handlers?: readonly GatewayHandler[];
+  /**
+   * Composite-authored context forwarded to the matched handler.
+   * Undefined for plain ModelRun applies; populated when the caller
+   * is the composite applier and the gateway entry declared
+   * `upstreamWorkloads` / `providerConfig`.
+   */
+  composite?: import('./types.js').CompositeGatewayContext;
 }
 
 /**
@@ -121,6 +128,7 @@ export async function dispatchGatewayApply(
     manifest: opts.manifest,
     node,
     getClient: opts.getClient,
-    onEvent: opts.onEvent,
+    ...(opts.onEvent !== undefined && { onEvent: opts.onEvent }),
+    ...(opts.composite !== undefined && { composite: opts.composite }),
   });
 }
