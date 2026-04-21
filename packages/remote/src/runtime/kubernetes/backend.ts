@@ -531,6 +531,30 @@ export class KubernetesBackend implements RuntimeBackend {
   // `RuntimeBackend.pullImage?` is optional and omitted here.
   pullImage?: undefined = undefined;
 
+  /**
+   * Composite-level teardown: deletes the composite's namespace and
+   * lets k8s cascade GC wipe every child (Deployments, StatefulSets,
+   * Services, Secrets, PVCs). Single-call destroy replaces the
+   * per-component loop for the common case. 404 is a no-op — same
+   * idempotent semantics as Docker's removeService.
+   *
+   * `opts.purgeVolumes` has no direct effect here (namespace delete
+   * cascades to PVCs regardless). We accept the opt for API symmetry
+   * with removeService.
+   */
+  async destroyCompositeBoundary(
+    compositeName: string,
+    _opts?: import('../backend.js').RemoveServiceOptions,
+  ): Promise<void> {
+    const namespace = this.namespaceFor(compositeName);
+    try {
+      await this.client.core.deleteNamespace({ name: namespace });
+    } catch (err) {
+      if (isNotFound(err)) return;
+      throw wrapBackend(err, `delete namespace '${namespace}'`);
+    }
+  }
+
   // Consumed by Phase 3+ translators; exposed here so tests can
   // spell the resolved namespace without reaching into `client`.
   namespaceFor(compositeName: string): string {

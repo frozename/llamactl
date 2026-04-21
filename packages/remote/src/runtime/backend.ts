@@ -186,6 +186,22 @@ export interface RuntimeBackend {
   /** Docker-specific today. Optional so KubernetesBackend can omit
    *  it (image pulls there are node-level + implicit). */
   pullImage?(ref: ImageRef): Promise<void>;
+
+  /**
+   * Composite-level tear-down hook. Only implemented by backends
+   * that own a boundary-object (namespace, resource group, ...)
+   * whose deletion cascades through every managed child — the k8s
+   * backend uses this to issue a single `DELETE Namespace` instead
+   * of N per-component deletes, relying on k8s GC for the rest.
+   *
+   * When a backend omits the method, the composite applier falls
+   * back to the per-component loop. Idempotent — a missing boundary
+   * object is a no-op.
+   */
+  destroyCompositeBoundary?(
+    compositeName: string,
+    opts?: RemoveServiceOptions,
+  ): Promise<void>;
 }
 
 export type { RuntimeError };

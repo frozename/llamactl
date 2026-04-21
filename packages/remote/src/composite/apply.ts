@@ -504,6 +504,41 @@ export async function destroyComposite(
   const removed: ComponentRef[] = [];
   const errors: Array<{ ref: ComponentRef; message: string }> = [];
 
+  // If the backend owns a composite-level boundary (k8s namespace,
+  // future resource group, ...), prefer that — a single call lets
+  // the runtime's native GC cascade through every service. The
+  // per-component loop still runs for the non-service kinds
+  // (workload / rag / gateway) since those aren't namespace-scoped
+  // on our side.
+  if (typeof opts.backend.destroyCompositeBoundary === 'function') {
+    try {
+      await opts.backend.destroyCompositeBoundary(opts.manifest.metadata.name, {
+        purgeVolumes: opts.purgeVolumes ?? false,
+      });
+      // Every service counts as removed — the boundary delete
+      // cascaded them. We still iterate workloads / rags / gateways
+      // below so those non-runtime teardown paths still run.
+      for (const ref of order) {
+        if (ref.kind === 'service') removed.push(ref);
+      }
+    } catch (err) {
+      errors.push({
+        ref: { kind: 'service', name: '__boundary__' },
+        message: toErrorMessage(err),
+      });
+    }
+    for (const ref of order) {
+      if (ref.kind === 'service') continue;
+      try {
+        await destroyComponent(ref, opts);
+        removed.push(ref);
+      } catch (err) {
+        errors.push({ ref, message: toErrorMessage(err) });
+      }
+    }
+    return { ok: errors.length === 0, removed, errors };
+  }
+
   for (const ref of order) {
     try {
       await destroyComponent(ref, opts);

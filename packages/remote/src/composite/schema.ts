@@ -77,6 +77,16 @@ export type RagNodeCompositeEntry = z.infer<typeof RagNodeCompositeEntrySchema>;
  * Cross-component validation lives on the outer `CompositeSchema`
  * refine below.
  */
+/**
+ * Runtime backend for this composite's services. `'docker'` targets
+ * the local Docker socket (v1 default, every operator has this);
+ * `'kubernetes'` targets a cluster resolved from the operator's
+ * kubeconfig. When unset, the router falls back to the
+ * `LLAMACTL_RUNTIME_BACKEND` env var, then finally `'docker'`.
+ */
+export const CompositeRuntimeSchema = z.enum(['docker', 'kubernetes']);
+export type CompositeRuntime = z.infer<typeof CompositeRuntimeSchema>;
+
 export const CompositeSpecSchema = z.object({
   services: z.array(ServiceSpecSchema).default([]),
   workloads: z.array(ModelRunSpecSchema).default([]),
@@ -84,6 +94,7 @@ export const CompositeSpecSchema = z.object({
   gateways: z.array(GatewayCompositeEntrySchema).default([]),
   dependencies: z.array(DependencyEdgeSchema).default([]),
   onFailure: z.enum(['rollback', 'leave-partial']).default('rollback'),
+  runtime: CompositeRuntimeSchema.optional(),
 });
 export type CompositeSpec = z.infer<typeof CompositeSpecSchema>;
 

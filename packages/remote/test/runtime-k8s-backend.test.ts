@@ -1089,3 +1089,32 @@ describe('createKubernetesBackend factory', () => {
     expect(backend.kind).toBe('kubernetes');
   });
 });
+
+describe('KubernetesBackend.destroyCompositeBoundary', () => {
+  test('deletes the composite namespace', async () => {
+    const deleted: string[] = [];
+    const stub = stubKubeConfig({
+      handlers: {
+        'core.deleteNamespace': (p) => {
+          deleted.push(p.name as string);
+          return { kind: 'Status', status: 'Success' };
+        },
+      },
+    });
+    const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
+    await backend.destroyCompositeBoundary!('kb-stack');
+    expect(deleted).toEqual(['llamactl-kb-stack']);
+  });
+
+  test('404 on delete is idempotent', async () => {
+    const stub = stubKubeConfig({
+      handlers: {
+        'core.deleteNamespace': () => {
+          throw notFound();
+        },
+      },
+    });
+    const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
+    await backend.destroyCompositeBoundary!('kb-stack');
+  });
+});

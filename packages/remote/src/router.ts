@@ -189,26 +189,49 @@ function resolveRagNode(nodeName: string): { node: ClusterNode } {
 }
 
 /**
- * Lazy-initialized Docker runtime backend shared by every composite
- * procedure. Instantiation is deferred until first use so
- * `router.ts`-at-load-time never fails on hosts without Docker — the
- * first `compositeApply` / `compositeDestroy` call is what triggers
- * the `createDockerBackend()` import + construction.
+ * Lazy-initialized runtime backends shared by every composite
+ * procedure, cached per-kind so a mixed fleet (one composite on
+ * docker, another on kubernetes) doesn't pay the construction cost
+ * twice. Instantiation is deferred until first use so
+ * `router.ts`-at-load-time never fails on hosts without a working
+ * daemon / kubeconfig — the first `compositeApply` /
+ * `compositeDestroy` call for a given kind is what triggers the
+ * backend's construction.
+ *
+ * Kind resolution precedence (highest wins):
+ *   1. `manifest.spec.runtime` — operator-declared per composite.
+ *   2. `LLAMACTL_RUNTIME_BACKEND` env var — host-level fallback.
+ *   3. `'docker'` — v1 default (every operator has a Docker socket).
  *
  * Tests that need to inject a fake backend go through `composite-
  * apply.test.ts` (which calls `applyComposite` directly with a
  * synthetic `RuntimeBackend`). The router-level tests stay on the
  * dry-run path so they never touch this helper.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let _compositeRuntime: import('./runtime/backend.js').RuntimeBackend | null = null;
-async function getCompositeRuntime(): Promise<
+const _compositeRuntimes = new Map<
+  import('./runtime/factory.js').RuntimeKind,
   import('./runtime/backend.js').RuntimeBackend
-> {
-  if (_compositeRuntime) return _compositeRuntime;
-  const { createDockerBackend } = await import('./runtime/docker/backend.js');
-  _compositeRuntime = createDockerBackend();
-  return _compositeRuntime;
+>();
+
+function resolveCompositeRuntimeKind(
+  requested?: import('./runtime/factory.js').RuntimeKind,
+): import('./runtime/factory.js').RuntimeKind {
+  if (requested) return requested;
+  const envHint = process.env.LLAMACTL_RUNTIME_BACKEND?.trim();
+  if (envHint === 'kubernetes') return 'kubernetes';
+  if (envHint === 'docker') return 'docker';
+  return 'docker';
+}
+
+async function getCompositeRuntime(
+  kind: import('./runtime/factory.js').RuntimeKind = 'docker',
+): Promise<import('./runtime/backend.js').RuntimeBackend> {
+  const cached = _compositeRuntimes.get(kind);
+  if (cached) return cached;
+  const { createRuntimeBackend } = await import('./runtime/factory.js');
+  const backend = createRuntimeBackend({ kind });
+  _compositeRuntimes.set(kind, backend);
+  return backend;
 }
 
 /**
@@ -2284,7 +2307,8 @@ export const router = t.router({
       // `compositeStatus` subscribers can stream live progress.
       const { applyComposite } = await import('./composite/apply.js');
       const { compositeEvents } = await import('./composite/event-bus.js');
-      const backend = await getCompositeRuntime();
+      const kind = resolveCompositeRuntimeKind(manifest.spec.runtime);
+      const backend = await getCompositeRuntime(kind);
       const name = manifest.metadata.name;
       compositeEvents.startRun(name);
       try {
@@ -2335,7 +2359,8 @@ export const router = t.router({
         };
       }
       const { destroyComposite } = await import('./composite/apply.js');
-      const backend = await getCompositeRuntime();
+      const kind = resolveCompositeRuntimeKind(manifest.spec.runtime);
+      const backend = await getCompositeRuntime(kind);
       const result = await destroyComposite({
         manifest,
         backend,

@@ -717,6 +717,141 @@ describe('applyComposite — external-runtime service short-circuits', () => {
   });
 });
 
+describe('destroyComposite — boundary-based destroy (k8s cascade)', () => {
+  test('backend with destroyCompositeBoundary skips per-service removeService', async () => {
+    const backend = new FakeRuntimeBackend();
+    const boundaryCalls: Array<{ compositeName: string; opts: unknown }> = [];
+    // Attach the optional hook — the applier should prefer it.
+    (
+      backend as FakeRuntimeBackend & {
+        destroyCompositeBoundary?: (
+          name: string,
+          opts?: unknown,
+        ) => Promise<void>;
+      }
+    ).destroyCompositeBoundary = async (compositeName, opts) => {
+      boundaryCalls.push({ compositeName, opts });
+    };
+
+    const { client } = makeFakeWorkloadClient();
+    const manifest = sampleComposite({
+      ragNodes: [
+        {
+          name: 'kb',
+          node: 'local',
+          binding: {
+            provider: 'chroma',
+            endpoint: '',
+            extraArgs: [],
+          },
+          backingService: 'chroma-1',
+        },
+      ],
+      dependencies: [
+        {
+          from: { kind: 'rag', name: 'kb' },
+          to: { kind: 'service', name: 'chroma-1' },
+        },
+      ],
+    });
+
+    // Apply first so a RAG node is registered in the kubeconfig.
+    await applyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+    });
+
+    const result = await destroyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+    });
+
+    expect(result.ok).toBe(true);
+    // Boundary called once — no per-service removeService during destroy.
+    expect(boundaryCalls).toHaveLength(1);
+    expect(boundaryCalls[0]?.compositeName).toBe('kb-stack');
+    // No removeService during destroy (only during rollback, which
+    // didn't fire here since apply succeeded).
+    const removeDuringDestroy = backend.calls.filter(
+      (c) => c.op === 'removeService',
+    );
+    expect(removeDuringDestroy).toHaveLength(0);
+
+    // Non-service components (rag node) still cleaned up via the
+    // per-component loop.
+    const { loadConfig } = await import('../src/config/kubeconfig.js');
+    const cfg = loadConfig(configPath);
+    expect(
+      cfg.clusters[0]?.nodes.find((n) => n.name === 'kb'),
+    ).toBeUndefined();
+  });
+
+  test('boundary call failure surfaces as a destroy error without breaking non-service teardown', async () => {
+    const backend = new FakeRuntimeBackend();
+    (
+      backend as FakeRuntimeBackend & {
+        destroyCompositeBoundary?: (name: string) => Promise<void>;
+      }
+    ).destroyCompositeBoundary = async () => {
+      throw new Error('cluster unreachable');
+    };
+    const { client } = makeFakeWorkloadClient();
+
+    const manifest = sampleComposite({
+      ragNodes: [
+        {
+          name: 'kb',
+          node: 'local',
+          binding: {
+            provider: 'chroma',
+            endpoint: '',
+            extraArgs: [],
+          },
+          backingService: 'chroma-1',
+        },
+      ],
+      dependencies: [
+        {
+          from: { kind: 'rag', name: 'kb' },
+          to: { kind: 'service', name: 'chroma-1' },
+        },
+      ],
+    });
+
+    await applyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+    });
+
+    const result = await destroyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors[0]?.message).toContain('cluster unreachable');
+    // RAG node still got cleaned up.
+    const { loadConfig } = await import('../src/config/kubeconfig.js');
+    const cfg = loadConfig(configPath);
+    expect(
+      cfg.clusters[0]?.nodes.find((n) => n.name === 'kb'),
+    ).toBeUndefined();
+  });
+});
+
 describe('applyComposite — gateway upstream threading', () => {
   test('resolved upstream endpoints + providerConfig reach the gateway handler', async () => {
     const backend = new FakeRuntimeBackend();
