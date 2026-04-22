@@ -145,6 +145,8 @@ export {
   type CliProviderOptions,
   type SpawnFn,
   type SpawnResult,
+  type SpawnStreamFn,
+  type SpawnStreamResult,
   type ResolvedCliInvocation,
   type CliJournalEntry,
 } from './cli/index.js';

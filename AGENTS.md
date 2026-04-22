@@ -309,6 +309,17 @@ pipeline.*` on MCP; Knowledge → Pipelines tab in the Electron app.
 Sources plug in via `packages/remote/src/rag/pipeline/fetchers/`;
 transforms via `packages/remote/src/rag/pipeline/transforms/`.
 
+For **Projects + routing policy** (the trifold local+cloud+
+subscription-CLI orchestration lens — register a project dir,
+auto-index its docs, declare per-task-kind routing targets across
+all three lanes, journal every decision), see `docs/projects.md`.
+`llamactl project {add, list, get, rm, index, route, apply}` on
+the CLI; `llamactl.project.*` on ops-chat dispatch; Projects
+module in the Electron activity bar. CLI subscription backends
+(`claude -p` / `codex exec` / `gemini -p`) are declared as
+`cli: []` bindings on agent nodes and synthesize as virtual
+`<agent>.<cli>` provider-kind nodes.
+
 For **Composites** (declarative multi-component infra — model +
 gateway + RAG + supporting services applied as one atomic unit
 with dependency DAG + rollback), see `docs/composites.md`.

@@ -24,6 +24,15 @@ export interface ResolvedCliInvocation {
   args: string[];
   format: 'text' | 'json';
   /**
+   * True when the preset emits output progressively and the
+   * adapter should expose a streaming `streamResponse`. False =
+   * the CLI only prints at completion; `streamResponse` falls
+   * back to collecting the full output and yielding one chunk.
+   * Phase 5 enables streaming for the `claude` preset only;
+   * codex + gemini stay false.
+   */
+  stream: boolean;
+  /**
    * The preset's declared version probe — a short argv vector that
    * should exit 0 on a working install (and reveal "not logged in"
    * or "missing binary" cleanly). `cliDoctor` uses this.
@@ -35,6 +44,7 @@ interface PresetDef {
   command: string;
   args: string[];
   format: 'text' | 'json';
+  stream: boolean;
   versionProbe: string[];
 }
 
@@ -55,18 +65,25 @@ export const CLI_PRESETS: Record<Exclude<CliPreset, 'custom'>, PresetDef> = {
     command: 'claude',
     args: ['-p', '{{prompt}}', '--output-format', 'text'],
     format: 'text',
+    // `claude -p` prints tokens as they arrive when stdout is a
+    // pipe — the adapter line-buffers stdout and forwards each
+    // line as a streaming chunk so CLI-backed chat feels
+    // interactive, not batch.
+    stream: true,
     versionProbe: ['--version'],
   },
   codex: {
     command: 'codex',
     args: ['exec', '{{prompt}}'],
     format: 'text',
+    stream: false,
     versionProbe: ['--version'],
   },
   gemini: {
     command: 'gemini',
     args: ['-p', '{{prompt}}'],
     format: 'text',
+    stream: false,
     versionProbe: ['--version'],
   },
 };
@@ -88,6 +105,10 @@ export function resolvePreset(binding: CliBinding): ResolvedCliInvocation {
       command: binding.command,
       args: [...binding.args],
       format: binding.format,
+      // Custom presets default to non-streaming — operators who
+      // know their CLI streams can wrap it in a fork of the
+      // adapter; the default stays conservative.
+      stream: false,
       versionProbe: ['--version'],
     };
   }
@@ -96,6 +117,7 @@ export function resolvePreset(binding: CliBinding): ResolvedCliInvocation {
     command: binding.command ?? preset.command,
     args: binding.args ? [...binding.args] : [...preset.args],
     format: binding.format ?? preset.format,
+    stream: preset.stream,
     versionProbe: preset.versionProbe,
   };
 }

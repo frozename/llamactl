@@ -9,6 +9,8 @@ export {
   type CliProviderOptions,
   type SpawnFn,
   type SpawnResult,
+  type SpawnStreamFn,
+  type SpawnStreamResult,
 } from './adapter.js';
 export {
   CLI_PRESETS,

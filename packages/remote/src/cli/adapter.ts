@@ -27,6 +27,7 @@ import type {
   ProviderHealth,
   UnifiedAiRequest,
   UnifiedAiResponse,
+  UnifiedStreamEvent,
 } from '@nova/contracts';
 
 import type { CliBinding } from '../config/schema.js';
@@ -42,6 +43,11 @@ export interface CliProviderOptions {
    *  canned stdout/stderr without touching the OS. Defaults to
    *  `Bun.spawn`. */
   spawn?: SpawnFn;
+  /** Injection seam for the streaming path. Defaults to a Bun-
+   *  backed implementation that line-buffers stdout. Tests use
+   *  this to feed a hand-crafted line sequence without spawning a
+   *  real process. */
+  spawnStream?: SpawnStreamFn;
   /** Injection seam for tests — override the journal writer so
    *  assertions don't require a tmpdir roundtrip. */
   journalWrite?: (entry: CliJournalEntry) => Promise<void>;
@@ -73,6 +79,30 @@ export interface SpawnResult {
 }
 
 /**
+ * Streaming spawn contract. `stdout` yields lines as they arrive
+ * (without the trailing newline); `stderrPromise` resolves to the
+ * full captured stderr after the child exits; `exitedPromise`
+ * resolves to the child's final state. Adapters consuming this
+ * must iterate `stdout` to completion OR cancel via the caller's
+ * AbortSignal — partial consumption leaks the child.
+ */
+export type SpawnStreamFn = (
+  argv: string[],
+  opts: {
+    env: NodeJS.ProcessEnv;
+    signal: AbortSignal;
+    promptOnStdin: boolean;
+    prompt: string;
+  },
+) => Promise<SpawnStreamResult>;
+
+export interface SpawnStreamResult {
+  stdout: AsyncIterable<string>;
+  stderrPromise: Promise<string>;
+  exitedPromise: Promise<{ exitCode: number; aborted: boolean }>;
+}
+
+/**
  * Build an `AiProvider` backed by a subscription CLI. Call per-
  * request from the factory, not per-workspace — each adapter is
  * cheap (no persistent connection; every call re-spawns).
@@ -83,6 +113,7 @@ export function createCliSubprocessProvider(
   const resolved = resolvePreset(opts.binding);
   const providerId = `${opts.agentName}.${opts.binding.name}`;
   const spawn = opts.spawn ?? defaultBunSpawn;
+  const spawnStream = opts.spawnStream ?? defaultBunSpawnStream;
   const journalWrite = opts.journalWrite ?? ((e) => appendCliJournal(e, opts.env));
 
   return {
@@ -215,6 +246,181 @@ export function createCliSubprocessProvider(
         provider: providerId,
       };
     },
+
+    // Streaming path — only wired when the preset declares
+    // `stream: true`. Presets that don't support incremental
+    // output omit this method entirely so routers fall through
+    // to `createResponse` (which then emits a single synthetic
+    // chunk via the orchestrator's own wrap logic).
+    ...(resolved.stream
+      ? {
+          async *streamResponse(
+            request: UnifiedAiRequest,
+            callerSignal?: AbortSignal,
+          ): AsyncGenerator<UnifiedStreamEvent, void, void> {
+            const prompt = messagesToPrompt(request.messages);
+            const { args: expandedArgs, promptOnStdin } = expandArgs(
+              resolved.args,
+              prompt,
+            );
+            const argv = [resolved.command, ...expandedArgs];
+            const env = mergeEnv(opts.env ?? process.env, opts.binding.env);
+
+            // Local AbortController: timeout + caller signal both
+            // flip it. The caller's AbortSignal (from tRPC) takes
+            // precedence — if the UI cancels, kill the child.
+            const ctrl = new AbortController();
+            const timer = setTimeout(
+              () => ctrl.abort(),
+              opts.binding.timeoutMs,
+            );
+            const onCallerAbort = (): void => ctrl.abort();
+            if (callerSignal) {
+              if (callerSignal.aborted) ctrl.abort();
+              else callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+            }
+            const startedAt = Date.now();
+            const model =
+              request.model ||
+              opts.binding.defaultModel ||
+              `${opts.binding.preset}-cli`;
+            const chunkId = `cli-${randomUUID()}`;
+            let responseBytes = 0;
+            let yieldedRole = false;
+            let stream: SpawnStreamResult;
+            try {
+              stream = await spawnStream(argv, {
+                env,
+                signal: ctrl.signal,
+                promptOnStdin,
+                prompt,
+              });
+            } catch (err) {
+              clearTimeout(timer);
+              callerSignal?.removeEventListener('abort', onCallerAbort);
+              const entry: CliJournalEntry = {
+                ts: new Date(startedAt).toISOString(),
+                agent: opts.agentName,
+                binding_name: opts.binding.name,
+                preset: opts.binding.preset,
+                ...(opts.binding.subscription !== undefined
+                  ? { subscription: opts.binding.subscription }
+                  : {}),
+                ...(opts.binding.defaultModel !== undefined
+                  ? { model: opts.binding.defaultModel }
+                  : {}),
+                prompt_bytes: Buffer.byteLength(prompt, 'utf8'),
+                response_bytes: 0,
+                latency_ms: Date.now() - startedAt,
+                ok: false,
+                error_code: 'spawn-failed',
+              };
+              await journalWrite(entry);
+              yield {
+                type: 'error',
+                error: {
+                  message: `cli provider '${providerId}' spawn-failed: ${(err as Error).message}`,
+                  code: 'spawn-failed',
+                },
+              };
+              return;
+            }
+
+            try {
+              for await (const rawLine of stream.stdout) {
+                if (ctrl.signal.aborted) break;
+                // Re-attach the newline so concatenated deltas
+                // reconstruct the original output. The final
+                // \n is trimmed in consumers that display
+                // token-by-token.
+                const delta = `${rawLine}\n`;
+                responseBytes += Buffer.byteLength(delta, 'utf8');
+                const choice: {
+                  index: number;
+                  delta: { role?: 'assistant'; content: string };
+                } = {
+                  index: 0,
+                  delta: yieldedRole
+                    ? { content: delta }
+                    : { role: 'assistant', content: delta },
+                };
+                yieldedRole = true;
+                yield {
+                  type: 'chunk',
+                  chunk: {
+                    id: chunkId,
+                    object: 'chat.completion.chunk',
+                    model,
+                    created: Math.floor(startedAt / 1000),
+                    choices: [choice],
+                  },
+                };
+              }
+            } catch (err) {
+              yield {
+                type: 'error',
+                error: {
+                  message: `cli provider '${providerId}' stream-failed: ${(err as Error).message}`,
+                  code: 'stream-failed',
+                },
+              };
+              // Fall through to the journal write + done below.
+            }
+
+            const { exitCode, aborted } = await stream.exitedPromise;
+            const stderrText = await stream.stderrPromise;
+            clearTimeout(timer);
+            callerSignal?.removeEventListener('abort', onCallerAbort);
+
+            const entry: CliJournalEntry = {
+              ts: new Date(startedAt).toISOString(),
+              agent: opts.agentName,
+              binding_name: opts.binding.name,
+              preset: opts.binding.preset,
+              ...(opts.binding.subscription !== undefined
+                ? { subscription: opts.binding.subscription }
+                : {}),
+              ...(opts.binding.defaultModel !== undefined
+                ? { model: opts.binding.defaultModel }
+                : {}),
+              prompt_bytes: Buffer.byteLength(prompt, 'utf8'),
+              response_bytes: responseBytes,
+              latency_ms: Date.now() - startedAt,
+              ok: !aborted && exitCode === 0,
+              exit_code: exitCode,
+              ...(aborted
+                ? { error_code: 'timeout' }
+                : exitCode !== 0
+                  ? { error_code: 'non-zero-exit' }
+                  : {}),
+            };
+            await journalWrite(entry);
+
+            if (aborted) {
+              yield {
+                type: 'error',
+                error: {
+                  message: `cli provider '${providerId}' timeout after ${opts.binding.timeoutMs}ms`,
+                  code: 'timeout',
+                  retryable: false,
+                },
+              };
+              yield { type: 'done', finish_reason: 'stop' };
+              return;
+            }
+            if (exitCode !== 0) {
+              yield {
+                type: 'error',
+                error: {
+                  message: `cli provider '${providerId}' non-zero-exit ${exitCode}: ${truncate(stderrText, 400)}`,
+                  code: 'non-zero-exit',
+                },
+              };
+            }
+            yield { type: 'done', finish_reason: 'stop' };
+          },
+        }
+      : {}),
 
     async healthCheck(): Promise<ProviderHealth> {
       const startedAt = Date.now();
@@ -359,6 +565,93 @@ function wrapCliError(
   (err as Error & { code?: string }).code = code;
   return err;
 }
+
+/**
+ * Line-buffered streaming spawn — default for presets that declare
+ * `stream: true`. Reads stdout as a `ReadableStream<Uint8Array>`,
+ * decodes incrementally, and yields complete lines as they arrive.
+ * A trailing fragment (no terminating `\n`) is yielded at close.
+ *
+ * stderr is buffered in full + surfaced via `stderrPromise` so the
+ * adapter can include it in error messages without blocking the
+ * streaming stdout path.
+ */
+const defaultBunSpawnStream: SpawnStreamFn = async (argv, opts) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const Bun = (globalThis as any).Bun;
+  if (!Bun?.spawn) {
+    throw new Error(
+      'Bun runtime not detected — cli adapter streaming requires Bun.spawn',
+    );
+  }
+  const [command, ...args] = argv;
+  const proc = Bun.spawn([command, ...args], {
+    env: opts.env,
+    stdout: 'pipe',
+    stderr: 'pipe',
+    stdin: opts.promptOnStdin ? 'pipe' : null,
+  });
+  if (opts.promptOnStdin && proc.stdin) {
+    try {
+      proc.stdin.write(opts.prompt);
+      proc.stdin.end();
+    } catch {
+      /* surfaced via stderr + exit code */
+    }
+  }
+  let aborted = false;
+  const onAbort = (): void => {
+    aborted = true;
+    try {
+      proc.kill();
+    } catch {
+      /* already exited */
+    }
+  };
+  opts.signal.addEventListener('abort', onAbort, { once: true });
+
+  const stderrPromise = new Response(proc.stderr).text();
+  const exitedPromise = proc.exited.then((exitCode: number) => {
+    opts.signal.removeEventListener('abort', onAbort);
+    return { exitCode, aborted };
+  });
+
+  async function* readLines(): AsyncIterable<string> {
+    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl = buffer.indexOf('\n');
+        while (nl >= 0) {
+          const line = buffer.slice(0, nl);
+          buffer = buffer.slice(nl + 1);
+          yield line;
+          nl = buffer.indexOf('\n');
+        }
+      }
+      // Drain decoder + yield any trailing fragment that didn't
+      // end with a newline. Common for single-line outputs.
+      buffer += decoder.decode();
+      if (buffer.length > 0) yield buffer;
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  return {
+    stdout: readLines(),
+    stderrPromise,
+    exitedPromise,
+  };
+};
 
 const defaultBunSpawn: SpawnFn = async (argv, opts) => {
   // Defer to Bun.spawn — the production path. Tests inject their
