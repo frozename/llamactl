@@ -27,7 +27,7 @@ import { useUIStore } from '@/stores/ui-store';
  * actually cares about reading at a glance.
  */
 
-type NodeKind = 'agent' | 'gateway' | 'provider' | 'rag';
+type NodeKind = 'agent' | 'gateway' | 'provider' | 'rag' | 'cloud';
 
 interface NodeListItem {
   name: string;
@@ -58,6 +58,8 @@ function colorForKind(kind: NodeKind, isLocal: boolean): string {
       return 'var(--color-fg-muted)';
     case 'rag':
       return 'var(--color-brand, #a78bfa)';
+    case 'cloud':
+      return '#60a5fa';
   }
 }
 

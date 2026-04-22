@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { APP_MODULES, type AppModule } from '@/modules/registry';
 import { useUIStore } from '@/stores/ui-store';
+import { useAppCommands } from './commands';
 
 /**
  * VSCode-style command palette. ⌘⇧P (or Ctrl+Shift+P) opens it; type
@@ -256,5 +257,6 @@ export function CommandPalette({
  *  root; the component itself is invisible when closed. */
 export function CommandPaletteMount(): React.JSX.Element {
   const [open, setOpen] = useCommandPaletteOpen();
-  return <CommandPalette open={open} onClose={() => setOpen(false)} />;
+  const extras = useAppCommands();
+  return <CommandPalette open={open} onClose={() => setOpen(false)} extraCommands={extras} />;
 }

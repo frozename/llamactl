@@ -665,7 +665,7 @@ export default function Nodes(): React.JSX.Element {
   }
   const data = list.data!;
   return (
-    <div className="flex flex-col gap-4 p-6" data-testid="nodes-root">
+    <div className="flex h-full flex-col gap-4 overflow-auto p-6" data-testid="nodes-root">
       <div className="flex items-baseline justify-between">
         <div>
           <h1 className="text-lg font-semibold text-[color:var(--color-fg)]">Nodes</h1>

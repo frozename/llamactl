@@ -421,6 +421,161 @@ function ProjectRow(props: {
   );
 }
 
+/**
+ * Single-form create-project flow. Posts a minimal ProjectSchema YAML
+ * via `projectApply` — no CLI round-trip. Compact mode renders as a
+ * one-line "add another" at the top of the table; default mode
+ * renders as a full-width wizard in the empty state.
+ */
+function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.Element {
+  const utils = trpc.useUtils();
+  const nodesQuery = trpc.nodeList.useQuery();
+  const apply = trpc.projectApply.useMutation({
+    onSuccess: async () => {
+      await utils.projectList.invalidate();
+      setName('');
+      setPath('');
+      setStatus({ kind: 'ok', message: 'project created' });
+    },
+    onError: (err) => setStatus({ kind: 'error', message: err.message }),
+  });
+  const [name, setName] = React.useState('');
+  const [path, setPath] = React.useState('');
+  const [purpose, setPurpose] = React.useState('');
+  const [ragNode, setRagNode] = React.useState<string>('');
+  const [ragCollection, setRagCollection] = React.useState('');
+  const [status, setStatus] = React.useState<
+    | { kind: 'idle' }
+    | { kind: 'ok'; message: string }
+    | { kind: 'error'; message: string }
+  >({ kind: 'idle' });
+
+  const ragNodes = (nodesQuery.data?.nodes ?? []).filter((n) => n.effectiveKind === 'rag');
+  const canSubmit = name.trim().length > 0 && path.trim().length > 0;
+
+  function onSubmit(e: React.FormEvent): void {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setStatus({ kind: 'idle' });
+    const manifest: Record<string, unknown> = {
+      apiVersion: 'llamactl/v1',
+      kind: 'Project',
+      metadata: { name: name.trim() },
+      spec: {
+        path: path.trim(),
+        ...(purpose.trim() ? { purpose: purpose.trim() } : {}),
+        ...(ragNode && ragCollection.trim()
+          ? {
+              rag: {
+                node: ragNode,
+                collection: ragCollection.trim(),
+              },
+            }
+          : {}),
+      },
+    };
+    const yaml = stringifyYaml(manifest);
+    apply.mutate({ manifestYaml: yaml });
+  }
+
+  return (
+    <form
+      onSubmit={onSubmit}
+      data-testid="projects-create-form"
+      className={compact ? 'rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3' : ''}
+    >
+      <div className={compact ? 'flex flex-wrap items-end gap-2' : 'grid grid-cols-2 gap-3'}>
+        <Field label="Name" required>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="novaflow"
+            data-testid="projects-create-name"
+            required
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+          />
+        </Field>
+        <Field label="Path" required>
+          <input
+            type="text"
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            placeholder="/Users/you/repos/novaflow"
+            data-testid="projects-create-path"
+            required
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+          />
+        </Field>
+        {!compact && (
+          <>
+            <Field label="Purpose">
+              <input
+                type="text"
+                value={purpose}
+                onChange={(e) => setPurpose(e.target.value)}
+                placeholder="e.g. at-home diagnostic services platform"
+                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg)]"
+              />
+            </Field>
+            <Field label="RAG node (optional)">
+              <select
+                value={ragNode}
+                onChange={(e) => setRagNode(e.target.value)}
+                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg)]"
+              >
+                <option value="">\u2014 skip RAG binding \u2014</option>
+                {ragNodes.map((n) => (
+                  <option key={n.name} value={n.name}>{n.name}</option>
+                ))}
+              </select>
+            </Field>
+            {ragNode && (
+              <Field label="RAG collection">
+                <input
+                  type="text"
+                  value={ragCollection}
+                  onChange={(e) => setRagCollection(e.target.value)}
+                  placeholder="novaflow_docs"
+                  className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+                />
+              </Field>
+            )}
+          </>
+        )}
+        <div className={compact ? '' : 'col-span-2 flex items-center gap-2 pt-1'}>
+          <button
+            type="submit"
+            disabled={!canSubmit || apply.isPending}
+            data-testid="projects-create-submit"
+            className="rounded border border-[var(--color-accent)] bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg-inverted)] disabled:opacity-40"
+          >
+            {apply.isPending ? 'Creating\u2026' : compact ? 'Add' : 'Create project'}
+          </button>
+          {status.kind === 'error' && (
+            <span className="text-[11px] text-[color:var(--color-danger)]">{status.message}</span>
+          )}
+          {status.kind === 'ok' && (
+            <span className="text-[11px] text-[color:var(--color-success)]">\u2713 {status.message}</span>
+          )}
+        </div>
+      </div>
+    </form>
+  );
+}
+
+function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }): React.JSX.Element {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+        {label}
+        {required && <span className="ml-0.5 text-[color:var(--color-danger)]">*</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
+
 export default function Projects(): React.JSX.Element {
   const list = trpc.projectList.useQuery(undefined, { retry: false });
   const data = list.data as ProjectListResponse | undefined;
@@ -463,16 +618,18 @@ export default function Projects(): React.JSX.Element {
       )}
       {!list.isLoading && !list.error && sorted.length === 0 && (
         <div
-          className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6 text-sm text-[color:var(--color-fg-muted)]"
+          className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6"
           data-testid="projects-empty"
         >
-          <div className="text-[color:var(--color-fg)]">
-            No projects registered yet.
+          <div className="mb-4 text-sm text-[color:var(--color-fg)]">
+            No projects registered yet. Create one:
           </div>
-          <pre className="mt-3 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-fg)]">{`llamactl project add novaflow \\
-  --path ~/DevStorage/repos/work/novaflow \\
-  --rag-node kb-chroma \\
-  --rag-collection novaflow_docs`}</pre>
+          <CreateProjectForm />
+        </div>
+      )}
+      {sorted.length > 0 && (
+        <div className="mb-4">
+          <CreateProjectForm compact />
         </div>
       )}
       {sorted.length > 0 && (

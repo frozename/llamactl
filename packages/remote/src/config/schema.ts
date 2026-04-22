@@ -131,7 +131,7 @@ export type CliBinding = z.infer<typeof CliBindingSchema>;
  *     `RetrievalProvider` contract in `@nova/contracts`. The `rag`
  *     binding block selects the backend and carries endpoint / auth.
  */
-export const NodeKindSchema = z.enum(['agent', 'gateway', 'provider', 'rag']);
+export const NodeKindSchema = z.enum(['agent', 'gateway', 'provider', 'rag', 'cloud']);
 export type NodeKind = z.infer<typeof NodeKindSchema>;
 
 /**
@@ -388,13 +388,28 @@ export function resolveNodeKind(node: ClusterNode): NodeKind {
     explicit === 'gateway' ||
     explicit === 'agent' ||
     explicit === 'provider' ||
-    explicit === 'rag'
+    explicit === 'rag' ||
+    explicit === 'cloud'
   )
     return explicit;
-  if (explicit === 'cloud') return 'gateway';
   if (node.provider) return 'provider';
   if (node.rag) return 'rag';
-  return node.cloud ? 'gateway' : 'agent';
+  if (node.cloud) {
+    // Distinguish "HTTP gateway that fans out to many upstreams"
+    // (sirius, embersynth, openai-compatible) from "direct cloud
+    // API client" (openai, anthropic, together, groq, mistral).
+    // The former carries provider children registered against it;
+    // the latter is a single-upstream endpoint with no fan-out.
+    // Conflating them mislabelled every direct cloud node as a
+    // gateway in the map + chip.
+    const upstream = node.cloud.provider;
+    const isGatewayStyle =
+      upstream === 'sirius' ||
+      upstream === 'embersynth' ||
+      upstream === 'openai-compatible';
+    return isGatewayStyle ? 'gateway' : 'cloud';
+  }
+  return 'agent';
 }
 
 /** Default OpenAI-compatible base URLs for each built-in provider.

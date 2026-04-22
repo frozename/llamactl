@@ -51,7 +51,7 @@ export function IDELayout(): React.JSX.Element {
                   key={m.id}
                   data-module-id={m.id}
                   aria-hidden={!isActive}
-                  className="absolute inset-0 overflow-hidden"
+                  className="absolute inset-0 overflow-auto"
                   style={{ display: isActive ? 'block' : 'none' }}
                 >
                   <Component />

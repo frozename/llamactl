@@ -20,7 +20,7 @@ import { trpc } from '@/lib/trpc';
  * direction is chosen.
  */
 
-type NodeKind = 'agent' | 'gateway' | 'provider' | 'rag';
+type NodeKind = 'agent' | 'gateway' | 'provider' | 'rag' | 'cloud';
 interface N {
   name: string;
   endpoint: string;
@@ -53,6 +53,7 @@ function TailscaleCard({ node, active }: { node: N; active: boolean }): React.JS
     gateway: 'Gateway',
     provider: 'Provider',
     rag: 'RAG',
+    cloud: 'Cloud',
   };
   return (
     <div

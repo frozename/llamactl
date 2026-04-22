@@ -64,7 +64,15 @@ function ExposePanel(): React.JSX.Element {
     apply.mutate({ yaml: yamlStringify(manifest) });
   }
 
-  const nodeOptions = nodes.data?.nodes.map((n) => n.name) ?? ['local'];
+  // Only agent-kind nodes can host a ModelRun workload. Gateways
+  // (sirius, embersynth), cloud providers, and RAG nodes have no
+  // llama-server to apply the manifest to — surfacing them in the
+  // picker silently creates a workload phase=Failed when the
+  // reconciler finds no agent behind the target.
+  const nodeOptions = (nodes.data?.nodes ?? [])
+    .filter((n) => (n.effectiveKind ?? 'agent') === 'agent')
+    .map((n) => n.name);
+  if (nodeOptions.length === 0) nodeOptions.push('local');
   const catalogRels = useMemo(() => {
     if (!catalog.data) return [] as string[];
     const rows = catalog.data as Array<{ rel?: string; name?: string }>;
