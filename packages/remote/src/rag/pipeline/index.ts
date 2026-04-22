@@ -35,6 +35,14 @@ export {
   type PipelineEventBus,
 } from './event-bus.js';
 export {
+  detectOrphanedRuns,
+  findTrailingOrphan,
+  DEFAULT_STALE_THRESHOLD_MS,
+  JOURNAL_TAIL_LINES,
+  type OrphanedRun,
+  type DetectOrphansOptions,
+} from './orphan.js';
+export {
   RagPipelineSpecSchema,
   RagPipelineManifestSchema,
   SourceSpecSchema,

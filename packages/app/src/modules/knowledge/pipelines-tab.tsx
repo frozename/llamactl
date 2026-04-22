@@ -61,6 +61,9 @@ interface RunningEntry {
   name: string;
   startedAt: string;
   sources: string[];
+  /** When true, the entry came from the journal-scan orphan path
+   *  (agent crashed mid-run — no live event-bus signal). */
+  stale?: boolean;
 }
 
 interface RunningResponse {
@@ -86,6 +89,21 @@ function RunningBadge(props: { entry: RunningEntry }): React.JSX.Element {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
+  if (entry.stale) {
+    // Orphan path — the journal recorded a run-started that never
+    // paired with a run-complete (agent crashed mid-run). Don't
+    // pulse (misleading — nothing is actually running); warn
+    // instead. Elapsed counter shows how long it's been stuck.
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded border border-[var(--color-danger)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-danger)]"
+        data-testid={`pipelines-orphan-${entry.name}`}
+        title={`journal shows run-started ${entry.startedAt} but no run-complete — agent likely crashed mid-run. Re-run to clear.`}
+      >
+        ⚠ orphaned · {formatElapsed(entry.startedAt, now)}
+      </span>
+    );
+  }
   return (
     <span
       className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-surface-0)]"
@@ -257,6 +275,9 @@ function PipelineRow(props: {
     .join(', ');
   // Prefer the authoritative server signal when present; fall back
   // to our optimistic stamp so fast runs (<2s) still render a badge.
+  // Orphan entries (stale: true) don't block the Run button — the
+  // operator should be able to trigger a fresh run to clear the
+  // stuck state.
   const displayRunning: RunningEntry | null =
     running ??
     (optimisticRunAt
@@ -264,8 +285,10 @@ function PipelineRow(props: {
           name: rec.name,
           startedAt: optimisticRunAt,
           sources: rec.manifest.spec.sources.map((s) => s.kind),
+          stale: false,
         }
       : null);
+  const isLive = !!displayRunning && !displayRunning.stale;
 
   return (
     <>
@@ -297,19 +320,19 @@ function PipelineRow(props: {
                 checked={dryRun}
                 onChange={(e) => setDryRun(e.target.checked)}
                 data-testid={`pipelines-dryrun-${rec.name}`}
-                disabled={!!displayRunning}
+                disabled={isLive}
               />
               dry
             </label>
             <button
               type="button"
               onClick={onRun}
-              disabled={runMut.isPending || !!displayRunning}
+              disabled={runMut.isPending || isLive}
               data-testid={`pipelines-run-${rec.name}`}
-              title={displayRunning ? 'run in progress' : undefined}
+              title={isLive ? 'run in progress' : displayRunning?.stale ? 'previous run was orphaned — click to start a fresh run' : undefined}
               className="rounded bg-[var(--color-brand)] px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {runMut.isPending ? '…' : displayRunning ? 'Running' : 'Run'}
+              {runMut.isPending ? '…' : isLive ? 'Running' : 'Run'}
             </button>
             <button
               type="button"

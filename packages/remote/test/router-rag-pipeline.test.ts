@@ -294,10 +294,66 @@ describe('ragPipelineRunning', () => {
     expect(res.running).toHaveLength(1);
     expect(res.running[0]!.name).toBe('live');
     expect(res.running[0]!.sources).toEqual(['live:0:filesystem', 'live:1:http']);
+    expect(res.running[0]!.stale).toBe(false);
     expect(typeof res.running[0]!.startedAt).toBe('string');
     pipelineEvents.endRun('live');
     const after = await caller.ragPipelineRunning();
     expect(after.running).toEqual([]);
+  });
+
+  test('surfaces orphaned runs (journal unpaired run-started) as stale', async () => {
+    const { _resetPipelineEventsForTests } = await import(
+      '../src/rag/pipeline/event-bus.js'
+    );
+    _resetPipelineEventsForTests();
+    applyPipeline(makeManifest('orphan-me'));
+    const journalPath = join(pipelinesRoot, 'orphan-me', 'journal.jsonl');
+    // Seed an 11-minute-old run-started with no matching run-complete.
+    const oldTs = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+    require('node:fs').writeFileSync(
+      journalPath,
+      `${JSON.stringify({
+        kind: 'run-started',
+        ts: oldTs,
+        spec_hash: 'x',
+        sources: ['orphan-me:0:filesystem'],
+      })}\n`,
+    );
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineRunning();
+    const orphan = res.running.find((r) => r.name === 'orphan-me');
+    expect(orphan).toBeDefined();
+    expect(orphan!.stale).toBe(true);
+    expect(orphan!.sources).toEqual(['orphan-me:0:filesystem']);
+    expect(orphan!.startedAt).toBe(oldTs);
+  });
+
+  test('live signal wins over orphan signal for the same pipeline', async () => {
+    const { pipelineEvents, _resetPipelineEventsForTests } = await import(
+      '../src/rag/pipeline/event-bus.js'
+    );
+    _resetPipelineEventsForTests();
+    applyPipeline(makeManifest('both'));
+    // Seed an orphan journal entry.
+    const journalPath = join(pipelinesRoot, 'both', 'journal.jsonl');
+    const oldTs = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+    require('node:fs').writeFileSync(
+      journalPath,
+      `${JSON.stringify({
+        kind: 'run-started',
+        ts: oldTs,
+        spec_hash: 'x',
+        sources: ['stale-src'],
+      })}\n`,
+    );
+    // ALSO fire a live start — the freshness should win.
+    pipelineEvents.startRun('both', { sources: ['live-src'] });
+    const caller = router.createCaller({});
+    const res = await caller.ragPipelineRunning();
+    const rows = res.running.filter((r) => r.name === 'both');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.stale).toBe(false);
+    expect(rows[0]!.sources).toEqual(['live-src']);
   });
   test('distinguishes multiple in-flight pipelines', async () => {
     const { pipelineEvents, _resetPipelineEventsForTests } = await import(
