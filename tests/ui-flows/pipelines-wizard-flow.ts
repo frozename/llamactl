@@ -303,10 +303,10 @@ async function main(): Promise<void> {
       state: 'visible',
       timeout: 3_000,
     });
-    await client.call('electron_type', {
+    await client.call('electron_fill', {
       sessionId,
       selector: '[data-testid="pipeline-wizard-name"]',
-      text: 'wizard-flow-smoke',
+      value: 'wizard-flow-smoke',
     });
     // The ragnode select already carries the default from the Pipelines
     // tab context; we assert the option is chosen by reading its value.
@@ -320,10 +320,10 @@ async function main(): Promise<void> {
       ragNode.result.length > 0,
       `value=${ragNode.result}`,
     );
-    await client.call('electron_type', {
+    await client.call('electron_fill', {
       sessionId,
       selector: '[data-testid="pipeline-wizard-collection"]',
-      text: 'smoke_docs',
+      value: 'smoke_docs',
     });
 
     // Sources step — fill filesystem root.
@@ -337,10 +337,10 @@ async function main(): Promise<void> {
       state: 'visible',
       timeout: 3_000,
     });
-    await client.call('electron_type', {
+    await client.call('electron_fill', {
       sessionId,
       selector: '[data-testid="pipeline-wizard-source-root-0"]',
-      text: '/tmp/wizard-flow-docs',
+      value: '/tmp/wizard-flow-docs',
     });
 
     // Jump to Review. Errors div should be gone; Apply enabled.

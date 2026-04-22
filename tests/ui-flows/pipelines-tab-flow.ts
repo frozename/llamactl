@@ -256,10 +256,10 @@ async function main(): Promise<void> {
       timeout: 5_000,
     });
 
-    await client.call('electron_type', {
+    await client.call('electron_fill', {
       sessionId,
       selector: '[data-testid="pipelines-draft-description"]',
-      text: 'crawl https://docs.example.com into kb-pg daily',
+      value: 'crawl https://docs.example.com into kb-pg daily',
     });
 
     await client.call('electron_click', {
