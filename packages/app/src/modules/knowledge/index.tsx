@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useMemo, useState } from 'react';
 import { trpc } from '@/lib/trpc';
 import { PipelinesTab } from './pipelines-tab';
+import { QualityTab } from './quality-tab';
 
 /**
  * Knowledge module. First UI consumer of the RAG stack shipped in
@@ -38,7 +39,7 @@ interface AgentNodeSummary {
   endpoint: string;
 }
 
-type TabId = 'query' | 'collections' | 'indexing' | 'pipelines';
+type TabId = 'query' | 'collections' | 'indexing' | 'pipelines' | 'quality';
 
 interface SearchResultDoc {
   id: string;
@@ -1167,6 +1168,7 @@ export default function Knowledge(): React.JSX.Element {
                 { id: 'collections', label: 'Collections' },
                 { id: 'indexing', label: 'Indexing' },
                 { id: 'pipelines', label: 'Pipelines' },
+                { id: 'quality', label: 'Quality' },
               ] as { id: TabId; label: string }[]
             ).map((tab) => {
               const active = tab.id === activeTab;
@@ -1208,6 +1210,9 @@ export default function Knowledge(): React.JSX.Element {
               />
             )}
             {activeTab === 'indexing' && <IndexingTab nodeName={selected.name} />}
+            {activeTab === 'quality' && (
+              <QualityTab nodeName={selected.name} collection={queryCollection} />
+            )}
             {activeTab === 'pipelines' && (
               <PipelinesTab
                 nodeName={selected.name}

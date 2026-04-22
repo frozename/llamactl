@@ -25,6 +25,11 @@ llamactl knowledge and lets the upstream driver stay library-generic.
   the `kind: RagPipeline` shape + the URL / schedule inferred from
   the description. Fast-exits with PASS when the profile has no rag
   nodes (the tab is conditionally rendered).
+- `quality-tab-flow.ts` — Aliveness-Slice-3 Quality tab. Opens
+  Knowledge → Quality, asserts the tab mounts, the starter button
+  seeds a plausible RagBench manifest, and the Run button is
+  enabled with non-empty YAML. Stops short of invoking a real
+  bench (query-set specific to each collection).
 - `pipelines-apply-run-flow.ts` — full E2E arc: wizard → apply →
   run → running-badge appears → run completes → lastRun badge →
   Remove. Proves the live agent wiring + Phase B running signal
