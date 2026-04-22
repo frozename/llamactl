@@ -37,6 +37,7 @@ export const KNOWN_OPS_CHAT_TOOLS = [
   'llamactl.node.remove',
   'llamactl.operator.plan',
   'llamactl.promotions.list',
+  'llamactl.rag.bench',
   'llamactl.rag.delete',
   'llamactl.rag.listCollections',
   'llamactl.rag.pipeline.apply',
@@ -243,6 +244,16 @@ export async function dispatchOpsChatTool(
           name: requireString(args, 'name'),
         });
         break;
+      case 'llamactl.rag.bench': {
+        // Read-only — bench only calls ragSearch under the hood,
+        // doesn't write anywhere. No dry-run branch makes sense
+        // (the whole thing is effectively a dry run against the
+        // collection).
+        result = await caller.ragBench({
+          manifestYaml: requireString(args, 'manifestYaml'),
+        });
+        break;
+      }
       case 'llamactl.rag.pipeline.list':
         result = await caller.ragPipelineList();
         break;

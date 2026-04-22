@@ -509,6 +509,52 @@ spec:
 
 ---
 
+## Retrieval quality gate — `rag bench`
+
+Once a collection is populated, you'll want to know whether
+retrieval is actually finding the right passages for likely
+queries. `llamactl rag bench` takes an operator-supplied query
+set (a `RagBench` manifest) and runs each query through
+`ragSearch`, scoring hits against expected doc IDs or content
+substrings. The report includes hit rate and mean reciprocal
+rank.
+
+```yaml
+apiVersion: llamactl/v1
+kind: RagBench
+metadata: { name: docs-quality }
+spec:
+  node: kb-pg
+  collection: llamactl_docs
+  topK: 10
+  queries:
+    - query: how does on_duplicate replace work
+      expected_substring: "delete every prior ingestion"
+    - query: what is the scheduler loop
+      expected_doc_id: docs/rag-pipelines.md
+```
+
+```sh
+llamactl rag bench -f templates/rag-bench/llamactl-docs.yaml
+```
+
+Each query must set `expected_doc_id`, `expected_substring`, or
+both. A hit counts when any top-k result matches. Exit codes:
+**0** when every scored query hit, **2** when any query missed
+or the search errored (so it drops cleanly into CI as a quality
+gate), **1** for usage errors.
+
+`--json` emits a single-line report for piping into scripts.
+Pipe-in via `-f -` works too, so:
+
+```sh
+# Generate a bench suite in your CI from whatever source:
+my-gen-bench.sh | llamactl rag bench -f -
+```
+
+The MCP tool `llamactl.rag.bench` + ops-chat dispatch expose the
+same surface to the agent.
+
 ## Roadmap (not in v1)
 
 - **Additional sources**: S3, Confluence, Notion, Slack, Linear.

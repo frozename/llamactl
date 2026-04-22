@@ -13,6 +13,12 @@ Subcommands:
   pipeline <sub>            Apply + run declarative RAG ingestion
                             pipelines. See 'llamactl rag pipeline -h'.
 
+  bench -f <file.yaml> [--json]
+                            Run a RagBench manifest (operator-supplied
+                            query set) against a rag node and print a
+                            hit-rate + MRR report. See 'llamactl rag
+                            bench -h' (-f -) for details.
+
 'ask' flags:
   --kb <name>              RAG node to retrieve from. Required when
                            the current context has more than one rag
@@ -63,6 +69,10 @@ export async function runRag(argv: string[]): Promise<number> {
     case 'pipeline': {
       const { runRagPipeline } = await import('./rag-pipeline.js');
       return runRagPipeline(rest);
+    }
+    case 'bench': {
+      const { runRagBenchCli } = await import('./rag-bench.js');
+      return runRagBenchCli(rest);
     }
     case undefined:
     case '--help':

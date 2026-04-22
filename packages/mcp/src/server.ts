@@ -1148,6 +1148,38 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
+    'llamactl.rag.bench',
+    {
+      title: 'Run a RagBench quality gate',
+      description:
+        'Run an operator-supplied RagBench manifest (query set + expected hits) against a rag node and return a hit-rate + mean reciprocal rank report. Each query must set expected_doc_id or expected_substring (or both); a hit = any top-k result matches. No writes — the report is the whole product.',
+      inputSchema: {
+        manifestYaml: z.string().min(1),
+      },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      const result = await caller.ragBench(input);
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: 'llamactl.rag.bench',
+        input,
+        dryRun: false,
+        // Keep the audit line tight — name + top-line metrics only.
+        // Full perQuery lives in the journal noise otherwise.
+        result: {
+          name: result.manifest.metadata.name,
+          hitRate: result.hitRate,
+          mrr: result.mrr,
+          hits: result.hits,
+          errors: result.errors,
+        },
+      });
+      return toTextContent(result);
+    },
+  );
+
+  server.registerTool(
     'llamactl.rag.pipeline.draft',
     {
       title: 'Draft a RagPipeline from a description',

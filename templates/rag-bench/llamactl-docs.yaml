@@ -1,0 +1,27 @@
+apiVersion: llamactl/v1
+kind: RagBench
+# Retrieval-quality gate for the llamactl-docs collection. Apply
+# after a successful `llamactl rag pipeline run llamactl-docs` to
+# confirm the embedder + chunker produced a collection where
+# operator-likely queries hit the right pages at top-k.
+#
+# Treat as a CI check: exit 0 = all queries hit (hit rate 100%);
+# exit 2 = any miss or error. Wire into a smoke script before
+# cutting a release.
+metadata:
+  name: llamactl-docs-quality
+spec:
+  node: kb-pg
+  collection: llamactl_docs
+  topK: 10
+  queries:
+    - query: how does on_duplicate replace work
+      expected_substring: "delete every prior ingestion"
+    - query: what is the pipeline scheduler loop
+      expected_substring: startPipelineScheduler
+    - query: how do I crawl a docs site daily
+      expected_substring: schedule
+    - query: how do the three rag node backends differ
+      expected_substring: pgvector
+    - query: what does dry-run do
+      expected_substring: doc-would-ingest

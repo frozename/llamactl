@@ -2476,6 +2476,46 @@ export const router = t.router({
       return { ok: true as const, removed };
     }),
 
+  ragBench: t.procedure
+    .input(z.object({ manifestYaml: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      // Retrieval quality gate. Takes a `RagBench` manifest,
+      // walks each query through `ragSearch`, scores hits against
+      // expected doc IDs / substrings, and returns a report. No
+      // disk writes — the report is the whole product.
+      const { parse: parseYaml } = await import('yaml');
+      const { RagBenchManifestSchema, runRagBench } = await import(
+        './rag/bench.js'
+      );
+      let parsedYaml: unknown;
+      try {
+        parsedYaml = parseYaml(input.manifestYaml);
+      } catch (err) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `RagBench manifest is not valid YAML: ${(err as Error).message}`,
+        });
+      }
+      const parsed = RagBenchManifestSchema.safeParse(parsedYaml);
+      if (!parsed.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `invalid RagBench manifest: ${JSON.stringify(parsed.error.issues)}`,
+        });
+      }
+      // Self-call `ragSearch` via the router caller so the bench
+      // routes through the same adapter open/close path operators
+      // already use. Keeps behavior identical to Knowledge-module
+      // queries — no divergence from what the operator sees in the
+      // Query tab.
+      const caller = router.createCaller({});
+      const report = await runRagBench({
+        manifest: parsed.data,
+        search: (req) => caller.ragSearch(req),
+      });
+      return report;
+    }),
+
   ragPipelineDraft: t.procedure
     .input(
       z.object({

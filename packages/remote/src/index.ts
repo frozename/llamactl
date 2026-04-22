@@ -121,3 +121,13 @@ export {
   journalPathFor,
   type PipelineRecord,
 } from './rag/pipeline/store.js';
+export {
+  runRagBench,
+  RagBenchManifestSchema,
+  RagBenchQuerySchema,
+  type RagBenchManifest,
+  type RagBenchQuery,
+  type BenchReport,
+  type PerQueryResult,
+  type RagSearchCaller,
+} from './rag/bench.js';
