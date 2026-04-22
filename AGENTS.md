@@ -300,6 +300,15 @@ from `@nova/contracts`; tRPC exposes `ragSearch` / `ragStore` /
 `llamactl.rag.*`; the Electron activity bar surfaces them through
 the Knowledge module.
 
+For **RAG pipelines** (declarative ingestion — filesystem / http /
+git sources → markdown-aware chunking → embed → store, with
+dedupe, scheduling, and a 4-step Electron wizard), see
+`docs/rag-pipelines.md`. `llamactl rag pipeline {apply, run, list,
+get, rm, logs, scheduler, draft}` on the CLI; `llamactl.rag.
+pipeline.*` on MCP; Knowledge → Pipelines tab in the Electron app.
+Sources plug in via `packages/remote/src/rag/pipeline/fetchers/`;
+transforms via `packages/remote/src/rag/pipeline/transforms/`.
+
 For **Composites** (declarative multi-component infra — model +
 gateway + RAG + supporting services applied as one atomic unit
 with dependency DAG + rollback), see `docs/composites.md`.
