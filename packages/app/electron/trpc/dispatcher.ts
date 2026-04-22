@@ -158,6 +158,13 @@ const CONTROL_PLANE_ONLY = new Set<string>([
   // UI-only procedures added by this module never go over the wire.
   'uiSetActiveNode',
   'uiGetActiveNode',
+  // UI-only procedures added alongside the projects-form picker +
+  // git-repo scan. Both touch the main-process filesystem +
+  // Electron dialog; forwarding them to a remote agent would
+  // either error (no electron runtime on agents) or scan the
+  // wrong machine.
+  'uiPickDirectory',
+  'uiScanGitRepos',
 ]);
 
 /**
@@ -201,6 +208,120 @@ const uiRouter = t.router({
   uiGetActiveNode: t.procedure.query(() => ({
     name: activeNodeOverride,
   })),
+  /**
+   * Native directory picker — opens the OS's folder-chooser dialog
+   * via Electron's dialog API. Used by the projects module's
+   * create-project form so operators don't have to type absolute
+   * paths by hand. Returns null when cancelled.
+   */
+  uiPickDirectory: t.procedure
+    .input(
+      z
+        .object({
+          title: z.string().optional(),
+          defaultPath: z.string().optional(),
+        })
+        .optional(),
+    )
+    .mutation(async ({ input }) => {
+      // Lazy-import so CLI consumers of the remote router don't pull
+      // in Electron's main-process `dialog` module by accident.
+      const { dialog, BrowserWindow } = await import('electron');
+      const focused = BrowserWindow.getFocusedWindow();
+      const result = focused
+        ? await dialog.showOpenDialog(focused, {
+            title: input?.title ?? 'Pick a project directory',
+            defaultPath: input?.defaultPath,
+            properties: ['openDirectory', 'createDirectory'],
+          })
+        : await dialog.showOpenDialog({
+            title: input?.title ?? 'Pick a project directory',
+            defaultPath: input?.defaultPath,
+            properties: ['openDirectory', 'createDirectory'],
+          });
+      if (result.canceled || result.filePaths.length === 0) return null;
+      return result.filePaths[0] as string;
+    }),
+  /**
+   * Scan `root` for directories that look like git checkouts —
+   * i.e. contain a `.git/` subdirectory. Non-recursive beyond the
+   * first level by default (operators usually organise repos flat);
+   * `maxDepth` opts into deeper walks for tools-in-subdir layouts.
+   *
+   * Returns up to `limit` results sorted by mtime (most recent
+   * first) so the UI's quick-pick list shows the repos the operator
+   * actually touched lately.
+   */
+  uiScanGitRepos: t.procedure
+    .input(
+      z.object({
+        root: z.string().min(1),
+        maxDepth: z.number().int().min(1).max(4).default(2),
+        limit: z.number().int().min(1).max(200).default(50),
+      }),
+    )
+    .query(async ({ input }) => {
+      const { existsSync, statSync, readdirSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const expandedRoot = input.root.startsWith('~/')
+        ? input.root.replace(/^~/, process.env.HOME ?? '')
+        : input.root;
+      if (!existsSync(expandedRoot)) {
+        return { root: expandedRoot, repos: [] };
+      }
+      interface Entry {
+        path: string;
+        name: string;
+        mtimeMs: number;
+      }
+      const hits: Entry[] = [];
+      const walk = (dir: string, depth: number): void => {
+        if (depth > input.maxDepth) return;
+        let items: string[];
+        try {
+          items = readdirSync(dir);
+        } catch {
+          return;
+        }
+        // If this dir is itself a repo, don't descend (avoid
+        // returning submodules + siblings with the same mtime).
+        if (items.includes('.git')) {
+          try {
+            const st = statSync(dir);
+            hits.push({
+              path: dir,
+              name: dir.split('/').slice(-1)[0] ?? dir,
+              mtimeMs: st.mtimeMs,
+            });
+          } catch {
+            /* unreadable — skip */
+          }
+          return;
+        }
+        for (const item of items) {
+          if (item.startsWith('.')) continue;
+          if (item === 'node_modules') continue;
+          const child = join(dir, item);
+          try {
+            const st = statSync(child);
+            if (!st.isDirectory()) continue;
+          } catch {
+            continue;
+          }
+          walk(child, depth + 1);
+        }
+      };
+      walk(expandedRoot, 0);
+      hits.sort((a, b) => b.mtimeMs - a.mtimeMs);
+      return {
+        root: expandedRoot,
+        repos: hits.slice(0, input.limit).map((h) => ({
+          path: h.path,
+          name: h.name,
+          mtimeMs: h.mtimeMs,
+        })),
+      };
+    }),
 });
 
 interface DispatchTarget {

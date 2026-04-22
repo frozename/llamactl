@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useMemo, useState } from 'react';
 import { stringify as stringifyYaml } from 'yaml';
-import { trpc } from '@/lib/trpc';
+import { trpc, trpcUIClient } from '@/lib/trpc';
 
 /**
  * Projects module — the Electron surface for the trifold-
@@ -421,6 +421,122 @@ function ProjectRow(props: {
   );
 }
 
+interface DetectedRepo {
+  path: string;
+  name: string;
+  mtimeMs: number;
+}
+
+/**
+ * Quick-pick list of git repos the operator has under their default
+ * project roots. Scans ~/DevStorage/repos + ~/repos + ~/Projects
+ * (two levels deep) for directories containing `.git/`; click a
+ * chip to fill the path field with that repo.
+ *
+ * Roots are hardcoded — adding an override input is a follow-up
+ * (probably surfaces as a Settings entry). Default roots cover the
+ * common Mac developer layouts; an empty scan just hides the
+ * strip.
+ */
+function GitRepoSuggestions({ onPick }: { onPick: (r: DetectedRepo) => void }): React.JSX.Element | null {
+  const [state, setState] = React.useState<
+    | { kind: 'loading' }
+    | { kind: 'ready'; repos: DetectedRepo[]; rootsShown: string[] }
+    | { kind: 'error'; message: string }
+  >({ kind: 'loading' });
+  const [expanded, setExpanded] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const scan = async (): Promise<void> => {
+      const candidateRoots = [
+        '~/DevStorage/repos/personal',
+        '~/DevStorage/repos/work',
+        '~/DevStorage/repos',
+        '~/repos',
+        '~/Projects',
+        '~/projects',
+        '~/src',
+      ];
+      const allRepos: DetectedRepo[] = [];
+      const rootsShown: string[] = [];
+      for (const root of candidateRoots) {
+        try {
+          const result = await trpcUIClient.uiScanGitRepos.query({
+            root,
+            maxDepth: 2,
+            limit: 30,
+          });
+          if (cancelled) return;
+          if (result.repos.length > 0) {
+            rootsShown.push(result.root);
+            allRepos.push(...result.repos);
+          }
+        } catch (err) {
+          // Log + keep scanning — one missing root shouldn't stop the rest.
+          if (!cancelled) console.warn('scan failed:', root, err);
+        }
+      }
+      if (cancelled) return;
+      // Dedupe by path, keep most-recent mtime.
+      const seen = new Map<string, DetectedRepo>();
+      for (const r of allRepos) {
+        const prior = seen.get(r.path);
+        if (!prior || prior.mtimeMs < r.mtimeMs) seen.set(r.path, r);
+      }
+      const repos = Array.from(seen.values()).sort((a, b) => b.mtimeMs - a.mtimeMs);
+      setState({ kind: 'ready', repos, rootsShown });
+    };
+    void scan();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (state.kind === 'loading') {
+    return (
+      <div className="mb-3 text-[10px] text-[color:var(--color-fg-muted)]">
+        Scanning for git repos\u2026
+      </div>
+    );
+  }
+  if (state.kind === 'error') {
+    return null;
+  }
+  if (state.repos.length === 0) return null;
+  const visible = expanded ? state.repos : state.repos.slice(0, 8);
+  return (
+    <div className="mb-3">
+      <div className="mb-1.5 flex items-baseline gap-2 text-[10px] uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+        <span>Detected git repos</span>
+        <span className="opacity-60">({state.repos.length} across {state.rootsShown.length} root{state.rootsShown.length === 1 ? '' : 's'})</span>
+      </div>
+      <div className="flex flex-wrap gap-1" data-testid="projects-git-suggestions">
+        {visible.map((repo) => (
+          <button
+            key={repo.path}
+            type="button"
+            onClick={() => onPick(repo)}
+            title={repo.path}
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[10px] text-[color:var(--color-fg)] hover:border-[var(--color-accent)]"
+          >
+            {repo.name}
+          </button>
+        ))}
+        {!expanded && state.repos.length > visible.length && (
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-1 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+          >
+            +{state.repos.length - visible.length} more
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Single-form create-project flow. Posts a minimal ProjectSchema YAML
  * via `projectApply` — no CLI round-trip. Compact mode renders as a
@@ -484,6 +600,14 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
       data-testid="projects-create-form"
       className={compact ? 'rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3' : ''}
     >
+      {!compact && (
+        <GitRepoSuggestions
+          onPick={(repo) => {
+            setPath(repo.path);
+            if (!name.trim()) setName(repo.name);
+          }}
+        />
+      )}
       <div className={compact ? 'flex flex-wrap items-end gap-2' : 'grid grid-cols-2 gap-3'}>
         <Field label="Name" required>
           <input
@@ -497,15 +621,38 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
           />
         </Field>
         <Field label="Path" required>
-          <input
-            type="text"
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            placeholder="/Users/you/repos/novaflow"
-            data-testid="projects-create-path"
-            required
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
-          />
+          <div className="flex gap-1">
+            <input
+              type="text"
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              placeholder="/Users/you/repos/novaflow"
+              data-testid="projects-create-path"
+              required
+              className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                const picked = await trpcUIClient.uiPickDirectory.mutate({
+                  title: 'Pick a project directory',
+                  defaultPath: path || undefined,
+                });
+                if (picked) {
+                  setPath(picked);
+                  if (!name.trim()) {
+                    const basename = picked.split('/').filter(Boolean).pop() ?? '';
+                    setName(basename);
+                  }
+                }
+              }}
+              data-testid="projects-create-pick-dir"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg)] hover:border-[var(--color-accent)]"
+              title="Pick directory\u2026"
+            >
+              📁
+            </button>
+          </div>
         </Field>
         {!compact && (
           <>
