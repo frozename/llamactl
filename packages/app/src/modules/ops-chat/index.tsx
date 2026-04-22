@@ -3,20 +3,24 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc';
 
 /**
- * N.4 — Operator Console. A chat surface that doesn't just produce
- * plans; it executes them. Each planner step renders an approval
- * card tiered by mutation risk:
- *   - read           → auto-run on request; result streams below
- *   - mutation-dry-run-safe → Preview (dry) → Run (wet) two-step
- *   - mutation-destructive  → type the tool name to unlock wet-run
+ * N.4 — Operator Console.
  *
- * Backed by router.operatorRunTool (see packages/remote/src/ops-chat).
- * Every call writes one audit entry to ~/.llamactl/ops-chat/audit.jsonl.
+ * Streaming chat surface: the operator types a goal, the planner
+ * loop emits one tool-call proposal at a time, and each proposal
+ * renders as an inline assistant bubble in the transcript. The
+ * operator approves (or rejects) each proposal individually; the
+ * outcome is posted back to the server loop which then re-plans and
+ * emits the next proposal — or a `done`/`refusal` event that closes
+ * the stream.
  *
- * The Plan module (N.4.5) produces plans and records intent; this
- * module produces plans AND runs them against the live MCP surface
- * — they sit side-by-side in the activity bar so operators pick the
- * flavor that matches their risk appetite for the task at hand.
+ * Approval tiers preserved from the pre-streaming surface:
+ *   - read                   → one-click Run
+ *   - mutation-dry-run-safe  → Preview (dry) → Run (wet) two-step
+ *   - mutation-destructive   → type the tool name to unlock wet-run
+ *
+ * Every tool invocation still writes one audit entry to
+ * `~/.llamactl/ops-chat/audit.jsonl` via `operatorRunTool`; the
+ * collapsible panel at the bottom tails the last 50 entries.
  */
 
 type PlanStep = {
@@ -26,54 +30,44 @@ type PlanStep = {
   annotation: string;
 };
 
-type PlanResult =
-  | {
-      ok: true;
-      plan: {
-        steps: PlanStep[];
-        reasoning: string;
-        requiresConfirmation: boolean;
-      };
-      executor: string;
-      toolsAvailable: string[];
-    }
-  | {
-      ok: false;
-      reason: string;
-      message: string;
-      executor?: string;
-      disallowedTools?: string[];
-    };
-
-type ToolTier = 'read' | 'mutation-dry-run-safe' | 'mutation-destructive' | 'unknown';
+type ToolTier = 'read' | 'mutation-dry-run-safe' | 'mutation-destructive';
 
 interface ToolCallOutcome {
   ok: boolean;
   name: string;
-  tier: ToolTier;
+  tier: ToolTier | 'unknown';
   durationMs: number;
   result?: unknown;
   error?: { code: string; message: string };
 }
 
-type StepState =
-  | { kind: 'idle' }
-  | { kind: 'running' }
-  | { kind: 'preview'; outcome: ToolCallOutcome }
-  | { kind: 'done'; outcome: ToolCallOutcome }
-  | { kind: 'failed'; outcome: ToolCallOutcome };
+type ProposalState =
+  | 'pending'
+  | 'previewing'
+  | 'preview-ready'
+  | 'running-wet'
+  | 'done'
+  | 'failed'
+  | 'rejected';
 
-type Turn =
-  | { id: number; role: 'user'; text: string }
+type TranscriptMessage =
+  | { kind: 'user'; id: number; content: string }
   | {
+      kind: 'proposal';
       id: number;
-      role: 'assistant';
-      result: PlanResult;
-      /** Per-step state keyed by step index. */
-      steps: Record<number, StepState>;
-      /** Per-step "typed to confirm" scratch for destructive tools. */
-      confirmText: Record<number, string>;
-    };
+      sessionId: string;
+      stepId: string;
+      iteration: number;
+      step: PlanStep;
+      tier: ToolTier;
+      reasoning: string;
+      state: ProposalState;
+      confirmText: string;
+      previewOutcome?: ToolCallOutcome;
+      wetOutcome?: ToolCallOutcome;
+    }
+  | { kind: 'refusal'; id: number; reason: string }
+  | { kind: 'done'; id: number; iterations: number };
 
 type Mode = 'stub' | 'llm';
 
@@ -82,79 +76,20 @@ const DEFAULT_CATALOG: Array<{
   description: string;
   tier: 'read' | 'mutation-dry-run-safe' | 'mutation-destructive';
 }> = [
-  {
-    name: 'llamactl.catalog.list',
-    description: 'List curated models on the control plane.',
-    tier: 'read',
-  },
-  {
-    name: 'llamactl.node.ls',
-    description: 'List every cluster node.',
-    tier: 'read',
-  },
-  {
-    name: 'llamactl.bench.compare',
-    description: 'Joined catalog + bench comparison table.',
-    tier: 'read',
-  },
-  {
-    name: 'llamactl.bench.history',
-    description: 'Recent bench runs.',
-    tier: 'read',
-  },
-  {
-    name: 'llamactl.server.status',
-    description: 'llama-server lifecycle status.',
-    tier: 'read',
-  },
-  {
-    name: 'llamactl.workload.list',
-    description: 'Declarative ModelRun manifests.',
-    tier: 'read',
-  },
-  {
-    name: 'llamactl.promotions.list',
-    description: 'Current preset promotions.',
-    tier: 'read',
-  },
-  {
-    name: 'llamactl.env',
-    description: 'Environment snapshot.',
-    tier: 'read',
-  },
-  {
-    name: 'llamactl.cost.snapshot',
-    description: 'Rolled-up spend for the last N days.',
-    tier: 'read',
-  },
-  {
-    name: 'llamactl.catalog.promote',
-    description: 'Promote a model to a preset on a profile.',
-    tier: 'mutation-dry-run-safe',
-  },
-  {
-    name: 'llamactl.catalog.promoteDelete',
-    description: 'Remove a preset promotion.',
-    tier: 'mutation-destructive',
-  },
-  {
-    name: 'llamactl.workload.delete',
-    description: 'Remove a ModelRun manifest.',
-    tier: 'mutation-destructive',
-  },
-  {
-    name: 'llamactl.node.remove',
-    description: 'Remove a node from the cluster.',
-    tier: 'mutation-destructive',
-  },
+  { name: 'llamactl.catalog.list', description: 'List curated models on the control plane.', tier: 'read' },
+  { name: 'llamactl.node.ls', description: 'List every cluster node.', tier: 'read' },
+  { name: 'llamactl.bench.compare', description: 'Joined catalog + bench comparison table.', tier: 'read' },
+  { name: 'llamactl.bench.history', description: 'Recent bench runs.', tier: 'read' },
+  { name: 'llamactl.server.status', description: 'llama-server lifecycle status.', tier: 'read' },
+  { name: 'llamactl.workload.list', description: 'Declarative ModelRun manifests.', tier: 'read' },
+  { name: 'llamactl.promotions.list', description: 'Current preset promotions.', tier: 'read' },
+  { name: 'llamactl.env', description: 'Environment snapshot.', tier: 'read' },
+  { name: 'llamactl.cost.snapshot', description: 'Rolled-up spend for the last N days.', tier: 'read' },
+  { name: 'llamactl.catalog.promote', description: 'Promote a model to a preset on a profile.', tier: 'mutation-dry-run-safe' },
+  { name: 'llamactl.catalog.promoteDelete', description: 'Remove a preset promotion.', tier: 'mutation-destructive' },
+  { name: 'llamactl.workload.delete', description: 'Remove a ModelRun manifest.', tier: 'mutation-destructive' },
+  { name: 'llamactl.node.remove', description: 'Remove a node from the cluster.', tier: 'mutation-destructive' },
 ];
-
-function summarizeResult(result: PlanResult): string {
-  if (!result.ok) return `planner failed: ${result.reason} — ${result.message}`;
-  return result.plan.steps
-    .map((s, i) => `${i + 1}. ${s.tool} — ${s.annotation}`)
-    .join('\n');
-}
 
 function tierClass(tier: ToolTier): string {
   switch (tier) {
@@ -163,118 +98,172 @@ function tierClass(tier: ToolTier): string {
     case 'mutation-dry-run-safe':
       return 'border-[var(--color-warning,var(--color-accent))] text-[color:var(--color-warning,var(--color-accent))]';
     case 'read':
-      return 'border-[var(--color-border)] text-[color:var(--color-fg-muted)]';
     default:
       return 'border-[var(--color-border)] text-[color:var(--color-fg-muted)]';
   }
 }
 
-function StepCard(props: {
-  index: number;
-  step: PlanStep;
-  state: StepState;
-  tier: ToolTier;
-  confirmText: string;
+interface ProposalBubbleProps {
+  message: Extract<TranscriptMessage, { kind: 'proposal' }>;
+  onApprove: (dryRun: boolean) => void;
+  onReject: () => void;
   onConfirmText: (v: string) => void;
-  onRun: (dryRun: boolean) => void;
-}): React.JSX.Element {
-  const { index, step, state, tier, confirmText, onConfirmText, onRun } = props;
-  const destructiveReady =
-    tier === 'mutation-destructive' ? confirmText.trim() === step.tool : true;
-  const running = state.kind === 'running';
-  const haveResult = state.kind === 'done' || state.kind === 'failed' || state.kind === 'preview';
-  const outcome = haveResult ? (state.outcome as ToolCallOutcome) : null;
+}
+
+function ProposalBubble({
+  message,
+  onApprove,
+  onReject,
+  onConfirmText,
+}: ProposalBubbleProps): React.JSX.Element {
+  const { step, tier, iteration, state, confirmText, previewOutcome, wetOutcome, reasoning } = message;
+  const destructiveReady = tier === 'mutation-destructive' ? confirmText.trim() === step.tool : true;
+  const terminal = state === 'done' || state === 'failed' || state === 'rejected';
+  const running = state === 'previewing' || state === 'running-wet';
 
   return (
-    <div
-      className={`rounded border p-2 space-y-1 bg-[color:var(--color-surface-1)] ${tierClass(tier)}`}
-      data-testid={`ops-chat-step-${index}`}
-      data-tier={tier}
-    >
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-mono text-[color:var(--color-fg-muted)]">{index + 1}.</span>
-        <span className="font-mono text-sm text-[color:var(--color-fg)]">{step.tool}</span>
-        <span
-          className={`rounded border px-1 text-[10px] ${tierClass(tier)}`}
-          data-testid={`ops-chat-step-${index}-tier`}
-        >
-          {tier}
-        </span>
-      </div>
-      <div className="text-xs text-[color:var(--color-fg-muted)]">{step.annotation}</div>
-      {step.args && Object.keys(step.args).length > 0 && (
-        <pre className="text-[11px] bg-[var(--color-surface-2)] rounded p-1 overflow-auto">
-          {JSON.stringify(step.args, null, 2)}
-        </pre>
-      )}
-
-      {tier === 'mutation-destructive' && state.kind !== 'done' && (
-        <label className="flex items-center gap-1 text-[10px] text-[color:var(--color-fg-muted)]">
-          Type <span className="font-mono">{step.tool}</span> to unlock:
-          <input
-            type="text"
-            value={confirmText}
-            onChange={(e) => onConfirmText(e.target.value)}
-            data-testid={`ops-chat-step-${index}-confirm`}
-            className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-0.5 font-mono text-[10px]"
-          />
-        </label>
-      )}
-
-      <div className="flex items-center gap-1 pt-1">
-        {tier !== 'read' && state.kind !== 'done' && (
-          <button
-            type="button"
-            onClick={() => onRun(true)}
-            disabled={running}
-            data-testid={`ops-chat-step-${index}-preview`}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] disabled:opacity-50"
+    <div className="flex justify-start">
+      <div
+        className={`max-w-[85%] rounded-2xl border p-3 space-y-2 bg-[color:var(--color-surface-1)] ${tierClass(tier)}`}
+        data-testid={`ops-chat-step-${iteration}`}
+        data-tier={tier}
+        data-state={state}
+      >
+        {reasoning.length > 0 && (
+          <p
+            className="text-xs text-[color:var(--color-fg-muted)] italic"
+            data-testid={`ops-chat-step-${iteration}-reasoning`}
           >
-            {running && state.kind === 'running' ? 'Running…' : 'Preview (dry)'}
-          </button>
+            {reasoning}
+          </p>
         )}
-        <button
-          type="button"
-          onClick={() => onRun(false)}
-          disabled={running || (tier === 'mutation-destructive' && !destructiveReady)}
-          data-testid={`ops-chat-step-${index}-run`}
-          className={
-            tier === 'mutation-destructive'
-              ? 'rounded border border-[var(--color-danger)] px-2 py-0.5 text-[10px] text-[color:var(--color-danger)] disabled:opacity-40'
-              : tier === 'mutation-dry-run-safe'
-                ? 'rounded border border-[var(--color-accent)] px-2 py-0.5 text-[10px] text-[color:var(--color-accent)] disabled:opacity-40'
-                : 'rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)] disabled:opacity-40'
-          }
-        >
-          {state.kind === 'done'
-            ? 'Done ✓'
-            : running
-              ? 'Running…'
-              : tier === 'read'
-                ? 'Run'
-                : 'Run (wet)'}
-        </button>
-      </div>
+        <div className="text-sm text-[color:var(--color-fg)]">
+          {terminal ? 'Ran:' : 'I\u2019d like to run:'}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-sm">{step.tool}</span>
+          <span
+            className={`rounded border px-1 text-[10px] ${tierClass(tier)}`}
+            data-testid={`ops-chat-step-${iteration}-tier`}
+          >
+            {tier}
+          </span>
+        </div>
+        <div className="text-xs text-[color:var(--color-fg-muted)]">{step.annotation}</div>
+        {step.args && Object.keys(step.args).length > 0 && (
+          <pre
+            className="text-[11px] bg-[var(--color-surface-2)] rounded p-1 overflow-auto max-h-40"
+            data-testid={`ops-chat-step-${iteration}-args`}
+          >
+            {JSON.stringify(step.args, null, 2)}
+          </pre>
+        )}
 
-      {outcome && (
-        <div
-          className="mt-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 text-[11px]"
-          data-testid={`ops-chat-step-${index}-result`}
-          data-ok={outcome.ok ? 'true' : 'false'}
-        >
-          <div className="text-[color:var(--color-fg-muted)]">
-            {outcome.ok ? '✓ ok' : '✗ failed'} · {outcome.durationMs}ms
-            {state.kind === 'preview' ? ' · dry-run' : ''}
+        {tier === 'mutation-destructive' && !terminal && (
+          <label className="flex items-center gap-1 text-[10px] text-[color:var(--color-fg-muted)]">
+            Type <span className="font-mono">{step.tool}</span> to unlock:
+            <input
+              type="text"
+              value={confirmText}
+              onChange={(e) => onConfirmText(e.target.value)}
+              data-testid={`ops-chat-step-${iteration}-confirm`}
+              className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-0.5 font-mono text-[10px]"
+            />
+          </label>
+        )}
+
+        {!terminal && (
+          <div className="flex items-center gap-1 pt-1">
+            {tier !== 'read' && (
+              <button
+                type="button"
+                onClick={() => onApprove(true)}
+                disabled={running || state === 'preview-ready'}
+                data-testid={`ops-chat-step-${iteration}-preview`}
+                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] disabled:opacity-50"
+              >
+                {state === 'previewing' ? 'Running\u2026' : 'Preview (dry)'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onApprove(false)}
+              disabled={
+                running ||
+                (tier === 'mutation-destructive' && !destructiveReady)
+              }
+              data-testid={`ops-chat-step-${iteration}-run`}
+              className={
+                tier === 'mutation-destructive'
+                  ? 'rounded border border-[var(--color-danger)] px-2 py-0.5 text-[10px] text-[color:var(--color-danger)] disabled:opacity-40'
+                  : tier === 'mutation-dry-run-safe'
+                    ? 'rounded border border-[var(--color-accent)] px-2 py-0.5 text-[10px] text-[color:var(--color-accent)] disabled:opacity-40'
+                    : 'rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)] disabled:opacity-40'
+              }
+            >
+              {state === 'running-wet'
+                ? 'Running\u2026'
+                : tier === 'read'
+                  ? 'Run'
+                  : 'Run (wet)'}
+            </button>
+            <button
+              type="button"
+              onClick={onReject}
+              disabled={running}
+              data-testid={`ops-chat-step-${iteration}-reject`}
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] disabled:opacity-40"
+            >
+              Reject
+            </button>
           </div>
-          {outcome.ok ? (
-            <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap font-mono">
-              {JSON.stringify(outcome.result, null, 2).slice(0, 2000)}
-            </pre>
-          ) : (
-            <div className="text-[color:var(--color-danger)]">
-              {outcome.error?.code}: {outcome.error?.message}
-            </div>
-          )}
+        )}
+
+        {previewOutcome && (
+          <OutcomePanel iteration={iteration} outcome={previewOutcome} kind="preview" />
+        )}
+        {wetOutcome && (
+          <OutcomePanel iteration={iteration} outcome={wetOutcome} kind="wet" />
+        )}
+        {state === 'rejected' && (
+          <div
+            className="text-xs italic text-[color:var(--color-fg-muted)]"
+            data-testid={`ops-chat-step-${iteration}-rejected`}
+          >
+            Operator rejected \u2014 session closed.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OutcomePanel({
+  iteration,
+  outcome,
+  kind,
+}: {
+  iteration: number;
+  outcome: ToolCallOutcome;
+  kind: 'preview' | 'wet';
+}): React.JSX.Element {
+  return (
+    <div
+      className="mt-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 text-[11px]"
+      data-testid={`ops-chat-step-${iteration}-${kind === 'preview' ? 'preview-result' : 'result'}`}
+      data-ok={outcome.ok ? 'true' : 'false'}
+    >
+      <div className="text-[color:var(--color-fg-muted)]">
+        {outcome.ok ? '\u2713 ok' : '\u2717 failed'} \u00b7 {outcome.durationMs}ms
+        {kind === 'preview' ? ' \u00b7 dry-run' : ''}
+      </div>
+      {outcome.ok ? (
+        <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap font-mono">
+          {JSON.stringify(outcome.result, null, 2).slice(0, 2000)}
+        </pre>
+      ) : (
+        <div className="text-[color:var(--color-danger)]">
+          {outcome.error?.code}: {outcome.error?.message}
         </div>
       )}
     </div>
@@ -282,74 +271,113 @@ function StepCard(props: {
 }
 
 export default function OpsChat(): React.JSX.Element {
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [mode, setMode] = useState<Mode>('stub');
   const [model, setModel] = useState('');
   const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1');
   const [apiKeyEnv, setApiKeyEnv] = useState('OPENAI_API_KEY');
   const [error, setError] = useState<string | null>(null);
+  const [streamInput, setStreamInput] = useState<Parameters<
+    typeof trpc.operatorChatStream.useSubscription
+  >[0] | null>(null);
+  const [streamKey, setStreamKey] = useState(0);
+  const [streaming, setStreaming] = useState(false);
   const nextId = useRef(1);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const plan = trpc.operatorPlan.useMutation({
-    onSuccess: (res) => {
-      setTurns((prev) => [
-        ...prev,
-        {
-          id: nextId.current++,
-          role: 'assistant',
-          result: res as PlanResult,
-          steps: {},
-          confirmText: {},
-        },
-      ]);
-      setError(null);
-    },
-    onError: (err) => {
-      setTurns((prev) => [
-        ...prev,
-        {
-          id: nextId.current++,
-          role: 'assistant',
-          result: { ok: false, reason: 'transport', message: err.message },
-          steps: {},
-          confirmText: {},
-        },
-      ]);
-      setError(err.message);
-    },
-  });
-
   const runTool = trpc.operatorRunTool.useMutation();
+  const submitOutcome = trpc.operatorSubmitStepOutcome.useMutation();
   const auditTail = trpc.opsChatAuditTail.useQuery(
     { limit: 50 },
     { refetchInterval: 5_000, staleTime: 1_000 },
   );
 
+  trpc.operatorChatStream.useSubscription(
+    streamInput ?? { goal: '__placeholder__', tools: [] },
+    {
+      enabled: !!streamInput,
+      key: streamKey,
+      onData: (evt) => {
+        const e = evt as
+          | {
+              type: 'plan_proposed';
+              sessionId: string;
+              stepId: string;
+              iteration: number;
+              step: PlanStep;
+              tier: ToolTier;
+              reasoning: string;
+            }
+          | { type: 'refusal'; reason: string }
+          | { type: 'done'; iterations: number };
+        if (e.type === 'plan_proposed') {
+          setMessages((prev) => [
+            ...prev,
+            {
+              kind: 'proposal',
+              id: nextId.current++,
+              sessionId: e.sessionId,
+              stepId: e.stepId,
+              iteration: e.iteration,
+              step: e.step,
+              tier: e.tier,
+              reasoning: e.reasoning,
+              state: 'pending',
+              confirmText: '',
+            },
+          ]);
+        } else if (e.type === 'refusal') {
+          setMessages((prev) => [
+            ...prev,
+            { kind: 'refusal', id: nextId.current++, reason: e.reason },
+          ]);
+          setStreaming(false);
+          setStreamInput(null);
+        } else if (e.type === 'done') {
+          if (e.iterations > 0) {
+            setMessages((prev) => [
+              ...prev,
+              { kind: 'done', id: nextId.current++, iterations: e.iterations },
+            ]);
+          }
+          setStreaming(false);
+          setStreamInput(null);
+        }
+      },
+      onError: (err) => {
+        setError(err.message);
+        setStreaming(false);
+        setStreamInput(null);
+      },
+    } as Parameters<typeof trpc.operatorChatStream.useSubscription>[1],
+  );
+
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [turns]);
+  }, [messages]);
 
   const history = useMemo(
     () =>
-      turns.map((turn) =>
-        turn.role === 'user'
-          ? { role: 'user' as const, text: turn.text }
-          : { role: 'assistant' as const, text: summarizeResult(turn.result) },
-      ),
-    [turns],
+      messages
+        .filter((m): m is Extract<TranscriptMessage, { kind: 'user' }> => m.kind === 'user')
+        .map((m) => ({ role: 'user' as const, text: m.content })),
+    [messages],
   );
 
   const onSubmit = (): void => {
     const goal = draft.trim();
-    if (!goal || plan.isPending) return;
+    if (!goal || streaming) return;
     setError(null);
-    const userTurn: Turn = { id: nextId.current++, role: 'user', text: goal };
-    setTurns((prev) => [...prev, userTurn]);
+    setMessages((prev) => [
+      ...prev,
+      { kind: 'user', id: nextId.current++, content: goal },
+    ]);
     setDraft('');
-    plan.mutate({
+    setStreaming(true);
+    setStreamKey((k) => k + 1);
+    setStreamInput({
       goal,
       mode,
       tools: DEFAULT_CATALOG,
@@ -365,9 +393,11 @@ export default function OpsChat(): React.JSX.Element {
   };
 
   const onReset = (): void => {
-    setTurns([]);
+    setMessages([]);
     setDraft('');
     setError(null);
+    setStreamInput(null);
+    setStreaming(false);
     nextId.current = 1;
   };
 
@@ -375,88 +405,98 @@ export default function OpsChat(): React.JSX.Element {
     void auditTail.refetch();
   }
 
-  async function runStep(turnId: number, stepIndex: number, dryRun: boolean): Promise<void> {
-    const turn = turns.find((t) => t.id === turnId);
-    if (!turn || turn.role !== 'assistant' || !turn.result.ok) return;
-    const step = turn.result.plan.steps[stepIndex];
-    if (!step) return;
-    setTurns((prev) =>
-      prev.map((t) =>
-        t.id === turnId && t.role === 'assistant'
-          ? { ...t, steps: { ...t.steps, [stepIndex]: { kind: 'running' } } }
-          : t,
-      ),
+  function patchProposal(
+    id: number,
+    patch: Partial<Extract<TranscriptMessage, { kind: 'proposal' }>>,
+  ): void {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === id && m.kind === 'proposal' ? { ...m, ...patch } : m)),
     );
+  }
+
+  async function onApprove(
+    msg: Extract<TranscriptMessage, { kind: 'proposal' }>,
+    dryRun: boolean,
+  ): Promise<void> {
+    patchProposal(msg.id, { state: dryRun ? 'previewing' : 'running-wet' });
     try {
       const outcome = (await runTool.mutateAsync({
-        name: step.tool,
-        arguments: (step.args ?? {}) as Record<string, unknown>,
+        name: msg.step.tool,
+        arguments: (msg.step.args ?? {}) as Record<string, unknown>,
         dryRun,
       })) as ToolCallOutcome;
       refreshAudit();
-      setTurns((prev) =>
-        prev.map((t) =>
-          t.id === turnId && t.role === 'assistant'
-            ? {
-                ...t,
-                steps: {
-                  ...t.steps,
-                  [stepIndex]: outcome.ok
-                    ? dryRun
-                      ? { kind: 'preview', outcome }
-                      : { kind: 'done', outcome }
-                    : { kind: 'failed', outcome },
-                },
-              }
-            : t,
-        ),
-      );
+      if (dryRun) {
+        patchProposal(msg.id, { state: 'preview-ready', previewOutcome: outcome });
+        return;
+      }
+      patchProposal(msg.id, {
+        state: outcome.ok ? 'done' : 'failed',
+        wetOutcome: outcome,
+      });
+      await submitOutcome.mutateAsync({
+        sessionId: msg.sessionId,
+        stepId: msg.stepId,
+        ok: outcome.ok,
+        summary: summarizeOutcome(outcome),
+        abort: false,
+      });
     } catch (err) {
-      setTurns((prev) =>
-        prev.map((t) =>
-          t.id === turnId && t.role === 'assistant'
-            ? {
-                ...t,
-                steps: {
-                  ...t.steps,
-                  [stepIndex]: {
-                    kind: 'failed',
-                    outcome: {
-                      ok: false,
-                      name: step.tool,
-                      tier: 'unknown',
-                      durationMs: 0,
-                      error: { code: 'transport', message: (err as Error).message },
-                    },
-                  },
-                },
-              }
-            : t,
-        ),
-      );
+      const outcome: ToolCallOutcome = {
+        ok: false,
+        name: msg.step.tool,
+        tier: 'unknown',
+        durationMs: 0,
+        error: { code: 'transport', message: (err as Error).message },
+      };
+      patchProposal(msg.id, { state: 'failed', wetOutcome: outcome });
       refreshAudit();
+      if (!dryRun) {
+        try {
+          await submitOutcome.mutateAsync({
+            sessionId: msg.sessionId,
+            stepId: msg.stepId,
+            ok: false,
+            summary: `transport error: ${(err as Error).message}`,
+            abort: false,
+          });
+        } catch {
+          /* best-effort — session may already be closed */
+        }
+      }
     }
   }
 
-  function setConfirmText(turnId: number, stepIndex: number, v: string): void {
-    setTurns((prev) =>
-      prev.map((t) =>
-        t.id === turnId && t.role === 'assistant'
-          ? { ...t, confirmText: { ...t.confirmText, [stepIndex]: v } }
-          : t,
-      ),
-    );
+  async function onReject(msg: Extract<TranscriptMessage, { kind: 'proposal' }>): Promise<void> {
+    patchProposal(msg.id, { state: 'rejected' });
+    try {
+      await submitOutcome.mutateAsync({
+        sessionId: msg.sessionId,
+        stepId: msg.stepId,
+        ok: false,
+        summary: 'operator rejected proposal',
+        abort: true,
+      });
+    } catch {
+      /* loop may have already terminated */
+    }
+    setStreaming(false);
+    setStreamInput(null);
   }
 
-  function tierFor(toolName: string): ToolTier {
-    const match = DEFAULT_CATALOG.find((t) => t.name === toolName);
-    return (match?.tier ?? 'unknown') as ToolTier;
+  function onConfirmText(id: number, v: string): void {
+    patchProposal(id, { confirmText: v });
   }
 
-  const submitDisabled = plan.isPending || draft.trim().length === 0;
+  const submitDisabled = streaming || draft.trim().length === 0;
 
   return (
-    <div className="flex h-full flex-col" data-testid="ops-chat-root">
+    <div
+      className="flex h-full flex-col"
+      data-testid="ops-chat-root"
+      data-streaming={streaming ? 'true' : 'false'}
+      data-message-count={messages.length}
+    >
       <div className="border-b border-[color:var(--color-border)] p-4 space-y-3">
         <div className="flex items-baseline justify-between gap-3">
           <div>
@@ -464,8 +504,8 @@ export default function OpsChat(): React.JSX.Element {
             <p className="text-xs text-[color:var(--color-fg-muted)] max-w-prose">
               Natural-language goals become MCP tool calls. Reads run with one
               click; mutations preview dry-first; destructive actions require
-              the operator to type the tool name to confirm. Every attempt —
-              dry, wet, successful, failed — appends one entry to
+              the operator to type the tool name to confirm. Every attempt \u2014
+              dry, wet, successful, failed \u2014 appends one entry to
               {auditTail.data?.path ? (
                 <span className="font-mono"> {auditTail.data.path}</span>
               ) : (
@@ -474,7 +514,7 @@ export default function OpsChat(): React.JSX.Element {
               .
             </p>
           </div>
-          {turns.length > 0 && (
+          {messages.length > 0 && (
             <button
               type="button"
               onClick={onReset}
@@ -548,7 +588,7 @@ export default function OpsChat(): React.JSX.Element {
         className="flex-1 overflow-auto p-4 space-y-3"
         data-testid="ops-chat-transcript"
       >
-        {turns.length === 0 && (
+        {messages.length === 0 && (
           <div
             className="rounded-md border border-dashed border-[color:var(--color-border)] p-6 text-sm text-[color:var(--color-fg-muted)]"
             data-testid="ops-chat-empty"
@@ -558,74 +598,62 @@ export default function OpsChat(): React.JSX.Element {
             </h3>
             <p className="mt-1 text-xs">
               Example:{' '}
-              <span className="font-mono">list installed vision models</span>
-              . The planner returns a step-by-step plan; each step is a tool
-              call you approve individually.
+              <span className="font-mono">list installed vision models</span>.
+              The planner proposes tool calls one at a time, inline. Approve
+              each one; reads run with a click, mutations preview dry-first.
             </p>
           </div>
         )}
-        {turns.map((turn) => {
-          if (turn.role === 'user') {
+        {messages.map((msg) => {
+          if (msg.kind === 'user') {
             return (
-              <div key={turn.id} className="flex justify-end">
+              <div key={msg.id} className="flex justify-end">
                 <div className="max-w-[70%] rounded-2xl bg-[color:var(--color-accent)] px-3 py-2 text-sm text-[color:var(--color-fg-inverted)] whitespace-pre-wrap">
-                  {turn.text}
+                  {msg.content}
                 </div>
               </div>
             );
           }
-          if (!turn.result.ok) {
+          if (msg.kind === 'refusal') {
+            return (
+              <div key={msg.id} className="flex justify-start">
+                <div
+                  className="max-w-[70%] rounded-2xl border border-[color:var(--color-warning,var(--color-accent))] p-3 text-sm space-y-1 bg-[color:var(--color-surface-1)]"
+                  data-testid={`ops-chat-refusal-${msg.id}`}
+                >
+                  <div className="font-medium">Planner refused</div>
+                  <div className="text-xs text-[color:var(--color-fg-muted)]">{msg.reason}</div>
+                </div>
+              </div>
+            );
+          }
+          if (msg.kind === 'done') {
             return (
               <div
-                key={turn.id}
-                className="rounded border border-[color:var(--color-warning,var(--color-accent))] p-3 text-sm space-y-1 bg-[color:var(--color-surface-1)]"
-                data-testid={`ops-chat-turn-${turn.id}-failure`}
+                key={msg.id}
+                className="flex justify-center"
+                data-testid={`ops-chat-done-${msg.id}`}
               >
-                <div className="font-medium">Planner failed: {turn.result.reason}</div>
-                <div className="text-xs text-[color:var(--color-fg-muted)]">
-                  {turn.result.message}
+                <div className="rounded-2xl bg-[color:var(--color-surface-2)] px-3 py-1 text-[10px] text-[color:var(--color-fg-muted)]">
+                  Loop closed \u00b7 {msg.iterations} iteration{msg.iterations === 1 ? '' : 's'}
                 </div>
               </div>
             );
           }
-          const steps = turn.result.plan.steps;
           return (
-            <div
-              key={turn.id}
-              className="rounded border border-[color:var(--color-border)] p-3 space-y-2 bg-[color:var(--color-surface-1)]"
-              data-testid={`ops-chat-turn-${turn.id}`}
-            >
-              <div className="flex items-center justify-between text-xs">
-                <div className="font-medium">Plan</div>
-                <div className="text-[color:var(--color-fg-muted)]">
-                  executor={turn.result.executor} · {steps.length} step
-                  {steps.length === 1 ? '' : 's'}
-                </div>
-              </div>
-              <div className="text-xs text-[color:var(--color-fg-muted)]">
-                {turn.result.plan.reasoning}
-              </div>
-              <div className="space-y-2 mt-1">
-                {steps.map((step, i) => (
-                  <StepCard
-                    key={i}
-                    index={i}
-                    step={step}
-                    tier={tierFor(step.tool)}
-                    state={turn.steps[i] ?? { kind: 'idle' }}
-                    confirmText={turn.confirmText[i] ?? ''}
-                    onConfirmText={(v) => setConfirmText(turn.id, i, v)}
-                    onRun={(dryRun) => void runStep(turn.id, i, dryRun)}
-                  />
-                ))}
-              </div>
-            </div>
+            <ProposalBubble
+              key={msg.id}
+              message={msg}
+              onApprove={(dryRun) => void onApprove(msg, dryRun)}
+              onReject={() => void onReject(msg)}
+              onConfirmText={(v) => onConfirmText(msg.id, v)}
+            />
           );
         })}
-        {plan.isPending && (
+        {streaming && !messages.some((m) => m.kind === 'proposal' && m.state === 'pending') && (
           <div className="flex justify-start" data-testid="ops-chat-pending">
             <div className="rounded-2xl bg-[color:var(--color-surface-2)] px-3 py-2 text-xs text-[color:var(--color-fg-muted)]">
-              Planning…
+              Planning\u2026
             </div>
           </div>
         )}
@@ -665,7 +693,7 @@ export default function OpsChat(): React.JSX.Element {
                       : 'text-[color:var(--color-danger)]'
                   }
                 >
-                  {entry.ok ? '✓' : '✗'}
+                  {entry.ok ? '\u2713' : '\u2717'}
                 </span>
                 <span className="text-[color:var(--color-fg)]">{entry.tool}</span>
                 {entry.dryRun && (
@@ -675,16 +703,14 @@ export default function OpsChat(): React.JSX.Element {
                 )}
                 <span className="ml-auto">{entry.durationMs}ms</span>
                 {!entry.ok && entry.errorCode && (
-                  <span className="text-[color:var(--color-danger)]">
-                    {entry.errorCode}
-                  </span>
+                  <span className="text-[color:var(--color-danger)]">{entry.errorCode}</span>
                 )}
               </li>
             ))}
           </ul>
         ) : (
           <p className="mt-2 text-[color:var(--color-fg-muted)]">
-            No audit entries yet — run a step to start populating{' '}
+            No audit entries yet \u2014 run a step to start populating{' '}
             {auditTail.data?.path ? (
               <span className="font-mono">{auditTail.data.path}</span>
             ) : (
@@ -707,11 +733,14 @@ export default function OpsChat(): React.JSX.Element {
           }}
           rows={2}
           placeholder={
-            turns.length === 0
+            messages.length === 0
               ? 'e.g. list installed vision models'
-              : 'Refine, or ask for the next step…'
+              : streaming
+                ? 'Waiting for next proposal\u2026'
+                : 'Start a new conversation by clicking "New conversation"'
           }
-          className="w-full rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] p-2 text-sm font-mono"
+          disabled={streaming}
+          className="w-full rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] p-2 text-sm font-mono disabled:opacity-60"
           data-testid="ops-chat-goal"
         />
         <div className="flex items-center justify-between gap-2">
@@ -722,13 +751,21 @@ export default function OpsChat(): React.JSX.Element {
             data-testid="ops-chat-submit"
             className="rounded border border-[color:var(--color-border)] bg-[var(--color-accent)] text-[color:var(--color-fg-inverted)] px-3 py-1 text-sm font-medium shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {plan.isPending ? 'Planning…' : turns.length === 0 ? 'Plan' : 'Send'}
+            {streaming ? 'Streaming\u2026' : messages.length === 0 ? 'Plan' : 'Send'}
           </button>
           <span className="text-[10px] text-[color:var(--color-fg-muted)]">
-            ⌘/Ctrl+Enter to send · {turns.length} turn{turns.length === 1 ? '' : 's'}
+            \u2318/Ctrl+Enter to send \u00b7 {messages.length} message{messages.length === 1 ? '' : 's'}
           </span>
         </div>
       </div>
     </div>
   );
+}
+
+function summarizeOutcome(outcome: ToolCallOutcome): string {
+  if (!outcome.ok) {
+    return `error ${outcome.error?.code ?? 'unknown'}: ${outcome.error?.message ?? '(no message)'}`;
+  }
+  const json = JSON.stringify(outcome.result);
+  return json.length > 500 ? `ok (${json.length} bytes): ${json.slice(0, 500)}\u2026` : `ok: ${json}`;
 }

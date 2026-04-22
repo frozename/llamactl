@@ -219,19 +219,32 @@ async function main(): Promise<void> {
       state: 'visible',
       timeout: 10_000,
     });
-    check('plan turn rendered with step 0', true);
+    check('first proposal bubble streams in inline (iteration 0)', true);
 
-    // The stub planner picks nova.ops.overview by default, which is
-    // in the catalog passed from the renderer. Its tier should be
-    // 'unknown' (not in KNOWN_OPS_CHAT_TOOLS — those are llamactl.*).
-    // Confirm the card shows the tier badge regardless.
+    // N.4 Phase 2 guarantee: proposal bubbles render inline in the
+    // transcript (not as a separate StepCard-at-the-bottom layout).
+    // The new Reject button is proposal-only — its presence proves
+    // we're on the streaming-loop architecture.
+    const rejectExists = (await client.call('electron_evaluate_renderer', {
+      sessionId,
+      expression:
+        '!!document.querySelector(\'[data-testid="ops-chat-step-0-reject"]\')',
+    })) as { result: boolean };
+    check(
+      'inline proposal bubble exposes Reject button (new architecture)',
+      rejectExists.result === true,
+    );
+
+    // Stub planner picks the first catalog entry — `llamactl.catalog.list`
+    // on this layout. Confirm the tier badge shows it rendered as
+    // `read` so the Run (not Preview) path applies.
     const tierEl = (await client.call('electron_evaluate_renderer', {
       sessionId,
       expression:
         'document.querySelector(\'[data-testid="ops-chat-step-0-tier"]\')?.textContent ?? null',
     })) as { result: string | null };
     check(
-      'tier badge present on step 0',
+      'tier badge present on proposal 0',
       typeof tierEl.result === 'string' && tierEl.result.length > 0,
       `tier=${String(tierEl.result)}`,
     );

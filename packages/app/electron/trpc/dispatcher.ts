@@ -114,6 +114,17 @@ const CONTROL_PLANE_ONLY = new Set<string>([
   'benchSchedulerStart',
   'benchSchedulerStop',
   'benchSchedulerKick',
+  // Ops Chat: the audit journal, the session registry, and the
+  // planner's allowlist all live on the control plane's filesystem +
+  // main-process memory. Routing these to a remote would split the
+  // session registry across processes (subscription on main, outcome
+  // ack on remote) and leak audit entries into the wrong log.
+  'operatorPlan',
+  'operatorRunTool',
+  'operatorChatStream',
+  'operatorSubmitStepOutcome',
+  'opsChatTools',
+  'opsChatAuditTail',
   // UI-only procedures added by this module never go over the wire.
   'uiSetActiveNode',
   'uiGetActiveNode',
