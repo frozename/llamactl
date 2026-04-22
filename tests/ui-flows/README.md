@@ -70,5 +70,18 @@ bun run tests/ui-flows/chat-compare-flow.ts \
   --args="$(pwd)/packages/app"
 ```
 
-These are not wired into `bun test` or any CI workflow — invoke them
-manually when you want to exercise a specific flow end-to-end.
+These are not wired into `bun test`, but the full pipelines sweep
+can be run with one command via `scripts/smoke-ui-flows.sh` (builds
+the bundle, resolves the Electron binary + `electron-mcp-server`
+entrypoint, then runs every R3 / aliveness flow in order). Useful
+for "I just shipped UI work — prove the whole Pipelines surface
+still works":
+
+```sh
+scripts/smoke-ui-flows.sh                              # full sweep
+SKIP_BUILD=1 scripts/smoke-ui-flows.sh                 # reuse existing bundle
+FLOWS=pipelines-tab-flow scripts/smoke-ui-flows.sh     # just one flow
+```
+
+The script honors the same `ELECTRON_MCP_DIR` env var as individual
+flows; `ELECTRON_BIN` + `APP_DIR` overrides are also available.
