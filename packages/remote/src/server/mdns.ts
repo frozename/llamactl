@@ -39,6 +39,19 @@ export function publishAgentMdns(opts: PublishAgentOptions): PublishedAgent {
       ...(opts.fingerprint ? { fp: opts.fingerprint } : {}),
     },
   });
+  // mDNS probe collisions ("Service name is already in use on the
+  // network") fire as uncaught error events on the service object.
+  // Without this listener, Bun's default uncaughtException kills the
+  // agent under launchd (where stdio is redirected) — even though the
+  // HTTP server is already listening on its TCP port. Treat the
+  // collision as best-effort: log + carry on.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const eventEmitter = service as unknown as { on?: (evt: string, cb: (err: unknown) => void) => void };
+  eventEmitter.on?.('error', (err) => {
+    process.stderr.write(
+      `mdns: ${err instanceof Error ? err.message : String(err)} (continuing without LAN advertisement)\n`,
+    );
+  });
   return {
     stop: async () => {
       await new Promise<void>((resolve) => {

@@ -128,6 +128,21 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   const port = opts.port ?? 0;
   const endpoint = opts.endpoint ?? '/trpc';
 
+  // Async best-effort subsystems (mDNS Bonjour probes, the tunnel
+  // client's reconnect loop, telemetry flushers) can throw
+  // unhandled rejections + uncaughtExceptions hours after startup.
+  // In a TTY those land as stderr noise; under launchd the default
+  // handler kills the process even though the HTTP server is fine.
+  // Make the agent resilient: log + continue. Once installed, this
+  // covers ANY future async-leak the agent picks up — not just mDNS.
+  const captureFatal = (kind: string) => (err: unknown) => {
+    process.stderr.write(
+      `${kind}: ${err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err)}\n`,
+    );
+  };
+  process.on('uncaughtException', captureFatal('uncaughtException'));
+  process.on('unhandledRejection', captureFatal('unhandledRejection'));
+
   agentInfo.set(
     {
       node_name: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? 'agent',
