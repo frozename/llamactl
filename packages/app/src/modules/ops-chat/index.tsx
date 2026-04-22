@@ -71,6 +71,33 @@ type TranscriptMessage =
 
 type Mode = 'stub' | 'llm';
 
+/**
+ * Canned prompts — seed examples that give operators an instant
+ * sense of what this module can do. Kept intentionally short; the
+ * chip strip has to stay one-line on a 1280px window.
+ */
+const CANNED_PROMPTS: Array<{ label: string; prompt: string }> = [
+  {
+    label: 'Audit fleet health',
+    prompt:
+      'Check every node for unhealthy providers and suggest fixes. Read-only — do not apply anything yet.',
+  },
+  {
+    label: "Today's AI spend",
+    prompt:
+      'Pull llamactl.cost.snapshot for today and summarize the top 3 spenders by provider.',
+  },
+  {
+    label: 'Promote top 3 models',
+    prompt:
+      'Using the bench results, promote the top 3 models by tokens/sec on macbook-pro-48g to the best/vision/balanced presets.',
+  },
+  {
+    label: 'List installed vision models',
+    prompt: 'List every vision-capable model installed on the control plane.',
+  },
+];
+
 const DEFAULT_CATALOG: Array<{
   name: string;
   description: string;
@@ -722,6 +749,23 @@ export default function OpsChat(): React.JSX.Element {
       </details>
 
       <div className="border-t border-[color:var(--color-border)] p-3 space-y-2">
+        <div
+          className="flex flex-wrap items-center gap-1"
+          data-testid="ops-chat-canned-prompts"
+        >
+          {CANNED_PROMPTS.map((cp, i) => (
+            <button
+              key={cp.label}
+              type="button"
+              onClick={() => setDraft(cp.prompt)}
+              disabled={streaming}
+              data-testid={`ops-chat-canned-${i}`}
+              className="rounded-full border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)] disabled:opacity-40"
+            >
+              {cp.label}
+            </button>
+          ))}
+        </div>
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}

@@ -10,6 +10,7 @@ import type {
   OpsChatStreamEvent,
   OpsChatStepOutcome,
 } from './loop-schema.js';
+import { checkRefusal } from './refusals.js';
 
 /**
  * N.4 Phase 1 — server-side loop executor for Ops Chat.
@@ -153,6 +154,15 @@ export async function* runLoopExecutor(
   opts.signal?.addEventListener('abort', abortHandler);
 
   try {
+    // Goal-pattern refusal fires before the planner ever runs. A
+    // match here short-circuits the entire loop — the planner is
+    // never consulted, no tools are offered, no audit entries land.
+    const refusal = checkRefusal(opts.goal);
+    if (refusal) {
+      yield { type: 'refusal', reason: refusal.reason };
+      return;
+    }
+
     let iteration = 0;
     while (iteration < maxIterations) {
       if (opts.signal?.aborted) break;

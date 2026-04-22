@@ -77,6 +77,12 @@ export {
   type OpsChatStepOutcome,
 } from './ops-chat/loop-schema.js';
 export {
+  checkRefusal,
+  normalizeGoal,
+  DEFAULT_REFUSAL_RULES,
+  type RefusalMatch,
+} from './ops-chat/refusals.js';
+export {
   createDockerBackend,
   DockerBackend,
   type DockerBackendOptions,

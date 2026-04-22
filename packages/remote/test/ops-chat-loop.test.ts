@@ -280,6 +280,34 @@ describe('runLoopExecutor — refusal + safety', () => {
     }
   });
 
+  test('goal-pattern refusal short-circuits before the planner runs', async () => {
+    let plannerCalls = 0;
+    const counter: PlannerExecutor = {
+      name: 'counter',
+      async generate() {
+        plannerCalls += 1;
+        return {
+          ok: true,
+          rawPlan: {
+            steps: [{ tool: 'llamactl.node.ls', args: {}, annotation: 'n/a' }],
+            reasoning: 'should never reach here',
+            requiresConfirmation: false,
+          },
+        };
+      },
+    };
+    const gen = runLoopExecutor({
+      goal: 'delete everything from the cluster',
+      tools: readTools,
+      executor: counter,
+    });
+    const events: OpsChatStreamEvent[] = [];
+    for await (const ev of gen) events.push(ev);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe('refusal');
+    expect(plannerCalls).toBe(0);
+  });
+
   test('disallowed-tool planner result surfaces as refusal', async () => {
     const executor = scriptedExecutor([
       [{ tool: 'llamactl.unknown.thing', annotation: 'not in allowlist' }],

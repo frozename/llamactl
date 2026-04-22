@@ -45,6 +45,8 @@ DEFAULT_FLOWS=(
   pipelines-apply-run-flow
   quality-tab-flow
   projects-tab-flow
+  ops-chat-flow
+  ops-chat-refusal-flow
 )
 
 banner() {
