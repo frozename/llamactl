@@ -78,13 +78,31 @@ describe('@llamactl/mcp read surface', () => {
     // Also assert that every llamactl.* tool (minus the two we
     // intentionally skip today) is wired into the Ops Chat dispatch.
     // Drift here = N.4 UI 404s on a tool the MCP server advertises.
+    //
+    // `MCP_ONLY_EXCLUDED` = MCP tools NOT in ops-chat dispatch (pure
+    // external-client surface).
+    // `OPS_CHAT_ONLY_EXCLUDED` = ops-chat tools NOT yet exposed as
+    // MCP server tools (the Phase 2 project.* surfaces land in MCP
+    // during Phase 3; renderer Ops Chat speaks tRPC directly and
+    // doesn't need the MCP round-trip).
     const { KNOWN_OPS_CHAT_TOOLS } = await import('@llamactl/remote');
-    const INTENTIONALLY_EXCLUDED = new Set([
+    const MCP_ONLY_EXCLUDED = new Set([
       'llamactl.embersynth.sync',
       'llamactl.embersynth.set-default-profile',
     ]);
-    const mcpEligible = names.filter((n) => !INTENTIONALLY_EXCLUDED.has(n)).sort();
-    expect(mcpEligible).toEqual([...KNOWN_OPS_CHAT_TOOLS].sort());
+    const OPS_CHAT_ONLY_EXCLUDED = new Set([
+      'llamactl.project.apply',
+      'llamactl.project.get',
+      'llamactl.project.index',
+      'llamactl.project.list',
+      'llamactl.project.remove',
+      'llamactl.project.resolveRouting',
+    ]);
+    const mcpEligible = names.filter((n) => !MCP_ONLY_EXCLUDED.has(n)).sort();
+    const opsChatEligible = [...KNOWN_OPS_CHAT_TOOLS]
+      .filter((n) => !OPS_CHAT_ONLY_EXCLUDED.has(n))
+      .sort();
+    expect(mcpEligible).toEqual(opsChatEligible);
 
     expect(names).toEqual([
       'llamactl.bench.compare',

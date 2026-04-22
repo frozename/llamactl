@@ -29,6 +29,7 @@ import { runArtifacts } from './commands/artifacts.js';
 import { runCostGuardian } from './commands/cost-guardian.js';
 import { runPlan } from './commands/plan.js';
 import { runInfra } from './commands/infra.js';
+import { runProject } from './commands/project.js';
 import { runTunnel } from './commands/tunnel.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
@@ -155,6 +156,12 @@ Declarative workloads (Kubernetes-style):
       [--cite] [--json]                         emits a structured doc.
   llamactl rag pipeline <subcommand>           Apply + run declarative RAG
       apply | run | list | get | rm | logs     ingestion pipelines.
+  llamactl project <subcommand>                Register a local filesystem
+      add | apply | list | get | rm            project with optional RAG
+      index | route                            target + task-kind → routing
+                                               policy. \`index\` auto-wires
+                                               a RagPipeline; \`route\`
+                                               shows the resolved target.
 
 Agentic operations:
   llamactl runbook list                       Enumerate operator runbooks
@@ -268,6 +275,8 @@ async function main(argv: string[]): Promise<number> {
       return runArtifacts(rest);
     case 'infra':
       return runInfra(rest);
+    case 'project':
+      return runProject(rest);
     case 'tunnel':
       return runTunnel(rest);
     case undefined:
