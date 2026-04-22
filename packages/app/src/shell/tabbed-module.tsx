@@ -97,7 +97,7 @@ export function TabbedModule({
       <div className="relative flex-1 overflow-hidden">
         <Suspense
           fallback={
-            <div className="p-6 text-xs text-[color:var(--color-fg-muted)]">Loading\u2026</div>
+            <div className="p-6 text-xs text-[color:var(--color-fg-muted)]">Loading…</div>
           }
         >
           {tabs.map((tab) => {

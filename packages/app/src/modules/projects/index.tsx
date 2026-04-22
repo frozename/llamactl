@@ -524,7 +524,7 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
                 onChange={(e) => setRagNode(e.target.value)}
                 className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg)]"
               >
-                <option value="">\u2014 skip RAG binding \u2014</option>
+                <option value="">— skip RAG binding —</option>
                 {ragNodes.map((n) => (
                   <option key={n.name} value={n.name}>{n.name}</option>
                 ))}
@@ -550,13 +550,13 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
             data-testid="projects-create-submit"
             className="rounded border border-[var(--color-accent)] bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg-inverted)] disabled:opacity-40"
           >
-            {apply.isPending ? 'Creating\u2026' : compact ? 'Add' : 'Create project'}
+            {apply.isPending ? 'Creating…' : compact ? 'Add' : 'Create project'}
           </button>
           {status.kind === 'error' && (
             <span className="text-[11px] text-[color:var(--color-danger)]">{status.message}</span>
           )}
           {status.kind === 'ok' && (
-            <span className="text-[11px] text-[color:var(--color-success)]">\u2713 {status.message}</span>
+            <span className="text-[11px] text-[color:var(--color-success)]">✓ {status.message}</span>
           )}
         </div>
       </div>

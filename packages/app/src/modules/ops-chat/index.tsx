@@ -209,7 +209,7 @@ function ProposalBubble({
                 data-testid={`ops-chat-step-${iteration}-preview`}
                 className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] disabled:opacity-50"
               >
-                {state === 'previewing' ? 'Running\u2026' : 'Preview (dry)'}
+                {state === 'previewing' ? 'Running…' : 'Preview (dry)'}
               </button>
             )}
             <button
@@ -229,7 +229,7 @@ function ProposalBubble({
               }
             >
               {state === 'running-wet'
-                ? 'Running\u2026'
+                ? 'Running…'
                 : tier === 'read'
                   ? 'Run'
                   : 'Run (wet)'}
@@ -281,8 +281,8 @@ function OutcomePanel({
       data-ok={outcome.ok ? 'true' : 'false'}
     >
       <div className="text-[color:var(--color-fg-muted)]">
-        {outcome.ok ? '\u2713 ok' : '\u2717 failed'} \u00b7 {outcome.durationMs}ms
-        {kind === 'preview' ? ' \u00b7 dry-run' : ''}
+        {outcome.ok ? '✓ ok' : '✗ failed'} · {outcome.durationMs}ms
+        {kind === 'preview' ? ' · dry-run' : ''}
       </div>
       {outcome.ok ? (
         <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap font-mono">
@@ -662,7 +662,7 @@ export default function OpsChat(): React.JSX.Element {
                 data-testid={`ops-chat-done-${msg.id}`}
               >
                 <div className="rounded-2xl bg-[color:var(--color-surface-2)] px-3 py-1 text-[10px] text-[color:var(--color-fg-muted)]">
-                  Loop closed \u00b7 {msg.iterations} iteration{msg.iterations === 1 ? '' : 's'}
+                  Loop closed · {msg.iterations} iteration{msg.iterations === 1 ? '' : 's'}
                 </div>
               </div>
             );
@@ -680,7 +680,7 @@ export default function OpsChat(): React.JSX.Element {
         {streaming && !messages.some((m) => m.kind === 'proposal' && m.state === 'pending') && (
           <div className="flex justify-start" data-testid="ops-chat-pending">
             <div className="rounded-2xl bg-[color:var(--color-surface-2)] px-3 py-2 text-xs text-[color:var(--color-fg-muted)]">
-              Planning\u2026
+              Planning…
             </div>
           </div>
         )}
@@ -720,7 +720,7 @@ export default function OpsChat(): React.JSX.Element {
                       : 'text-[color:var(--color-danger)]'
                   }
                 >
-                  {entry.ok ? '\u2713' : '\u2717'}
+                  {entry.ok ? '✓' : '✗'}
                 </span>
                 <span className="text-[color:var(--color-fg)]">{entry.tool}</span>
                 {entry.dryRun && (
@@ -780,7 +780,7 @@ export default function OpsChat(): React.JSX.Element {
             messages.length === 0
               ? 'e.g. list installed vision models'
               : streaming
-                ? 'Waiting for next proposal\u2026'
+                ? 'Waiting for next proposal…'
                 : 'Start a new conversation by clicking "New conversation"'
           }
           disabled={streaming}
@@ -795,10 +795,10 @@ export default function OpsChat(): React.JSX.Element {
             data-testid="ops-chat-submit"
             className="rounded border border-[color:var(--color-border)] bg-[var(--color-accent)] text-[color:var(--color-fg-inverted)] px-3 py-1 text-sm font-medium shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {streaming ? 'Streaming\u2026' : messages.length === 0 ? 'Plan' : 'Send'}
+            {streaming ? 'Streaming…' : messages.length === 0 ? 'Plan' : 'Send'}
           </button>
           <span className="text-[10px] text-[color:var(--color-fg-muted)]">
-            \u2318/Ctrl+Enter to send \u00b7 {messages.length} message{messages.length === 1 ? '' : 's'}
+            ⌘/Ctrl+Enter to send · {messages.length} message{messages.length === 1 ? '' : 's'}
           </span>
         </div>
       </div>
@@ -811,5 +811,5 @@ function summarizeOutcome(outcome: ToolCallOutcome): string {
     return `error ${outcome.error?.code ?? 'unknown'}: ${outcome.error?.message ?? '(no message)'}`;
   }
   const json = JSON.stringify(outcome.result);
-  return json.length > 500 ? `ok (${json.length} bytes): ${json.slice(0, 500)}\u2026` : `ok: ${json}`;
+  return json.length > 500 ? `ok (${json.length} bytes): ${json.slice(0, 500)}…` : `ok: ${json}`;
 }

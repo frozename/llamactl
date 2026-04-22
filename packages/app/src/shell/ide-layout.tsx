@@ -39,7 +39,7 @@ export function IDELayout(): React.JSX.Element {
         <main className="relative flex-1 overflow-hidden bg-[var(--color-surface-0)]">
           <Suspense
             fallback={
-              <div className="p-6 text-[color:var(--color-fg-muted)]">Loading\u2026</div>
+              <div className="p-6 text-[color:var(--color-fg-muted)]">Loading…</div>
             }
           >
             {APP_MODULES.map((m) => {

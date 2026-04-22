@@ -184,7 +184,7 @@ export function CommandPalette({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Type a command\u2026"
+            placeholder="Type a command…"
             data-testid="command-palette-input"
             className="w-full bg-transparent px-2 py-1.5 text-sm text-[color:var(--color-fg)] outline-none placeholder:text-[color:var(--color-fg-muted)]"
           />

@@ -168,11 +168,11 @@ export function StatusBar(): React.JSX.Element {
           type="button"
           onClick={() => setPaletteOpen(true)}
           className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-[var(--color-surface-2)]"
-          title="Open command palette (\u2318\u21E7P)"
+          title="Open command palette (⌘⇧P)"
           data-testid="status-bar-cmd-palette"
         >
           <Command size={10} />
-          <span>\u2318\u21E7P</span>
+          <span>⌘⇧P</span>
         </button>
         <span
           className="px-1.5 py-0.5"
