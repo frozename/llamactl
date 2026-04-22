@@ -83,6 +83,10 @@ export async function runAgent(args: string[]): Promise<number> {
       const { runAgentUpdate } = await import('./agent-update.js');
       return runAgentUpdate(rest);
     }
+    case 'rollback': {
+      const { runAgentRollback } = await import('./agent-rollback.js');
+      return runAgentRollback(rest);
+    }
     case 'rpc-doctor': {
       const { runRpcDoctor } = await import('./agent-rpc-doctor.js');
       return runRpcDoctor(rest);

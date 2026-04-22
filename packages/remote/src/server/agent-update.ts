@@ -154,3 +154,88 @@ function jsonError(status: number, message: string): Response {
     headers: { 'content-type': 'application/json' },
   });
 }
+
+export interface AgentRollbackOptions {
+  tokenHash: string;
+  selfPath?: string;
+  exitAfter?: boolean;
+}
+
+export interface AgentRollbackResult {
+  ok: boolean;
+  /** Path that was restored. */
+  restoredAt: string;
+  /** Hash of the binary now at `installedAt` (the restored .previous). */
+  newSha256: string;
+  /** Hash of the binary that was rolled out (was at `installedAt`,
+   *  now overwritten — we don't keep a `.previous.previous`). */
+  rolledOutSha256: string;
+  message?: string;
+}
+
+/**
+ * Companion to `handleAgentUpdate` — restores `<execPath>.previous`
+ * over the running binary + exits 0 so launchd respawns the prior
+ * version. Same auth + bookkeeping; returns the hashes so the
+ * operator confirms which build is now in place.
+ *
+ * Bidirectional: calling rollback again flips back to the OTHER
+ * version, since the in-place rename swaps. That's fine — the
+ * symmetry makes "I pushed a bad build, fix it" a single repeated
+ * command if the network blips.
+ */
+export async function handleAgentRollback(
+  req: Request,
+  opts: AgentRollbackOptions,
+): Promise<Response> {
+  if (req.method !== 'POST') {
+    return new Response('method not allowed', { status: 405 });
+  }
+  if (!verifyBearer(req, opts.tokenHash)) {
+    return new Response('unauthorized', {
+      status: 401,
+      headers: { 'www-authenticate': 'Bearer realm="llamactl-agent"' },
+    });
+  }
+
+  const selfPath = opts.selfPath ?? process.execPath;
+  const previousPath = `${selfPath}.previous`;
+  if (!existsSync(selfPath)) {
+    return jsonError(500, `selfPath does not exist: ${selfPath}`);
+  }
+  if (!existsSync(previousPath)) {
+    return jsonError(409, `no previous binary at ${previousPath} — nothing to roll back to`);
+  }
+
+  const rolledOutSha = sha256OfFile(selfPath);
+  const restoredSha = sha256OfFile(previousPath);
+  const swapStaging = `${selfPath}.swap`;
+
+  try {
+    // Three-way swap: current → swap, previous → current, swap → previous.
+    // Symmetric so a second rollback flips back without losing either binary.
+    renameSync(selfPath, swapStaging);
+    renameSync(previousPath, selfPath);
+    renameSync(swapStaging, previousPath);
+    chmodSync(selfPath, 0o755);
+  } catch (err) {
+    return jsonError(500, `rollback-failed: ${(err as Error).message}`);
+  }
+
+  const result: AgentRollbackResult = {
+    ok: true,
+    restoredAt: selfPath,
+    newSha256: restoredSha,
+    rolledOutSha256: rolledOutSha,
+  };
+  const body = JSON.stringify(result);
+
+  if (opts.exitAfter !== false) {
+    setTimeout(() => process.exit(0), 200);
+  }
+
+  return new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}

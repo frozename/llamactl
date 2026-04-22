@@ -20,7 +20,7 @@ import {
   type InstallScriptHandlerOptions,
 } from './install-script.js';
 import { handleArtifact, type ArtifactsHandlerOptions } from './artifacts.js';
-import { handleAgentUpdate } from './agent-update.js';
+import { handleAgentRollback, handleAgentUpdate } from './agent-update.js';
 import { handleRagChatCompletions } from './rag-chat-endpoint.js';
 import { handleTunnelRelay } from './tunnel-relay.js';
 import {
@@ -247,6 +247,12 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // plane; never exposed unauthenticated.
     if (url.pathname === '/agent/update') {
       return handleAgentUpdate(req, { tokenHash: opts.tokenHash });
+    }
+    // Companion to /agent/update — restores `<execPath>.previous`
+    // over the running binary + exits 0 so launchd respawns the
+    // prior version. Symmetric: calling it twice flips back.
+    if (url.pathname === '/agent/rollback') {
+      return handleAgentRollback(req, { tokenHash: opts.tokenHash });
     }
     // Prometheus scrape endpoint. Bearer-auth'd like everything else;
     // scrapers can set the standard Authorization header.
