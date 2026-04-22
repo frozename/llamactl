@@ -1,4 +1,5 @@
 import { discovery } from '@llamactl/core';
+import { getNodeClient, isLocalDispatch } from '../dispatcher.js';
 
 function padRight(value: string, width: number): string {
   return value.length >= width ? value : value + ' '.repeat(width - value.length);
@@ -35,11 +36,21 @@ export async function runDiscover(args: string[]): Promise<number> {
   const limitArg = args[2];
   const limit = limitArg ? Number.parseInt(limitArg, 10) : undefined;
 
-  const result = await discovery.discover({
-    filter,
-    requestedProfile,
-    limit,
-  });
+  // Honor --node: the agent's `discover` procedure scans HF + classifies
+  // results against the target node's machine profile, so the
+  // catalog/fit columns line up with the node where the model would
+  // actually run. Local dispatch keeps the original in-process call.
+  const result = !isLocalDispatch()
+    ? await getNodeClient().discover.query({
+        ...(filter !== undefined ? { filter } : {}),
+        ...(requestedProfile !== undefined ? { profile: requestedProfile } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      })
+    : await discovery.discover({
+        filter,
+        requestedProfile,
+        limit,
+      });
 
   if (!result) {
     process.stderr.write('Unable to fetch Hugging Face discovery feed\n');

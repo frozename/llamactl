@@ -1,4 +1,5 @@
 import { recommendations } from '@llamactl/core';
+import { getNodeClient, isLocalDispatch } from '../dispatcher.js';
 
 function padRight(value: string, width: number): string {
   return value.length >= width ? value : value + ' '.repeat(width - value.length);
@@ -34,7 +35,27 @@ export async function runRecommendations(args: string[]): Promise<number> {
     return 0;
   }
 
-  const profiles = recommendations.expandRequestedProfile(args[0]);
+  const requested = args[0] ?? 'current';
+
+  // Honor --node: when remote, the agent's `recommendations` tRPC
+  // procedure resolves the profile against the target node's own
+  // hardware (so `--node mac-mini recommendations current` reports
+  // `mac-mini-16g`, not the MacBook's profile). Falls back to local
+  // for the no-node and local-node paths.
+  if (!isLocalDispatch()) {
+    const blocks = await getNodeClient().recommendations.query(requested);
+    for (const block of blocks) {
+      process.stdout.write(`profile=${block.profile}\n`);
+      for (const row of block.rows) {
+        process.stdout.write(`${formatRow(row)}\n`);
+        if (row.hf) process.stdout.write(`             hf=${row.hf}\n`);
+      }
+      process.stdout.write('\n');
+    }
+    return 0;
+  }
+
+  const profiles = recommendations.expandRequestedProfile(requested);
 
   for (let i = 0; i < profiles.length; i += 1) {
     const profile = profiles[i];
