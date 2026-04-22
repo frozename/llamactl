@@ -84,4 +84,8 @@ jobs:
           NOVA_DIR: ${{ github.workspace }}/nova
           SIRIUS_DIR: ${{ github.workspace }}/sirius-gateway
           EMBERSYNTH_DIR: ${{ github.workspace }}/embersynth
+          # GitHub's hosted macOS runners block multicast, so the
+          # mDNS discovery tests time out there. The test suite has
+          # a dedicated skip env var for exactly this case.
+          LLAMACTL_SKIP_MDNS_TESTS: '1'
         run: bash scripts/smoke-cross-repo.sh
