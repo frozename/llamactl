@@ -58,6 +58,25 @@ export {
   type OpsChatAuditEntry,
 } from './ops-chat/audit.js';
 export {
+  runLoopExecutor,
+  submitOutcome as submitOpsChatStepOutcome,
+  sessionCount as opsChatSessionCount,
+  resetSessions as resetOpsChatSessions,
+  type LoopExecutorOptions,
+} from './ops-chat/loop-executor.js';
+export {
+  OpsChatStreamEventSchema,
+  OpsChatPlanProposedSchema,
+  OpsChatRefusalSchema,
+  OpsChatDoneSchema,
+  OpsChatStepOutcomeSchema,
+  type OpsChatStreamEvent,
+  type OpsChatPlanProposed,
+  type OpsChatRefusal,
+  type OpsChatDone,
+  type OpsChatStepOutcome,
+} from './ops-chat/loop-schema.js';
+export {
   createDockerBackend,
   DockerBackend,
   type DockerBackendOptions,

@@ -2260,6 +2260,130 @@ export const router = t.router({
     )
     .query(({ input }) => readOpsChatAudit({ limit: input.limit })),
 
+  /**
+   * N.4 Phase 1 — streaming Ops Chat loop.
+   *
+   * The subscription calls `runPlanner` per iteration, emits one
+   * step at a time as `plan_proposed`, and blocks each iteration
+   * until the caller posts an outcome via
+   * `operatorSubmitStepOutcome`. Re-planning uses the accumulated
+   * outcome transcript as additional context so the model can
+   * adapt (retry on failure, pivot when a tool returns unexpected
+   * data, terminate early when the goal is met).
+   *
+   * The one-shot `operatorPlan` mutation above is preserved for CLI
+   * callers that just want a plan back without the approval loop.
+   */
+  operatorChatStream: t.procedure
+    .input(
+      z.object({
+        goal: z.string().min(1),
+        context: z.string().optional(),
+        mode: z.enum(['stub', 'llm']).optional(),
+        model: z.string().optional(),
+        baseUrl: z.string().optional(),
+        apiKeyEnv: z.string().optional(),
+        tools: z
+          .array(
+            z.object({
+              name: z.string().min(1),
+              description: z.string(),
+              tier: z.enum(['read', 'mutation-dry-run-safe', 'mutation-destructive']),
+            }),
+          )
+          .optional(),
+        history: z
+          .array(
+            z.object({
+              role: z.enum(['user', 'assistant']),
+              text: z.string(),
+            }),
+          )
+          .optional(),
+        maxIterations: z.number().int().positive().max(20).optional(),
+      }),
+    )
+    .subscription(async function* ({ input, signal }) {
+      const { runLoopExecutor } = await import('./ops-chat/loop-executor.js');
+      const mode = input.mode ?? 'stub';
+      let executor: PlannerExecutor = stubPlannerExecutor;
+      if (mode === 'llm') {
+        if (!input.model) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'model is required when mode=llm',
+          });
+        }
+        const env = input.apiKeyEnv ?? 'OPENAI_API_KEY';
+        const apiKey = process.env[env];
+        if (!apiKey) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `env var ${env} is empty — set it or switch to mode=stub`,
+          });
+        }
+        const provider = createOpenAICompatProvider({
+          name: 'planner-llm',
+          baseUrl: input.baseUrl ?? 'https://api.openai.com/v1',
+          apiKey,
+        });
+        executor = createLlmExecutor({ provider, model: input.model });
+      }
+      const callerTools: PlannerToolDescriptor[] = (input.tools ?? []).map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: { type: 'object' },
+        tier: tool.tier,
+      }));
+      const plannerTools = mergePlannerTools(callerTools, BUILT_IN_PLANNER_TOOLS);
+      const stream = runLoopExecutor({
+        goal: input.goal,
+        context: input.context,
+        history: input.history,
+        tools: plannerTools,
+        executor,
+        allowlist: DEFAULT_ALLOWLIST,
+        maxIterations: input.maxIterations,
+        signal,
+      });
+      for await (const event of stream) {
+        if (signal?.aborted) break;
+        yield event;
+      }
+    }),
+
+  /**
+   * Companion mutation to `operatorChatStream`. The caller runs the
+   * proposed tool (via `operatorRunTool`), summarizes the outcome,
+   * and posts it back here so the streaming loop's pending Deferred
+   * resolves. Returns `{ ok: false, reason: 'stale' }` if the
+   * session is gone or the stepId no longer matches — safe to
+   * retry with an updated stepId.
+   */
+  operatorSubmitStepOutcome: t.procedure
+    .input(
+      z.object({
+        sessionId: z.string().min(1),
+        stepId: z.string().min(1),
+        ok: z.boolean(),
+        summary: z.string(),
+        abort: z.boolean().default(false),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { submitOutcome } = await import('./ops-chat/loop-executor.js');
+      const delivered = submitOutcome({
+        sessionId: input.sessionId,
+        stepId: input.stepId,
+        ok: input.ok,
+        summary: input.summary,
+        abort: input.abort,
+      });
+      return delivered
+        ? ({ ok: true as const } as const)
+        : ({ ok: false as const, reason: 'stale' as const } as const);
+    }),
+
   // ---- RAG (retrieval) --------------------------------------------------
   //
   // Each procedure opens a RetrievalProvider per call and closes it in
