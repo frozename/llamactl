@@ -79,6 +79,10 @@ export async function runAgent(args: string[]): Promise<number> {
       const { runAgentInstallLaunchd } = await import('./agent-install/index.js');
       return runAgentInstallLaunchd(rest);
     }
+    case 'update': {
+      const { runAgentUpdate } = await import('./agent-update.js');
+      return runAgentUpdate(rest);
+    }
     case 'rpc-doctor': {
       const { runRpcDoctor } = await import('./agent-rpc-doctor.js');
       return runRpcDoctor(rest);

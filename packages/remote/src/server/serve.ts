@@ -20,6 +20,7 @@ import {
   type InstallScriptHandlerOptions,
 } from './install-script.js';
 import { handleArtifact, type ArtifactsHandlerOptions } from './artifacts.js';
+import { handleAgentUpdate } from './agent-update.js';
 import { handleRagChatCompletions } from './rag-chat-endpoint.js';
 import { handleTunnelRelay } from './tunnel-relay.js';
 import {
@@ -238,6 +239,14 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // TLS with caching is a convenience, not a privilege).
     if (url.pathname.startsWith('/artifacts/')) {
       return handleArtifact(req, url, opts.artifactsOptions ?? {});
+    }
+    // Agent self-update endpoint — bearer-auth'd POST that takes a
+    // raw binary body + X-Sha256 header, atomic-replaces the running
+    // binary, and exits so launchd respawns into the new build.
+    // Used by `llamactl agent update --node <n>` from the control
+    // plane; never exposed unauthenticated.
+    if (url.pathname === '/agent/update') {
+      return handleAgentUpdate(req, { tokenHash: opts.tokenHash });
     }
     // Prometheus scrape endpoint. Bearer-auth'd like everything else;
     // scrapers can set the standard Authorization header.
