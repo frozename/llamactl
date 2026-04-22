@@ -55,6 +55,11 @@ Subcommands:
       to dispatch through the rpcServerDoctor tRPC procedure on a
       remote node. --json emits the raw result for tooling. Exit 0 on
       ok, 1 otherwise.
+  cli <subcommand>
+      CLI subscription backends (claude-pro, codex-plus, etc.). See
+      'llamactl agent cli --help' for subcommands. Today: \`doctor\`
+      probes every declared binding and reports health; exit 2 when
+      any binding is unhealthy (CI quality-gate semantics).
 
 All state lives under \$LLAMACTL_AGENT_DIR or \$DEV_STORAGE or ~/.llamactl.
 `;
@@ -77,6 +82,10 @@ export async function runAgent(args: string[]): Promise<number> {
     case 'rpc-doctor': {
       const { runRpcDoctor } = await import('./agent-rpc-doctor.js');
       return runRpcDoctor(rest);
+    }
+    case 'cli': {
+      const { runAgentCli } = await import('./cli-doctor.js');
+      return runAgentCli(rest);
     }
     case undefined:
     case '--help':

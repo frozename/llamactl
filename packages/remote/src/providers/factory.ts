@@ -107,6 +107,13 @@ export function providerForNode(opts: {
         `provider-kind node '${node.name}' requires opts.cfg to resolve its parent gateway`,
       );
     }
+    // CLI subscription backend — the virtual node synthesizes from an
+    // agent's `cli:[]` binding, NOT a gateway's cloud binding. Dispatch
+    // to the subprocess adapter; the parent "gateway" in this binding
+    // is actually the hosting agent.
+    if (node.provider.source === 'cli') {
+      return buildCliProviderForNode({ node, cfg, env });
+    }
     const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
     const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
     const parent = cluster?.nodes.find((n) => n.name === node.provider!.gateway);
@@ -142,6 +149,57 @@ export function providerForNode(opts: {
     baseUrl,
     apiKey: token,
     ...(fetchImpl ? { fetch: fetchImpl as typeof globalThis.fetch } : {}),
+  });
+}
+
+/**
+ * Walk from a CLI-synthesis virtual node back to its hosting
+ * agent's `cli[]` binding and materialize a `CliSubprocessAdapter`.
+ * The subprocess runs on the agent's own machine (where the CLI
+ * is authenticated); this function just wires the binding into
+ * the provider construction.
+ */
+function buildCliProviderForNode(opts: {
+  node: ClusterNode;
+  cfg: Config;
+  env: NodeJS.ProcessEnv;
+}): AiProvider {
+  const { node, cfg, env } = opts;
+  if (!node.provider) {
+    throw new Error(`cli-source provider-kind node '${node.name}' missing provider{}`);
+  }
+  const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
+  const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
+  const agent = cluster?.nodes.find(
+    (n) => n.name === node.provider!.gateway && resolveNodeKind(n) === 'agent',
+  );
+  if (!agent) {
+    throw new Error(
+      `cli-source provider-kind node '${node.name}': parent agent '${node.provider.gateway}' not found`,
+    );
+  }
+  const binding = agent.cli?.find((b) => b.name === node.provider!.providerName);
+  if (!binding) {
+    throw new Error(
+      `cli-source provider-kind node '${node.name}': binding '${node.provider.providerName}' not declared on agent '${agent.name}'`,
+    );
+  }
+  // Dynamic import avoids pulling the cli/ module into consumers
+  // that never touch a CLI binding. The subprocess adapter ships
+  // its own Bun.spawn dependency — don't force that surface onto
+  // every factory caller.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createCliSubprocessProvider } = require('../cli/adapter.js') as {
+    createCliSubprocessProvider: (o: {
+      agentName: string;
+      binding: typeof binding;
+      env?: NodeJS.ProcessEnv;
+    }) => AiProvider;
+  };
+  return createCliSubprocessProvider({
+    agentName: agent.name,
+    binding,
+    env,
   });
 }
 

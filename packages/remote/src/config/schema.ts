@@ -60,6 +60,55 @@ export const CloudBindingSchema = z.object({
 export type CloudBinding = z.infer<typeof CloudBindingSchema>;
 
 /**
+ * CLI subscription backends — `claude -p`, `codex exec`, `gemini -p`
+ * etc. Each binding describes one CLI tool the hosting agent can
+ * spawn on its own machine to answer a chat request. The machine
+ * that runs the subprocess MUST be where the CLI is logged in, so
+ * CLI bindings live on `kind: 'agent'` nodes and synthesize as
+ * virtual `kind: 'provider'` nodes named `<agent>.<cli-name>`.
+ *
+ * `preset` picks a canned argv template + output parser for known
+ * CLIs; `command` + `args` are available when the operator needs a
+ * custom invocation. `{{prompt}}` in `args` is substituted with the
+ * serialized chat prompt at call time.
+ *
+ * Subscriptions are flat-fee — there's no per-call dollar price to
+ * track. Instead the cli-journal counts calls + prompt/response
+ * bytes so cost-guardian can warn when a subscription is being
+ * hammered. `subscription` is an operator-picked stable label that
+ * groups calls across agents (e.g. "claude-pro-alex").
+ */
+export const CliPresetSchema = z.enum(['claude', 'codex', 'gemini', 'custom']);
+export type CliPreset = z.infer<typeof CliPresetSchema>;
+
+export const CliBindingSchema = z.object({
+  /** Local-unique inside the agent. Part of the virtual node id
+   *  `<agent.name>.<cli.name>`. Filesystem-safe shape. */
+  name: z.string().min(1).regex(/^[a-z0-9][a-z0-9-]*$/),
+  preset: CliPresetSchema.default('custom'),
+  /** Preset=custom requires `command` + `args`. For known presets
+   *  these are optional overrides of the preset defaults. */
+  command: z.string().optional(),
+  args: z.array(z.string()).optional(),
+  format: z.enum(['text', 'json']).default('text'),
+  timeoutMs: z.number().int().positive().default(120_000),
+  /** Informational routing hints — embersynth-agnostic. UIs surface
+   *  these; routing decisions use them as preference signals. */
+  advertisedModels: z.array(z.string()).default([]),
+  defaultModel: z.string().optional(),
+  capabilities: z.array(z.string()).default(['reasoning']),
+  /** Stable label the cli-journal uses to attribute calls. Operators
+   *  pick any string; cost-guardian aggregates by this key. */
+  subscription: z.string().optional(),
+  /** Extra env vars merged onto the inherited PATH-bearing env the
+   *  subprocess receives. Useful for `CLAUDE_MODEL=...` style hints
+   *  a CLI reads from env. Values may be secret refs resolved via
+   *  the shared secret resolver. */
+  env: z.record(z.string(), z.string()).optional(),
+});
+export type CliBinding = z.infer<typeof CliBindingSchema>;
+
+/**
  * Node taxonomy:
  *
  *   * `agent`    — self-hosted llama.cpp behind an llamactl-native
@@ -172,6 +221,14 @@ export type RagBinding = z.infer<typeof RagBindingSchema>;
 export const ProviderBindingSchema = z.object({
   gateway: z.string().min(1),
   providerName: z.string().min(1),
+  /**
+   * Synthesis origin — `sirius` / `embersynth` / `cli`. Drives the
+   * factory's adapter choice: `cli` goes to the subprocess adapter
+   * for CLI subscription backends; the others fall through to the
+   * existing OpenAI-compat path. Optional for backward compat with
+   * existing sirius-synthesized virtual nodes that don't carry it.
+   */
+  source: z.enum(['sirius', 'embersynth', 'cli']).optional(),
 });
 export type ProviderBinding = z.infer<typeof ProviderBindingSchema>;
 
@@ -203,6 +260,13 @@ export const ClusterNodeSchema = z.object({
    * blocks are mutually exclusive (a node is exactly one kind).
    */
   rag: RagBindingSchema.optional(),
+  /**
+   * CLI subscription backends hosted by this agent. Only valid on
+   * `kind: 'agent'` nodes — the subprocess runs on the agent's
+   * machine where the CLI is authenticated. Each entry synthesizes
+   * as a virtual `<agent>.<cli-name>` provider-kind node.
+   */
+  cli: z.array(CliBindingSchema).optional(),
 }).refine(
   (n) => {
     // Legacy kubeconfigs may carry `kind: 'cloud'`. Treat that as
@@ -224,6 +288,10 @@ export const ClusterNodeSchema = z.object({
               : n.cloud
                 ? 'gateway'
                 : 'agent';
+    // CLI bindings only on agent nodes. Checked first so rag /
+    // gateway / provider rejection wins over their own
+    // block-specific rules when cli[] is present.
+    if (n.cli && n.cli.length > 0 && k !== 'agent') return false;
     if (k === 'rag') return !!n.rag;
     // Non-rag nodes must not carry a rag block.
     if (n.rag) return false;
@@ -233,7 +301,7 @@ export const ClusterNodeSchema = z.object({
   },
   {
     message:
-      "agent nodes require endpoint; gateway nodes require cloud{} block; provider nodes require provider{} block; rag nodes require rag{} block and must not carry cloud/provider blocks",
+      "agent nodes require endpoint; gateway nodes require cloud{} block; provider nodes require provider{} block; rag nodes require rag{} block and must not carry cloud/provider blocks; cli[] is agent-only",
   },
 );
 

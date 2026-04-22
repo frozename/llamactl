@@ -66,20 +66,39 @@ export function resolveNode(
   const direct = cluster.nodes.find((n) => n.name === nodeName);
   if (direct) return { node: direct, context, user };
 
-  // Provider-kind virtual node? Shape is `<gateway>.<providerName>`.
+  // Provider-kind virtual node? Shape is `<parent>.<leaf>`.
+  // Two flavors today:
+  //   * Gateway fanout: `<gateway>.<providerName>` — sirius or
+  //     embersynth synthesis. Falls through to the existing
+  //     cloud-compat provider path.
+  //   * Agent CLI binding: `<agent>.<cli-binding-name>` — Phase 1
+  //     of trifold-orchestrating-engelbart. Marked with
+  //     `provider.source: 'cli'` so the factory knows to build a
+  //     subprocess adapter.
   const dot = nodeName.indexOf('.');
   if (dot > 0 && dot < nodeName.length - 1) {
-    const gatewayName = nodeName.slice(0, dot);
-    const providerName = nodeName.slice(dot + 1);
-    const gateway = cluster.nodes.find((n) => n.name === gatewayName);
-    if (gateway && gateway.cloud) {
-      const virtualNode: ClusterNode = {
-        name: nodeName,
-        endpoint: '',
-        kind: 'provider',
-        provider: { gateway: gatewayName, providerName },
-      };
-      return { node: virtualNode, context, user };
+    const parentName = nodeName.slice(0, dot);
+    const leafName = nodeName.slice(dot + 1);
+    const parent = cluster.nodes.find((n) => n.name === parentName);
+    if (parent) {
+      if (parent.cloud) {
+        const virtualNode: ClusterNode = {
+          name: nodeName,
+          endpoint: '',
+          kind: 'provider',
+          provider: { gateway: parentName, providerName: leafName },
+        };
+        return { node: virtualNode, context, user };
+      }
+      if (parent.cli && parent.cli.some((b) => b.name === leafName)) {
+        const virtualNode: ClusterNode = {
+          name: nodeName,
+          endpoint: '',
+          kind: 'provider',
+          provider: { gateway: parentName, providerName: leafName, source: 'cli' },
+        };
+        return { node: virtualNode, context, user };
+      }
     }
   }
 

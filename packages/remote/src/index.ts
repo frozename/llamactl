@@ -131,3 +131,31 @@ export {
   type PerQueryResult,
   type RagSearchCaller,
 } from './rag/bench.js';
+
+// ---- CLI subscription backends (Phase 1 of trifold-orchestrating-engelbart) ----
+export {
+  createCliSubprocessProvider,
+  messagesToPrompt,
+  CLI_PRESETS,
+  resolvePreset,
+  expandArgs,
+  appendCliJournal,
+  cliJournalPathFor,
+  defaultCliJournalDir,
+  type CliProviderOptions,
+  type SpawnFn,
+  type SpawnResult,
+  type ResolvedCliInvocation,
+  type CliJournalEntry,
+} from './cli/index.js';
+export {
+  synthesizeProviderNodes,
+  parseProviderNodeName,
+  findCliBindingForNode,
+} from './config/provider-nodes.js';
+export {
+  CliBindingSchema,
+  CliPresetSchema,
+  type CliBinding,
+  type CliPreset,
+} from './config/schema.js';

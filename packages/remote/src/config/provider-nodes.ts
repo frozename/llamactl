@@ -44,7 +44,10 @@ export function synthesizeProviderNodes(
   if (!cluster) return [];
 
   const gateways = cluster.nodes.filter((n) => resolveNodeKind(n) === 'gateway');
-  if (gateways.length === 0) return [];
+  // NOTE: do not early-return here — the CLI-binding synthesis
+  // below emits virtual nodes from agent nodes, independent of
+  // whether any gateways exist. The sirius + embersynth blocks
+  // below both tolerate an empty `gateways` list.
 
   const loadSirius = loaders.loadSirius ?? loadSiriusProviders;
   const loadEmbersynth = loaders.loadEmbersynth ?? (() => loadEmbersynthConfig());
@@ -94,6 +97,29 @@ export function synthesizeProviderNodes(
     }
   }
 
+  // CLI subscription backends declared on agent nodes. Same
+  // projection shape — one virtual provider-kind node per
+  // (agent, cli-binding) pair — but the `provider.source: 'cli'`
+  // discriminator tells the factory to build a subprocess adapter
+  // instead of an OpenAI-compat one.
+  const agentsWithCli = cluster.nodes.filter(
+    (n) => resolveNodeKind(n) === 'agent' && (n.cli?.length ?? 0) > 0,
+  );
+  for (const agent of agentsWithCli) {
+    for (const binding of agent.cli ?? []) {
+      virtual.push({
+        name: `${agent.name}.${binding.name}`,
+        endpoint: '',
+        kind: 'provider',
+        provider: {
+          gateway: agent.name,
+          providerName: binding.name,
+          source: 'cli',
+        },
+      });
+    }
+  }
+
   return virtual;
 }
 
@@ -109,4 +135,31 @@ export function parseProviderNodeName(name: string): { gateway: string; provider
     gateway: name.slice(0, dot),
     providerName: name.slice(dot + 1),
   };
+}
+
+/**
+ * Find the CLI binding behind a virtual `<agent>.<cli-name>`
+ * provider-kind node. Returns the binding + its hosting agent, or
+ * null when the node doesn't resolve to a CLI binding (e.g. it's a
+ * sirius/embersynth synthesis instead). Consumers use this to
+ * decide whether to construct a `CliSubprocessAdapter` or fall
+ * back to the default cloud-compat path.
+ */
+export function findCliBindingForNode(
+  cfg: Config,
+  nodeName: string,
+): { agentName: string; binding: import('./schema.js').CliBinding } | null {
+  const parsed = parseProviderNodeName(nodeName);
+  if (!parsed) return null;
+  const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
+  if (!ctx) return null;
+  const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
+  if (!cluster) return null;
+  const agent = cluster.nodes.find(
+    (n) => n.name === parsed.gateway && resolveNodeKind(n) === 'agent',
+  );
+  if (!agent || !agent.cli) return null;
+  const binding = agent.cli.find((b) => b.name === parsed.providerName);
+  if (!binding) return null;
+  return { agentName: agent.name, binding };
 }
