@@ -50,10 +50,14 @@ Subcommands:
       it. Pipeline name: \`project-<name>\`. Requires spec.rag to be
       set; errors otherwise.
 
-  route <name> <taskKind>
+  route <name> <taskKind> [--json]
       Resolve the routing target for a task kind against a project's
-      policy. Read-only — no side effects. Prints the target plus
-      whether the policy matched explicitly.
+      policy. Full Phase 3 resolution — walks the same path dispatch
+      takes for \`project:<name>/<taskKind>\` chat nodes, including
+      budget overrides. Read-only — no side effects, no journal
+      writes. Prints target + reason (matched | fallback-default |
+      project-not-found | over-budget) with an optional budget
+      annotation when applicable. --json emits the raw envelope.
 `;
 
 export interface ProjectTestSeams {
@@ -448,7 +452,13 @@ async function runIndex(args: string[]): Promise<number> {
 // ---- route ----------------------------------------------------------
 
 async function runRoute(args: string[]): Promise<number> {
-  const [name, taskKind] = args;
+  let json = false;
+  const positional: string[] = [];
+  for (const a of args) {
+    if (a === '--json') json = true;
+    else positional.push(a);
+  }
+  const [name, taskKind] = positional;
   if (!name || name.startsWith('-')) {
     process.stderr.write(`project route: <name> is required\n\n${USAGE}`);
     return 1;
@@ -458,13 +468,29 @@ async function runRoute(args: string[]): Promise<number> {
     return 1;
   }
   try {
-    const res = await client().projectResolveRouting.query({
-      project: name,
-      taskKind,
+    // Use the Phase 3 `projectRoutePreview` path — it runs the
+    // full in-dispatch routing resolution (including budget
+    // checks when wired) against a `project:<name>/<taskKind>`
+    // node name, without journaling or firing a chat.
+    const res = await client().projectRoutePreview.query({
+      node: `project:${name}/${taskKind}`,
     });
-    const label = res.matched ? 'matched' : 'default';
+    if (json) {
+      process.stdout.write(`${JSON.stringify(res)}\n`);
+      return 0;
+    }
+    if (!res.decision) {
+      // Should be unreachable (the node prefix guarantees a decision)
+      // but keep the fallback useful.
+      process.stdout.write(`${name}/${taskKind} → ${res.node}\n`);
+      return 0;
+    }
+    const d = res.decision;
+    const budgetNote = d.budget
+      ? ` · budget ${d.budget.usdToday?.toFixed(4) ?? '?'}/${d.budget.limit?.toFixed(2) ?? '?'} USD`
+      : '';
     process.stdout.write(
-      `${name}/${taskKind} → ${res.target} (${label})\n`,
+      `${name}/${taskKind} → ${d.target} (${d.reason})${budgetNote}\n`,
     );
     return 0;
   } catch (err) {

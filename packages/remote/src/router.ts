@@ -747,8 +747,14 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
+      const { resolveProjectNodeTarget, appendProjectRoutingJournal } =
+        await import('./config/project-routing.js');
+      const route = await resolveProjectNodeTarget(input.node);
+      if (route.decision) {
+        await appendProjectRoutingJournal(route.decision);
+      }
       const cfg = kubecfg.loadConfig();
-      const resolved = kubecfg.resolveNode(cfg, input.node);
+      const resolved = kubecfg.resolveNode(cfg, route.node);
       if (resolved.node.endpoint === 'inproc://local') {
         // Local agent — short-circuit through core's openaiProxy.
         const { openaiProxy } = await import('@llamactl/core');
@@ -797,8 +803,14 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
+      const { resolveProjectNodeTarget, appendProjectRoutingJournal } =
+        await import('./config/project-routing.js');
+      const route = await resolveProjectNodeTarget(input.node);
+      if (route.decision) {
+        await appendProjectRoutingJournal(route.decision);
+      }
       const cfg = kubecfg.loadConfig();
-      const resolved = kubecfg.resolveNode(cfg, input.node);
+      const resolved = kubecfg.resolveNode(cfg, route.node);
       const { providerForNode } = await import('./providers/factory.js');
       // Local-inproc agent: same OpenAI-compat adapter, but pointed at
       // the in-process llama-server's HTTP endpoint (not the
@@ -2773,7 +2785,28 @@ export const router = t.router({
         taskKind: input.taskKind,
         target,
         matched,
+        // Additive field for Phase 3 callers — existing consumers
+        // that destructure {ok, target, matched} keep working.
+        reason: matched ? ('matched' as const) : ('fallback-default' as const),
       };
+    }),
+
+  /**
+   * Full-resolution preview that mirrors the in-dispatch routing
+   * path — parses a `project:<name>/<taskKind>` node name and
+   * returns the rewritten target + decision record WITHOUT
+   * journaling or firing the chat. The Electron routing-decisions
+   * strip uses this for live lookups when the operator hovers over
+   * a task kind in the Project detail page.
+   */
+  projectRoutePreview: t.procedure
+    .input(z.object({ node: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const { resolveProjectNodeTarget } = await import(
+        './config/project-routing.js'
+      );
+      const route = await resolveProjectNodeTarget(input.node);
+      return { ok: true as const, ...route };
     }),
 
   // ---- Composite (multi-component apply) --------------------------------

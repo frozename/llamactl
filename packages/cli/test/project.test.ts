@@ -62,6 +62,10 @@ interface StubProcs {
     taskKind: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) => Promise<any>;
+  projectRoutePreview: (i: {
+    node: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) => Promise<any>;
 }
 
 function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
@@ -114,7 +118,28 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
       taskKind,
       target: 'mac-mini.claude-pro',
       matched: true,
+      reason: 'matched',
     }),
+    projectRoutePreview: async ({ node }) => {
+      // Parse `project:<name>/<taskKind>`; stub defaults to a
+      // "matched" decision pointing at mac-mini.claude-pro so the
+      // existing CLI tests don't have to inject overrides.
+      const m = node.match(/^project:([^/]+)\/(.+)$/);
+      const project = m?.[1] ?? 'unknown';
+      const taskKind = m?.[2] ?? 'unknown';
+      return {
+        ok: true,
+        node: 'mac-mini.claude-pro',
+        decision: {
+          ts: '2026-04-22T00:00:00.000Z',
+          project,
+          taskKind,
+          target: 'mac-mini.claude-pro',
+          matched: true,
+          reason: 'matched' as const,
+        },
+      };
+    },
     ...overrides,
   };
   return {
@@ -124,6 +149,7 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
     projectRemove: { mutate: stubs.projectRemove },
     projectIndex: { mutate: stubs.projectIndex },
     projectResolveRouting: { query: stubs.projectResolveRouting },
+    projectRoutePreview: { query: stubs.projectRoutePreview },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any as NodeClient;
 }
@@ -386,7 +412,7 @@ describe('project route', () => {
     expect(cap.err).toContain('<taskKind> is required');
   });
 
-  test('prints target + matched label for a declared policy entry', async () => {
+  test('prints target + reason for a declared policy entry', async () => {
     const { result, cap } = await captureStdio(() =>
       runProject(['route', 'demo', 'quick_qna']),
     );
@@ -394,22 +420,70 @@ describe('project route', () => {
     expect(cap.out).toContain('demo/quick_qna → mac-mini.claude-pro (matched)');
   });
 
-  test('prints default label when policy falls back', async () => {
+  test('prints fallback-default reason when policy falls back', async () => {
     __setProjectTestSeams({
       nodeClient: makeStubClient({
-        projectResolveRouting: async ({ project, taskKind }) => ({
-          ok: true,
-          project,
-          taskKind,
-          target: 'private-first',
-          matched: false,
-        }),
+        projectRoutePreview: async ({ node }) => {
+          const m = node.match(/^project:([^/]+)\/(.+)$/);
+          return {
+            ok: true,
+            node: 'private-first',
+            decision: {
+              ts: '2026-04-22T00:00:00.000Z',
+              project: m?.[1] ?? '?',
+              taskKind: m?.[2] ?? '?',
+              target: 'private-first',
+              matched: false,
+              reason: 'fallback-default' as const,
+            },
+          };
+        },
       }),
     });
     const { result, cap } = await captureStdio(() =>
       runProject(['route', 'demo', 'never_heard_of']),
     );
     expect(result).toBe(0);
-    expect(cap.out).toContain('demo/never_heard_of → private-first (default)');
+    expect(cap.out).toContain(
+      'demo/never_heard_of → private-first (fallback-default)',
+    );
+  });
+
+  test('--json emits the raw decision envelope', async () => {
+    const { result, cap } = await captureStdio(() =>
+      runProject(['route', 'demo', 'quick_qna', '--json']),
+    );
+    expect(result).toBe(0);
+    const parsed = JSON.parse(cap.out.trim());
+    expect(parsed.decision.reason).toBe('matched');
+    expect(parsed.node).toBe('mac-mini.claude-pro');
+  });
+
+  test('over-budget reason surfaces the budget annotation', async () => {
+    __setProjectTestSeams({
+      nodeClient: makeStubClient({
+        projectRoutePreview: async ({ node }) => {
+          const m = node.match(/^project:([^/]+)\/(.+)$/);
+          return {
+            ok: true,
+            node: 'private-first',
+            decision: {
+              ts: '2026-04-22T00:00:00.000Z',
+              project: m?.[1] ?? '?',
+              taskKind: m?.[2] ?? '?',
+              target: 'private-first',
+              matched: true,
+              reason: 'over-budget' as const,
+              budget: { usdToday: 1.25, limit: 1.0 },
+            },
+          };
+        },
+      }),
+    });
+    const { cap } = await captureStdio(() =>
+      runProject(['route', 'demo', 'code_review']),
+    );
+    expect(cap.out).toContain('(over-budget)');
+    expect(cap.out).toContain('1.2500/1.00 USD');
   });
 });
