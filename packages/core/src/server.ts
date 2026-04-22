@@ -300,15 +300,57 @@ export interface StartServerResult {
   error?: string;
 }
 
+/**
+ * Quick pre-flight: dial the configured llama-server endpoint after
+ * we've torn down our own previous instance. If something answers
+ * within ~500ms, another process is bound to the port — return a
+ * human-readable hint so startServer can surface it before spawning
+ * a doomed llama-server. Returns null when the port looks clear.
+ */
+async function detectPortConflict(endpointUrl: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${endpointUrl}/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(500),
+    });
+    // Anything that answers means the port is taken. 200 = a stale
+    // llama-server somehow survived our stopServer; everything else
+    // = a foreign listener (Docker forwards, etc.).
+    return (
+      `port ${endpointUrl.replace(/^https?:\/\//, '')} is already bound ` +
+      `(HTTP ${res.status} on /health) \u2014 stop the foreign process ` +
+      `(try: lsof -P -iTCP:PORT) or set LLAMA_CPP_PORT to a free port`
+    );
+  } catch {
+    // Connection refused / timeout = port is free.
+    return null;
+  }
+}
+
+interface PollReadyResult {
+  outcome: 'ready' | 'exited' | 'timeout' | 'aborted';
+  /** Last HTTP status code the probe saw on the health endpoint, if
+   *  any. When `outcome === 'timeout'` and this is a non-503 code
+   *  (e.g. 401, 404), another process is almost certainly bound to
+   *  the port — startServer surfaces it in the error message so
+   *  operators don't have to guess. */
+  lastHttpCode?: string;
+  /** True when the majority of probe attempts returned the same
+   *  non-503 HTTP status — classic port-collision signature. */
+  portConflict?: boolean;
+}
+
 async function pollReady(
   pid: number,
   healthUrl: string,
   timeoutSeconds: number,
   onEvent?: (e: ServerEvent) => void,
   signal?: AbortSignal,
-): Promise<'ready' | 'exited' | 'timeout' | 'aborted'> {
+): Promise<PollReadyResult> {
+  let lastHttpCode: string | null = null;
+  let nonLoadingHttpCount = 0;
   for (let attempt = 0; attempt < timeoutSeconds; attempt += 1) {
-    if (signal?.aborted) return 'aborted';
+    if (signal?.aborted) return { outcome: 'aborted' };
     let httpCode: string | null = null;
     try {
       const res = await fetch(healthUrl, {
@@ -316,14 +358,21 @@ async function pollReady(
         signal: AbortSignal.timeout(1000),
       });
       httpCode = String(res.status);
-      if (res.status === 200) return 'ready';
+      lastHttpCode = httpCode;
+      if (res.status === 200) return { outcome: 'ready', lastHttpCode: httpCode };
+      // 503 is the documented "loading" code llama-server emits
+      // while loading the model. Any other non-200 (401/403/404)
+      // almost always means *something else* is bound to the same
+      // port and we're polling the wrong process.
       if (res.status === 503) {
         onEvent?.({ type: 'waiting', attempt, httpCode });
-      } else if (!isProcessAlive(pid)) {
-        return 'exited';
+      } else {
+        nonLoadingHttpCount += 1;
+        if (!isProcessAlive(pid)) return { outcome: 'exited', lastHttpCode: httpCode };
+        onEvent?.({ type: 'waiting', attempt, httpCode });
       }
     } catch {
-      if (!isProcessAlive(pid)) return 'exited';
+      if (!isProcessAlive(pid)) return { outcome: 'exited', lastHttpCode: lastHttpCode ?? undefined };
       onEvent?.({ type: 'waiting', attempt, httpCode });
     }
     // Interruptible sleep so SIGTERM + abort react within ~1s.
@@ -339,8 +388,15 @@ async function pollReady(
       );
     });
   }
-  if (signal?.aborted) return 'aborted';
-  return isProcessAlive(pid) ? 'timeout' : 'exited';
+  if (signal?.aborted) return { outcome: 'aborted' };
+  const alive = isProcessAlive(pid);
+  const portConflict = nonLoadingHttpCount >= Math.max(3, timeoutSeconds - 1);
+  const result: PollReadyResult = {
+    outcome: alive ? 'timeout' : 'exited',
+  };
+  if (lastHttpCode !== null) result.lastHttpCode = lastHttpCode;
+  if (portConflict) result.portConflict = true;
+  return result;
 }
 
 /**
@@ -404,6 +460,26 @@ export async function startServer(
   // Stop any existing instance — best effort.
   await stopServer({ resolved });
 
+  // Pre-flight port-collision check. After our own stopServer, the
+  // configured port should be free. If something still answers on
+  // /health, it's a foreign process (Colima docker forwards, an old
+  // Ollama, a stray docker container) and llama-server's bind would
+  // either fail silently or land on a duplicate port that the
+  // readiness probe would never resolve correctly. Fail fast with
+  // the offending HTTP code so the operator knows what to kill.
+  const portConflictHint = await detectPortConflict(endpoint(resolved));
+  if (portConflictHint) {
+    return {
+      ok: false,
+      pid: null,
+      endpoint: endpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved),
+      tunedProfile: null,
+      retried: false,
+      error: portConflictHint,
+    };
+  }
+
   mkdirSync(resolved.LLAMA_CPP_MODELS, { recursive: true });
   mkdirSync(resolved.LLAMA_CPP_CACHE, { recursive: true });
   mkdirSync(resolved.LLAMA_CPP_LOGS, { recursive: true });
@@ -464,7 +540,8 @@ export async function startServer(
 
   const timeoutSeconds = opts.timeoutSeconds ?? 60;
   const healthUrl = `${endpoint(resolved)}/health`;
-  let outcome = await pollReady(pid, healthUrl, timeoutSeconds, opts.onEvent, opts.signal);
+  let readyResult = await pollReady(pid, healthUrl, timeoutSeconds, opts.onEvent, opts.signal);
+  let outcome = readyResult.outcome;
   if (outcome === 'aborted') {
     opts.signal?.removeEventListener('abort', killOnAbort);
     killOnAbort();
@@ -506,7 +583,8 @@ export async function startServer(
       onEvent: opts.onEvent,
     });
     writeServerPid(resolved, retryPid);
-    outcome = await pollReady(retryPid, healthUrl, timeoutSeconds, opts.onEvent, opts.signal);
+    readyResult = await pollReady(retryPid, healthUrl, timeoutSeconds, opts.onEvent, opts.signal);
+    outcome = readyResult.outcome;
     retried = true;
     if (outcome === 'aborted') {
       try {
@@ -544,6 +622,14 @@ export async function startServer(
 
   if (outcome === 'timeout') {
     opts.onEvent?.({ type: 'timeout', pid });
+    // Port-collision hint: when the probe kept seeing a non-503 HTTP
+    // status on the health endpoint, something else is bound to the
+    // port and llama-server is answering nobody. Name the status
+    // code so operators can lsof / pkill the right process.
+    const conflictHint =
+      readyResult.portConflict && readyResult.lastHttpCode
+        ? ` \u2014 health endpoint returned HTTP ${readyResult.lastHttpCode} repeatedly; another process is likely bound to this port (try: lsof -P -iTCP:PORT)`
+        : '';
     return {
       ok: false,
       pid,
@@ -551,7 +637,7 @@ export async function startServer(
       advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile,
       retried,
-      error: `llama-server readiness check timed out after ${timeoutSeconds}s`,
+      error: `llama-server readiness check timed out after ${timeoutSeconds}s${conflictHint}`,
     };
   }
 

@@ -126,6 +126,34 @@ describe('server.startServer (error paths)', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/llama-server binary not found/);
   });
+
+  test('detects port collision before spawn + names the foreign HTTP code', async () => {
+    // Stand up everything past the binary check, then bind a fake
+    // HTTP server on the configured port so the pre-flight detector
+    // sees an answer and bails before launching llama-server.
+    const modelDir = join(temp.modelsDir, 'Demo');
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(join(modelDir, 'demo.gguf'), '');
+    const binDir = join(temp.devStorage, 'fake-bin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, 'llama-server'), '#!/bin/sh\nexit 0\n');
+    process.env.LLAMA_CPP_BIN = binDir;
+    const port = 17843;
+    process.env.LLAMA_CPP_PORT = String(port);
+    const blocker = Bun.serve({
+      port,
+      hostname: '127.0.0.1',
+      fetch: () => new Response('nope', { status: 401 }),
+    });
+    try {
+      const result = await startServer({ target: 'Demo/demo.gguf' });
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/already bound/);
+      expect(result.error).toMatch(/HTTP 401/);
+    } finally {
+      blocker.stop(true);
+    }
+  });
 });
 
 describe('server.stopServer', () => {
