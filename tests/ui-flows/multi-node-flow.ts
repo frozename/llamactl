@@ -180,41 +180,42 @@ async function main(): Promise<void> {
       timeout: 10_000,
     });
 
-    // Selector mounts. If only a single node is registered, the
-    // selector renders as a static span instead — skip cleanly.
-    const selectorPresent = (await client.call('electron_evaluate_renderer', {
+    // The title-bar chip is the visible pointer; clicking it routes
+    // to the dashboard's interactive cluster map (the canonical
+    // node-switch surface). Verify the chip mounts.
+    await client.call('electron_wait_for_selector', {
       sessionId,
-      expression: '!!document.querySelector("[data-testid=\\"node-selector\\"]")',
-    })) as { result: boolean };
-    if (!selectorPresent.result) {
-      check(
-        'multi-node selector skipped (only one node in kubeconfig)',
-        true,
-        'no remote agent registered',
-      );
-      await client.call('electron_close', { sessionId });
-      console.log('SKIP — single-node fleet');
-      return;
-    }
-    check('multi-node selector mounts', true);
+      selector: '[data-testid="node-selector-root"]',
+      state: 'visible',
+      timeout: 5_000,
+    });
+    check('node-selector chip mounts in title bar', true);
 
-    // Enumerate the options. Skip the test if only `local` is there.
-    const options = (await client.call('electron_evaluate_renderer', {
+    // Click the chip — should land on the dashboard's NodeMap.
+    await client.call('electron_click', {
+      sessionId,
+      selector: '[data-testid="node-selector-root"]',
+    });
+    await client.call('electron_wait_for_selector', {
+      sessionId,
+      selector: '[data-testid="node-map-root"]',
+      state: 'visible',
+      timeout: 5_000,
+    });
+    check('clicking the chip opens the dashboard cluster map', true);
+
+    // Inventory the bubbles. Each registered node renders a bubble
+    // with `data-testid="node-map-bubble-<name>"`.
+    const bubbleNames = (await client.call('electron_evaluate_renderer', {
       sessionId,
       expression:
-        'Array.from(document.querySelectorAll("[data-testid=\\"node-selector\\"] option")).map(o => o.value).join(",")',
+        `Array.from(document.querySelectorAll('[data-testid^=\"node-map-bubble-\"]')).map(el => el.getAttribute('data-testid').slice('node-map-bubble-'.length)).join(',')`,
     })) as { result: string };
-    const nodes = (options.result ?? '').split(',').filter(Boolean);
+    const nodes = (bubbleNames.result ?? '').split(',').filter(Boolean);
     check(
-      `selector lists >=2 nodes (got ${nodes.length}: ${options.result})`,
+      `cluster map renders >=2 nodes (got ${nodes.length}: ${bubbleNames.result})`,
       nodes.length >= 2,
     );
-    // Pick an agent-kind node (we want a real remote agent, not a
-    // gateway/cloud/RAG node — those have different query surfaces and
-    // the multi-node UX checks below assume agent semantics).
-    // Heuristic: skip 'local', skip any node with a `.` in the name
-    // (gateway-fanned providers like `sirius.openai`), prefer nodes
-    // whose name suggests an agent (no `-gw`, no `-direct` suffix).
     const remoteCandidate = nodes.find(
       (n) =>
         n !== 'local' &&
@@ -228,13 +229,24 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Switch to the remote node.
-    await client.call('electron_select_option', {
+    // Click the remote bubble — opens the detail card.
+    await client.call('electron_click', {
       sessionId,
-      selector: '[data-testid="node-selector"]',
-      value: remoteCandidate,
+      selector: `[data-testid="node-map-bubble-${remoteCandidate}"]`,
     });
-    // Give the dispatcher a moment to flip + the active-node attr to update.
+    await client.call('electron_wait_for_selector', {
+      sessionId,
+      selector: `[data-testid="node-map-detail-${remoteCandidate}"]`,
+      state: 'visible',
+      timeout: 3_000,
+    });
+    check(`clicking '${remoteCandidate}' bubble opens detail card`, true);
+
+    // Click "Set as active node" — flips the dispatcher.
+    await client.call('electron_click', {
+      sessionId,
+      selector: `[data-testid="node-map-activate-${remoteCandidate}"]`,
+    });
     await new Promise((r) => setTimeout(r, 800));
     const active = (await client.call('electron_evaluate_renderer', {
       sessionId,
@@ -242,30 +254,18 @@ async function main(): Promise<void> {
         'document.querySelector("[data-testid=\\"node-selector-root\\"]")?.getAttribute("data-active-node")',
     })) as { result: string | null };
     check(
-      `data-active-node flipped to '${remoteCandidate}'`,
+      `chip data-active-node flipped to '${remoteCandidate}'`,
       active.result === remoteCandidate,
       `got ${String(active.result)}`,
     );
-
-    // Health probe is a 30s refetchInterval; first probe on switch
-    // happens immediately. Wait up to 8s for healthy=true (or false
-    // if the node is unreachable, which is also a valid signal).
-    let healthy: string | null = null;
-    for (let i = 0; i < 16; i += 1) {
-      await new Promise((r) => setTimeout(r, 500));
-      const probe = (await client.call('electron_evaluate_renderer', {
-        sessionId,
-        expression:
-          'document.querySelector("[data-testid=\\"node-selector-root\\"]")?.getAttribute("data-healthy")',
-      })) as { result: string | null };
-      if (probe.result && probe.result !== 'probing') {
-        healthy = probe.result;
-        break;
-      }
-    }
+    const mapActive = (await client.call('electron_evaluate_renderer', {
+      sessionId,
+      expression:
+        'document.querySelector("[data-testid=\\"node-map-root\\"]")?.getAttribute("data-active-node")',
+    })) as { result: string | null };
     check(
-      `health probe resolved against '${remoteCandidate}' (got '${healthy}')`,
-      healthy === 'true' || healthy === 'false',
+      `cluster map data-active-node flipped to '${remoteCandidate}'`,
+      mapActive.result === remoteCandidate,
     );
 
     // The Workloads tab's `workloadList` query is control-plane-local
@@ -301,11 +301,30 @@ async function main(): Promise<void> {
     });
     check('models module mounts (active=remote) — query reached the remote agent', true);
 
-    // Switch back to local + assert.
-    await client.call('electron_select_option', {
+    // Switch back to local via the same map flow.
+    await client.call('electron_click', {
       sessionId,
-      selector: '[data-testid="node-selector"]',
-      value: 'local',
+      selector: '[data-testid="node-selector-root"]',
+    });
+    await client.call('electron_wait_for_selector', {
+      sessionId,
+      selector: '[data-testid="node-map-bubble-local"]',
+      state: 'visible',
+      timeout: 3_000,
+    });
+    await client.call('electron_click', {
+      sessionId,
+      selector: '[data-testid="node-map-bubble-local"]',
+    });
+    await client.call('electron_wait_for_selector', {
+      sessionId,
+      selector: '[data-testid="node-map-activate-local"]',
+      state: 'visible',
+      timeout: 3_000,
+    });
+    await client.call('electron_click', {
+      sessionId,
+      selector: '[data-testid="node-map-activate-local"]',
     });
     await new Promise((r) => setTimeout(r, 800));
     const back = (await client.call('electron_evaluate_renderer', {

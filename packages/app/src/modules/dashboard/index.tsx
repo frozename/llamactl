@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { stringify as yamlStringify } from 'yaml';
 import type { bench, schemas } from '@llamactl/core';
 import { trpc } from '@/lib/trpc';
+import { NodeMap } from './NodeMap';
 
 type BenchCompareRow = bench.BenchCompareRow;
 type PresetOverride = schemas.PresetOverride;
@@ -256,6 +257,18 @@ function DashboardBody(): React.JSX.Element {
         Dashboard
       </div>
       <h1 className="mb-6 text-2xl font-semibold text-[color:var(--color-fg)]">Overview</h1>
+
+      {/* Cluster map is the dashboard's centerpiece — switching active
+          nodes happens by clicking a bubble + "Set as active node" in
+          the popover, which makes the topology + the routing target
+          visible in one view (the title-bar dropdown is the legacy
+          quick-jump fallback). */}
+      <section className="mb-8" data-testid="dashboard-node-map-section">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+          Cluster map
+        </h2>
+        <NodeMap />
+      </section>
 
       <div className="grid grid-cols-3 gap-3">
         <StatusCard title="Profile" body={env?.LLAMA_CPP_MACHINE_PROFILE ?? '—'} />

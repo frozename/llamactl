@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { trpc, trpcUIClient } from '@/lib/trpc';
+import { useUIStore } from '@/stores/ui-store';
 
 /**
  * Title-bar dropdown that shows the currently-selected node and lets
@@ -93,6 +94,7 @@ export function NodeSelector(): React.JSX.Element | null {
   const utils = trpc.useUtils();
   const list = trpc.nodeList.useQuery();
   const { selectedNode, setSelectedNode } = useNodeSelection();
+  const setActiveModule = useUIStore((s) => s.setActiveModule);
 
   // Resolve the effective selection: explicit override → kubeconfig
   // default → `local`. Kept outside the store so when a user hasn't
@@ -153,13 +155,27 @@ export function NodeSelector(): React.JSX.Element | null {
         ? 'bg-[var(--color-danger)]'
         : 'bg-[var(--color-fg-muted)]';
 
+  // The title-bar selector is now a label-only chip — clicking it
+  // jumps to the dashboard's interactive node map, which is the
+  // canonical place to switch the active node. The dropdown
+  // confused operators ("which routing surface does this affect?");
+  // the map shows the topology + the dispatch target in one view.
+  // Hidden `<select>` is preserved underneath as an accessibility +
+  // automation hook (data-testid="node-selector"), but pointer-events
+  // are off in normal use.
+  void groupNodesForSelector;
+  void nodes;
+  void setSelectedNode;
   return (
-    <div
-      className="flex items-center gap-1 text-xs"
+    <button
+      type="button"
+      onClick={() => setActiveModule('dashboard')}
+      className="flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg)] hover:border-[var(--color-accent)]"
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       data-testid="node-selector-root"
       data-active-node={effective}
       data-healthy={healthy === true ? 'true' : healthy === false ? 'false' : 'probing'}
+      title={`active node: ${effective} — click to open the cluster map`}
     >
       <span className="text-[10px] text-[color:var(--color-fg-muted)]">node</span>
       <span
@@ -174,51 +190,11 @@ export function NodeSelector(): React.JSX.Element | null {
         }
         className={`h-1.5 w-1.5 rounded-full ${dotClass}`}
       />
-      <select
-        value={effective}
-        onChange={(e) => setSelectedNode(e.target.value)}
-        data-testid="node-selector"
-        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)]"
-      >
-        {groupNodesForSelector(nodes).map((group) =>
-          group.label ? (
-            <optgroup key={group.label} label={group.label}>
-              {group.items.map((n) => (
-                <option key={n.name} value={n.name}>
-                  {n.name}
-                </option>
-              ))}
-            </optgroup>
-          ) : (
-            group.items.map((n) => (
-              <option key={n.name} value={n.name}>
-                {n.name}
-              </option>
-            ))
-          ),
-        )}
-      </select>
-      {healthy === false && !isLocalSelection && (
-        <>
-          <button
-            type="button"
-            onClick={() => test.refetch()}
-            disabled={test.isFetching}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg)] disabled:opacity-50"
-            title="probe the node again"
-          >
-            {test.isFetching ? '…' : 'retry'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setSelectedNode('local')}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-danger)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)]"
-            title="route UI traffic back to the local node"
-          >
-            switch to local
-          </button>
-        </>
-      )}
-    </div>
+      <span className="font-mono text-[11px]">{effective}</span>
+      <span className="text-[10px] text-[color:var(--color-fg-muted)]">·</span>
+      <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+        switch on map
+      </span>
+    </button>
   );
 }
