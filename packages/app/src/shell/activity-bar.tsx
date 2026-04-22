@@ -23,8 +23,13 @@ function IconButton({ module }: { module: AppModule }): React.JSX.Element {
 }
 
 export function ActivityBar(): React.JSX.Element {
-  const topModules = APP_MODULES.filter((m) => m.position !== 'bottom');
-  const bottomModules = APP_MODULES.filter((m) => m.position === 'bottom');
+  // Only modules flagged `activityBar: true` show up in the sidebar.
+  // The rest are reachable via the command palette (⌘⇧P); this keeps
+  // the left edge focused on the ~8 modules an operator uses daily
+  // without dropping access to the long tail of administrative views.
+  const visibleModules = APP_MODULES.filter((m) => m.activityBar === true);
+  const topModules = visibleModules.filter((m) => m.position !== 'bottom');
+  const bottomModules = visibleModules.filter((m) => m.position === 'bottom');
 
   return (
     <div className="flex h-full w-12 shrink-0 flex-col items-center border-r border-[var(--color-border)] bg-[var(--color-surface-1)]">

@@ -125,6 +125,29 @@ const CONTROL_PLANE_ONLY = new Set<string>([
   'operatorSubmitStepOutcome',
   'opsChatTools',
   'opsChatAuditTail',
+  // Projects live in the control plane's projects.yaml — the
+  // kubeconfig default + every registered route target + every
+  // policy reference is control-plane state. Routing to a remote
+  // agent makes it read its OWN projects.yaml (which doesn't
+  // exist) and its auth layer 401s with a plain-text body that
+  // the renderer's JSON parser chokes on
+  // ("Unexpected token 'u', 'unauthorized' is not valid JSON").
+  'projectApply',
+  'projectList',
+  'projectGet',
+  'projectRemove',
+  'projectIndex',
+  'projectResolveRouting',
+  'projectRoutePreview',
+  'projectRoutingJournal',
+  // Cost guardian's journal + snapshot are aggregated across the
+  // whole fleet's usage records; the read lives on the control
+  // plane's $DEV_STORAGE. Dispatching to a remote turns a 0.5s
+  // local read into a hung tRPC call to an agent that doesn't
+  // implement costSnapshot semantics — hence "loading forever".
+  'costSnapshot',
+  'costGuardianStatus',
+  'costJournalTail',
   // UI-only procedures added by this module never go over the wire.
   'uiSetActiveNode',
   'uiGetActiveNode',

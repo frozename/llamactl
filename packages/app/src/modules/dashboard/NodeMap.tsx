@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useMemo, useState } from 'react';
 import { trpc } from '@/lib/trpc';
-import { useNodeSelection } from '@/shell/node-selector';
+import { useUIStore } from '@/stores/ui-store';
 
 /**
  * Interactive cluster node map. The dashboard's centerpiece — every
@@ -255,11 +255,15 @@ function NodeDetail({
 
 export function NodeMap(): React.JSX.Element {
   const list = trpc.nodeList.useQuery();
-  const { selectedNode, setSelectedNode } = useNodeSelection();
+  const setActiveModule = useUIStore((s) => s.setActiveModule);
   const [hovered, setHovered] = useState<string | null>(null);
   const [focused, setFocused] = useState<string | null>(null);
 
-  const effective = selectedNode ?? list.data?.defaultNode ?? 'local';
+  // No global "active" node any more — the cluster map is a
+  // navigation surface, not a state mutator. The default-node
+  // highlight still reads from kubeconfig for a soft indicator
+  // (so the operator's eye goes to the canonical host first).
+  const effective = list.data?.defaultNode ?? 'local';
   const allNodes = useMemo(() => {
     const fromQuery = list.data?.nodes ?? [];
     const local = fromQuery.find((n) => n.name === 'local');
@@ -340,7 +344,11 @@ export function NodeMap(): React.JSX.Element {
             endpoint={focusedNode.endpoint}
             isActive={focusedNode.name === effective}
             onActivate={() => {
-              setSelectedNode(focusedNode.name);
+              // "Set as active" is now a scoped jump — open the
+              // Workloads tab so the operator sees what's running
+              // on this node. For other kinds the detail card's
+              // per-kind actions (future work) take over.
+              setActiveModule('workloads');
               setFocused(null);
             }}
             onClose={() => setFocused(null)}

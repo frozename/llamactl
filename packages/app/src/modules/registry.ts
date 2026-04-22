@@ -39,6 +39,15 @@ export interface AppModule {
   position?: 'top' | 'bottom';
   /** 1..9 keyboard shortcut when we wire the palette in later. */
   shortcut?: number;
+  /**
+   * Module grouping — used by the command palette to organize + search.
+   * Hidden from the activity bar unless explicitly shown via
+   * `activityBar: true`. Modules without activityBar:true are still
+   * reachable via the command palette (⌘⇧P).
+   */
+  activityBar?: boolean;
+  group?: 'core' | 'models' | 'ops' | 'observability';
+  aliases?: string[];
 }
 
 const LazyDashboard = lazy(() => import('./dashboard/index'));
@@ -61,129 +70,186 @@ const LazyOpsChat = lazy(() => import('./ops-chat/index'));
 const LazyCost = lazy(() => import('./cost/index'));
 const LazySettings = lazy(() => import('./settings/index'));
 
+/**
+ * Registry — sharp distinction between "activity bar items" (always
+ * visible in the sidebar — the 8 modules an operator reaches for
+ * daily) and "command-palette-only" modules (still fully mounted,
+ * still stateful, just not taking up sidebar real estate).
+ *
+ * Rough triage:
+ *   always visible: dashboard, chat, ops-chat, projects, knowledge,
+ *                   workloads, nodes, logs + settings (bottom)
+ *   palette only:   plan (subsumed by ops-chat), pipelines (into
+ *                   knowledge later), composites (into workloads
+ *                   later), models/presets/pulls/bench/lmstudio
+ *                   (all about managing the catalog — unify later),
+ *                   server (local-only legacy), cost (→ bottom)
+ */
 export const APP_MODULES: AppModule[] = [
+  // ── Activity bar: top ─────────────────────────────────────
   {
     id: 'dashboard',
     labelKey: 'Dashboard',
     icon: LayoutDashboard,
     Component: LazyDashboard,
     shortcut: 1,
-  },
-  {
-    id: 'nodes',
-    labelKey: 'Nodes',
-    icon: Network,
-    Component: LazyNodes,
-    shortcut: 2,
+    activityBar: true,
+    group: 'core',
+    aliases: ['home', 'overview'],
   },
   {
     id: 'chat',
     labelKey: 'Chat',
     icon: MessageSquare,
     Component: LazyChat,
+    shortcut: 2,
+    activityBar: true,
+    group: 'core',
+  },
+  {
+    id: 'ops-chat',
+    labelKey: 'Ops Chat',
+    icon: Terminal,
+    Component: LazyOpsChat,
     shortcut: 3,
-  },
-  {
-    id: 'plan',
-    labelKey: 'Plan',
-    icon: BrainCircuit,
-    Component: LazyPlan,
-  },
-  {
-    id: 'knowledge',
-    labelKey: 'Knowledge',
-    icon: Brain,
-    Component: LazyKnowledge,
+    activityBar: true,
+    group: 'ops',
+    aliases: ['operator console', 'operator'],
   },
   {
     id: 'projects',
     labelKey: 'Projects',
     icon: FolderKanban,
     Component: LazyProjects,
+    shortcut: 4,
+    activityBar: true,
+    group: 'core',
   },
   {
-    id: 'ops-chat',
-    labelKey: 'Operator Console',
-    icon: Terminal,
-    Component: LazyOpsChat,
-  },
-  {
-    id: 'cost',
-    labelKey: 'Cost',
-    icon: Coins,
-    Component: LazyCost,
-  },
-  {
-    id: 'pipelines',
-    labelKey: 'Pipelines',
-    icon: Workflow,
-    Component: LazyPipelines,
+    id: 'knowledge',
+    labelKey: 'Knowledge',
+    icon: Brain,
+    Component: LazyKnowledge,
+    shortcut: 5,
+    activityBar: true,
+    group: 'core',
+    aliases: ['rag', 'retrieval'],
   },
   {
     id: 'workloads',
     labelKey: 'Workloads',
     icon: Layers,
     Component: LazyWorkloads,
-    shortcut: 4,
-  },
-  {
-    id: 'composites',
-    labelKey: 'Composites',
-    icon: Boxes,
-    Component: LazyComposites,
-  },
-  {
-    id: 'models',
-    labelKey: 'Models',
-    icon: Database,
-    Component: LazyModels,
-    shortcut: 5,
-  },
-  {
-    id: 'presets',
-    labelKey: 'Presets',
-    icon: Star,
-    Component: LazyPresets,
-  },
-  {
-    id: 'pulls',
-    labelKey: 'Pulls',
-    icon: Download,
-    Component: LazyPulls,
     shortcut: 6,
+    activityBar: true,
+    group: 'ops',
   },
   {
-    id: 'bench',
-    labelKey: 'Bench',
-    icon: Activity,
-    Component: LazyBench,
+    id: 'nodes',
+    labelKey: 'Nodes',
+    icon: Network,
+    Component: LazyNodes,
     shortcut: 7,
-  },
-  {
-    id: 'server',
-    labelKey: 'Server',
-    icon: ServerIcon,
-    Component: LazyServer,
-    shortcut: 8,
+    activityBar: true,
+    group: 'ops',
+    aliases: ['cluster', 'fleet'],
   },
   {
     id: 'logs',
     labelKey: 'Logs',
     icon: ScrollText,
     Component: LazyLogs,
-    shortcut: 9,
+    shortcut: 8,
+    activityBar: true,
+    group: 'observability',
   },
+  // ── Activity bar: bottom ──────────────────────────────────
   {
-    id: 'lmstudio',
-    labelKey: 'LM Studio',
-    icon: PackagePlus,
-    Component: LazyLMStudio,
+    id: 'cost',
+    labelKey: 'Cost',
+    icon: Coins,
+    Component: LazyCost,
+    activityBar: true,
+    position: 'bottom',
+    group: 'observability',
   },
   {
     id: 'settings',
     labelKey: 'Settings',
     icon: Settings,
     Component: LazySettings,
+    activityBar: true,
     position: 'bottom',
+    group: 'core',
+  },
+  // ── Command palette only ──────────────────────────────────
+  {
+    id: 'models',
+    labelKey: 'Models',
+    icon: Database,
+    Component: LazyModels,
+    group: 'models',
+    aliases: ['catalog'],
+  },
+  {
+    id: 'presets',
+    labelKey: 'Presets',
+    icon: Star,
+    Component: LazyPresets,
+    group: 'models',
+  },
+  {
+    id: 'pulls',
+    labelKey: 'Pulls',
+    icon: Download,
+    Component: LazyPulls,
+    group: 'models',
+    aliases: ['hf', 'huggingface', 'download'],
+  },
+  {
+    id: 'bench',
+    labelKey: 'Bench',
+    icon: Activity,
+    Component: LazyBench,
+    group: 'models',
+    aliases: ['benchmark'],
+  },
+  {
+    id: 'lmstudio',
+    labelKey: 'LM Studio Import',
+    icon: PackagePlus,
+    Component: LazyLMStudio,
+    group: 'models',
+  },
+  {
+    id: 'pipelines',
+    labelKey: 'RAG Pipelines',
+    icon: Workflow,
+    Component: LazyPipelines,
+    group: 'core',
+    aliases: ['ingestion'],
+  },
+  {
+    id: 'composites',
+    labelKey: 'Composites',
+    icon: Boxes,
+    Component: LazyComposites,
+    group: 'ops',
+  },
+  {
+    id: 'plan',
+    labelKey: 'Plan',
+    icon: BrainCircuit,
+    Component: LazyPlan,
+    group: 'ops',
+    aliases: ['planner', 'operator plan'],
+  },
+  {
+    id: 'server',
+    labelKey: 'Local Server',
+    icon: ServerIcon,
+    Component: LazyServer,
+    group: 'models',
+    aliases: ['llama-server'],
   },
 ];
