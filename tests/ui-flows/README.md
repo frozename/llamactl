@@ -19,6 +19,20 @@ llamactl knowledge and lets the upstream driver stay library-generic.
 - `plan-chat-flow.ts` — N.4.5 planner chat. Drives two turns in stub
   mode (no LLM) and asserts the transcript grows to 4 turns with
   history preserved across the second user message.
+- `pipelines-tab-flow.ts` — R3.b Pipelines tab. Opens Knowledge →
+  Pipelines, asserts the list (or empty-state) renders, drives the
+  draft-from-description panel, confirms the returned YAML carries
+  the `kind: RagPipeline` shape + the URL / schedule inferred from
+  the description. Fast-exits with PASS when the profile has no rag
+  nodes (the tab is conditionally rendered).
+- `pipelines-wizard-flow.ts` — R3.c wizard modal. Opens the "+ New
+  pipeline" wizard, advances through the stepper with an empty form,
+  asserts Review shows validation errors + Apply is disabled. Then
+  back-fills name / ragNode / collection / source-root, jumps to
+  Review again, asserts errors clear + Apply enables + the YAML
+  reflects the entered values. Closes without applying (the apply
+  roundtrip is covered by router tests). Requires a profile with at
+  least one rag node registered.
 - `pilot-driver.ts` — broad smoke + Plan + Cost module walk. Emits a
   structured findings report.
 
