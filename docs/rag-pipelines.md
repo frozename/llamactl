@@ -257,6 +257,15 @@ llamactl rag pipeline apply -f templates/rag-pipelines/llamactl-docs.yaml
   # → applied rag pipeline 'llamactl-docs'
   #     path: $DEV_STORAGE/rag-pipelines/llamactl-docs/spec.yaml
 
+# `-f -` reads from stdin, so draft + apply is one line:
+llamactl rag pipeline draft "crawl https://docs.example.com daily" \
+  | llamactl rag pipeline apply -f -
+
+# Same shape works for clone-and-modify:
+llamactl rag pipeline get llamactl-docs \
+  | sed 's/@daily/@hourly/' \
+  | llamactl rag pipeline apply -f -
+
 llamactl rag pipeline run llamactl-docs
   # Ingests every file. Prints a RunSummary at the end.
 
