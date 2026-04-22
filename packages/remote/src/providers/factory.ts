@@ -241,7 +241,15 @@ export function providerForNode(opts: {
     });
   }
 
-  if (kind === 'gateway') return providerForCloudNode(node, env);
+  // Gateway + cloud-direct both carry a `cloud` binding and want
+  // the same provider-quirks-wrapped openai-compat adapter. Without
+  // the cloud branch here, chatStream for gemini-direct /
+  // anthropic-direct / openai-direct would fall through to the
+  // agent path — which treats the cloud URL as if it were a
+  // llamactl agent endpoint and sends the agent's bearer instead
+  // of the cloud API key. That's the "still erroring on gemini"
+  // bug: transform was there, but unreachable.
+  if (kind === 'gateway' || kind === 'cloud') return providerForCloudNode(node, env);
 
   if (node.endpoint === LOCAL_NODE_ENDPOINT) {
     throw new Error(

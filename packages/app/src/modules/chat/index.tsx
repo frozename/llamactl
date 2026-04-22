@@ -775,6 +775,19 @@ export default function Chat(): React.JSX.Element {
         .filter((id): id is string => typeof id === 'string') ?? [],
     [modelList.data],
   );
+  // When the node changed (model got cleared) OR the stored model
+  // doesn't match any model the new node exposes, auto-pick the
+  // first option. Avoids the stale-model-crossover bug where
+  // switching from gemini-direct → anthropic-direct left
+  // `models/gemini-2.5-flash` in the chat's meta and every
+  // subsequent request 404'd.
+  useEffect(() => {
+    if (!active || !activeId) return;
+    if (models.length === 0) return;
+    if (!active.model || !models.includes(active.model)) {
+      store.updateMeta(activeId, { model: models[0]! });
+    }
+  }, [active, activeId, models, store]);
   const modelListB = trpc.nodeModels.useQuery(
     { name: active?.compareWith?.node ?? 'local' },
     { enabled: !!active?.compareWith, staleTime: 60_000 },
@@ -1067,7 +1080,7 @@ export default function Chat(): React.JSX.Element {
               models={models}
               modelsLoading={modelList.isLoading}
               onStartedLocal={() => { void modelList.refetch(); }}
-              onNodeChange={(node) => store.updateMeta(active.id, { node })}
+              onNodeChange={(node) => store.updateMeta(active.id, { node, model: '' })}
               onModelChange={(model) => store.updateMeta(active.id, { model })}
               onToggleCapability={(tag) => store.toggleCapability(active.id, tag)}
               headerExtras={
@@ -1110,7 +1123,7 @@ export default function Chat(): React.JSX.Element {
                 nodes={nodes}
                 models={modelsB}
                 modelsLoading={modelListB.isLoading}
-                onNodeChange={(node) => store.updateCompareMeta(active.id, { node })}
+                onNodeChange={(node) => store.updateCompareMeta(active.id, { node, model: '' })}
                 onModelChange={(model) => store.updateCompareMeta(active.id, { model })}
                 onToggleCapability={(tag) => store.toggleCompareCapability(active.id, tag)}
                 headerExtras={
