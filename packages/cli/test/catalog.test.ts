@@ -12,7 +12,7 @@ describe('llamactl catalog', () => {
     const r = runCli(['catalog', 'list'], temp.env);
     expect(r.code).toBe(0);
     const lines = r.stdout.trim().split('\n');
-    expect(lines.length).toBe(8);
+    expect(lines.length).toBe(10);
     expect(lines[0]).toContain('gemma4-e4b-q8');
   });
 

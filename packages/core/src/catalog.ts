@@ -49,6 +49,19 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     repo: 'unsloth/gemma-4-31B-it-GGUF',
   },
   {
+    // Tightest fit on 16 GiB unified memory (M4-class). 35B-A3B at
+    // IQ2_M is ~11.5 GB; with KV-cache headroom under Metal's
+    // 12.7 GB working-set cap the workload runs reliably with
+    // operator-set `-c 4096 -ctk q4_0 -ctv q4_0`.
+    id: 'qwen36-iq2m',
+    label: 'Qwen 3.6 35B-A3B IQ2_M',
+    family: 'qwen36',
+    class: 'reasoning',
+    scope: 'compact-fit-16g',
+    rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ2_M.gguf',
+    repo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+  },
+  {
     id: 'qwen36-q3s',
     label: 'Qwen 3.6 35B-A3B Q3_K_S',
     family: 'qwen36',
@@ -74,6 +87,17 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     scope: 'quality',
     rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf',
     repo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+  },
+  {
+    // 27B at IQ2_M is ~10.2 GB; the smallest fit-on-16g rel for
+    // the qwen35 family. Same KV-quant guidance as qwen36-iq2m.
+    id: 'qwen27-iq2m',
+    label: 'Qwen 3.5 27B IQ2_M',
+    family: 'qwen35',
+    class: 'reasoning',
+    scope: 'compact-fit-16g',
+    rel: 'Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-IQ2_M.gguf',
+    repo: 'unsloth/Qwen3.5-27B-GGUF',
   },
   {
     id: 'qwen27-q5',

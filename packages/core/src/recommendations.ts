@@ -38,14 +38,39 @@ export interface RecommendationsForProfile {
 const PRESET_TARGETS: readonly PresetName[] = ['best', 'vision', 'balanced', 'fast'];
 const TARGET_ORDER: readonly string[] = [...PRESET_TARGETS, 'qwen', 'qwen27'];
 
+/**
+ * Qwen 3.6 35B-A3B quant per machine profile.
+ *
+ * mac-mini-16g picks IQ2_M (~11.5 GB). Q3_K_S (15.4 GB) and larger
+ * never fit under M4's `recommendedMaxWorkingSetSize` (12.7 GB on
+ * 16 GiB unified memory) regardless of free RAM — Metal caps a
+ * single app's GPU residency below total memory. IQ2_M leaves ~1.2 GB
+ * of headroom; operators run it as a managed workload with
+ * `extraArgs: -c 4096 -ctk q4_0 -ctv q4_0` to shrink the KV cache
+ * into the same envelope. Verified live: 31 gen tok/s on M4.
+ */
 function qwen36ForProfile(profile: MachineProfile): string {
   switch (profile) {
     case 'mac-mini-16g':
-      return 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q3_K_S.gguf';
+      return 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ2_M.gguf';
     case 'balanced':
       return 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf';
     default:
       return 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf';
+  }
+}
+
+/**
+ * Qwen 3.5 27B (legacy slot). Same Metal-cap rationale as
+ * qwen36ForProfile — Q5_K_XL (18.9 GB) is unworkable on 16 GiB; pick
+ * IQ2_M (10.2 GB) for that profile.
+ */
+function qwen35ForProfile(profile: MachineProfile): string {
+  switch (profile) {
+    case 'mac-mini-16g':
+      return 'Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-IQ2_M.gguf';
+    default:
+      return 'Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf';
   }
 }
 
@@ -96,7 +121,7 @@ export function recommendationsForProfile(
     let rel: string;
     let promoted: PresetOverrideSource = null;
     if (target === 'qwen27') {
-      rel = 'Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf';
+      rel = qwen35ForProfile(profile);
     } else if (target === 'qwen') {
       rel = qwen36ForProfile(profile);
     } else {
