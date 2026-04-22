@@ -7,7 +7,7 @@ const USAGE = `llamactl artifacts — manage pre-built llamactl-agent binaries
 
 USAGE:
   llamactl artifacts list
-  llamactl artifacts build-agent [--target=<platform>] [--src=<path>] [--dir=<path>]
+  llamactl artifacts build-agent [--target=<platform>] [--src=<path>] [--dir=<path>] [--sign=<identity>]
   llamactl artifacts fetch [--version=<v>] [--target=<p>] [--repo=<owner/repo>] [--dir=<path>] [--verify-sig[=mode]]
   llamactl artifacts prune [--target=<p>] [--keep=<N>] [--dir=<path>] [--execute]
   llamactl artifacts show-path [--target=<platform>] [--dir=<path>]
@@ -22,11 +22,26 @@ pre-compiled llamactl binaries can't rebuild themselves. Pass --src to
 override the source path when the heuristic (relative to this module's
 own __dirname) doesn't find bin.ts.
 
+When --sign=<identity> is set (or LLAMACTL_SIGN_IDENTITY is exported),
+the produced binary is re-signed with macOS \`codesign\` after the
+compile. Identity values match the codesign \`-s\` argument: an Apple
+Development cert (\"Apple Development: <email>\"), a Developer ID
+Application cert (\"Developer ID Application: <name>\"), or a SHA1
+fingerprint. macOS TCC tracks the signing identity, not the binary
+hash — once you've granted Files & Folders access once, all future
+builds with the same identity inherit the grant. Without --sign,
+Bun's ad-hoc signature is preserved (re-prompts every build).
+The flag is silently ignored on non-darwin targets.
+
 FLAGS:
   --target=<platform>   darwin-arm64 | darwin-x64 | linux-x64 |
                         linux-arm64. Default: the current host.
   --src=<path>          Path to packages/cli/src/bin.ts. Default: auto.
   --dir=<path>          Override the artifacts directory.
+  --sign=<identity>     macOS only: re-sign the produced binary with
+                        \`codesign -s <identity>\`. Same value as
+                        codesign's \`-s\` flag. Defaults from env
+                        LLAMACTL_SIGN_IDENTITY when unset.
   --verify-sig[=mode]   fetch only. Cosign-keyless signature check:
                           best-effort (default when flag is bare) —
                             verify when .sig + .cert + cosign are
@@ -44,6 +59,7 @@ EXAMPLES:
   llamactl artifacts list
   llamactl artifacts build-agent                       # current platform
   llamactl artifacts build-agent --target=linux-x64    # cross-compile
+  llamactl artifacts build-agent --sign='Apple Development: alex@example.com'
   llamactl artifacts fetch --version=v0.4.0            # download from GitHub
   llamactl artifacts fetch --version=latest --target=linux-arm64
   llamactl artifacts prune                             # dry-run
@@ -95,6 +111,13 @@ export interface BuildAgentBinaryOptions {
   src: string | null;
   /** Artifacts root. Binary lands at `<dir>/agent/<target>/llamactl-agent`. */
   dir: string;
+  /**
+   * codesign signing identity. When set on a darwin target, the
+   * produced binary is re-signed with `codesign -s <identity>` after
+   * the bun compile finishes. Defaults from `LLAMACTL_SIGN_IDENTITY`
+   * env. Silently no-op on non-darwin targets (codesign is macOS-only).
+   */
+  signIdentity?: string;
 }
 
 export interface BuildAgentBinaryResult {
@@ -105,6 +128,12 @@ export interface BuildAgentBinaryResult {
   code: number;
   /** Present when the build could not start (missing src). */
   reason?: string;
+  /**
+   * codesign exit code when --sign was used. 0 on success, omitted
+   * when no signing was requested. Non-zero leaves the binary in
+   * place with its bun ad-hoc signature; the build is still ok.
+   */
+  signCode?: number;
 }
 
 /**
@@ -145,13 +174,56 @@ export async function buildAgentBinary(
     stderr: 'inherit',
   });
   const code = await proc.exited;
-  return { ok: code === 0, outPath, code };
+  if (code !== 0) return { ok: false, outPath, code };
+
+  const identity = opts.signIdentity ?? process.env.LLAMACTL_SIGN_IDENTITY ?? '';
+  if (identity && opts.target.startsWith('darwin')) {
+    const signCode = await codesignBinary(outPath, identity);
+    if (signCode !== 0) {
+      return {
+        ok: true,
+        outPath,
+        code,
+        signCode,
+        reason: `codesign exited ${signCode} — binary still produced with bun ad-hoc signature`,
+      };
+    }
+    return { ok: true, outPath, code, signCode: 0 };
+  }
+  return { ok: true, outPath, code };
+}
+
+/**
+ * Re-sign a binary with macOS `codesign`. Exported so callers (tests,
+ * the agent-update push flow) can re-use the same invocation shape.
+ *
+ * `--force` overwrites the bun ad-hoc signature with the operator's
+ * signing identity. `--timestamp=none` skips the trusted-timestamp
+ * round-trip to Apple — fine for local dev where TCC just needs the
+ * identity to match prior grants. Release/notarized builds should
+ * drop the flag and use the signed-timestamp default.
+ *
+ * Returns the codesign exit code. macOS-only; calling this on Linux
+ * (where `codesign` doesn't exist) will return a non-zero spawn-error
+ * code rather than throwing.
+ */
+export async function codesignBinary(
+  binaryPath: string,
+  identity: string,
+): Promise<number> {
+  const proc = Bun.spawn({
+    cmd: ['codesign', '--force', '--sign', identity, '--timestamp=none', binaryPath],
+    stdout: 'inherit',
+    stderr: 'inherit',
+  });
+  return await proc.exited;
 }
 
 interface BuildFlags {
   target: Platform;
   src: string | null;
   dir: string;
+  signIdentity?: string;
 }
 
 function parseBuildFlags(argv: string[]): BuildFlags | { error: string } {
@@ -183,6 +255,9 @@ function parseBuildFlags(argv: string[]): BuildFlags | { error: string } {
         break;
       case 'dir':
         flags.dir = value;
+        break;
+      case 'sign':
+        flags.signIdentity = value;
         break;
       default:
         return { error: `artifacts build-agent: unknown flag --${key}` };
@@ -218,6 +293,7 @@ async function runBuildAgent(argv: string[]): Promise<number> {
     target: parsed.target,
     src: parsed.src,
     dir: parsed.dir,
+    ...(parsed.signIdentity !== undefined ? { signIdentity: parsed.signIdentity } : {}),
   });
   if (!result.ok) {
     if (result.reason) {
@@ -228,6 +304,15 @@ async function runBuildAgent(argv: string[]): Promise<number> {
     return 1;
   }
   process.stderr.write(`artifacts build-agent: wrote ${result.outPath}\n`);
+  if (result.signCode === 0) {
+    const identity = parsed.signIdentity ?? process.env.LLAMACTL_SIGN_IDENTITY;
+    process.stderr.write(`artifacts build-agent: re-signed with codesign -s '${identity}'\n`);
+  } else if (result.signCode !== undefined) {
+    process.stderr.write(
+      `artifacts build-agent: WARNING — codesign failed (exit ${result.signCode}); ` +
+        `binary still written but TCC will re-prompt on first removable-volume access\n`,
+    );
+  }
   return 0;
 }
 
