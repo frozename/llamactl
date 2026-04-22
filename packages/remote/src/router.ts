@@ -2573,6 +2573,209 @@ export const router = t.router({
       return { ok: true as const, path, entries };
     }),
 
+  // ---- Project resources (local filesystem project + routing policy) ----
+  //
+  // Phase 2 of trifold-orchestrating-engelbart.md. A project is a
+  // first-class llamactl resource: a path + optional RAG target + a
+  // task-kind → routing-target map. Projects live in a dedicated
+  // YAML (`~/.llamactl/projects.yaml` by default) so the kubeconfig
+  // stays lean and projects version independently.
+  //
+  // The routing target is validated as a string only — resolution
+  // happens later in the router's chat dispatch hook. `projectIndex`
+  // auto-generates a RagPipeline manifest from `spec.rag` and
+  // delegates to `ragPipelineApply`, so project indexing reuses the
+  // entire R1–R3 ingestion stack with no duplicated runtime code.
+
+  projectApply: t.procedure
+    .input(z.object({ manifestYaml: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const { parse: parseYaml } = await import('yaml');
+      const {
+        ProjectSchema,
+        loadProjects,
+        saveProjects,
+        upsertProject,
+        defaultProjectsPath,
+      } = await import('./config/projects.js');
+      let parsedYaml: unknown;
+      try {
+        parsedYaml = parseYaml(input.manifestYaml);
+      } catch (err) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `Project manifest is not valid YAML: ${(err as Error).message}`,
+        });
+      }
+      const parsed = ProjectSchema.safeParse(parsedYaml);
+      if (!parsed.success) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `invalid Project manifest: ${JSON.stringify(parsed.error.issues)}`,
+        });
+      }
+      const path = defaultProjectsPath();
+      const existing = loadProjects(path);
+      const created = !existing.some((p) => p.metadata.name === parsed.data.metadata.name);
+      const next = upsertProject(existing, parsed.data);
+      saveProjects(next, path);
+      return {
+        ok: true as const,
+        name: parsed.data.metadata.name,
+        path,
+        created,
+      };
+    }),
+
+  projectList: t.procedure.query(async () => {
+    const { loadProjects } = await import('./config/projects.js');
+    const projects = loadProjects();
+    return { ok: true as const, projects };
+  }),
+
+  projectGet: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const { loadProjects } = await import('./config/projects.js');
+      const projects = loadProjects();
+      const project = projects.find((p) => p.metadata.name === input.name);
+      if (!project) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: `project '${input.name}' not found — run \`llamactl project list\` to see registered names`,
+        });
+      }
+      return { ok: true as const, project };
+    }),
+
+  projectRemove: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const {
+        loadProjects,
+        saveProjects,
+        removeProject,
+        defaultProjectsPath,
+      } = await import('./config/projects.js');
+      const path = defaultProjectsPath();
+      const existing = loadProjects(path);
+      const next = removeProject(existing, input.name);
+      const removed = next.length !== existing.length;
+      if (removed) saveProjects(next, path);
+      // Mirrors ragPipelineRemove semantics: we never touch the
+      // already-indexed data in the rag node. Re-indexing requires
+      // an explicit `llamactl project index <name>` after re-adding.
+      return { ok: true as const, removed };
+    }),
+
+  projectIndex: t.procedure
+    .input(z.object({ name: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const { loadProjects } = await import('./config/projects.js');
+      const { stringify: stringifyYaml } = await import('yaml');
+      const projects = loadProjects();
+      const project = projects.find((p) => p.metadata.name === input.name);
+      if (!project) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: `project '${input.name}' not found`,
+        });
+      }
+      if (!project.spec.rag) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `project '${input.name}' has no spec.rag — declare { node, collection } before indexing`,
+        });
+      }
+      // Auto-generate a RagPipeline manifest. Pipeline name is
+      // `project-<projectName>` so operators can distinguish
+      // project-owned pipelines from free-standing ones in
+      // `llamactl rag pipeline list`.
+      const pipelineName = `project-${project.metadata.name}`;
+      const source: Record<string, unknown> = {
+        kind: 'filesystem',
+        root: project.spec.path,
+        glob: project.spec.rag.docsGlob,
+      };
+      const tag: Record<string, string> = { project: project.metadata.name };
+      if (project.spec.purpose) tag.purpose = project.spec.purpose;
+      source.tag = tag;
+      const pipelineManifest: Record<string, unknown> = {
+        apiVersion: 'llamactl/v1',
+        kind: 'RagPipeline',
+        metadata: { name: pipelineName },
+        spec: {
+          destination: {
+            ragNode: project.spec.rag.node,
+            collection: project.spec.rag.collection,
+          },
+          sources: [source],
+          transforms: [
+            {
+              kind: 'markdown-chunk',
+              chunk_size: 800,
+              overlap: 150,
+              preserve_headings: true,
+            },
+          ],
+          on_duplicate: 'replace',
+          ...(project.spec.rag.schedule
+            ? { schedule: project.spec.rag.schedule }
+            : {}),
+        },
+      };
+      // Delegate to the existing ragPipelineApply procedure via a
+      // local caller — reuses the R1–R3 validation + store code
+      // without duplicating any ingestion logic here. The narrow
+      // `ApplyResult` type breaks the `router → caller → router`
+      // inference cycle; the underlying procedure returns a superset.
+      interface ApplyResult {
+        ok: true;
+        name: string;
+        path: string;
+        created: boolean;
+      }
+      const caller = router.createCaller({});
+      const res = (await caller.ragPipelineApply({
+        manifestYaml: stringifyYaml(pipelineManifest),
+      })) as ApplyResult;
+      return {
+        ok: true as const,
+        pipelineName,
+        path: res.path,
+        created: res.created,
+      };
+    }),
+
+  projectResolveRouting: t.procedure
+    .input(
+      z.object({
+        project: z.string().min(1),
+        taskKind: z.string().min(1),
+      }),
+    )
+    .query(async ({ input }) => {
+      const { loadProjects, resolveProjectRouting } = await import(
+        './config/projects.js'
+      );
+      const projects = loadProjects();
+      const project = projects.find((p) => p.metadata.name === input.project);
+      if (!project) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: `project '${input.project}' not found`,
+        });
+      }
+      const { target, matched } = resolveProjectRouting(project, input.taskKind);
+      return {
+        ok: true as const,
+        project: input.project,
+        taskKind: input.taskKind,
+        target,
+        matched,
+      };
+    }),
+
   // ---- Composite (multi-component apply) --------------------------------
   //
   // Phase 5 of composite-infra.md — tRPC surface for the composite

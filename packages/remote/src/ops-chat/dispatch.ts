@@ -36,6 +36,12 @@ export const KNOWN_OPS_CHAT_TOOLS = [
   'llamactl.node.ls',
   'llamactl.node.remove',
   'llamactl.operator.plan',
+  'llamactl.project.apply',
+  'llamactl.project.get',
+  'llamactl.project.index',
+  'llamactl.project.list',
+  'llamactl.project.remove',
+  'llamactl.project.resolveRouting',
   'llamactl.promotions.list',
   'llamactl.rag.bench',
   'llamactl.rag.delete',
@@ -71,6 +77,7 @@ export function toolTier(name: OpsChatToolName): ToolTier {
     case 'llamactl.rag.delete':
     case 'llamactl.rag.pipeline.remove':
     case 'llamactl.composite.destroy':
+    case 'llamactl.project.remove':
       return 'mutation-destructive';
     case 'llamactl.node.add':
     case 'llamactl.catalog.promote':
@@ -78,6 +85,8 @@ export function toolTier(name: OpsChatToolName): ToolTier {
     case 'llamactl.rag.pipeline.apply':
     case 'llamactl.rag.pipeline.run':
     case 'llamactl.composite.apply':
+    case 'llamactl.project.apply':
+    case 'llamactl.project.index':
       return 'mutation-dry-run-safe';
     default:
       return 'read';
@@ -278,6 +287,20 @@ export async function dispatchOpsChatTool(
         result = await caller.ragPipelineDraft(payload);
         break;
       }
+      case 'llamactl.project.list':
+        result = await caller.projectList();
+        break;
+      case 'llamactl.project.get':
+        result = await caller.projectGet({
+          name: requireString(args, 'name'),
+        });
+        break;
+      case 'llamactl.project.resolveRouting':
+        result = await caller.projectResolveRouting({
+          project: requireString(args, 'project'),
+          taskKind: requireString(args, 'taskKind'),
+        });
+        break;
 
       /* ---------------- mutations (dry-run-safe) ---------------- */
       case 'llamactl.catalog.promote': {
@@ -382,6 +405,32 @@ export async function dispatchOpsChatTool(
         });
         break;
       }
+      case 'llamactl.project.apply': {
+        // projectApply is idempotent — writing projects.yaml is safe.
+        // Dry run only parses + validates without touching disk.
+        const manifestYaml = requireString(args, 'manifestYaml');
+        if (input.dryRun) {
+          result = { dryRun: true, wouldApply: { bytes: manifestYaml.length } };
+        } else {
+          result = await caller.projectApply({ manifestYaml });
+        }
+        break;
+      }
+      case 'llamactl.project.index': {
+        // Generates + applies the auto-wired RagPipeline manifest.
+        // Dry run surfaces the intended pipeline name without
+        // invoking ragPipelineApply.
+        const name = requireString(args, 'name');
+        if (input.dryRun) {
+          result = {
+            dryRun: true,
+            wouldIndex: { project: name, pipelineName: `project-${name}` },
+          };
+        } else {
+          result = await caller.projectIndex({ name });
+        }
+        break;
+      }
 
       /* ---------------- mutations (destructive) ---------------- */
       case 'llamactl.catalog.promoteDelete': {
@@ -457,6 +506,18 @@ export async function dispatchOpsChatTool(
           result = { dryRun: true, wouldRemove: payload };
         } else {
           result = await caller.ragPipelineRemove(payload);
+        }
+        break;
+      }
+      case 'llamactl.project.remove': {
+        // Matches ragPipelineRemove semantics — never touches the
+        // already-indexed data in the rag node. Re-indexing requires
+        // `project add` + `project index` again.
+        const payload = { name: requireString(args, 'name') };
+        if (input.dryRun) {
+          result = { dryRun: true, wouldRemove: payload };
+        } else {
+          result = await caller.projectRemove(payload);
         }
         break;
       }
