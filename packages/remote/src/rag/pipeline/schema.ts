@@ -122,6 +122,25 @@ export const RagPipelineSpecSchema = z.object({
         "expected @hourly, @daily, @weekly, or @every <N>{m|h|d} (e.g. '@every 15m')",
     })
     .optional(),
+  /**
+   * Operator-declared pricing. Adapters don't surface token-level
+   * usage today (chroma embeds internally; pgvector's delegated
+   * embedder return shape doesn't thread through the RetrievalProvider
+   * contract), so precise cost visibility would require changes
+   * in `@nova/contracts`. The v1 compromise: let the operator
+   * declare a rate per chunk and/or per doc, and the runtime
+   * multiplies that by the observed totals to surface an estimate.
+   * Both fields are optional — set what matches your embedder's
+   * pricing model. Estimate is best-effort; real accounting lives
+   * in the cost-guardian snapshot once adapters grow usage hooks.
+   */
+  cost: z
+    .object({
+      per_chunk_usd: z.number().min(0).optional(),
+      per_doc_usd: z.number().min(0).optional(),
+      currency: z.string().default('USD'),
+    })
+    .optional(),
 });
 
 export const RagPipelineManifestSchema = z.object({

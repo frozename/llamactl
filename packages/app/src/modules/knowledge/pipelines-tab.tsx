@@ -44,6 +44,11 @@ interface PipelineRecord {
       skipped_docs: number;
       errors: number;
       elapsed_ms: number;
+      estimated_cost?: {
+        usd: number;
+        currency: string;
+        source: 'per_chunk' | 'per_doc' | 'combined';
+      };
     };
   };
 }
@@ -129,6 +134,16 @@ function formatRelative(iso: string, now: number = Date.now()): string {
   return `${d}d ago`;
 }
 
+function formatCost(cost: { usd: number; currency: string }): string {
+  // Operator-declared rates can be very small (e.g. $0.0001/chunk).
+  // Pick a precision that makes sub-cent runs readable without lying
+  // about larger ones.
+  if (cost.usd === 0) return `0 ${cost.currency}`;
+  if (cost.usd < 0.01) return `${cost.usd.toFixed(6)} ${cost.currency}`;
+  if (cost.usd < 1) return `${cost.usd.toFixed(4)} ${cost.currency}`;
+  return `${cost.usd.toFixed(2)} ${cost.currency}`;
+}
+
 function LastRunBadge(props: { rec: PipelineRecord }): React.JSX.Element {
   const { rec } = props;
   if (!rec.lastRun) {
@@ -146,16 +161,36 @@ function LastRunBadge(props: { rec: PipelineRecord }): React.JSX.Element {
   const cls = ok
     ? 'bg-[var(--color-success)] text-[color:var(--color-fg-inverted)]'
     : 'bg-[var(--color-danger)] text-[color:var(--color-fg-inverted)]';
+  const costStr = summary.estimated_cost ? formatCost(summary.estimated_cost) : null;
+  const tooltipParts: string[] = [
+    `${summary.total_docs} docs`,
+    `${summary.total_chunks} chunks`,
+    `${summary.errors} errors`,
+    `${Math.round(summary.elapsed_ms)}ms`,
+  ];
+  if (costStr) tooltipParts.push(`cost ~${costStr}`);
   return (
     <div className="flex items-baseline gap-2" data-testid="pipelines-lastrun">
       <span
         className={`rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] ${cls}`}
-        title={`${summary.total_docs} docs · ${summary.total_chunks} chunks · ${summary.errors} errors`}
+        title={tooltipParts.join(' · ')}
       >
         {ok ? 'ok' : `${summary.errors} err`}
       </span>
       <span className="text-[10px] text-[color:var(--color-fg-muted)]">
         {summary.total_docs}/{summary.total_chunks} · {formatRelative(at)}
+        {costStr && (
+          <>
+            {' · '}
+            <span
+              className="mono text-[color:var(--color-fg)]"
+              data-testid={`pipelines-lastrun-cost-${rec.name}`}
+              title={`source: ${summary.estimated_cost!.source}`}
+            >
+              ~{costStr}
+            </span>
+          </>
+        )}
       </span>
     </div>
   );

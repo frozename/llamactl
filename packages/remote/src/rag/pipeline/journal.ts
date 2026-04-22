@@ -69,6 +69,16 @@ export type JournalEntry =
       total_docs: number;
       total_chunks: number;
       elapsed_ms: number;
+      /**
+       * Operator-declared cost estimate, when the manifest set a
+       * `spec.cost.*` rate. Absent means no rate was configured —
+       * readers treat absence as "no estimate available" (not zero).
+       */
+      estimated_cost?: {
+        usd: number;
+        currency: string;
+        source: 'per_chunk' | 'per_doc' | 'combined';
+      };
     }
   | {
       kind: 'error';

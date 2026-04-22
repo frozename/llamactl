@@ -214,6 +214,28 @@ convention.
 
 ---
 
+## Cost estimation
+
+```yaml
+spec:
+  cost:
+    per_chunk_usd: 0.0001       # optional; rate per stored chunk
+    per_doc_usd: 0.0             # optional; rate per ingested doc
+    currency: USD                # default USD
+```
+
+When present, each run's summary gets an `estimated_cost.usd`
+field computed as `total_chunks × per_chunk_usd + total_docs ×
+per_doc_usd`. The Pipelines tab surfaces the number next to the
+last-run badge ("~$0.0032"). Rates are operator-declared because
+retrieval adapters (chroma embeds internally; pgvector's delegated
+embedder swallows `UnifiedEmbeddingResponse.usage`) don't surface
+token counts through the `RetrievalProvider` contract today —
+precise accounting is a follow-up that needs either an adapter
+change in `@nova/contracts` or a side-channel embedder hook.
+
+Absent → no estimate rendered. Honest silence over a false zero.
+
 ## Scheduling
 
 ```yaml

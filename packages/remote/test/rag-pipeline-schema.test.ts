@@ -178,6 +178,26 @@ describe('RagPipelineSpecSchema', () => {
     }
   });
 
+  test('accepts spec.cost with per_chunk_usd + default currency USD', () => {
+    const parsed = RagPipelineSpecSchema.parse({
+      destination: { ragNode: 'kb-pg', collection: 'docs' },
+      sources: [{ kind: 'filesystem', root: '/tmp' }],
+      cost: { per_chunk_usd: 0.0001 },
+    });
+    expect(parsed.cost?.per_chunk_usd).toBe(0.0001);
+    expect(parsed.cost?.currency).toBe('USD');
+  });
+
+  test('spec.cost rejects negative rates', () => {
+    expect(() =>
+      RagPipelineSpecSchema.parse({
+        destination: { ragNode: 'kb-pg', collection: 'docs' },
+        sources: [{ kind: 'filesystem', root: '/tmp' }],
+        cost: { per_chunk_usd: -1 },
+      }),
+    ).toThrow();
+  });
+
   test('rejects unknown on_duplicate values', () => {
     expect(() =>
       RagPipelineSpecSchema.parse({

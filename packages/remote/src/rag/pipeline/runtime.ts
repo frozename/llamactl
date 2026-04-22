@@ -69,6 +69,17 @@ export interface RunSummary {
     chunks: number;
     errors: number;
   }>;
+  /**
+   * Operator-declared cost estimate. Present only when the manifest
+   * supplies `spec.cost.{per_chunk_usd, per_doc_usd}`. Best-effort —
+   * adapter-level token tracking is a follow-up once the
+   * RetrievalProvider contract grows usage output.
+   */
+  estimated_cost?: {
+    usd: number;
+    currency: string;
+    source: 'per_chunk' | 'per_doc' | 'combined';
+  };
 }
 
 const BATCH_SIZE = 20;
@@ -199,12 +210,15 @@ export async function runPipeline(
     }
 
     summary.elapsed_ms = Date.now() - startedAt;
+    const cost = computeEstimatedCost(manifest.spec.cost, summary);
+    if (cost) summary.estimated_cost = cost;
     await journal.append({
       kind: 'run-complete',
       ts: new Date().toISOString(),
       total_docs: summary.total_docs,
       total_chunks: summary.total_chunks,
       elapsed_ms: summary.elapsed_ms,
+      ...(cost ? { estimated_cost: cost } : {}),
     });
     await journal.close();
     return summary;
@@ -516,6 +530,39 @@ function sha256HexBytes(value: string): string {
 
 function sourceLabel(pipeline: string, index: number, kind: string): string {
   return `${pipeline}:${index}:${kind}`;
+}
+
+/**
+ * Compute an operator-declared cost estimate from the manifest's
+ * `spec.cost.{per_chunk_usd, per_doc_usd}` against the observed
+ * totals. Returns null when neither rate is set (explicit absence
+ * in the summary is clearer than a zero-dollar estimate). The
+ * `source` field tells downstream UIs which rate drove the number
+ * so they can label the estimate honestly.
+ */
+function computeEstimatedCost(
+  cost: RagPipelineManifest['spec']['cost'] | undefined,
+  summary: Pick<RunSummary, 'total_docs' | 'total_chunks'>,
+): NonNullable<RunSummary['estimated_cost']> | null {
+  if (!cost) return null;
+  const perChunk = cost.per_chunk_usd ?? 0;
+  const perDoc = cost.per_doc_usd ?? 0;
+  if (perChunk <= 0 && perDoc <= 0) return null;
+  const chunkCost = summary.total_chunks * perChunk;
+  const docCost = summary.total_docs * perDoc;
+  const usd = chunkCost + docCost;
+  let costSource: 'per_chunk' | 'per_doc' | 'combined' = 'combined';
+  if (perChunk > 0 && perDoc === 0) costSource = 'per_chunk';
+  else if (perDoc > 0 && perChunk === 0) costSource = 'per_doc';
+  return {
+    usd: roundTo6(usd),
+    currency: cost.currency ?? 'USD',
+    source: costSource,
+  };
+}
+
+function roundTo6(n: number): number {
+  return Math.round(n * 1_000_000) / 1_000_000;
 }
 
 function toMessage(err: unknown): string {

@@ -533,6 +533,76 @@ describe('runPipeline', () => {
     }
   });
 
+  test('spec.cost.per_chunk_usd surfaces an estimated_cost on the summary', async () => {
+    const docs: RawDoc[] = [
+      { id: 'a', content: 'alpha', metadata: {} },
+      { id: 'b', content: 'beta', metadata: {} },
+      { id: 'c', content: 'gamma', metadata: {} },
+    ];
+    const restore = installStubFetcher({ docs });
+    try {
+      const mock = makeMockAdapter();
+      const manifest = baseManifest();
+      // Wire a per-chunk rate — 3 chunks × $0.001 = $0.003
+      manifest.spec.cost = { per_chunk_usd: 0.001, currency: 'USD' };
+      const summary = await runPipeline({
+        manifest,
+        journalPath: join(tmp, 'journal.jsonl'),
+        openAdapter: mock.open,
+      });
+      expect(summary.estimated_cost).toBeDefined();
+      expect(summary.estimated_cost!.usd).toBeCloseTo(0.003, 6);
+      expect(summary.estimated_cost!.source).toBe('per_chunk');
+      expect(summary.estimated_cost!.currency).toBe('USD');
+    } finally {
+      restore();
+    }
+  });
+
+  test('combined per_chunk_usd + per_doc_usd sums both', async () => {
+    const docs: RawDoc[] = [
+      { id: 'a', content: 'alpha', metadata: {} },
+      { id: 'b', content: 'beta', metadata: {} },
+    ];
+    const restore = installStubFetcher({ docs });
+    try {
+      const mock = makeMockAdapter();
+      const manifest = baseManifest();
+      // 2 chunks × 0.01 + 2 docs × 0.05 = 0.02 + 0.10 = 0.12
+      manifest.spec.cost = {
+        per_chunk_usd: 0.01,
+        per_doc_usd: 0.05,
+        currency: 'USD',
+      };
+      const summary = await runPipeline({
+        manifest,
+        journalPath: join(tmp, 'journal.jsonl'),
+        openAdapter: mock.open,
+      });
+      expect(summary.estimated_cost?.usd).toBeCloseTo(0.12, 6);
+      expect(summary.estimated_cost?.source).toBe('combined');
+    } finally {
+      restore();
+    }
+  });
+
+  test('no cost rates configured → estimated_cost is undefined', async () => {
+    const restore = installStubFetcher({
+      docs: [{ id: 'a', content: 'x', metadata: {} }],
+    });
+    try {
+      const mock = makeMockAdapter();
+      const summary = await runPipeline({
+        manifest: baseManifest(),
+        journalPath: join(tmp, 'journal.jsonl'),
+        openAdapter: mock.open,
+      });
+      expect(summary.estimated_cost).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
   test('missing fetcher for a kind journals an error and continues', async () => {
     // Temporarily delete the registered filesystem fetcher to prove
     // the runtime doesn't crash when the registry lookup misses.
