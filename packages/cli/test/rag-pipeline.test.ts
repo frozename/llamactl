@@ -189,6 +189,49 @@ describe('rag pipeline apply', () => {
     expect(result).toBe(0);
     expect(cap.out).toContain("applied rag pipeline 'test'");
   });
+  test('-f - reads manifest from stdin and applies', async () => {
+    const yaml = 'apiVersion: llamactl/v1\nkind: RagPipeline\nmetadata:\n  name: piped\n';
+    let sawYaml = '';
+    __setRagPipelineTestSeams({
+      nodeClient: makeStubClient({
+        ragPipelineApply: async (i) => {
+          sawYaml = i.manifestYaml;
+          return { ok: true, name: 'piped', path: '/tmp/p', created: true };
+        },
+      }),
+      readStdinYaml: () => yaml,
+    });
+    const { result, cap } = await captureStdio(() =>
+      runRag(['pipeline', 'apply', '-f', '-']),
+    );
+    expect(result).toBe(0);
+    expect(sawYaml).toBe(yaml);
+    expect(cap.out).toContain("applied rag pipeline 'piped'");
+  });
+  test('-f - with empty stdin → exit 1', async () => {
+    __setRagPipelineTestSeams({
+      nodeClient: makeStubClient(),
+      readStdinYaml: () => '',
+    });
+    const { result, cap } = await captureStdio(() =>
+      runRag(['pipeline', 'apply', '-f', '-']),
+    );
+    expect(result).toBe(1);
+    expect(cap.err).toContain('stdin was empty');
+  });
+  test('-f - surfacing a read error returns exit 1', async () => {
+    __setRagPipelineTestSeams({
+      nodeClient: makeStubClient(),
+      readStdinYaml: () => {
+        throw new Error('EIO fake-read-failure');
+      },
+    });
+    const { result, cap } = await captureStdio(() =>
+      runRag(['pipeline', 'apply', '-f', '-']),
+    );
+    expect(result).toBe(1);
+    expect(cap.err).toContain('failed reading manifest from stdin');
+  });
 });
 
 describe('rag pipeline run', () => {

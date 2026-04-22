@@ -12,9 +12,10 @@ import { getNodeClient } from '../dispatcher.js';
 const USAGE = `Usage: llamactl rag pipeline <subcommand>
 
 Subcommands:
-  apply -f <file.yaml>
+  apply -f <file.yaml | ->
       Persist a RagPipeline manifest under
       $DEV_STORAGE/rag-pipelines/<name>/spec.yaml. Does not execute.
+      Pass \`-f -\` to read YAML from stdin (e.g. pipe from \`draft\`).
 
   run <name> [--dry-run] [--json]
       Execute an applied pipeline. --dry-run walks fetch + chunk
@@ -62,6 +63,12 @@ export interface RagPipelineTestSeams {
   startPipelineScheduler?: (
     opts: PipelineSchedulerOptions,
   ) => PipelineSchedulerHandle;
+  /**
+   * Override the stdin reader for `apply -f -` tests. Default reads
+   * fd 0 via readFileSync, which tests can't redirect without
+   * spawning a subprocess — this seam makes that unnecessary.
+   */
+  readStdinYaml?: () => string;
 }
 
 let testSeams: RagPipelineTestSeams = {};
@@ -147,12 +154,36 @@ async function runApply(args: string[]): Promise<number> {
     process.stderr.write(`${parsed.error}\n\n${USAGE}`);
     return 1;
   }
-  const absPath = resolve(parsed.file);
-  if (!existsSync(absPath)) {
-    process.stderr.write(`rag pipeline apply: file not found: ${absPath}\n`);
-    return 1;
+  let manifestYaml: string;
+  if (parsed.file === '-') {
+    // Enables: `llamactl rag pipeline draft "…" | llamactl rag pipeline apply -f -`
+    // Reads all of stdin synchronously since tRPC mutations need
+    // the full body up front. Small manifests (< a few MB); we're
+    // not streaming anywhere. Tests override via `readStdinYaml`
+    // seam because fd-0 can't be redirected without a subprocess.
+    const reader = testSeams.readStdinYaml ?? (() => readFileSync(0, 'utf8'));
+    try {
+      manifestYaml = reader();
+    } catch (err) {
+      process.stderr.write(
+        `rag pipeline apply: failed reading manifest from stdin: ${(err as Error).message}\n`,
+      );
+      return 1;
+    }
+    if (!manifestYaml.trim()) {
+      process.stderr.write(
+        'rag pipeline apply: stdin was empty — pipe a RagPipeline YAML in.\n',
+      );
+      return 1;
+    }
+  } else {
+    const absPath = resolve(parsed.file);
+    if (!existsSync(absPath)) {
+      process.stderr.write(`rag pipeline apply: file not found: ${absPath}\n`);
+      return 1;
+    }
+    manifestYaml = readFileSync(absPath, 'utf8');
   }
-  const manifestYaml = readFileSync(absPath, 'utf8');
   try {
     const res = await client().ragPipelineApply.mutate({ manifestYaml });
     process.stdout.write(
