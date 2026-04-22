@@ -450,6 +450,87 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
   );
 }
 
+/**
+ * Inline CTA shown when the chat's active node is `local` and the
+ * model dropdown resolved empty — nothing to chat with. Kicks off
+ * a llama-server start against the catalog's default rel; polls
+ * /health for up-to-60s; on success the parent re-fires the
+ * nodeModels query and the dropdown populates.
+ */
+function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): React.JSX.Element {
+  const utils = trpc.useUtils();
+  const catalog = trpc.catalogList.useQuery();
+  const [picked, setPicked] = React.useState<string>('');
+  const start = trpc.serverStart.useSubscription(
+    picked ? { target: picked } : { target: 'noop' },
+    {
+      enabled: picked !== '',
+      onData: (evt: unknown) => {
+        const e = evt as { type?: string; result?: { ok?: boolean } };
+        if (e.type === 'done' && e.result?.ok) {
+          setPicked('');
+          void utils.nodeModels.invalidate();
+          void utils.serverStatus.invalidate();
+          onStarted?.();
+        }
+      },
+      onError: () => setPicked(''),
+    } as Parameters<typeof trpc.serverStart.useSubscription>[1],
+  );
+  void start;
+  const rels = React.useMemo(() => {
+    const rows = (catalog.data ?? []) as Array<{ rel?: string }>;
+    return rows.map((r) => r.rel).filter((r): r is string => typeof r === 'string');
+  }, [catalog.data]);
+  const [choice, setChoice] = React.useState<string>('');
+  React.useEffect(() => {
+    if (!choice && rels.length > 0) setChoice(rels[0]!);
+  }, [rels, choice]);
+  const isStarting = picked !== '';
+  return (
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
+      <div className="mb-2 text-xs text-[color:var(--color-fg)]">
+        Start local llama-server
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={choice}
+          onChange={(e) => setChoice(e.target.value)}
+          disabled={isStarting}
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-xs text-[color:var(--color-fg)] disabled:opacity-40"
+        >
+          {rels.length === 0 ? (
+            <option value="">(no catalog entries)</option>
+          ) : (
+            rels.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))
+          )}
+        </select>
+        <button
+          type="button"
+          onClick={() => setPicked(choice)}
+          disabled={isStarting || !choice}
+          data-testid="chat-empty-start-local"
+          className="rounded border border-[var(--color-accent)] bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg-inverted)] disabled:opacity-40"
+        >
+          {isStarting ? 'Starting…' : 'Start'}
+        </button>
+        <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+          or open <button
+            type="button"
+            onClick={() => {
+              localStorage.setItem('llamactl-tab-models-page', 'server');
+              window.dispatchEvent(new CustomEvent('llamactl:nav', { detail: 'models' }));
+            }}
+            className="underline hover:text-[color:var(--color-fg)]"
+          >Models → Local Server</button> for the full flow.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function TranscriptColumn(props: {
   label: string;
   node: string;
@@ -462,6 +543,7 @@ function TranscriptColumn(props: {
   onNodeChange: (node: string) => void;
   onModelChange: (model: string) => void;
   onToggleCapability: (tag: CapabilityTag) => void;
+  onStartedLocal?: () => void;
   headerExtras?: React.ReactNode;
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
@@ -518,8 +600,17 @@ function TranscriptColumn(props: {
         className="flex flex-1 flex-col gap-4 overflow-auto bg-[var(--color-surface-0)] p-6"
       >
         {props.messages.length === 0 && (
-          <div className="text-sm text-[color:var(--color-fg-muted)]">
-            Start a conversation by typing below.
+          <div className="flex flex-col gap-3">
+            <div className="text-sm text-[color:var(--color-fg-muted)]">
+              {!props.modelsLoading && props.models.length === 0 && props.node === 'local'
+                ? 'Local llama-server isn\u2019t running yet \u2014 no models to chat with.'
+                : !props.modelsLoading && props.models.length === 0
+                  ? `No models exposed by ${props.node}.`
+                  : 'Start a conversation by typing below.'}
+            </div>
+            {!props.modelsLoading && props.models.length === 0 && props.node === 'local' && (
+              <LocalServerStartInline onStarted={props.onStartedLocal} />
+            )}
           </div>
         )}
         {props.messages.map((m) => (
@@ -975,6 +1066,7 @@ export default function Chat(): React.JSX.Element {
               nodes={nodes}
               models={models}
               modelsLoading={modelList.isLoading}
+              onStartedLocal={() => { void modelList.refetch(); }}
               onNodeChange={(node) => store.updateMeta(active.id, { node })}
               onModelChange={(model) => store.updateMeta(active.id, { model })}
               onToggleCapability={(tag) => store.toggleCapability(active.id, tag)}

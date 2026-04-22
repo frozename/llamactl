@@ -33,13 +33,115 @@ export function providerForCloudNode(
   const apiKey = node.cloud.apiKeyRef
     ? resolveApiKeyRef(node.cloud.apiKeyRef, env)
     : '';
-  return createOpenAICompatProvider({
+  const providerName: CloudProvider = node.cloud.provider;
+  const baseUrl = normalizeOpenAICompatBaseUrl(
+    node.cloud.baseUrl || DEFAULT_CLOUD_BASE_URLS[providerName] || '',
+    providerName,
+  );
+  const base = createOpenAICompatProvider({
     name: node.name,
     displayName: node.cloud.displayName ?? node.name,
-    baseUrl: normalizeOpenAICompatBaseUrl(node.cloud.baseUrl),
+    baseUrl,
     apiKey,
     ...(fetchImpl ? { fetch: fetchImpl } : {}),
   });
+  return applyProviderQuirks(base, providerName);
+}
+
+/**
+ * Non-OpenAI-compat quirks layered on top of the generic adapter so
+ * providers that diverge from the spec keep the single-factory shape.
+ *
+ *   gemini     — Google's OpenAI-compat shim returns models with
+ *                `id: "models/gemini-2.5-flash"` from /v1/models but
+ *                rejects that same string when echoed back in
+ *                /chat/completions with "model is not specified".
+ *                Strip the `models/` prefix before forwarding.
+ *   anthropic  — listing models via `GET /v1/models` needs
+ *                `x-api-key` + `anthropic-version` headers, NOT the
+ *                `Authorization: Bearer` the adapter sends. We fall
+ *                back to a known-good hardcoded catalog when the
+ *                upstream returns empty / 401 / 404 so the chat UI
+ *                can still pick a model to talk to.
+ */
+function applyProviderQuirks(
+  base: AiProvider,
+  providerName: CloudProvider,
+): AiProvider {
+  if (providerName !== 'gemini' && providerName !== 'anthropic') return base;
+
+  const stripGeminiPrefix = (value: string | undefined): string | undefined =>
+    typeof value === 'string' && value.startsWith('models/')
+      ? value.slice('models/'.length)
+      : value;
+
+  const transformRequest = <T extends { model?: string } | undefined>(req: T): T => {
+    if (providerName !== 'gemini' || !req || !req.model) return req;
+    return { ...req, model: stripGeminiPrefix(req.model) } as T;
+  };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const wrapped = {
+    ...base,
+    createResponse: (req: any) => base.createResponse(transformRequest(req)),
+    ...(base.streamResponse
+      ? {
+          streamResponse: (req: any, signal?: AbortSignal) => {
+            const nonNullStream = base.streamResponse!;
+            return nonNullStream(transformRequest(req), signal);
+          },
+        }
+      : {}),
+    listModels: async () => {
+      const fallback = fallbackModelsFor(providerName);
+      if (!base.listModels) return fallback;
+      try {
+        const upstream = await base.listModels();
+        if (upstream && upstream.length > 0) return upstream;
+        return fallback;
+      } catch {
+        return fallback;
+      }
+    },
+  } as AiProvider;
+  return wrapped;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function fallbackModelsFor(provider: CloudProvider): any[] {
+  // Curated minimal catalogs — keep short, recent, and non-exhaustive.
+  // The operator picks one to chat with; they can add custom catalog
+  // entries if they need a model we don't list.
+  const now = Math.floor(Date.now() / 1000);
+  if (provider === 'anthropic') {
+    return [
+      'claude-opus-4-5-20251101',
+      'claude-sonnet-4-5-20251022',
+      'claude-haiku-4-5-20251001',
+      'claude-3-7-sonnet-20250219',
+      'claude-3-5-sonnet-20241022',
+    ].map((id) => ({
+      id,
+      object: 'model' as const,
+      created: now,
+      owned_by: 'anthropic',
+      capabilities: ['chat' as const, 'tools' as const, 'vision' as const, 'long_context' as const],
+    }));
+  }
+  if (provider === 'gemini') {
+    return [
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-8b',
+    ].map((id) => ({
+      id,
+      object: 'model' as const,
+      created: now,
+      owned_by: 'google',
+      capabilities: ['chat' as const, 'tools' as const, 'vision' as const, 'long_context' as const],
+    }));
+  }
+  return [];
 }
 
 /**
@@ -57,9 +159,15 @@ export function providerForCloudNode(
  * escape hatch for operators with a proxy that exposes a different
  * versioned prefix (or none) open.
  */
-function normalizeOpenAICompatBaseUrl(url: string): string {
+function normalizeOpenAICompatBaseUrl(url: string, providerName?: CloudProvider): string {
   const trimmed = url.endsWith('/') ? url.slice(0, -1) : url;
+  // Google's OpenAI-compat shim lives at /v1beta/openai/ — a path
+  // that DOESN'T end in /v<n> so the default-append rule above
+  // would bolt on a bogus /v1 and every request would 404. Skip
+  // the append when the URL already terminates at .../openai.
+  if (/\/openai$/.test(trimmed)) return trimmed;
   if (/\/v\d+$/.test(trimmed)) return trimmed;
+  if (providerName === 'gemini') return trimmed;
   return `${trimmed}/v1`;
 }
 

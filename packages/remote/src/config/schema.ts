@@ -34,6 +34,7 @@ export const NodeFactsSchema = z.object({
 export const CloudProviderSchema = z.enum([
   'openai',
   'anthropic',
+  'gemini',
   'together',
   'groq',
   'mistral',
@@ -417,6 +418,11 @@ export function resolveNodeKind(node: ClusterNode): NodeKind {
 export const DEFAULT_CLOUD_BASE_URLS: Record<CloudProvider, string> = {
   openai: 'https://api.openai.com/v1',
   anthropic: 'https://api.anthropic.com/v1',
+  // Google's OpenAI-compat shim — served at /v1beta/openai/ (not
+  // /v1). The factory skips the `normalizeOpenAICompatBaseUrl` /v1
+  // append for this URL because the versioned prefix is already in
+  // the path.
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/openai',
   together: 'https://api.together.xyz/v1',
   groq: 'https://api.groq.com/openai/v1',
   mistral: 'https://api.mistral.ai/v1',
