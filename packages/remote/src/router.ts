@@ -2809,6 +2809,56 @@ export const router = t.router({
       return { ok: true as const, ...route };
     }),
 
+  /**
+   * Tail the project-routing decision journal. Powers the Electron
+   * Projects module's "where did my AI go" strip. Default tail=200
+   * entries from `$LLAMACTL_PROJECT_ROUTING_JOURNAL || ~/.llamactl/
+   * project-routing.jsonl`; malformed lines are silently dropped
+   * the same way ragPipelineLogs handles journal corruption.
+   */
+  projectRoutingJournal: t.procedure
+    .input(
+      z.object({
+        tail: z.number().int().min(1).max(10_000).default(200),
+        /** Optional project-name filter. Decisions are journaled
+         *  without structural sorting, so the filter keeps the
+         *  tail window relevant when many projects share the
+         *  same journal. */
+        project: z.string().optional(),
+      }),
+    )
+    .query(async ({ input }) => {
+      const { defaultProjectRoutingJournalPath } = await import(
+        './config/project-routing.js'
+      );
+      const { existsSync, readFileSync } = await import('node:fs');
+      const path = defaultProjectRoutingJournalPath();
+      if (!existsSync(path)) {
+        return { ok: true as const, path, entries: [] as Array<Record<string, unknown>> };
+      }
+      const raw = readFileSync(path, 'utf8');
+      const all = raw
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+      const entries: Array<Record<string, unknown>> = [];
+      for (const line of all) {
+        try {
+          const parsed = JSON.parse(line) as unknown;
+          if (!parsed || typeof parsed !== 'object') continue;
+          if (input.project) {
+            const entry = parsed as { project?: unknown };
+            if (entry.project !== input.project) continue;
+          }
+          entries.push(parsed as Record<string, unknown>);
+        } catch {
+          /* malformed line — skip */
+        }
+      }
+      const tailed = entries.slice(Math.max(0, entries.length - input.tail));
+      return { ok: true as const, path, entries: tailed };
+    }),
+
   // ---- Composite (multi-component apply) --------------------------------
   //
   // Phase 5 of composite-infra.md — tRPC surface for the composite

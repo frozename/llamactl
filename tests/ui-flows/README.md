@@ -25,6 +25,13 @@ llamactl knowledge and lets the upstream driver stay library-generic.
   the `kind: RagPipeline` shape + the URL / schedule inferred from
   the description. Fast-exits with PASS when the profile has no rag
   nodes (the tab is conditionally rendered).
+- `projects-tab-flow.ts` — trifold Phase 4 Projects module. Opens
+  the activity-bar Projects entry, asserts the module mounts,
+  exercises the empty-state branch when no projects are
+  registered, and drives the "open detail + close" arc when the
+  operator has at least one project registered. The rest of the
+  register → index → chat arc is covered by CLI + tRPC unit
+  tests from Phases 1–3.
 - `quality-tab-flow.ts` — Aliveness-Slice-3 Quality tab. Opens
   Knowledge → Quality, asserts the tab mounts, the starter button
   seeds a plausible RagBench manifest, and the Run button is

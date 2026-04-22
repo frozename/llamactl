@@ -44,6 +44,7 @@ DEFAULT_FLOWS=(
   pipelines-wizard-flow
   pipelines-apply-run-flow
   quality-tab-flow
+  projects-tab-flow
 )
 
 banner() {
