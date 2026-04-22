@@ -892,7 +892,14 @@ export const router = t.router({
         );
         return { node: input.name, kind, models: filtered };
       }
-      if (kind === 'gateway') {
+      if (kind === 'gateway' || kind === 'cloud') {
+        // Cloud-direct and gateway-style cloud nodes both carry a
+        // `cloud` binding with a base URL + API key ref. The
+        // OpenAI-compat provider factory handles both identically
+        // — it opens an openai-compat client at that base URL with
+        // the resolved API key and scrapes /v1/models. We forward
+        // the effective kind so the chat UI can render the right
+        // label without round-tripping.
         const { providerForCloudNode } = await import('./providers/factory.js');
         const provider = providerForCloudNode(resolved.node);
         const models = (await provider.listModels?.()) ?? [];

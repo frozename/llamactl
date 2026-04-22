@@ -91,6 +91,13 @@ const CONTROL_PLANE_ONLY = new Set<string>([
   'nodeOpenAIConfig',
   'nodeDiscover',
   'nodeAddCloud',
+  // nodeModels resolves a by-name lookup against the local
+  // kubeconfig + scrapes /v1/models on whatever the node's
+  // endpoint resolves to. Must run on the control plane;
+  // dispatching to a remote active-node makes that remote try to
+  // look up the CALLER's node name in its OWN kubeconfig (which
+  // doesn't have it) and error + leave the chat models dropdown
+  // hanging on isLoading forever.
   'nodeModels',
   'chatComplete',
   'chatStream',

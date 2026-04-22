@@ -41,27 +41,33 @@ export const useNodeSelection = create<NodeSelectionStore>()(
 );
 
 /**
- * Sync the current override (if any) to Electron main so the
- * dispatcher picks it up. Only writes when an override is set;
- * absence means the dispatcher falls back to kubeconfig.defaultNode
- * \u2014 the happy path.
+ * Clear any stale active-node override on boot. The dispatcher
+ * honors an override-first policy, and a persisted value from the
+ * old dropdown-era UX silently routed every tRPC call to whatever
+ * was last picked \u2014 even after the UI dropped the dropdown and
+ * the user thought they were back on local. Reset to null on mount
+ * so every module defaults to kubeconfig.defaultNode. Scoped
+ * per-feature pickers (chat conversation, RAG-node dropdown) drive
+ * their own routing with explicit inputs \u2014 they don't need the
+ * global override.
  */
 export function useSyncActiveNode(): void {
   const qc = useQueryClient();
   const utils = trpc.useUtils();
-  const { selectedNode } = useNodeSelection();
+  const { selectedNode, setSelectedNode } = useNodeSelection();
   useEffect(() => {
-    if (!selectedNode) return;
-    void trpcUIClient.uiSetActiveNode
-      .mutate({ name: selectedNode })
-      .then(() => {
-        void utils.invalidate();
-        void qc.invalidateQueries();
-      })
-      .catch(() => {
-        /* main-side race \u2014 dispatcher falls back to kubeconfig */
-      });
-  }, [selectedNode, utils, qc]);
+    // Clear the persisted override exactly once on boot. If the
+    // user picks a node again via the dashboard map's detail-card
+    // "set as active" action (which navigates instead of overriding
+    // in the new UX), no re-sync fires and the override stays null.
+    if (selectedNode !== null) {
+      setSelectedNode(null);
+      void trpcUIClient.uiSetActiveNode.mutate({ name: 'local' }).catch(() => {});
+      void utils.invalidate();
+      void qc.invalidateQueries();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 }
 
 export function NodeSelector(): React.JSX.Element | null {

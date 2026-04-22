@@ -661,7 +661,18 @@ export default function Chat(): React.JSX.Element {
   const [streamInputA, setStreamInputA] = useState<StreamInput | null>(null);
   const [streamInputB, setStreamInputB] = useState<StreamInput | null>(null);
 
-  const nodes = useMemo(() => nodeList.data?.nodes ?? [], [nodeList.data]);
+  // Chat needs a node that serves `/v1/chat/completions` — agents
+  // (llama-server), gateways (sirius/embersynth), cloud-direct
+  // (openai/anthropic/gemini), and provider-via-gateway bindings
+  // all qualify. RAG nodes (Chroma/pgvector) don't speak chat, so
+  // they're filtered out.
+  const nodes = useMemo(
+    () =>
+      (nodeList.data?.nodes ?? []).filter(
+        (n) => (n.effectiveKind ?? 'agent') !== 'rag',
+      ),
+    [nodeList.data],
+  );
   const modelList = trpc.nodeModels.useQuery(
     { name: active?.node ?? 'local' },
     { enabled: !!active, staleTime: 60_000 },
