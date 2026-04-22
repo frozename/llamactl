@@ -1,6 +1,7 @@
 import { APP_MODULES } from '@/modules/registry';
 import { useUIStore } from '@/stores/ui-store';
 import { NodeSelector } from './node-selector';
+import { ThemePickerButton } from './theme-picker';
 
 /**
  * Top chrome. macOS uses `titleBarStyle: 'hiddenInset'` in the main
@@ -36,6 +37,7 @@ export function TitleBar(): React.JSX.Element {
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
         <NodeSelector />
+        <ThemePickerButton />
       </div>
     </div>
   );

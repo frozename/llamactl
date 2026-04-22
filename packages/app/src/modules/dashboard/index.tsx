@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { stringify as yamlStringify } from 'yaml';
 import type { bench, schemas } from '@llamactl/core';
 import { trpc } from '@/lib/trpc';
-import { NodeMap } from './NodeMap';
+import { ThemedNodeMap } from './ThemedNodeMap';
 
 type BenchCompareRow = bench.BenchCompareRow;
 type PresetOverride = schemas.PresetOverride;
@@ -267,7 +267,7 @@ function DashboardBody(): React.JSX.Element {
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
           Cluster map
         </h2>
-        <NodeMap />
+        <ThemedNodeMap />
       </section>
 
       <div className="grid grid-cols-3 gap-3">

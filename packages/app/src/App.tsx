@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { trpc, trpcClient } from '@/lib/trpc';
 import { IDELayout } from '@/shell/ide-layout';
+import { ThemeProvider } from '@/shell/theme-provider';
 
 export function App(): React.JSX.Element {
   const [queryClient] = useState(
@@ -22,10 +23,12 @@ export function App(): React.JSX.Element {
   );
 
   return (
-    <trpc.Provider client={trpcClient} queryClient={queryClient}>
-      <QueryClientProvider client={queryClient}>
-        <IDELayout />
-      </QueryClientProvider>
-    </trpc.Provider>
+    <ThemeProvider>
+      <trpc.Provider client={trpcClient} queryClient={queryClient}>
+        <QueryClientProvider client={queryClient}>
+          <IDELayout />
+        </QueryClientProvider>
+      </trpc.Provider>
+    </ThemeProvider>
   );
 }
