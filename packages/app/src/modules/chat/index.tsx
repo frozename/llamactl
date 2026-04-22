@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { trpc } from '@/lib/trpc';
+import { useUIStore } from '@/stores/ui-store';
 
 /**
  * Chat module. Scopes a conversation to a node + model; streams
@@ -459,7 +460,8 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
  */
 function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): React.JSX.Element {
   const utils = trpc.useUtils();
-  const catalog = trpc.catalogList.useQuery();
+  const setActiveModule = useUIStore((s) => s.setActiveModule);
+  const catalog = trpc.catalogList.useQuery('all');
   const [picked, setPicked] = React.useState<string>('');
   const start = trpc.serverStart.useSubscription(
     picked ? { target: picked } : { target: 'noop' },
@@ -521,7 +523,7 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
             type="button"
             onClick={() => {
               localStorage.setItem('llamactl-tab-models-page', 'server');
-              window.dispatchEvent(new CustomEvent('llamactl:nav', { detail: 'models' }));
+              setActiveModule('models');
             }}
             className="underline hover:text-[color:var(--color-fg)]"
           >Models → Local Server</button> for the full flow.
