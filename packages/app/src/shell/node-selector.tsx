@@ -38,7 +38,7 @@ export const useNodeSelection = create<NodeSelectionStore>()(
 
 type SelectorNode = {
   name: string;
-  effectiveKind?: 'agent' | 'gateway' | 'provider';
+  effectiveKind?: 'agent' | 'gateway' | 'provider' | 'rag';
 };
 
 interface SelectorGroup {
@@ -56,7 +56,7 @@ interface SelectorGroup {
  * `<optgroup>` immediately after, labelled with the gateway's name.
  */
 function groupNodesForSelector(nodes: readonly SelectorNode[]): SelectorGroup[] {
-  const kindOf = (n: SelectorNode): 'agent' | 'gateway' | 'provider' =>
+  const kindOf = (n: SelectorNode): 'agent' | 'gateway' | 'provider' | 'rag' =>
     n.effectiveKind ?? 'agent';
 
   const roots = nodes.filter((n) => kindOf(n) !== 'provider');
@@ -157,6 +157,9 @@ export function NodeSelector(): React.JSX.Element | null {
     <div
       className="flex items-center gap-1 text-xs"
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      data-testid="node-selector-root"
+      data-active-node={effective}
+      data-healthy={healthy === true ? 'true' : healthy === false ? 'false' : 'probing'}
     >
       <span className="text-[10px] text-[color:var(--color-fg-muted)]">node</span>
       <span
@@ -174,6 +177,7 @@ export function NodeSelector(): React.JSX.Element | null {
       <select
         value={effective}
         onChange={(e) => setSelectedNode(e.target.value)}
+        data-testid="node-selector"
         className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)]"
       >
         {groupNodesForSelector(nodes).map((group) =>

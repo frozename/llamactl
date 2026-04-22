@@ -240,7 +240,12 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
   });
 
   return (
-    <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
+    <div
+      className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
+      data-testid={`workloads-row-${row.name}`}
+      data-phase={row.phase}
+      data-node={row.node}
+    >
       <div className="flex items-baseline justify-between gap-4">
         <div className="flex items-baseline gap-2">
           <span className="font-mono text-sm text-[color:var(--color-fg)]">{row.name}</span>

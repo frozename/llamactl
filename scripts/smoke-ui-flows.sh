@@ -47,6 +47,7 @@ DEFAULT_FLOWS=(
   projects-tab-flow
   ops-chat-flow
   ops-chat-refusal-flow
+  multi-node-flow
 )
 
 banner() {
