@@ -25,6 +25,16 @@ llamactl knowledge and lets the upstream driver stay library-generic.
   the `kind: RagPipeline` shape + the URL / schedule inferred from
   the description. Fast-exits with PASS when the profile has no rag
   nodes (the tab is conditionally rendered).
+- `pipelines-apply-run-flow.ts` — full E2E arc: wizard → apply →
+  run → running-badge appears → run completes → lastRun badge →
+  Remove. Proves the live agent wiring + Phase B running signal
+  against a real backend. Seeds a deterministic fixture at
+  `/tmp/llamactl-wizard-smoke/doc.md`, timestamps the pipeline +
+  collection names so re-runs don't collide, flips the browser
+  dialog policy to `accept` before Remove so the confirm doesn't
+  block. Leaves a tiny `wizard_smoke_<ts>` collection in the
+  targeted rag node (documented side-effect of Remove's
+  "applied documents stay" semantics).
 - `pipelines-wizard-flow.ts` — R3.c wizard modal. Opens the "+ New
   pipeline" wizard, advances through the stepper with an empty form,
   asserts Review shows validation errors + Apply is disabled. Then

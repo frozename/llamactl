@@ -206,14 +206,25 @@ function PipelineRow(props: {
   const utils = trpc.useUtils();
   const [dryRun, setDryRun] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Optimistic "run just started" stamp — the backend event bus polls
+  // at 2s so sub-second runs would otherwise flash past without any
+  // visible feedback. When the operator clicks Run we snap a fake
+  // RunningEntry into view immediately; the real `running` prop takes
+  // over once the next poll lands (usually within 2s, always within
+  // ragPipelineList invalidation on mutation success).
+  const [optimisticRunAt, setOptimisticRunAt] = useState<string | null>(null);
 
   const runMut = trpc.ragPipelineRun.useMutation({
     onSuccess: async () => {
       setActionError(null);
+      setOptimisticRunAt(null);
       // Refresh list so last-run column flips.
       await utils.ragPipelineList.invalidate();
     },
-    onError: (err) => setActionError(err.message),
+    onError: (err) => {
+      setOptimisticRunAt(null);
+      setActionError(err.message);
+    },
   });
   const removeMut = trpc.ragPipelineRemove.useMutation({
     onSuccess: async () => {
@@ -225,6 +236,10 @@ function PipelineRow(props: {
 
   const onRun = (): void => {
     setActionError(null);
+    // Stamp optimistic start BEFORE firing the mutation so the
+    // running badge appears on the very next render — no poll
+    // dependency. Cleared in runMut.{onSuccess,onError}.
+    if (!dryRun) setOptimisticRunAt(new Date().toISOString());
     runMut.mutate({ name: rec.name, dryRun });
   };
   const onRemove = (): void => {
@@ -240,6 +255,17 @@ function PipelineRow(props: {
   const sources = rec.manifest.spec.sources
     .map((s) => s.kind)
     .join(', ');
+  // Prefer the authoritative server signal when present; fall back
+  // to our optimistic stamp so fast runs (<2s) still render a badge.
+  const displayRunning: RunningEntry | null =
+    running ??
+    (optimisticRunAt
+      ? {
+          name: rec.name,
+          startedAt: optimisticRunAt,
+          sources: rec.manifest.spec.sources.map((s) => s.kind),
+        }
+      : null);
 
   return (
     <>
@@ -257,7 +283,11 @@ function PipelineRow(props: {
           {schedule}
         </td>
         <td className="px-3 py-2">
-          {running ? <RunningBadge entry={running} /> : <LastRunBadge rec={rec} />}
+          {displayRunning ? (
+            <RunningBadge entry={displayRunning} />
+          ) : (
+            <LastRunBadge rec={rec} />
+          )}
         </td>
         <td className="px-3 py-2 text-right">
           <div className="flex items-center justify-end gap-1">
@@ -267,19 +297,19 @@ function PipelineRow(props: {
                 checked={dryRun}
                 onChange={(e) => setDryRun(e.target.checked)}
                 data-testid={`pipelines-dryrun-${rec.name}`}
-                disabled={!!running}
+                disabled={!!displayRunning}
               />
               dry
             </label>
             <button
               type="button"
               onClick={onRun}
-              disabled={runMut.isPending || !!running}
+              disabled={runMut.isPending || !!displayRunning}
               data-testid={`pipelines-run-${rec.name}`}
-              title={running ? 'run in progress' : undefined}
+              title={displayRunning ? 'run in progress' : undefined}
               className="rounded bg-[var(--color-brand)] px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {runMut.isPending ? '…' : running ? 'Running' : 'Run'}
+              {runMut.isPending ? '…' : displayRunning ? 'Running' : 'Run'}
             </button>
             <button
               type="button"
