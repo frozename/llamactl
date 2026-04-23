@@ -26,3 +26,7 @@ __pycache__/
 
 # UI-audit diff artifacts (local runs of `bun run audit`)
 .audit-diffs/
+
+# Brainstorming / visual-companion scratch
+.superpowers/
+.claude/worktrees/
