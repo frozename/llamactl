@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc';
+import { Button, StatusDot } from '@/ui';
+import type { StatusDotTone } from '@/ui';
 
 /**
  * Tails `server.log` via the `serverLogs` subscription. Keeps a
@@ -79,14 +81,14 @@ export default function Logs(): React.JSX.Element {
     setSubKey((k) => k + 1);
   }
 
-  const connDotClass =
+  const connTone: StatusDotTone =
     conn === 'live'
-      ? 'bg-[var(--color-success)]'
+      ? 'ok'
       : conn === 'error'
-        ? 'bg-[var(--color-danger)]'
+        ? 'err'
         : conn === 'connecting'
-          ? 'bg-[var(--color-accent)]'
-          : 'bg-[var(--color-fg-muted)]';
+          ? 'info'
+          : 'idle';
   const connLabel =
     conn === 'live'
       ? 'streaming'
@@ -115,15 +117,14 @@ export default function Logs(): React.JSX.Element {
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs">
-          <span
+          <StatusDot
             data-testid="logs-conn"
             data-state={conn}
-            className="flex items-center gap-1 text-[color:var(--color-fg-muted)]"
+            tone={connTone}
+            pulse={conn === 'live' || conn === 'connecting'}
+            label={connLabel}
             title={error ?? `subscription ${connLabel}`}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${connDotClass}`} />
-            {connLabel}
-          </span>
+          />
           <label className="flex items-center gap-1 text-[color:var(--color-fg-muted)]">
             <input
               type="checkbox"
@@ -156,20 +157,12 @@ export default function Logs(): React.JSX.Element {
             />
             autoscroll
           </label>
-          <button
-            type="button"
-            onClick={restart}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
-          >
+          <Button type="button" variant="secondary" size="sm" onClick={restart}>
             Reconnect
-          </button>
-          <button
-            type="button"
-            onClick={clear}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg-muted)]"
-          >
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={clear}>
             Clear
-          </button>
+          </Button>
         </div>
       </div>
       <div
