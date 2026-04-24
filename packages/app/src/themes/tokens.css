@@ -219,3 +219,8 @@ body::before {
 
 /* Emphasis: brand color, upright — NEVER italic. Used as <em class="t-brand">. */
 .t-brand  { color: var(--color-brand); font-weight: 400; font-style: normal; }
+
+@keyframes bcn-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
+}
