@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { stringify as yamlStringify } from 'yaml';
 import type { bench, schemas } from '@llamactl/core';
 import { trpc } from '@/lib/trpc';
+import { EditorialHero } from '@/ui';
 import { ThemedNodeMap } from './ThemedNodeMap';
 
 type BenchCompareRow = bench.BenchCompareRow;
@@ -261,10 +262,18 @@ function DashboardBody(): React.JSX.Element {
 
   return (
     <div className="h-full overflow-auto p-6" data-testid="dashboard-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
-        Dashboard
-      </div>
-      <h1 className="mb-6 text-2xl font-semibold text-[color:var(--color-fg)]">Overview</h1>
+      <EditorialHero
+        eyebrow="Dashboard"
+        title="Your fleet"
+        titleAccent="at a glance"
+        lede="Nodes, workloads, and cost — in one view. Pin a workload or open a specific node from the Explorer to dig in."
+        pills={[
+          { label: 'healthy', tone: 'ok' },
+          { label: 'Beacon', tone: 'info' },
+        ]}
+        style={{ marginBottom: 32 }}
+      />
+
 
       {/* Cluster map is the dashboard's centerpiece — switching active
           nodes happens by clicking a bubble + "Set as active node" in
