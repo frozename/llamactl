@@ -1,15 +1,17 @@
 /**
- * llamactl themes — three full visual languages that swap in one
- * click (VSCode-style). A theme defines every CSS var the app reads
- * plus a font stack, and pairs with a matching NodeMap variant so
- * the cluster visualization stays coherent with the chrome.
+ * Beacon theme families. Each family declares the `Theme` shape the
+ * ThemeProvider applies to `<html>` at runtime: a set of CSS custom
+ * properties, an optional root background and overlay (preserved for
+ * scanlines opt-in), and a NodeMap variant so the cluster
+ * visualization stays coherent with the chrome.
  *
- * Themes cascade via CSS custom properties set on `document.documentElement`
- * — modules don't need to know the theme exists; they keep using
- * `var(--color-accent)` etc. Adding a theme = appending to this file.
+ * Token values live in `tokens.css` (applied by the data-theme
+ * attribute). This file drives font-family overrides, the optional
+ * background/overlay, and the NodeMap variant — everything the
+ * ThemeProvider can't get from CSS alone.
  */
 
-export type ThemeId = 'glass' | 'neon' | 'ops';
+export type ThemeId = 'sirius' | 'ember' | 'clinical' | 'scrubs';
 
 export interface Theme {
   id: ThemeId;
@@ -19,94 +21,67 @@ export interface Theme {
   mapVariant: 'glass' | 'neon' | 'hex';
   /** Root font-family override. */
   fontFamily: string;
-  /** CSS custom properties to set on :root. Keys are property names
-   *  (with leading `--`); values are any valid CSS value. */
+  /** CSS custom properties applied at runtime. Kept for backwards
+   *  compatibility with ThemeProvider, but in Beacon the actual
+   *  tokens come from tokens.css via data-theme. This map stays
+   *  empty for all four families. */
   vars: Record<string, string>;
-  /** Optional decoration overlay — a CSS background property that
-   *  the ThemeProvider layers under the app's content. Used for the
-   *  cyberpunk scanlines. */
   rootBackground?: string;
   rootOverlay?: string;
 }
 
+const SANS_STACK = "'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif";
+const MONO_STACK = "'JetBrains Mono', ui-monospace, Menlo, monospace";
+
 export const THEMES: readonly Theme[] = [
   {
-    id: 'glass',
-    label: 'Glass',
-    tagline: 'Minimalist cards, soft shadows, Tailscale-ish calm.',
+    id: 'sirius',
+    label: 'Sirius',
+    tagline: 'Indigo calm. Default operator-night dark.',
     mapVariant: 'glass',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif',
-    vars: {
-      '--color-surface-0': '#0d1117',
-      '--color-surface-1': '#161b22',
-      '--color-surface-2': '#21262d',
-      '--color-border': '#30363d',
-      '--color-fg': '#e6edf3',
-      '--color-fg-muted': '#8b949e',
-      '--color-fg-inverted': '#0d1117',
-      '--color-brand': '#58a6ff',
-      '--color-brand-dim': '#1f6feb',
-      '--color-accent': '#7ee2b8',
-      '--color-warn': '#f0b36a',
-      '--color-warning': '#f0b36a',
-      '--color-danger': '#f85149',
-      '--color-success': '#3fb950',
-    },
+    fontFamily: SANS_STACK,
+    vars: {},
   },
   {
-    id: 'neon',
-    label: 'Neon',
-    tagline: 'Terminal-black, monospace, glowing edges. 3 a.m. sysadmin chic.',
-    mapVariant: 'neon',
-    fontFamily:
-      '"JetBrains Mono", "SF Mono", "Menlo", "Monaco", "Courier New", ui-monospace, monospace',
-    rootBackground: 'radial-gradient(ellipse at top left, #0a0d14 0%, #03040a 70%)',
-    rootOverlay:
-      'repeating-linear-gradient(0deg, rgba(0,255,159,0.035) 0 1px, transparent 1px 3px)',
-    vars: {
-      '--color-surface-0': '#05060a',
-      '--color-surface-1': '#0a0d14',
-      '--color-surface-2': '#101522',
-      '--color-border': '#1f2a44',
-      '--color-fg': '#c7f9e4',
-      '--color-fg-muted': '#5f7a78',
-      '--color-fg-inverted': '#000308',
-      '--color-brand': '#00e5ff',
-      '--color-brand-dim': '#008ba3',
-      '--color-accent': '#00ff9f',
-      '--color-warn': '#ffcc33',
-      '--color-warning': '#ffcc33',
-      '--color-danger': '#ff00c8',
-      '--color-success': '#00ff9f',
-    },
+    id: 'ember',
+    label: 'Ember',
+    tagline: 'Warm amber dark. Workshop mood.',
+    mapVariant: 'glass',
+    fontFamily: SANS_STACK,
+    vars: {},
   },
   {
-    id: 'ops',
-    label: 'Ops',
-    tagline: 'Dense NOC console. Hex tiles, industrial navy, every pixel earns.',
+    id: 'clinical',
+    label: 'Clinical',
+    tagline: 'Bright, high-contrast, morning light.',
     mapVariant: 'hex',
-    fontFamily: '"Inter", "SF Pro Display", -apple-system, sans-serif',
-    vars: {
-      '--color-surface-0': '#0b1220',
-      '--color-surface-1': '#111a2d',
-      '--color-surface-2': '#1a2540',
-      '--color-border': '#1f2e4d',
-      '--color-fg': '#dce5f1',
-      '--color-fg-muted': '#7084a0',
-      '--color-fg-inverted': '#0b1220',
-      '--color-brand': '#1ec4b6',
-      '--color-brand-dim': '#127d74',
-      '--color-accent': '#fba94c',
-      '--color-warn': '#fba94c',
-      '--color-warning': '#fba94c',
-      '--color-danger': '#ff5d67',
-      '--color-success': '#1ec4b6',
-    },
+    fontFamily: SANS_STACK,
+    vars: {},
+  },
+  {
+    id: 'scrubs',
+    label: 'Scrubs',
+    tagline: 'Teal-dark. Hospital-quiet precision.',
+    mapVariant: 'hex',
+    fontFamily: SANS_STACK,
+    vars: {},
   },
 ];
 
-export const DEFAULT_THEME: ThemeId = 'glass';
+export const DEFAULT_THEME: ThemeId = 'sirius';
 
 export function getTheme(id: ThemeId): Theme {
   return THEMES.find((t) => t.id === id) ?? THEMES[0]!;
 }
+
+/** Null-safe helper: accepts any string (e.g. a legacy id that hasn't
+ *  been migrated yet) and returns the closest match. Callers that
+ *  know they already have a valid id should use `getTheme` instead. */
+export function coerceThemeId(id: string | null | undefined): ThemeId {
+  if (id === 'sirius' || id === 'ember' || id === 'clinical' || id === 'scrubs') return id;
+  return DEFAULT_THEME;
+}
+
+/** Keep a handle on the mono stack for components that need it
+ *  explicitly (e.g. data-heavy subtrees). */
+export const MONO_FONT_STACK = MONO_STACK;
