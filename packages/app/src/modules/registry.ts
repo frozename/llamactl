@@ -75,9 +75,14 @@ const LazyUIPrimitives = lazy(() => import('./ui-primitives/index'));
 // Tabbed grouped pages — each bundles several formerly-top-level
 // modules into tabs. Activity bar shows only the group; the
 // palette jumps to the group + the chosen tab is sticky per-user.
-const LazyWorkloadsPage = lazy(() => import('./workloads-tabbed/index'));
 const LazyOpsChat = lazy(() => import('./ops-chat/index'));
 const LazyPlan = lazy(() => import('./plan/index'));
+
+// Flattened workloads.* leaves. The Workloads group itself renders
+// a placeholder (live instances hang under it in the Explorer).
+const LazyWorkloadsPlaceholder = lazy(() => import('./workloads/placeholder'));
+const LazyWorkloadsList = lazy(() => import('./workloads/index'));
+const LazyWorkloadsComposites = lazy(() => import('./composites/index'));
 
 // Flattened knowledge.* leaves.
 const LazyKnowledgeRetrieval = lazy(() => import('./knowledge/index'));
@@ -199,14 +204,38 @@ export const APP_MODULES: AppModule[] = [
     id: 'workloads',
     labelKey: 'Workloads',
     icon: Layers,
-    Component: LazyWorkloadsPage,
+    Component: LazyWorkloadsPlaceholder,
     shortcut: 6,
     activityBar: true,
     group: 'ops',
-    aliases: ['modelruns', 'composites'],
+    aliases: ['workloads'],
     beaconGroup: 'ops',
     beaconKind: 'dynamic-group',
     beaconOrder: 20,
+  },
+  {
+    id: 'workloads.model-runs',
+    labelKey: 'Model Runs',
+    icon: Layers,
+    Component: LazyWorkloadsList,
+    activityBar: false,
+    group: 'ops',
+    aliases: ['model runs', 'modelruns', 'workload list'],
+    beaconGroup: 'ops',
+    beaconKind: 'static',
+    beaconOrder: 22,
+  },
+  {
+    id: 'workloads.composites',
+    labelKey: 'Composites',
+    icon: Layers,
+    Component: LazyWorkloadsComposites,
+    activityBar: false,
+    group: 'ops',
+    aliases: ['composites'],
+    beaconGroup: 'ops',
+    beaconKind: 'static',
+    beaconOrder: 24,
   },
   {
     id: 'models.catalog',
