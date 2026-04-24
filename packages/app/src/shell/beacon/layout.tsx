@@ -10,6 +10,7 @@ import { TabBar } from './tab-bar';
 import { StatusBar } from './status-bar';
 import { TokensPanel } from './tokens-panel';
 import { FirstRunTip } from './first-run-tip';
+import { DynamicTabRouter } from './dynamic-tab-router';
 import type { RailViewId } from './rail-views';
 
 const RAIL_KEY = 'beacon.rail.view';
@@ -101,26 +102,34 @@ export function BeaconLayout(): React.JSX.Element {
             <Suspense fallback={<div style={{ padding: 24, color: 'var(--color-text-tertiary)' }}>Loading…</div>}>
               {tabs.map((tab) => {
                 if (!visitedRef.current.has(tab.tabKey)) return null;
-                if (tab.kind !== 'module') return null; // dynamic instances render in P3
-                const moduleId = tab.tabKey.slice('module:'.length);
-                const mod = APP_MODULES.find((m) => m.id === moduleId);
-                if (!mod) return null;
-                const Component = mod.Component;
                 const isActive = tab.tabKey === activeKey;
+                if (tab.kind === 'module') {
+                  const moduleId = tab.tabKey.slice('module:'.length);
+                  const mod = APP_MODULES.find((m) => m.id === moduleId);
+                  if (!mod) return null;
+                  const Component = mod.Component;
+                  return (
+                    <div
+                      key={tab.tabKey}
+                      data-module-id={moduleId}
+                      aria-hidden={!isActive}
+                      style={{ position: 'absolute', inset: 0, overflow: 'auto', display: isActive ? 'block' : 'none' }}
+                    >
+                      <Component />
+                    </div>
+                  );
+                }
                 return (
                   <div
                     key={tab.tabKey}
-                    data-module-id={moduleId}
+                    data-tab-key={tab.tabKey}
                     aria-hidden={!isActive}
                     style={{ position: 'absolute', inset: 0, overflow: 'auto', display: isActive ? 'block' : 'none' }}
                   >
-                    <Component />
+                    <DynamicTabRouter tab={tab} />
                   </div>
                 );
               })}
-              {tabs.some((t) => t.kind !== 'module') && (
-                <DynamicTabPlaceholder tabKey={activeKey} />
-              )}
             </Suspense>
           </div>
         </main>
@@ -134,15 +143,3 @@ export function BeaconLayout(): React.JSX.Element {
   );
 }
 
-function DynamicTabPlaceholder({ tabKey }: { tabKey: string | null }): React.JSX.Element | null {
-  if (!tabKey || tabKey.startsWith('module:')) return null;
-  return (
-    <div style={{ padding: 48 }}>
-      <h2 style={{ fontSize: 20, margin: '0 0 8px' }}>Instance view</h2>
-      <p style={{ color: 'var(--color-text-secondary)' }}>
-        Dynamic tab <code>{tabKey}</code> — detail view ships in P3. Close this tab and open its
-        parent module for now.
-      </p>
-    </div>
-  );
-}
