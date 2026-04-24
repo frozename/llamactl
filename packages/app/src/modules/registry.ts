@@ -75,11 +75,18 @@ const LazyUIPrimitives = lazy(() => import('./ui-primitives/index'));
 // Tabbed grouped pages — each bundles several formerly-top-level
 // modules into tabs. Activity bar shows only the group; the
 // palette jumps to the group + the chosen tab is sticky per-user.
-const LazyModelsPage = lazy(() => import('./models-tabbed/index'));
 const LazyKnowledgePage = lazy(() => import('./knowledge-tabbed/index'));
 const LazyWorkloadsPage = lazy(() => import('./workloads-tabbed/index'));
 const LazyOpsChat = lazy(() => import('./ops-chat/index'));
 const LazyPlan = lazy(() => import('./plan/index'));
+
+// Flattened models.* leaves — each was a tab inside models-tabbed.
+const LazyModelsCatalog = lazy(() => import('./models/index'));
+const LazyModelsPresets = lazy(() => import('./presets/index'));
+const LazyModelsPulls = lazy(() => import('./pulls/index'));
+const LazyModelsBench = lazy(() => import('./bench/index'));
+const LazyModelsLMStudio = lazy(() => import('./lmstudio/index'));
+const LazyModelsServer = lazy(() => import('./server/index'));
 
 /**
  * Registry — sharp distinction between "activity bar items" (always
@@ -187,17 +194,77 @@ export const APP_MODULES: AppModule[] = [
     beaconOrder: 20,
   },
   {
-    id: 'models',
-    labelKey: 'Models',
+    id: 'models.catalog',
+    labelKey: 'Catalog',
     icon: Database,
-    Component: LazyModelsPage,
+    Component: LazyModelsCatalog,
     shortcut: 7,
-    activityBar: true,
+    activityBar: false,
     group: 'models',
-    aliases: ['catalog', 'presets', 'pulls', 'bench', 'lmstudio'],
+    aliases: ['models', 'catalog'],
     beaconGroup: 'models',
     beaconKind: 'static',
     beaconOrder: 10,
+  },
+  {
+    id: 'models.presets',
+    labelKey: 'Presets',
+    icon: Database,
+    Component: LazyModelsPresets,
+    activityBar: false,
+    group: 'models',
+    aliases: ['presets'],
+    beaconGroup: 'models',
+    beaconKind: 'static',
+    beaconOrder: 20,
+  },
+  {
+    id: 'models.pulls',
+    labelKey: 'Pulls',
+    icon: Database,
+    Component: LazyModelsPulls,
+    activityBar: false,
+    group: 'models',
+    aliases: ['pulls', 'huggingface', 'download'],
+    beaconGroup: 'models',
+    beaconKind: 'static',
+    beaconOrder: 30,
+  },
+  {
+    id: 'models.bench',
+    labelKey: 'Bench',
+    icon: Database,
+    Component: LazyModelsBench,
+    activityBar: false,
+    group: 'models',
+    aliases: ['bench', 'benchmark'],
+    beaconGroup: 'models',
+    beaconKind: 'static',
+    beaconOrder: 40,
+  },
+  {
+    id: 'models.lmstudio',
+    labelKey: 'LM Studio',
+    icon: Database,
+    Component: LazyModelsLMStudio,
+    activityBar: false,
+    group: 'models',
+    aliases: ['lmstudio', 'lm studio'],
+    beaconGroup: 'models',
+    beaconKind: 'static',
+    beaconOrder: 50,
+  },
+  {
+    id: 'models.server',
+    labelKey: 'Local Server',
+    icon: Database,
+    Component: LazyModelsServer,
+    activityBar: false,
+    group: 'models',
+    aliases: ['server', 'llama-server'],
+    beaconGroup: 'models',
+    beaconKind: 'static',
+    beaconOrder: 60,
   },
   {
     id: 'nodes',
