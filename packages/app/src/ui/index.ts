@@ -19,3 +19,5 @@ export { AtmosphericPanel } from './atmospheric-panel';
 export type { AtmosphericPanelProps } from './atmospheric-panel';
 export { StatCard, sparklineHeights } from './stat-card';
 export type { StatCardProps } from './stat-card';
+export { EditorialHero } from './editorial-hero';
+export type { EditorialHeroProps } from './editorial-hero';
