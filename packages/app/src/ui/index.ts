@@ -5,3 +5,5 @@ export { Badge } from './badge';
 export type { BadgeProps, BadgeVariant } from './badge';
 export { StatusDot } from './status-dot';
 export type { StatusDotProps, StatusDotTone } from './status-dot';
+export { Kbd } from './kbd';
+export type { KbdProps } from './kbd';
