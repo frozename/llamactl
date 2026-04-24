@@ -28,6 +28,11 @@ interface TabbedModuleProps {
   title?: string;
   /** Optional subtitle rendered below the title. */
   subtitle?: string;
+  /** Optional extras rendered on the right side of the tab strip.
+   *  Used by Ops Console to surface its shared node + model picker
+   *  so both tabs share one executor config instead of each tab
+   *  owning its own inputs. */
+  headerRight?: React.ReactNode;
 }
 
 export function TabbedModule({
@@ -35,6 +40,7 @@ export function TabbedModule({
   tabs,
   title,
   subtitle,
+  headerRight,
 }: TabbedModuleProps): React.JSX.Element {
   const [active, setActive] = useState<string>(() => {
     if (typeof window !== 'undefined') {
@@ -92,6 +98,11 @@ export function TabbedModule({
               </button>
             );
           })}
+          {headerRight && (
+            <div className="ml-auto flex items-center gap-2 py-1.5 pr-2">
+              {headerRight}
+            </div>
+          )}
         </div>
       </div>
       <div className="relative flex-1 overflow-hidden">

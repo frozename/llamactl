@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc';
+import { useOpsExecutorStore } from '@/stores/ops-executor-store';
 
 /**
  * N.4 — Operator Console.
@@ -68,8 +69,6 @@ type TranscriptMessage =
     }
   | { kind: 'refusal'; id: number; reason: string }
   | { kind: 'done'; id: number; iterations: number };
-
-type Mode = 'stub' | 'llm';
 
 /**
  * Canned prompts — seed examples that give operators an instant
@@ -300,10 +299,7 @@ function OutcomePanel({
 export default function OpsChat(): React.JSX.Element {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [draft, setDraft] = useState('');
-  const [mode, setMode] = useState<Mode>('stub');
-  const [model, setModel] = useState('');
-  const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1');
-  const [apiKeyEnv, setApiKeyEnv] = useState('OPENAI_API_KEY');
+  const { nodeId, model } = useOpsExecutorStore();
   const [error, setError] = useState<string | null>(null);
   const [streamInput, setStreamInput] = useState<Parameters<
     typeof trpc.operatorChatStream.useSubscription
@@ -396,6 +392,10 @@ export default function OpsChat(): React.JSX.Element {
   const onSubmit = (): void => {
     const goal = draft.trim();
     if (!goal || streaming) return;
+    if (!nodeId || !model) {
+      setError('pick a node + model in the header first');
+      return;
+    }
     setError(null);
     setMessages((prev) => [
       ...prev,
@@ -406,16 +406,10 @@ export default function OpsChat(): React.JSX.Element {
     setStreamKey((k) => k + 1);
     setStreamInput({
       goal,
-      mode,
+      nodeId,
+      model,
       tools: DEFAULT_CATALOG,
       history,
-      ...(mode === 'llm'
-        ? {
-            model: model.trim() || 'gpt-4o-mini',
-            baseUrl: baseUrl.trim() || undefined,
-            apiKeyEnv: apiKeyEnv.trim() || undefined,
-          }
-        : {}),
     });
   };
 
@@ -550,62 +544,6 @@ export default function OpsChat(): React.JSX.Element {
             >
               New conversation
             </button>
-          )}
-        </div>
-        <div className="flex items-center gap-2" role="radiogroup" aria-label="Planner mode">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={mode === 'stub'}
-            data-testid="ops-chat-mode-stub"
-            onClick={() => setMode('stub')}
-            className={
-              mode === 'stub'
-                ? 'rounded border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg)]'
-                : 'rounded border border-transparent px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)]'
-            }
-          >
-            Stub
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={mode === 'llm'}
-            data-testid="ops-chat-mode-llm"
-            onClick={() => setMode('llm')}
-            className={
-              mode === 'llm'
-                ? 'rounded border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg)]'
-                : 'rounded border border-transparent px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)]'
-            }
-          >
-            LLM
-          </button>
-          {mode === 'llm' && (
-            <>
-              <input
-                type="text"
-                placeholder="gpt-4o-mini"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                data-testid="ops-chat-model"
-                className="text-xs rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 w-40"
-              />
-              <input
-                type="text"
-                placeholder="https://api.openai.com/v1"
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                className="text-xs rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 w-60"
-              />
-              <input
-                type="text"
-                placeholder="OPENAI_API_KEY"
-                value={apiKeyEnv}
-                onChange={(e) => setApiKeyEnv(e.target.value)}
-                className="text-xs rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 w-40"
-              />
-            </>
           )}
         </div>
       </div>

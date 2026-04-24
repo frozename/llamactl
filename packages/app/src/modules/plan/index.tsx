@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc';
+import { useOpsExecutorStore } from '@/stores/ops-executor-store';
 
 /**
  * N.4.5 — operator-plan chat UI. Starts empty; each user message runs
@@ -80,8 +81,6 @@ const DEFAULT_CATALOG: ToolCatalogEntry[] = [
     tier: 'mutation-dry-run-safe',
   },
 ];
-
-type Mode = 'stub' | 'llm';
 
 type Turn =
   | { id: number; role: 'user'; text: string }
@@ -226,10 +225,7 @@ function PlanCard({
 export default function Plan(): React.JSX.Element {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState('');
-  const [mode, setMode] = useState<Mode>('stub');
-  const [model, setModel] = useState('');
-  const [apiKeyEnv, setApiKeyEnv] = useState('OPENAI_API_KEY');
-  const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1');
+  const { nodeId, model } = useOpsExecutorStore();
   const [catalog, setCatalog] = useState<ToolCatalogEntry[]>(DEFAULT_CATALOG);
   const [decision, setDecision] = useState<'approved' | 'rejected' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -285,28 +281,22 @@ export default function Plan(): React.JSX.Element {
   const onSubmit = (): void => {
     const goal = draft.trim();
     if (!goal || plan.isPending) return;
+    if (!nodeId || !model) {
+      setError('pick a node + model in the header first');
+      return;
+    }
     setError(null);
     setDecision(null);
-    // Append the user turn immediately, then mutate with history +
-    // this draft as goal. The history param carries every prior turn
-    // so the planner can treat the session as a conversation.
     const userTurn: Turn = { id: nextId.current++, role: 'user', text: goal };
     setTurns((prev) => [...prev, userTurn]);
     setDraft('');
-    const payload = {
+    plan.mutate({
       goal,
-      mode,
+      nodeId,
+      model,
       tools: catalog,
       history,
-      ...(mode === 'llm'
-        ? {
-            model: model.trim() || 'gpt-4o-mini',
-            baseUrl: baseUrl.trim() || undefined,
-            apiKeyEnv: apiKeyEnv.trim() || undefined,
-          }
-        : {}),
-    };
-    plan.mutate(payload);
+    });
   };
 
   const onReset = (): void => {
@@ -327,9 +317,7 @@ export default function Plan(): React.JSX.Element {
             <h2 className="text-lg font-medium">Operator plan</h2>
             <p className="text-xs text-[color:var(--color-fg-muted)] max-w-prose">
               Describe an operational goal. Each reply is a validated plan you
-              can approve or refine in a follow-up turn. Stub mode produces a
-              canned plan so you can review the shape without burning tokens;
-              LLM mode drives a real OpenAI-compatible model.
+              can approve or refine in a follow-up turn.
             </p>
           </div>
           {turns.length > 0 && (
@@ -341,68 +329,6 @@ export default function Plan(): React.JSX.Element {
             >
               New conversation
             </button>
-          )}
-        </div>
-        <div className="flex items-center gap-2" role="radiogroup" aria-label="Plan mode">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={mode === 'stub'}
-            data-testid="plan-mode-stub"
-            data-active={mode === 'stub' ? 'true' : 'false'}
-            onClick={() => setMode('stub')}
-            title="Canned plan, no LLM call."
-            className={
-              mode === 'stub'
-                ? 'rounded border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg)]'
-                : 'rounded border border-transparent px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)] hover:text-[color:var(--color-fg)]'
-            }
-          >
-            Stub
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={mode === 'llm'}
-            data-testid="plan-mode-llm"
-            data-active={mode === 'llm' ? 'true' : 'false'}
-            onClick={() => setMode('llm')}
-            title="Drives a real OpenAI-compatible model."
-            className={
-              mode === 'llm'
-                ? 'rounded border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg)]'
-                : 'rounded border border-transparent px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)] hover:text-[color:var(--color-fg)]'
-            }
-          >
-            LLM
-          </button>
-          {mode === 'llm' && (
-            <>
-              <input
-                type="text"
-                placeholder="gpt-4o-mini"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="text-xs rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 w-40"
-                data-testid="plan-model"
-              />
-              <input
-                type="text"
-                placeholder="https://api.openai.com/v1"
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                className="text-xs rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 w-60"
-                data-testid="plan-base-url"
-              />
-              <input
-                type="text"
-                placeholder="OPENAI_API_KEY"
-                value={apiKeyEnv}
-                onChange={(e) => setApiKeyEnv(e.target.value)}
-                className="text-xs rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 w-40"
-                data-testid="plan-api-key-env"
-              />
-            </>
           )}
         </div>
       </div>

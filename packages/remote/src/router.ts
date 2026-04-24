@@ -26,7 +26,7 @@ import {
   type PlannerExecutor,
   type PlannerToolDescriptor,
 } from '@nova/mcp';
-import { createOpenAICompatProvider } from '@nova/contracts';
+import { createOpenAICompatProvider, type AiProvider } from '@nova/contracts';
 import {
   decideGuardianAction,
   emptyCostGuardianConfig,
@@ -168,6 +168,27 @@ function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
     links: buildPinnedLinks(resolved.node, token),
   });
   return trpc as unknown as WorkloadNodeClient;
+}
+
+/**
+ * Resolve the planner's LLM provider from a fleet node. Mirrors the
+ * chatStream path: inproc→local llama-server, everything else goes
+ * through `providerForNode` (which handles agent/gateway/cloud).
+ */
+async function resolvePlannerProvider(nodeId: string): Promise<AiProvider> {
+  const cfg = kubecfg.loadConfig();
+  const resolved = kubecfg.resolveNode(cfg, nodeId);
+  if (resolved.node.endpoint === 'inproc://local') {
+    const { env: envMod } = await import('@llamactl/core');
+    const rEnv = envMod.resolveEnv();
+    return createOpenAICompatProvider({
+      name: 'local',
+      baseUrl: `http://${rEnv.LLAMA_CPP_HOST}:${rEnv.LLAMA_CPP_PORT}/v1`,
+      apiKey: 'local',
+    });
+  }
+  const { providerForNode } = await import('./providers/factory.js');
+  return providerForNode({ node: resolved.node, user: resolved.user, cfg });
 }
 
 /**
@@ -1940,10 +1961,8 @@ export const router = t.router({
       z.object({
         goal: z.string().min(1),
         context: z.string().optional(),
-        mode: z.enum(['stub', 'llm']).optional(),
+        nodeId: z.string().optional(),
         model: z.string().optional(),
-        baseUrl: z.string().optional(),
-        apiKeyEnv: z.string().optional(),
         tools: z
           .array(
             z.object({
@@ -1972,28 +1991,15 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      const mode = input.mode ?? 'stub';
       let executor: PlannerExecutor = stubPlannerExecutor;
-      if (mode === 'llm') {
+      if (input.nodeId) {
         if (!input.model) {
           throw new TRPCError({
             code: 'BAD_REQUEST',
-            message: 'model is required when mode=llm',
+            message: 'model is required when nodeId is set',
           });
         }
-        const env = input.apiKeyEnv ?? 'OPENAI_API_KEY';
-        const apiKey = process.env[env];
-        if (!apiKey) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: `env var ${env} is empty — set it or switch to mode=stub`,
-          });
-        }
-        const provider = createOpenAICompatProvider({
-          name: 'planner-llm',
-          baseUrl: input.baseUrl ?? 'https://api.openai.com/v1',
-          apiKey,
-        });
+        const provider = await resolvePlannerProvider(input.nodeId);
         executor = createLlmExecutor({ provider, model: input.model });
       }
       const callerTools: PlannerToolDescriptor[] = (input.tools ?? []).map((t) => ({
@@ -2286,10 +2292,8 @@ export const router = t.router({
       z.object({
         goal: z.string().min(1),
         context: z.string().optional(),
-        mode: z.enum(['stub', 'llm']).optional(),
+        nodeId: z.string().optional(),
         model: z.string().optional(),
-        baseUrl: z.string().optional(),
-        apiKeyEnv: z.string().optional(),
         tools: z
           .array(
             z.object({
@@ -2312,28 +2316,15 @@ export const router = t.router({
     )
     .subscription(async function* ({ input, signal }) {
       const { runLoopExecutor } = await import('./ops-chat/loop-executor.js');
-      const mode = input.mode ?? 'stub';
       let executor: PlannerExecutor = stubPlannerExecutor;
-      if (mode === 'llm') {
+      if (input.nodeId) {
         if (!input.model) {
           throw new TRPCError({
             code: 'BAD_REQUEST',
-            message: 'model is required when mode=llm',
+            message: 'model is required when nodeId is set',
           });
         }
-        const env = input.apiKeyEnv ?? 'OPENAI_API_KEY';
-        const apiKey = process.env[env];
-        if (!apiKey) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: `env var ${env} is empty — set it or switch to mode=stub`,
-          });
-        }
-        const provider = createOpenAICompatProvider({
-          name: 'planner-llm',
-          baseUrl: input.baseUrl ?? 'https://api.openai.com/v1',
-          apiKey,
-        });
+        const provider = await resolvePlannerProvider(input.nodeId);
         executor = createLlmExecutor({ provider, model: input.model });
       }
       const callerTools: PlannerToolDescriptor[] = (input.tools ?? []).map((tool) => ({
