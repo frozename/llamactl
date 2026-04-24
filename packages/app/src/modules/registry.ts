@@ -49,6 +49,7 @@ const LazyLogs = lazy(() => import('./logs/index'));
 const LazyProjects = lazy(() => import('./projects/index'));
 const LazyCost = lazy(() => import('./cost/index'));
 const LazySettings = lazy(() => import('./settings/index'));
+const LazyUIPrimitives = lazy(() => import('./ui-primitives/index'));
 
 // Tabbed grouped pages — each bundles several formerly-top-level
 // modules into tabs. Activity bar shows only the group; the
@@ -180,5 +181,14 @@ export const APP_MODULES: AppModule[] = [
     activityBar: true,
     position: 'bottom',
     group: 'core',
+  },
+  {
+    id: 'ui-primitives',
+    labelKey: 'UI Primitives',
+    icon: FolderKanban, // reused — P2/P3 will swap this when the registry schema changes
+    Component: LazyUIPrimitives,
+    activityBar: false,
+    group: 'core',
+    aliases: ['sandbox', 'components', 'primitives', 'beacon'],
   },
 ];
