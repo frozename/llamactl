@@ -3,13 +3,13 @@ import { StatusDot, TreeItem } from '@/ui';
 import { APP_MODULES } from '@/modules/registry';
 import { trpc } from '@/lib/trpc';
 import { useTabStore, type TabEntry } from '@/stores/tab-store';
+import { useExplorerCollapse } from '@/stores/explorer-collapse-store';
 import { buildExplorerTree, type DynamicInstance, type ExplorerLeaf } from './registry-view';
 
 /**
  * Renders the Workspace tree. Static leaves open a module tab; dynamic
  * leaves expand to show live instances (each a workload / node tab).
- * Collapse state is local (component state) — persistence across
- * sessions is left for P3 once the actual UX settles.
+ * Collapse state is persisted per-user via useExplorerCollapse.
  */
 export function ExplorerTree(): React.JSX.Element {
   const workloads = trpc.workloadList.useQuery(undefined, { refetchInterval: 10_000 });
@@ -38,7 +38,8 @@ export function ExplorerTree(): React.JSX.Element {
     [wlInstances, nodeInstances],
   );
 
-  const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({});
+  const collapsed = useExplorerCollapse((s) => s.collapsed);
+  const toggleCollapse = useExplorerCollapse((s) => s.toggle);
   const activeTabKey = useTabStore((s) => s.activeKey);
   const open = useTabStore((s) => s.open);
 
@@ -72,7 +73,7 @@ export function ExplorerTree(): React.JSX.Element {
           <div key={group.id}>
             <button
               type="button"
-              onClick={() => setCollapsed((c) => ({ ...c, [group.id]: !c[group.id] }))}
+              onClick={() => toggleCollapse(group.id)}
               style={{
                 all: 'unset',
                 display: 'flex',
@@ -100,7 +101,7 @@ export function ExplorerTree(): React.JSX.Element {
                   collapsed={leaf.kind === 'dynamic-group' ? (collapsed[`${group.id}/${leaf.id}`] ?? false) : undefined}
                   onDoubleClick={() => {
                     if (leaf.kind === 'dynamic-group') {
-                      setCollapsed((c) => ({ ...c, [`${group.id}/${leaf.id}`]: !c[`${group.id}/${leaf.id}`] }));
+                      toggleCollapse(`${group.id}/${leaf.id}`);
                     }
                   }}
                 />
