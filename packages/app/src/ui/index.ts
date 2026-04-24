@@ -17,3 +17,5 @@ export { Card, Panel } from './card';
 export type { CardProps } from './card';
 export { AtmosphericPanel } from './atmospheric-panel';
 export type { AtmosphericPanelProps } from './atmospheric-panel';
+export { StatCard, sparklineHeights } from './stat-card';
+export type { StatCardProps } from './stat-card';
