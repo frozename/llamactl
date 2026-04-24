@@ -333,7 +333,7 @@ export default function Pulls(): React.JSX.Element {
                 onClick={() => setMode(m)}
                 className={
                   isActive
-                    ? 'rounded border border-[var(--color-ok)] bg-[var(--color-surface-2)] px-3 py-1 font-medium text-[color:var(--color-text)]'
+                    ? 'rounded border border-[var(--color-brand)] bg-[var(--color-surface-2)] px-3 py-1 font-medium text-[color:var(--color-text)]'
                     : 'rounded border border-transparent px-3 py-1 text-[color:var(--color-text-secondary)] hover:bg-[var(--color-surface-2)] hover:text-[color:var(--color-text)]'
                 }
               >

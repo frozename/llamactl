@@ -92,7 +92,7 @@ function scoreBadgeClass(score: number): string {
     return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
   }
   if (score >= 0.75) {
-    return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
+    return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
   }
   if (score >= 0.45) {
     return 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]';

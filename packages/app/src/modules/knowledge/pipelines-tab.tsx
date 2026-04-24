@@ -159,7 +159,7 @@ function LastRunBadge(props: { rec: PipelineRecord }): React.JSX.Element {
   const { summary, at } = rec.lastRun;
   const ok = summary.errors === 0;
   const cls = ok
-    ? 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]'
+    ? 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]'
     : 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
   const costStr = summary.estimated_cost ? formatCost(summary.estimated_cost) : null;
   const tooltipParts: string[] = [

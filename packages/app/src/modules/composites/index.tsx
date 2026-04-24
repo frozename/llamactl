@@ -122,14 +122,14 @@ spec:
 function phaseBadgeClass(phase: Phase | undefined): string {
   switch (phase) {
     case 'Ready':
-      return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
+      return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
     case 'Degraded':
       return 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]';
     case 'Failed':
       return 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
     case 'Pending':
     case 'Applying':
-      return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
+      return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
     default:
       return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
   }
@@ -138,11 +138,11 @@ function phaseBadgeClass(phase: Phase | undefined): string {
 function componentStateBadgeClass(state: ComponentState): string {
   switch (state) {
     case 'Ready':
-      return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
+      return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
     case 'Failed':
       return 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
     case 'Applying':
-      return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
+      return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
     default:
       return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
   }
@@ -295,7 +295,7 @@ function ListTab(props: {
           type="button"
           onClick={onCreate}
           data-testid="composites-empty-apply"
-          className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 text-xs font-medium text-[color:var(--color-text-inverse)]"
+          className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 text-xs font-medium text-[color:var(--color-brand-contrast)]"
         >
           Open Apply tab
         </button>
@@ -603,7 +603,7 @@ function ApplyTab(props: {
               data-testid="composites-mode-new"
               className={
                 mode === 'new'
-                  ? 'rounded border border-[var(--color-ok)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-text)]'
+                  ? 'rounded border border-[var(--color-brand)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-text)]'
                   : 'rounded border border-[var(--color-border)] px-3 py-1 text-xs text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]'
               }
             >
@@ -617,7 +617,7 @@ function ApplyTab(props: {
               data-testid="composites-mode-edit"
               className={
                 mode === 'edit'
-                  ? 'rounded border border-[var(--color-ok)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-text)]'
+                  ? 'rounded border border-[var(--color-brand)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-text)]'
                   : 'rounded border border-[var(--color-border)] px-3 py-1 text-xs text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]'
               }
             >
@@ -678,7 +678,7 @@ function ApplyTab(props: {
           }}
           disabled={apply.isPending}
           data-testid="composites-dryrun"
-          className="rounded border border-[var(--color-ok)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-ok)] disabled:opacity-50"
+          className="rounded border border-[var(--color-brand)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-ok)] disabled:opacity-50"
         >
           {apply.isPending && apply.variables?.dryRun
             ? 'Validating…'
@@ -695,7 +695,7 @@ function ApplyTab(props: {
             dryRunYaml !== yamlText
           }
           data-testid="composites-apply"
-          className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 text-xs font-medium text-[color:var(--color-text-inverse)] disabled:opacity-40"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 text-xs font-medium text-[color:var(--color-brand-contrast)] disabled:opacity-40"
           title={
             dryRunOk && dryRunYaml === yamlText
               ? 'Wet-apply the composite'

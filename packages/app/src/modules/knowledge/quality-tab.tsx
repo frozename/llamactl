@@ -74,7 +74,7 @@ function hitRateBadge(rate: number): { cls: string; label: string } {
   const pct = Math.round(rate * 100);
   if (rate >= 0.9) {
     return {
-      cls: 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]',
+      cls: 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]',
       label: `${pct}%`,
     };
   }

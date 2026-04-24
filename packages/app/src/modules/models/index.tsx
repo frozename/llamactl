@@ -48,7 +48,7 @@ function ScopeTabs(): React.JSX.Element {
             onClick={() => setScope(tab.id)}
             className={
               isActive
-                ? 'rounded border border-[var(--color-ok)] bg-[var(--color-surface-2)] px-3 py-1 font-medium text-[color:var(--color-text)]'
+                ? 'rounded border border-[var(--color-brand)] bg-[var(--color-surface-2)] px-3 py-1 font-medium text-[color:var(--color-text)]'
                 : 'rounded border border-transparent px-3 py-1 text-[color:var(--color-text-secondary)] hover:bg-[var(--color-surface-1)] hover:text-[color:var(--color-text)]'
             }
           >

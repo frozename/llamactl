@@ -241,7 +241,7 @@ function NodeDetail({
           type="button"
           onClick={onActivate}
           data-testid={`node-map-activate-${name}`}
-          className="mt-3 w-full rounded border border-[var(--color-ok)] bg-[var(--color-ok)] px-2 py-1 text-xs font-medium text-[color:var(--color-text-inverse)] hover:opacity-90"
+          className="mt-3 w-full rounded border border-[var(--color-brand)] bg-[var(--color-brand)] px-2 py-1 text-xs font-medium text-[color:var(--color-brand-contrast)] hover:opacity-90"
         >
           Set as active node
         </button>

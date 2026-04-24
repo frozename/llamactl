@@ -396,7 +396,7 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
         : 'items-start';
   const bg =
     role === 'user'
-      ? 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]'
+      ? 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]'
       : role === 'error'
         ? 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]'
         : 'bg-[var(--color-surface-1)] text-[color:var(--color-text)]';
@@ -632,7 +632,7 @@ function TranscriptColumn(props: {
               onClick={() => props.onToggleCapability(tag)}
               className={`rounded-full border px-2 py-0.5 font-mono transition-colors ${
                 active
-                  ? 'border-[var(--color-ok)] bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]'
+                  ? 'border-[var(--color-brand)] bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]'
                   : 'border-[var(--color-border)] bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]'
               }`}
               title={

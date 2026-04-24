@@ -357,7 +357,7 @@ export default function Server(): React.JSX.Element {
               type="button"
               onClick={() => keepAliveStartMutation.mutate({ target: target.trim() || 'current' })}
               disabled={ka?.running || keepAliveStartMutation.isPending}
-              className="flex-1 rounded bg-[var(--color-ok)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:opacity-50"
+              className="flex-1 rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-brand-contrast)] hover:opacity-90 disabled:opacity-50"
             >
               {keepAliveStartMutation.isPending ? 'Starting…' : 'Start supervisor'}
             </button>

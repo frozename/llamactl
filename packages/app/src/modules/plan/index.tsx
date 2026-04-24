@@ -189,7 +189,7 @@ function PlanCard({
             type="button"
             onClick={onApprove}
             disabled={decision !== null}
-            className="rounded border border-[color:var(--color-border)] bg-[var(--color-ok)] text-[color:var(--color-text-inverse)] px-3 py-1 text-xs font-medium disabled:opacity-50"
+            className="rounded border border-[color:var(--color-border)] bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)] px-3 py-1 text-xs font-medium disabled:opacity-50"
             data-testid="plan-approve"
           >
             Approve
@@ -441,7 +441,7 @@ export default function Plan(): React.JSX.Element {
             disabled={submitDisabled}
             data-testid="plan-submit"
             title={submitDisabled ? 'Type a goal, then send' : 'Send (⌘/Ctrl+Enter)'}
-            className="rounded border border-[color:var(--color-border)] bg-[var(--color-ok)] text-[color:var(--color-text-inverse)] px-3 py-1 text-sm font-medium shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded border border-[color:var(--color-border)] bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)] px-3 py-1 text-sm font-medium shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
           >
             {plan.isPending ? 'Planning…' : turns.length === 0 ? 'Generate plan' : 'Send'}
           </button>

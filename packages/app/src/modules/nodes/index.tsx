@@ -157,7 +157,7 @@ function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
         <button
           type="submit"
           disabled={add.isPending}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 text-[color:var(--color-text-inverse)] disabled:opacity-50"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 text-[color:var(--color-brand-contrast)] disabled:opacity-50"
         >
           {add.isPending ? 'Probing…' : 'Register cloud node'}
         </button>
@@ -248,7 +248,7 @@ function RegisterPanel(props: { onDone: () => void }): React.JSX.Element {
         <button
           type="submit"
           disabled={add.isPending}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 text-[color:var(--color-text-inverse)] disabled:opacity-50"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 text-[color:var(--color-brand-contrast)] disabled:opacity-50"
         >
           {add.isPending ? 'Registering…' : 'Register'}
         </button>

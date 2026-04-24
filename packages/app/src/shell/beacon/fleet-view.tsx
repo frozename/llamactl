@@ -44,7 +44,7 @@ export function FleetView(): React.JSX.Element {
   }
 
   return (
-    <div style={{ overflowY: 'auto', flex: 1, padding: '8px 0' }}>
+    <div role="tree" style={{ overflowY: 'auto', flex: 1, padding: '8px 0' }}>
       {nodes.map((n) => {
         const tone = n.phase === 'Ready' || !n.phase ? 'ok' : 'warn';
         return (

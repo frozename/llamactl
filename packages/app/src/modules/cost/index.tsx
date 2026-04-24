@@ -31,7 +31,7 @@ function tierColor(tier: Tier): string {
     case 'force_private':
       return 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]';
     case 'warn':
-      return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
+      return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
     default:
       return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
   }

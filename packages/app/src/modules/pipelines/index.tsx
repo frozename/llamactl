@@ -302,7 +302,7 @@ function StageCard(props: {
                 onClick={() => props.onToggleCapability(tag)}
                 className={`rounded-full border px-2 py-0.5 font-mono transition-colors ${
                   active
-                    ? 'border-[var(--color-ok)] bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]'
+                    ? 'border-[var(--color-brand)] bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]'
                     : 'border-[var(--color-border)] bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]'
                 }`}
               >
@@ -609,7 +609,7 @@ export default function Pipelines(): React.JSX.Element {
             <button
               type="submit"
               disabled={runningId !== null || !initialInput.trim() || active.stages.length === 0}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-4 text-sm text-[color:var(--color-text-inverse)] disabled:opacity-50"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-4 text-sm text-[color:var(--color-brand-contrast)] disabled:opacity-50"
             >
               {runningId === active.id ? `Stage ${currentIdx + 1}/${active.stages.length}…` : 'Run'}
             </button>
@@ -633,7 +633,7 @@ export default function Pipelines(): React.JSX.Element {
               type="button"
               onClick={newPipeline}
               data-testid="pipelines-new"
-              className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-4 py-2 text-sm text-[color:var(--color-text-inverse)]"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-4 py-2 text-sm text-[color:var(--color-brand-contrast)]"
             >
               New pipeline
             </button>

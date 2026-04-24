@@ -224,8 +224,8 @@ function ProposalBubble({
                 tier === 'mutation-destructive'
                   ? 'rounded border border-[var(--color-err)] px-2 py-0.5 text-[10px] text-[color:var(--color-err)] disabled:opacity-40'
                   : tier === 'mutation-dry-run-safe'
-                    ? 'rounded border border-[var(--color-ok)] px-2 py-0.5 text-[10px] text-[color:var(--color-ok)] disabled:opacity-40'
-                    : 'rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-inverse)] disabled:opacity-40'
+                    ? 'rounded border border-[var(--color-brand)] px-2 py-0.5 text-[10px] text-[color:var(--color-brand)] disabled:opacity-40'
+                    : 'rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-2 py-0.5 text-[10px] text-[color:var(--color-brand-contrast)] disabled:opacity-40'
               }
             >
               {state === 'running-wet'
@@ -735,7 +735,7 @@ export default function OpsChat(): React.JSX.Element {
             onClick={onSubmit}
             disabled={submitDisabled}
             data-testid="ops-chat-submit"
-            className="rounded border border-[color:var(--color-border)] bg-[var(--color-ok)] text-[color:var(--color-text-inverse)] px-3 py-1 text-sm font-medium shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded border border-[color:var(--color-border)] bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)] px-3 py-1 text-sm font-medium shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
           >
             {streaming ? 'Streaming…' : messages.length === 0 ? 'Plan' : 'Send'}
           </button>

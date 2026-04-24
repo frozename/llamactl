@@ -309,7 +309,7 @@ export default function Presets(): React.JSX.Element {
                                 rel: row.rel,
                               })
                             }
-                            className="rounded border border-[var(--color-ok)] px-2 py-0.5 text-[color:var(--color-ok)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                            className="rounded border border-[var(--color-brand)] px-2 py-0.5 text-[color:var(--color-brand)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                           >
                             {promoteMutation.isPending ? 'Setting…' : 'Set'}
                           </button>

@@ -50,7 +50,7 @@ export function SearchView(): React.JSX.Element {
           autoFocus
         />
       </div>
-      <div style={{ padding: '0 0 12px', overflowY: 'auto', flex: 1 }}>
+      <div role="tree" style={{ padding: '0 0 12px', overflowY: 'auto', flex: 1 }}>
         {q.trim() === '' && (
           <div
             style={{

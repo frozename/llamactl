@@ -143,7 +143,7 @@ function ExposePanel(): React.JSX.Element {
           disabled={apply.isPending || !canSubmit}
           data-testid="dashboard-expose-submit"
           title={submitTitle}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 font-medium text-[color:var(--color-text-inverse)] shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 font-medium text-[color:var(--color-brand-contrast)] shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
         >
           {apply.isPending ? 'Exposing…' : 'Expose'}
         </button>

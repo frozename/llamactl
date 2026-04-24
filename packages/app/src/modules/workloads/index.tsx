@@ -39,7 +39,7 @@ interface WorkloadRow {
 function phaseBadgeClass(phase: Phase): string {
   switch (phase) {
     case 'Running':
-      return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
+      return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
     case 'Mismatch':
       return 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]';
     case 'Unreachable':
@@ -201,7 +201,7 @@ function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
         <button
           type="submit"
           disabled={apply.isPending}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 text-[color:var(--color-text-inverse)] disabled:opacity-50"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 text-[color:var(--color-brand-contrast)] disabled:opacity-50"
         >
           {apply.isPending ? 'Applying…' : 'Apply'}
         </button>
@@ -465,7 +465,7 @@ function ReconcilerToolbar(): React.JSX.Element {
             type="button"
             onClick={() => start.mutate({ intervalSeconds: 10 })}
             disabled={start.isPending}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-inverse)] disabled:opacity-50"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-2 py-0.5 text-[10px] text-[color:var(--color-brand-contrast)] disabled:opacity-50"
           >
             Start
           </button>
@@ -541,7 +541,7 @@ export default function Workloads(): React.JSX.Element {
               type="button"
               onClick={() => setShowApply(true)}
               data-testid="workloads-apply"
-              className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 text-xs font-medium text-[color:var(--color-text-inverse)]"
+              className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 text-xs font-medium text-[color:var(--color-brand-contrast)]"
             >
               Apply workload
             </button>

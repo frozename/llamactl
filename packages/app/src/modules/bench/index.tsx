@@ -124,7 +124,7 @@ function SchedulerPanel(): React.JSX.Element {
             <button
               type="button"
               onClick={() => start.mutate({ tickIntervalSeconds: 60 })}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-inverse)]"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-2 py-0.5 text-[10px] text-[color:var(--color-brand-contrast)]"
             >
               Start
             </button>
@@ -182,7 +182,7 @@ function SchedulerPanel(): React.JSX.Element {
               ? 'Fill id and rel before adding a schedule.'
               : `Run bench for ${rel.trim()} on ${node.trim() || 'local'} every ${hours}h.`
           }
-          className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 font-medium text-[color:var(--color-text-inverse)] disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 font-medium text-[color:var(--color-brand-contrast)] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {add.isPending ? 'Adding…' : 'Add schedule'}
         </button>
@@ -471,7 +471,7 @@ export default function Bench(): React.JSX.Element {
                   disabled={!canRun}
                   data-testid="bench-run-vision"
                   title={canRun ? 'Run vision bench.' : 'Enter a target first.'}
-                  className="flex-1 rounded border border-[var(--color-ok)] px-3 py-1 text-sm font-medium text-[color:var(--color-ok)] hover:bg-[var(--color-surface-2)] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex-1 rounded border border-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-brand)] hover:bg-[var(--color-surface-2)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Run vision
                 </button>

@@ -72,6 +72,7 @@ export function OpsExecutorPicker(): React.JSX.Element {
         value={nodeId ?? ''}
         onChange={(e) => setNode(e.target.value || null)}
         data-testid="ops-executor-node"
+        aria-label="Executor node"
         className="rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
       >
         <option value="">pick a node…</option>
@@ -86,6 +87,7 @@ export function OpsExecutorPicker(): React.JSX.Element {
         onChange={(e) => setModel(e.target.value || null)}
         disabled={!nodeId || models.length === 0}
         data-testid="ops-executor-model"
+        aria-label="Executor model"
         className="rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)] disabled:opacity-50"
       >
         {models.length === 0 && <option value="">…</option>}
