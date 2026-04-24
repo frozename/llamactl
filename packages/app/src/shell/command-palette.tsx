@@ -2,15 +2,17 @@ import * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { APP_MODULES, type AppModule } from '@/modules/registry';
 import { useUIStore } from '@/stores/ui-store';
+import { useTabStore } from '@/stores/tab-store';
+import { useShellFlag } from '@/stores/shell-flag';
 import { useAppCommands } from './commands';
 
 /**
- * VSCode-style command palette. ⌘⇧P (or Ctrl+Shift+P) opens it; type
- * to filter; ↑↓ to move the highlight; Enter to execute; Esc to
- * cancel. Results come from `APP_MODULES` today (every module + its
- * aliases is a "Go to <module>" command) — extensibility for ad-hoc
- * commands (New workload…, Switch theme…, Apply manifest…) lands
- * here when those verbs exist.
+ * VSCode-style command palette. Opens on ⌘⇧P or ⌘K (Ctrl+Shift+P /
+ * Ctrl+K on non-mac); type to filter; ↑↓ to move the highlight;
+ * Enter to execute; Esc to cancel. Results come from `APP_MODULES`
+ * today (every module + its aliases is an "Open <module>" command)
+ * — extensibility for ad-hoc commands (New workload…, Switch theme…,
+ * Apply manifest…) lands here when those verbs exist.
  *
  * Fuzzy match: each result gets a score by "how many chars of the
  * query appear IN ORDER in label+aliases". Ties break by shorter
@@ -28,14 +30,28 @@ export interface Command {
   run: () => void;
 }
 
-function modulesToCommands(setActiveModule: (id: string) => void): Command[] {
+function modulesToCommands(): Command[] {
   return APP_MODULES.map((m: AppModule) => ({
     id: `go:${m.id}`,
-    label: `Go to ${m.labelKey}`,
+    label: `Open ${m.labelKey}`,
     group: groupLabel(m.group),
-    hint: m.shortcut ? `\u2318${m.shortcut}` : undefined,
+    hint: m.shortcut ? `⌘${m.shortcut}` : undefined,
     keywords: m.aliases ?? [],
-    run: () => setActiveModule(m.id),
+    run: () => {
+      // Read both stores at run-time — the shell flag can flip while
+      // the palette is mounted (Task 17 Settings toggle), and the
+      // Beacon shell owns the open-tab side effect, not activeModule.
+      if (useShellFlag.getState().beaconShell) {
+        useTabStore.getState().open({
+          tabKey: `module:${m.id}`,
+          title: m.labelKey,
+          kind: 'module',
+          openedAt: Date.now(),
+        });
+      } else {
+        useUIStore.getState().setActiveModule(m.id);
+      }
+    },
   }));
 }
 
@@ -70,23 +86,15 @@ function fuzzyScore(query: string, haystack: string): number {
   return score - haystack.length * 0.01;
 }
 
+/**
+ * Shared selector over the palette's open state (in `ui-store`). Any
+ * consumer (TitleBar, StatusBar, SearchStub) can call this to drive
+ * the same mounted palette. No keydown listener here — exactly one
+ * listener is installed in `CommandPaletteMount`.
+ */
 export function useCommandPaletteOpen(): [boolean, (open: boolean) => void] {
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    const handler = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && open) {
-        setOpen(false);
-        return;
-      }
-      const meta = e.metaKey || e.ctrlKey;
-      if (meta && e.shiftKey && e.key.toLowerCase() === 'p') {
-        e.preventDefault();
-        setOpen((v) => !v);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [open]);
+  const open = useUIStore((s) => s.commandPaletteOpen);
+  const setOpen = useUIStore((s) => s.setCommandPaletteOpen);
   return [open, setOpen];
 }
 
@@ -101,14 +109,13 @@ export function CommandPalette({
   onClose,
   extraCommands = [],
 }: CommandPaletteProps): React.JSX.Element | null {
-  const setActiveModule = useUIStore((s) => s.setActiveModule);
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const commands = useMemo<Command[]>(
-    () => [...modulesToCommands(setActiveModule), ...extraCommands],
-    [setActiveModule, extraCommands],
+    () => [...modulesToCommands(), ...extraCommands],
+    [extraCommands],
   );
 
   const filtered = useMemo(() => {
@@ -195,7 +202,7 @@ export function CommandPalette({
         >
           {filtered.length === 0 ? (
             <div className="px-4 py-6 text-center text-xs text-[color:var(--color-fg-muted)]">
-              No matches for \u201C{query}\u201D
+              No matches for “{query}”
             </div>
           ) : (
             filtered.map((cmd, idx) => {
@@ -253,10 +260,37 @@ export function CommandPalette({
   );
 }
 
-/** Mounts the palette + its ⌘⇧P listener. Drop once in the app
- *  root; the component itself is invisible when closed. */
+/** Mounts the palette + its single ⌘⇧P / ⌘K keydown listener. Drop
+ *  once in the app root; the component itself is invisible when
+ *  closed. */
 export function CommandPaletteMount(): React.JSX.Element {
   const [open, setOpen] = useCommandPaletteOpen();
   const extras = useAppCommands();
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && open) {
+        setOpen(false);
+        return;
+      }
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+      const k = e.key.toLowerCase();
+      // ⌘⇧P toggles.
+      if (e.shiftKey && k === 'p') {
+        e.preventDefault();
+        setOpen(!open);
+        return;
+      }
+      // ⌘K toggles.
+      if (!e.shiftKey && k === 'k') {
+        e.preventDefault();
+        setOpen(!open);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [open, setOpen]);
+
   return <CommandPalette open={open} onClose={() => setOpen(false)} extraCommands={extras} />;
 }
