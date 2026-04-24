@@ -18,9 +18,8 @@ const RAIL_KEY = 'beacon.rail.view';
 /**
  * Beacon shell root. Manages the rail-view selection (local state,
  * persisted to localStorage), mounts every tab's module component
- * lazily via APP_MODULES, toggles visibility with display:none so
- * state is preserved across tab switches (the same pattern the
- * legacy IDELayout uses for modules).
+ * lazily via APP_MODULES, and toggles visibility with display:none
+ * so each module's state is preserved across tab switches.
  */
 export function BeaconLayout(): React.JSX.Element {
   const tabs = useTabStore((s) => s.tabs);
