@@ -41,9 +41,8 @@ export interface AppModule {
   group?: 'core' | 'models' | 'ops' | 'observability';
   aliases?: string[];
 
-  /** Beacon (P2+). Where this leaf renders in the Explorer tree.
-   *  Parallel to `group`; required for every leaf the Beacon Explorer
-   *  shows. Legacy IDELayout ignores it. */
+  /** Beacon. Where this leaf renders in the Explorer tree. Parallel
+   *  to `group`; required for every leaf the Beacon Explorer shows. */
   beaconGroup?:
     | 'workspace'
     | 'ops'
@@ -55,7 +54,7 @@ export interface AppModule {
 
   /** Beacon kind — `static` leaves are 1:1 with a tab; `dynamic-group`
    *  leaves are containers whose children come from a runtime
-   *  query (workloads, nodes, ops sessions). Legacy shell ignores. */
+   *  query (workloads, nodes, ops sessions). */
   beaconKind?: 'static' | 'dynamic-group';
 
   /** Ordering hint inside the beaconGroup — lower values come first.

@@ -3,7 +3,6 @@ import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { schemas } from '@llamactl/core';
 import { trpc } from '@/lib/trpc';
-import { useShellFlag } from '@/stores/shell-flag';
 
 type PresetOverride = schemas.PresetOverride;
 type Profile = 'mac-mini-16g' | 'balanced' | 'macbook-pro-48g';
@@ -286,8 +285,6 @@ function PromotionsEditor(): React.JSX.Element {
 
 export default function Settings(): React.JSX.Element {
   const env = trpc.env.useQuery();
-  const beaconShell = useShellFlag((s) => s.beaconShell);
-  const setBeaconShell = useShellFlag((s) => s.setBeaconShell);
 
   if (env.isLoading) {
     return <div className="p-6 text-[color:var(--color-fg-muted)]">Loading…</div>;
@@ -308,27 +305,6 @@ export default function Settings(): React.JSX.Element {
       </p>
 
       <div className="space-y-6">
-        <section data-testid="settings-shell">
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
-            Shell
-          </h2>
-          <label className="flex items-start gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 text-sm text-[color:var(--color-fg)]">
-            <input
-              type="checkbox"
-              checked={beaconShell}
-              onChange={(e) => setBeaconShell(e.target.checked)}
-              className="mt-0.5"
-              data-testid="settings-beacon-shell-toggle"
-            />
-            <span>
-              <span className="block">Use the new Beacon shell</span>
-              <span className="block text-xs text-[color:var(--color-fg-muted)]">
-                Default. Uncheck to fall back to the legacy layout for one release cycle — the old shell will be retired in P3.
-              </span>
-            </span>
-          </label>
-        </section>
-
         {GROUPS.map((group) => (
           <section key={group.title}>
             <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">

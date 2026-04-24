@@ -1,35 +1,39 @@
 import { useMemo } from 'react';
-import { useUIStore } from '@/stores/ui-store';
+import { useTabStore } from '@/stores/tab-store';
 import { useThemeStore } from '@/stores/theme-store';
 import { THEMES, type ThemeId } from '@/themes';
 import type { Command } from './command-palette';
 
 /**
- * Full palette command set — navigation + real actions, VSCode-style.
- * Actions are grouped by verb (View:, Theme:, Developer:, Open:).
- * Commands with side-effects run immediately; no prompt-input flow
- * yet (that lands when we add the two-step sub-palette pattern for
- * verbs that need a parameter — Pull Model..., Apply Manifest...,
- * Test Node...).
+ * Supplemental command palette entries — real actions plus curated
+ * View/New synonyms. Per-module "Open X" commands are generated
+ * directly from APP_MODULES in the palette itself; these commands
+ * cover the verbs that don't map 1:1 with a registry entry (theme
+ * switches, developer tools, creation flows that land on a specific
+ * module).
  */
-
 export function useAppCommands(): Command[] {
-  const setActiveModule = useUIStore((s) => s.setActiveModule);
   const themeId = useThemeStore((s) => s.themeId);
   const setThemeId = useThemeStore((s) => s.setThemeId);
 
   return useMemo<Command[]>(() => {
     const out: Command[] = [];
+    const openTab = (id: string, title: string): void => {
+      useTabStore.getState().open({
+        tabKey: `module:${id}`,
+        title,
+        kind: 'module',
+        openedAt: Date.now(),
+      });
+    };
 
-    // Theme commands — every theme gets a "Theme: <name>" verb so
-    // the user can switch without opening the sub-picker.
     for (const t of THEMES) {
       out.push({
         id: `theme:set:${t.id}`,
         label: `Theme: ${t.label}`,
         group: 'Preferences',
         hint: themeId === t.id ? 'current' : undefined,
-        keywords: ['theme', 'color', 'palette', t.id, ...(t.tagline.split(/\W+/))],
+        keywords: ['theme', 'color', 'palette', t.id, ...t.tagline.split(/\W+/)],
         run: () => setThemeId(t.id as ThemeId),
       });
     }
@@ -45,162 +49,121 @@ export function useAppCommands(): Command[] {
       },
     });
 
-    // View actions — jump to a specific page + tab combo.
     out.push(
       {
         id: 'view:dashboard:map',
-        label: 'View: Cluster Map',
+        label: 'View: Cluster map',
         group: 'View',
         keywords: ['nodes', 'map', 'topology', 'cluster'],
-        run: () => setActiveModule('dashboard'),
+        run: () => openTab('dashboard', 'Dashboard'),
       },
       {
         id: 'view:models:catalog',
-        label: 'View: Model Catalog',
+        label: 'View: Model catalog',
         group: 'View',
         keywords: ['models', 'catalog'],
-        run: () => {
-          localStorage.setItem('llamactl-tab-models-page', 'catalog');
-          setActiveModule('models');
-        },
+        run: () => openTab('models.catalog', 'Catalog'),
       },
       {
         id: 'view:models:pulls',
-        label: 'View: Pulls (HF Downloads)',
+        label: 'View: Pulls',
         group: 'View',
         keywords: ['huggingface', 'download', 'pulls'],
-        run: () => {
-          localStorage.setItem('llamactl-tab-models-page', 'pulls');
-          setActiveModule('models');
-        },
+        run: () => openTab('models.pulls', 'Pulls'),
       },
       {
         id: 'view:models:bench',
         label: 'View: Benchmarks',
         group: 'View',
         keywords: ['bench', 'benchmark', 'tokens/sec'],
-        run: () => {
-          localStorage.setItem('llamactl-tab-models-page', 'bench');
-          setActiveModule('models');
-        },
+        run: () => openTab('models.bench', 'Bench'),
       },
       {
         id: 'view:models:presets',
-        label: 'View: Preset Promotions',
+        label: 'View: Preset promotions',
         group: 'View',
         keywords: ['presets', 'promote'],
-        run: () => {
-          localStorage.setItem('llamactl-tab-models-page', 'presets');
-          setActiveModule('models');
-        },
+        run: () => openTab('models.presets', 'Presets'),
       },
       {
         id: 'view:knowledge:retrieval',
-        label: 'View: Retrieval (RAG)',
+        label: 'View: Retrieval',
         group: 'View',
         keywords: ['rag', 'retrieval', 'knowledge'],
-        run: () => {
-          localStorage.setItem('llamactl-tab-knowledge-page', 'retrieval');
-          setActiveModule('knowledge');
-        },
+        run: () => openTab('knowledge.retrieval', 'Retrieval'),
       },
       {
         id: 'view:knowledge:pipelines',
-        label: 'View: RAG Pipelines',
+        label: 'View: RAG pipelines',
         group: 'View',
         keywords: ['rag', 'pipelines', 'ingestion', 'crawl'],
-        run: () => {
-          localStorage.setItem('llamactl-tab-knowledge-page', 'pipelines');
-          setActiveModule('knowledge');
-        },
+        run: () => openTab('knowledge.pipelines', 'Pipelines'),
       },
       {
         id: 'view:workloads:modelruns',
-        label: 'View: Model Runs',
+        label: 'View: Model runs',
         group: 'View',
         keywords: ['workloads', 'modelruns', 'apply'],
-        run: () => {
-          localStorage.setItem('llamactl-tab-workloads-page', 'workloads');
-          setActiveModule('workloads');
-        },
+        run: () => openTab('workloads.model-runs', 'Model Runs'),
       },
       {
         id: 'view:workloads:composites',
         label: 'View: Composites',
         group: 'View',
         keywords: ['composite', 'compose', 'multi-workload'],
-        run: () => {
-          localStorage.setItem('llamactl-tab-workloads-page', 'composites');
-          setActiveModule('workloads');
-        },
+        run: () => openTab('workloads.composites', 'Composites'),
       },
       {
         id: 'view:ops:plan',
         label: 'View: Planner',
         group: 'View',
         keywords: ['plan', 'planner', 'operator plan'],
-        run: () => {
-          localStorage.setItem('llamactl-tab-ops-page', 'plan');
-          setActiveModule('ops-chat');
-        },
+        run: () => openTab('plan', 'Planner'),
       },
     );
 
-    // New / creation flows — jump to the tab + the form mounts in
-    // focus. Actual focus management is the module's job; this
-    // command just routes the operator there.
     out.push(
       {
         id: 'new:project',
         label: 'New: Project',
         group: 'New',
         keywords: ['project', 'add', 'create'],
-        run: () => setActiveModule('projects'),
+        run: () => openTab('projects', 'Projects'),
       },
       {
         id: 'new:workload',
-        label: 'New: Workload (ModelRun)',
+        label: 'New: Workload',
         group: 'New',
         keywords: ['workload', 'modelrun', 'apply', 'start server'],
-        run: () => {
-          localStorage.setItem('llamactl-tab-workloads-page', 'workloads');
-          setActiveModule('workloads');
-        },
+        run: () => openTab('workloads.model-runs', 'Model Runs'),
       },
       {
         id: 'new:chat',
         label: 'New: Chat',
         group: 'New',
         keywords: ['chat', 'conversation'],
-        run: () => setActiveModule('chat'),
+        run: () => openTab('chat', 'Chat'),
       },
       {
         id: 'new:ops-chat',
-        label: 'New: Ops Chat Session',
+        label: 'New: Ops Chat session',
         group: 'New',
         keywords: ['ops', 'operator', 'tool calling'],
-        run: () => {
-          localStorage.setItem('llamactl-tab-ops-page', 'chat');
-          setActiveModule('ops-chat');
-        },
+        run: () => openTab('ops-chat', 'Ops Chat'),
       },
       {
         id: 'new:pipeline',
-        label: 'New: RAG Pipeline',
+        label: 'New: RAG pipeline',
         group: 'New',
         keywords: ['pipeline', 'ingestion', 'crawl', 'index'],
-        run: () => {
-          localStorage.setItem('llamactl-tab-knowledge-page', 'pipelines');
-          setActiveModule('knowledge');
-        },
+        run: () => openTab('knowledge.pipelines', 'Pipelines'),
       },
     );
 
-    // Developer / window actions
     out.push(
       {
         id: 'dev:reload',
-        label: 'Developer: Reload Window',
+        label: 'Developer: Reload window',
         group: 'Developer',
         keywords: ['reload', 'refresh'],
         run: () => window.location.reload(),
@@ -222,5 +185,5 @@ export function useAppCommands(): Command[] {
     );
 
     return out;
-  }, [setActiveModule, themeId, setThemeId]);
+  }, [themeId, setThemeId]);
 }

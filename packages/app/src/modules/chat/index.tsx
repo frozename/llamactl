@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { trpc } from '@/lib/trpc';
-import { useUIStore } from '@/stores/ui-store';
+import { useTabStore } from '@/stores/tab-store';
 import { Badge, Button } from '@/ui';
 
 /**
@@ -459,7 +459,6 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
  */
 function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): React.JSX.Element {
   const utils = trpc.useUtils();
-  const setActiveModule = useUIStore((s) => s.setActiveModule);
   const catalog = trpc.catalogList.useQuery('all');
   const [picked, setPicked] = React.useState<string>('');
   const start = trpc.serverStart.useSubscription(
@@ -522,10 +521,14 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
         <span className="text-[10px] text-[color:var(--color-fg-muted)]">
           or open <button
             type="button"
-            onClick={() => {
-              localStorage.setItem('llamactl-tab-models-page', 'server');
-              setActiveModule('models');
-            }}
+            onClick={() =>
+              useTabStore.getState().open({
+                tabKey: 'module:models.server',
+                title: 'Local Server',
+                kind: 'module',
+                openedAt: Date.now(),
+              })
+            }
             className="underline hover:text-[color:var(--color-fg)]"
           >Models → Local Server</button> for the full flow.
         </span>

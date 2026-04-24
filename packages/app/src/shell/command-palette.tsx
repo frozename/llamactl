@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { APP_MODULES, type AppModule } from '@/modules/registry';
 import { useUIStore } from '@/stores/ui-store';
 import { useTabStore } from '@/stores/tab-store';
-import { useShellFlag } from '@/stores/shell-flag';
 import { useAppCommands } from './commands';
 
 /**
@@ -38,19 +37,12 @@ function modulesToCommands(): Command[] {
     hint: m.shortcut ? `⌘${m.shortcut}` : undefined,
     keywords: m.aliases ?? [],
     run: () => {
-      // Read both stores at run-time — the shell flag can flip while
-      // the palette is mounted (Task 17 Settings toggle), and the
-      // Beacon shell owns the open-tab side effect, not activeModule.
-      if (useShellFlag.getState().beaconShell) {
-        useTabStore.getState().open({
-          tabKey: `module:${m.id}`,
-          title: m.labelKey,
-          kind: 'module',
-          openedAt: Date.now(),
-        });
-      } else {
-        useUIStore.getState().setActiveModule(m.id);
-      }
+      useTabStore.getState().open({
+        tabKey: `module:${m.id}`,
+        title: m.labelKey,
+        kind: 'module',
+        openedAt: Date.now(),
+      });
     },
   }));
 }
