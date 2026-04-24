@@ -3,18 +3,14 @@ import { useEffect } from 'react';
 import { useThemeStore } from '@/stores/theme-store';
 import { getTheme, type ThemeId } from '@/themes';
 
+const SCANLINES_OVERLAY =
+  'repeating-linear-gradient(0deg, rgba(0,255,159,0.035) 0 1px, transparent 1px 3px)';
+
 /**
- * Mount at the root. Applies the active theme's CSS custom properties +
- * font-family to `document.documentElement`, updates `data-theme` so
- * downstream selectors (conditional SVG decorations, etc.) can key on
- * it, and optionally injects a fixed background + overlay layer
- * (scanlines) when the theme declares one.
- *
- * Accepts an optional `previewThemeId` override used by the theme
- * picker for VSCode-style live-preview — when arrow keys move through
- * options we apply the highlighted one WITHOUT committing to the
- * zustand store; on commit/Enter the store updates and this prop
- * goes back to undefined.
+ * Mount at the root. Applies the active theme to <html>: sets
+ * `data-theme` (drives tokens.css), sets the font-family override,
+ * and optionally paints the preserved `scanlines` decoration (kept
+ * for users migrated from the legacy `neon` theme).
  */
 export function ThemeProvider({
   children,
@@ -24,41 +20,24 @@ export function ThemeProvider({
   previewThemeId?: ThemeId;
 }): React.JSX.Element {
   const persistedId = useThemeStore((s) => s.themeId);
+  const scanlines = useThemeStore((s) => s.scanlines);
   const effectiveId = previewThemeId ?? persistedId;
 
   useEffect(() => {
     const root = document.documentElement;
     const theme = getTheme(effectiveId);
-    for (const [key, value] of Object.entries(theme.vars)) {
-      root.style.setProperty(key, value);
-    }
-    root.style.setProperty('font-family', theme.fontFamily);
     root.setAttribute('data-theme', theme.id);
-    if (theme.rootBackground) {
-      document.body.style.background = theme.rootBackground;
-    } else {
-      document.body.style.background = '';
-    }
-    return () => {
-      // Intentionally don't strip the vars on unmount — the next
-      // ThemeProvider render will overwrite them; leaving the last
-      // values avoids a flash while re-mounting.
-    };
+    root.style.setProperty('font-family', theme.fontFamily);
   }, [effectiveId]);
 
-  const theme = getTheme(effectiveId);
   return (
     <>
       {children}
-      {theme.rootOverlay && (
+      {scanlines && (
         <div
           aria-hidden="true"
           className="pointer-events-none fixed inset-0"
-          style={{
-            zIndex: 1000,
-            background: theme.rootOverlay,
-            mixBlendMode: 'screen',
-          }}
+          style={{ zIndex: 1000, background: SCANLINES_OVERLAY, mixBlendMode: 'screen' }}
         />
       )}
     </>
