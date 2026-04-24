@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>llamactl</title>
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem('beacon-theme');
+          if (!raw) return;
+          var parsed = JSON.parse(raw);
+          var id = parsed && parsed.state && parsed.state.themeId;
+          if (id === 'sirius' || id === 'ember' || id === 'clinical' || id === 'scrubs') {
+            document.documentElement.setAttribute('data-theme', id);
+          }
+        } catch (e) {
+          /* storage disabled / malformed — fall through to default theme */
+        }
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
