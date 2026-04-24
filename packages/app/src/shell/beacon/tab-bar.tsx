@@ -19,13 +19,25 @@ export function TabBar(): React.JSX.Element {
   const closeAll = useTabStore((s) => s.closeAll);
 
   const [menu, setMenu] = React.useState<{ x: number; y: number; tab: TabEntry } | null>(null);
+  const tabRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
 
   React.useEffect(() => {
     if (!menu) return;
-    const handler = (): void => setMenu(null);
-    window.addEventListener('click', handler);
-    return () => window.removeEventListener('click', handler);
+    const dismiss = (): void => setMenu(null);
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setMenu(null);
+    };
+    window.addEventListener('click', dismiss);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', dismiss);
+      window.removeEventListener('keydown', onKey);
+    };
   }, [menu]);
+
+  const focusTab = (key: string): void => {
+    requestAnimationFrame(() => tabRefs.current.get(key)?.focus());
+  };
 
   return (
     <div
@@ -39,13 +51,18 @@ export function TabBar(): React.JSX.Element {
         minHeight: 38,
       }}
     >
-      {tabs.map((tab) => {
+      {tabs.map((tab, idx) => {
         const active = tab.tabKey === activeKey;
         return (
           <div
             key={tab.tabKey}
+            ref={(el) => {
+              if (el) tabRefs.current.set(tab.tabKey, el);
+              else tabRefs.current.delete(tab.tabKey);
+            }}
             role="tab"
             aria-selected={active}
+            tabIndex={active ? 0 : -1}
             onClick={() => setActive(tab.tabKey)}
             onAuxClick={(e) => {
               if (e.button === 1) close(tab.tabKey);
@@ -53,6 +70,40 @@ export function TabBar(): React.JSX.Element {
             onContextMenu={(e) => {
               e.preventDefault();
               setMenu({ x: e.clientX, y: e.clientY, tab });
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const dir = e.key === 'ArrowRight' ? 1 : -1;
+                const next = tabs[(idx + dir + tabs.length) % tabs.length];
+                if (next) {
+                  setActive(next.tabKey);
+                  focusTab(next.tabKey);
+                }
+                return;
+              }
+              if (e.key === 'Home') {
+                e.preventDefault();
+                const first = tabs[0];
+                if (first) {
+                  setActive(first.tabKey);
+                  focusTab(first.tabKey);
+                }
+                return;
+              }
+              if (e.key === 'End') {
+                e.preventDefault();
+                const last = tabs[tabs.length - 1];
+                if (last) {
+                  setActive(last.tabKey);
+                  focusTab(last.tabKey);
+                }
+                return;
+              }
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setActive(tab.tabKey);
+              }
             }}
             style={{
               display: 'flex',

@@ -52,12 +52,13 @@ export function BeaconLayout(): React.JSX.Element {
     const h = (e: KeyboardEvent): void => {
       const meta = e.metaKey || e.ctrlKey;
       if (!meta) return;
-      if (e.key === 'w' && !e.shiftKey && activeKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'w' && !e.shiftKey && activeKey) {
         e.preventDefault();
         close(activeKey);
         return;
       }
-      if (e.key === 'T' && e.shiftKey) {
+      if (k === 't' && e.shiftKey) {
         e.preventDefault();
         reopen();
         return;

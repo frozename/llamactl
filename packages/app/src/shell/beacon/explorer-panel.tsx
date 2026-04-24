@@ -3,7 +3,7 @@ import { Input } from '@/ui';
 import { Search } from 'lucide-react';
 import { useCommandPaletteOpen } from '@/shell/command-palette';
 import { ExplorerTree } from './explorer-tree';
-import type { RailViewId } from './rail-views';
+import { getRailView, type RailViewId } from './rail-views';
 
 interface ExplorerPanelProps {
   activeView: RailViewId;
@@ -40,6 +40,7 @@ export function ExplorerPanel({ activeView }: ExplorerPanelProps): React.JSX.Ele
 }
 
 function Header({ label }: { label: RailViewId }): React.JSX.Element {
+  const displayLabel = label === 'explorer' ? 'Beacon' : getRailView(label).label;
   return (
     <div style={{ padding: '14px 18px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
       <h2
@@ -53,7 +54,7 @@ function Header({ label }: { label: RailViewId }): React.JSX.Element {
           fontWeight: 500,
         }}
       >
-        {label === 'explorer' ? 'Beacon' : label}
+        {displayLabel}
       </h2>
     </div>
   );

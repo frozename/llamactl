@@ -65,7 +65,7 @@ export function ExplorerTree(): React.JSX.Element {
   };
 
   return (
-    <div style={{ overflowY: 'auto', flex: 1 }}>
+    <div role="tree" style={{ overflowY: 'auto', flex: 1 }}>
       {tree.map((group) => {
         const isCollapsed = collapsed[group.id] === true;
         return (
