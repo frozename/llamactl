@@ -21,3 +21,5 @@ export { StatCard, sparklineHeights } from './stat-card';
 export type { StatCardProps } from './stat-card';
 export { EditorialHero } from './editorial-hero';
 export type { EditorialHeroProps } from './editorial-hero';
+export { CommandBar } from './command-bar';
+export type { CommandBarProps, CommandBarCrumb } from './command-bar';
