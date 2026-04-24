@@ -16,7 +16,7 @@ Replace the current IDE-style shell and loose visual language with **Beacon**: a
 
 1. **Tokens** — replace the `index.css` `@theme` block and `themes/index.ts` with the Beacon token set (5-step surface ramp, status colors, border/text tiers, scales, shadows, radii).
 2. **Theme families** — four named families (Sirius, Ember, Clinical, Scrubs) replace Glass/Neon/Ops with first-load migration from the legacy ids.
-3. **Type voices** — add Instrument Serif for hero moments, keep Inter for UI, keep JetBrains Mono for data.
+3. **Type voices** — Inter (UI + display) and JetBrains Mono (data). Hero surfaces get Inter 300 at 56–96 px with tight negative tracking; no display serif. Emphasis inside headlines is brand-painted `<em class="t-brand">`, upright — never italic.
 4. **Navigation** — replace module-as-activity-bar-entry with a VSCode-style model: activity rail = view modes, Explorer = unified module tree, tabs = persistent open set. Flatten every `*-tabbed` module into Explorer folders. Add dynamic items (live workloads, node details, ops sessions) as first-class tabs.
 5. **Chrome** — new TitleBar (Layout B: traffic lights · ⌘K breadcrumb · node selector · theme orbs · notifications · avatar), new ActivityRail (view modes), new Explorer panel, new TabBar with persistent state, new StatusBar, new slide-in Tokens inspector.
 6. **Editorial vs utilitarian split** — dense data surfaces stay monospace/tabular/tight. Arrival/empty/settings surfaces get serif display type, gradients, atmospheric blobs, generous whitespace.
@@ -43,12 +43,18 @@ Two atmospheric tokens for hero surfaces: `--glow-brand` and `--glow-ember` (rad
 ```
 --font-sans     Inter, -apple-system, system-ui, sans-serif
 --font-mono     JetBrains Mono, SF Mono, ui-monospace, monospace
---font-display  Instrument Serif, Cormorant Garamond, Georgia, serif
+--font-display  Inter, system-ui, sans-serif    /* display == sans, just tighter */
 ```
 
-Scale (all in pixels): 11, 12, 13, 14, 16, 20, 24, 32, 48, 72, 96, 128. The app uses 11–16 for chrome and data, 20–32 for module headers, 48–128 for editorial heroes only.
+Two voices — Inter for every visual surface, JetBrains Mono for data. No display serif, no script, no novelty. Hero surfaces get impact from **weight (300 or 600) and size (56–128 px) and tight negative tracking**, not a different face.
+
+Scale (all in pixels): 10, 11, 12, 13, 14, 16, 20, 24, 28, 32, 48, 56, 72, 96, 128. The app uses 11–16 for chrome and data, 20–32 for module headers, 48–128 for editorial heroes.
 
 Numeric data uses `font-feature-settings: 'tnum'` (tabular-nums) — already the convention, now codified.
+
+**Semantic type classes** ship in the token CSS so modules don't re-author font stacks: `.t-h1` (56 / 600 / −0.03em), `.t-h2` (28 / 600), `.t-h3` (20 / 600), `.t-h4` (16 / 600), `.t-lede` (19 / 300 / 62ch), `.t-body` (14), `.t-ui` (13), `.t-meta` (12), `.t-eyebrow` (mono 11 uppercase 0.18em tracking), `.t-label` (mono 10 uppercase 0.14em), `.t-mono` (mono 12 tnum), `.t-code` (mono 0.92em chip), and `.t-brand` (emphasis — brand color, `font-style: normal`, **never italic**).
+
+Emphasis inside a headline is an inline `<em class="t-brand">` painted brand, upright. Italic is not an emphasis mode in Beacon.
 
 ### 3.3 Spacing, radius, shadow
 
@@ -92,10 +98,11 @@ A shared `@app/ui` library (internal, same package) exporting the building block
 - `TreeItem` — used by the Explorer; handles indentation, chevron, icon, label, trailing badge/dot.
 - `Card` / `Panel` — elevated container with surface-step background and optional border.
 - `StatCard` — label, value (mono, large), delta, sparkline.
-- `EditorialHero` — gradient-backed hero with atmospheric blobs, display-serif headline, lede, pill row.
+- `EditorialHero` — gradient-backed hero with atmospheric blobs. Title is Inter 300 at 56–96 px with tight negative tracking; accent text uses `.t-brand` (brand color, upright).
 - `AtmosphericPanel` — surface-1 gradient + two blurred blobs; used for editorial sections.
 - `CommandBar` (title-bar breadcrumb) — composite of orbs, path segments, slashes, kbd hint.
 - `ThemeOrbs` — the four-dot theme picker shown in the title bar.
+- `Lockup` — the Beacon wordmark: lowercase `beacon` in Inter 600 + an 8 px indigo orb with a matching box-shadow glow, used leftmost in the title bar.
 
 Icons: continue with `lucide-react` (already the dependency). No migration.
 
@@ -258,7 +265,7 @@ Today: `⌘⇧P` opens the palette. Keep that. **Add** `⌘K` from the TitleBar 
 Each surface is classified as one or the other. The classification is a design invariant; modules declare their intent, and the primitives render accordingly.
 
 **Utilitarian surfaces:** Logs, Workloads list, Models catalog, Nodes list, Pipelines, Bench, Pulls, Cost, Ops Chat history, and most of Chat's message list.
-- Inter UI font, no display serif
+- Inter 11–13 px body, Inter 16–20 px section heads
 - Mono + tabular-nums for data
 - Tight 4–8 px row padding, 10–12 px section gutters
 - Borders only where a line is load-bearing; prefer surface-step contrast
@@ -266,7 +273,8 @@ Each surface is classified as one or the other. The classification is a design i
 - `Card` panels are subtle: `surface-1` background, `border-subtle` edge
 
 **Editorial surfaces:** Dashboard landing hero, every module empty state, Projects new-project welcome, Settings section headers, About, onboarding/first-run.
-- `EditorialHero` component with Instrument Serif display type
+- `EditorialHero` component — Inter 300 display at 56–96 px, tight negative tracking (−0.03em)
+- Emphasis inside titles via `<em class="t-brand">` (brand color, upright — never italic)
 - `AtmosphericPanel` with gradient + two atmospheric blobs
 - 48 px — 128 px type sizes for heroes
 - 120–180 px vertical rhythm between sections
@@ -300,7 +308,7 @@ Each phase is independently shippable and revertable. No phase depends on the ne
 
 - Replace the `@theme` block in `packages/app/src/index.css` with the Beacon token set.
 - Rewrite `packages/app/src/themes/index.ts`: Sirius / Ember / Clinical / Scrubs. Preserve the `Theme` interface's `mapVariant` and `rootBackground` / `rootOverlay` so the NodeMap keeps working.
-- Add Instrument Serif to the font load path. Inter + JetBrains Mono kept.
+- Load only Inter + JetBrains Mono from Google Fonts (no display serif).
 - First-load migration: if `localStorage[old-key]` exists and `beacon.migrated != 1`, map to the new id and set `beacon.migrated`.
 - Noise overlay (`body::before` SVG feTurbulence at 2.5 % opacity) added globally.
 
@@ -360,6 +368,23 @@ Old keys are left untouched after migration — P3 removes them.
 - Focus ring is `--color-brand-ghost` 3 px outside the focused element (never `outline: none`).
 - All interactive elements meet 4.5:1 contrast on their surface in every theme; Clinical overrides the status colors so `ok`/`warn`/`err` clear the bar against a light background.
 
+## 11a. Voice & content rules
+
+These rules apply to every surface — UI copy, doc copy, commit messages, status-bar strings, tab titles. They are non-negotiable; implementers enforce them at PR review.
+
+1. **Sentence case everywhere.** Headings, buttons, labels, tab titles. Proper nouns only (Sirius, Ember, Clinical, Scrubs, Inter, JetBrains Mono, Beacon). No Title Case, no ALL CAPS outside labels that use letter-spaced uppercase as a typographic treatment.
+2. **No emoji. Ever.** Not in UI, not in docs, not in empty states, not in toasts. Use unicode glyphs: `▸ ▾ ▲ ▼ ● ◉ ◎ ✓ × ⌕ ⌘ ⇧ ⌥ ↗ ↑ ↓ ↺ ⎇ ⚙`.
+3. **Em-dashes ( — ) connect clauses.** Never hyphens with spaces (" - ").
+4. **Middle-dot separators (`·`) between related fragments.** `v2.1.4 · frozen · shipping`. Slashes (`/`) reserved for paths.
+5. **Ellipses use the single character `…`.** Never three dots.
+6. **Mono is for identifiers and telemetry only.** `svc.gateway`, `v2.1.4`, `⌘K`, `842 ms`. Never mono prose.
+7. **Numbers are digits.** `4 themes`, not `four themes`. Units compact: `842ms`, `1.24M`, `99.98%`.
+8. **Emphasis is brand-painted, never italic.** Inline `<em class="t-brand">` renders the emphasized word in `--color-brand` with `font-style: normal`.
+9. **Third person or imperative.** Docs instruct ("Drop this in"), specs describe ("Every primitive resolves to a token"). Avoid "we" and "you" unless the surface is explicitly conversational (chat, onboarding tip).
+10. **Present tense.** The system *is*, does, runs. Avoid "will support" / "is supported by".
+11. **No exclamation marks.** Confidence without performance.
+12. **Visual "do not" list:** no purple-blue gradients as backgrounds; no "card with a colored left border only" pattern; no inner shadows; no frosted-glass / backdrop-blur as a default surface treatment; no photography unless explicitly justified (cool, desaturated, 15 % grain if used).
+
 ## 12. Testing & verification
 
 - Token migration: snapshot the computed styles of a reference component across all four themes (already the pattern in `test/` — extend).
@@ -387,7 +412,7 @@ Not in this renewal; noted for later:
 - **P2 is a big cut.** Shell files are central. Mitigation: ship P0 and P1 first (visible wins, low blast radius); P2 lands behind a feature flag (`beacon.shell.v3 = true`) that lets us A/B the new shell against the old for one release.
 - **Tab model is new muscle memory.** Users who relied on the activity-bar-as-module-switcher get a different pattern. The old registry's `⌘1`…`⌘9` "open module N" shortcuts are retired — `⌘1`…`⌘9` are now positional (tab 1…9 by position in the tab bar, VSCode semantics). Mitigation: the command palette grows an "Open in tab…" section so keyboard users open any static or dynamic leaf in one chord; first-run shows a 3-step tip overlay explaining the new shape.
 - **Flattening risks:** a module's internal tabs sometimes share state (e.g. Models Catalog filter carries into Pulls). P3 needs to audit each `*-tabbed` wrapper for shared state and either keep it shared via the module's store or explicitly scope it per-tab. Caught at the per-module PR level, not upfront.
-- **Instrument Serif loads over the network.** Fall back to Cormorant Garamond → Georgia → serif so a font load failure doesn't break editorial surfaces.
+- **Google Fonts network dependency.** Inter + JetBrains Mono load from Google Fonts. Fall-back stacks (`-apple-system`, `ui-monospace`) keep text readable if the load fails; re-audit if the app ships in air-gapped contexts.
 
 ## 15. Provenance
 
@@ -396,4 +421,17 @@ Not in this renewal; noted for later:
 - Clinical (light) and Scrubs (teal dark) are new additions for breadth.
 - IDE chrome grammar is shared between the two source projects; Beacon v3 is the modernization pass.
 
-The design bundle (`Design System v3.html` + `tokens-v2.css` + chat transcript) is archived at `.superpowers/brainstorm/8062-1776955512/` for the duration of the renewal and will be moved into `docs/superpowers/design-assets/beacon-v3/` when P0 is implemented.
+## 15a. Reference assets
+
+The frozen Beacon v2.0 design bundle is archived in the repo at `docs/superpowers/design-assets/beacon-v2/`:
+
+- `project/tokens.css` and `project/colors_and_type.css` — the source-of-truth token files (our `packages/app/src/themes/tokens.css` is a derivative of these).
+- `project/SKILL.md` — the 12 non-negotiable design rules (codified above in §11a).
+- `project/README.md` — full visual foundations + voice + content rules.
+- `project/source_reference.html` — the original Design System v3 IDE preview; read this for voice calibration.
+- `project/preview/*.html` — 21 canonical preview cards, one per primitive / token family. Use these as pixel-match references during P1.
+- `project/ui_kits/llamactl/index.html` — full interactive dense control plane mockup on Sirius. Pixel-match target for the shell rewrite in P2.
+- `project/ui_kits/novaflow/index.html` — the Ember twin; useful for seeing the token system in a different mood.
+- `project/assets/beacon-lockup.svg` — the wordmark used by the `Lockup` primitive.
+
+Brainstorming scratch (chat transcript, visual-companion mockups) lives under `.superpowers/` and is gitignored — the archived bundle above is the durable reference.

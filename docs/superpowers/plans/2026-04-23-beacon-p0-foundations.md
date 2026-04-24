@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land the Beacon token set, the four theme families (Sirius/Ember/Clinical/Scrubs), the Instrument Serif display voice, the noise overlay, and a one-shot migration from the legacy `glass`/`neon`/`ops` theme ids — without changing any shell chrome behavior.
+**Goal:** Land the Beacon token set, the four theme families (Sirius/Ember/Clinical/Scrubs), the semantic type classes (`.t-h1/h2/h3/h4/lede/body/ui/meta/eyebrow/label/mono/code/brand`), the noise overlay, and a one-shot migration from the legacy `glass`/`neon`/`ops` theme ids — without changing any shell chrome behavior.
 
-**Architecture:** Tokens live in a dedicated `tokens.css` imported from `index.css`. The `themes/index.ts` module keeps the same `Theme` interface so `ThemeProvider` + `ThemePicker` keep working unchanged. A one-shot migration step runs inside `theme-store` via Zustand's `migrate` hook, reading the legacy `localStorage` key and mapping to the new id. Instrument Serif loads over the network from Google Fonts with a serif fallback stack. The noise overlay is a `body::before` SVG data-URI driven from `tokens.css`.
+**Architecture:** Tokens live in a dedicated `tokens.css` imported from `index.css`. The `themes/index.ts` module keeps the same `Theme` interface so `ThemeProvider` + `ThemePicker` keep working unchanged. A one-shot migration step runs inside `theme-store` via Zustand's `migrate` hook, reading the legacy `localStorage` key and mapping to the new id. Only Inter + JetBrains Mono load from Google Fonts — per the frozen Beacon v2.0 system, display surfaces use Inter 300/600 at larger sizes with tight tracking, not a display serif. The noise overlay is a `body::before` SVG data-URI driven from `tokens.css`.
 
 **Tech Stack:** Tailwind v4 `@theme` directive, zustand v5 with `persist` + `migrate`, Bun `bun:test` runner, Electron + Vite (electron-vite), TypeScript 5.9 strict.
 
@@ -22,7 +22,7 @@ Modify:
 - `packages/app/src/themes/index.ts` — rewrite `THEMES` with Sirius/Ember/Clinical/Scrubs, keep the `Theme` interface shape, keep `mapVariant` field, default = `sirius`
 - `packages/app/src/stores/theme-store.ts` — add `version: 2` + `migrate` function that calls `migrate.ts`, rename `localStorage` key to `beacon-theme` (Zustand `name`)
 - `packages/app/src/shell/theme-provider.tsx` — pass the noise overlay through, otherwise unchanged
-- `packages/app/src/index.html` — add Google Fonts preconnect + `<link>` for Inter + JetBrains Mono + Instrument Serif
+- `packages/app/src/index.html` — add Google Fonts preconnect + `<link>` for Inter + JetBrains Mono
 
 Delete: none in P0.
 
@@ -152,13 +152,19 @@ Create `packages/app/src/themes/tokens.css` with the full Beacon token set. This
 
 /* Shared non-color tokens */
 :root {
-  --font-display: 'Instrument Serif', 'Cormorant Garamond', Georgia, serif;
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  --font-sans:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, monospace;
+  --font-display: 'Inter', system-ui, sans-serif; /* display == sans, just tighter */
 
-  --fs-11: 11px; --fs-12: 12px; --fs-13: 13px; --fs-14: 14px;
-  --fs-16: 16px; --fs-20: 20px; --fs-24: 24px; --fs-32: 32px;
-  --fs-48: 48px; --fs-72: 72px; --fs-96: 96px; --fs-128: 128px;
+  --fs-10: 10px; --fs-11: 11px; --fs-12: 12px; --fs-13: 13px;
+  --fs-14: 14px; --fs-16: 16px; --fs-20: 20px; --fs-24: 24px;
+  --fs-28: 28px; --fs-32: 32px; --fs-48: 48px; --fs-56: 56px;
+  --fs-72: 72px; --fs-96: 96px; --fs-128: 128px;
+
+  --lh-tight:  1.05;
+  --lh-snug:   1.2;
+  --lh-normal: 1.5;
+  --lh-loose:  1.65;
 
   --s-1:4px;  --s-2:8px;  --s-3:12px; --s-4:16px;  --s-5:20px; --s-6:24px;
   --s-8:32px; --s-10:40px; --s-12:48px; --s-16:64px; --s-20:80px;
@@ -169,6 +175,27 @@ Create `packages/app/src/themes/tokens.css` with the full Beacon token set. This
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.20);
   --shadow-md: 0 8px 24px rgba(0,0,0,0.32);
   --shadow-lg: 0 20px 60px rgba(0,0,0,0.50);
+
+  /* Chrome heights — operator UI */
+  --h-title: 44px;
+  --h-status: 26px;
+  --h-tab: 34px;
+  --h-input: 32px;
+  --h-btn: 28px;
+}
+
+/* Foreground aliases + status-muted tints — per-theme because fg
+ * aliases track --color-text values that vary per family. */
+:root, [data-theme='sirius'], [data-theme='ember'], [data-theme='clinical'], [data-theme='scrubs'] {
+  --fg1: var(--color-text);
+  --fg2: var(--color-text-secondary);
+  --fg3: var(--color-text-tertiary);
+  --fg4: var(--color-text-ghost);
+
+  --color-ok-muted:   rgba(52,211,153,0.12);
+  --color-warn-muted: rgba(251,191,36,0.12);
+  --color-err-muted:  rgba(248,113,113,0.12);
+  --color-info-muted: rgba(96,165,250,0.12);
 }
 
 /* Legacy aliases — consumed by modules that still reference the pre-Beacon
@@ -212,9 +239,26 @@ body::before {
 ::-webkit-scrollbar-thumb:hover { background: var(--color-surface-4); }
 
 .mono { font-family: var(--font-mono); font-feature-settings: 'tnum'; letter-spacing: -0.02em; }
-.display { font-family: var(--font-display); font-weight: 400; letter-spacing: -0.02em; line-height: 0.95; }
+.display { font-family: var(--font-display); font-weight: 300; letter-spacing: -0.03em; line-height: 0.95; }
 .eyebrow { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.18em; color: var(--color-text-tertiary); }
 .eyebrow.brand { color: var(--color-brand); }
+
+/* Semantic type classes — use these instead of re-authoring font stacks. */
+.t-h1     { font-family: var(--font-sans); font-size: var(--fs-56); font-weight: 600; letter-spacing: -0.03em; line-height: var(--lh-tight); color: var(--fg1); }
+.t-h2     { font-family: var(--font-sans); font-size: var(--fs-28); font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; color: var(--fg1); }
+.t-h3     { font-family: var(--font-sans); font-size: var(--fs-20); font-weight: 600; letter-spacing: -0.005em; line-height: 1.25; color: var(--fg1); }
+.t-h4     { font-family: var(--font-sans); font-size: var(--fs-16); font-weight: 600; line-height: 1.35; color: var(--fg1); }
+.t-lede   { font-family: var(--font-sans); font-size: 19px; font-weight: 300; line-height: 1.55; color: var(--fg2); max-width: 62ch; }
+.t-body   { font-family: var(--font-sans); font-size: var(--fs-14); line-height: var(--lh-loose); color: var(--fg2); }
+.t-ui     { font-family: var(--font-sans); font-size: var(--fs-13); line-height: 1.4; color: var(--fg1); }
+.t-meta   { font-family: var(--font-sans); font-size: var(--fs-12); line-height: 1.5; color: var(--fg3); }
+.t-eyebrow{ font-family: var(--font-mono); font-size: var(--fs-11); letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg3); font-weight: 500; }
+.t-label  { font-family: var(--font-mono); font-size: var(--fs-10); letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg3); font-weight: 500; }
+.t-mono   { font-family: var(--font-mono); font-size: var(--fs-12); font-feature-settings: 'tnum'; letter-spacing: -0.02em; color: var(--fg1); }
+.t-code   { font-family: var(--font-mono); font-size: 0.92em; padding: 1px 5px; border-radius: var(--r-sm); background: var(--color-surface-2); border: 1px solid var(--color-border); color: var(--fg1); }
+
+/* Emphasis: brand color, upright — NEVER italic. Used as <em class="t-brand">. */
+.t-brand  { color: var(--color-brand); font-weight: 400; font-style: normal; }
 ```
 
 - [ ] **Step 2: Commit**
@@ -267,7 +311,7 @@ git commit -m "refactor(app): move tokens out of @theme block into tokens.css"
 
 ---
 
-## Task 3: Load Instrument Serif + Inter + JetBrains Mono from Google Fonts
+## Task 3: Load Inter + JetBrains Mono from Google Fonts
 
 **Files:**
 - Modify: `packages/app/src/index.html`
@@ -285,23 +329,25 @@ Replace the `<head>` block in `packages/app/src/index.html` with:
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
     rel="stylesheet"
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
   />
 </head>
 ```
+
+Two faces only. Per the frozen Beacon v2.0 system: Inter handles UI body, section heads, and display (heavier weight + tighter tracking at larger sizes); JetBrains Mono handles data / identifiers / telemetry. No display serif.
 
 Keep the `<body>` block exactly as-is (it still uses `bg-[var(--color-surface-0)]` etc., which now resolve via `tokens.css`).
 
 - [ ] **Step 2: Launch and verify**
 
 Run: `bun run --cwd packages/app dev`
-Expected: app opens, `<html>` font stack resolves to Inter for body, JetBrains Mono for `.mono` elements. Open DevTools → Fonts panel → confirm three Google Fonts face families are loaded.
+Expected: app opens, `<html>` font stack resolves to Inter for body, JetBrains Mono for `.mono` elements. Open DevTools → Fonts panel → confirm Inter (five weights) and JetBrains Mono (three weights) face families are loaded. No Instrument Serif.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add packages/app/src/index.html
-git commit -m "feat(app): load Inter + JetBrains Mono + Instrument Serif from Google Fonts"
+git commit -m "feat(app): load Inter + JetBrains Mono from Google Fonts"
 ```
 
 ---

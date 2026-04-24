@@ -1,0 +1,260 @@
+<!doctype html>
+<html data-theme="sirius">
+<head>
+<meta charset="utf-8">
+<title>llamactl — UI kit</title>
+<link rel="stylesheet" href="../../colors_and_type.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;font-family:var(--font-sans);background:var(--color-surface-0);color:var(--color-text);font-size:13px}
+.app{display:grid;grid-template-rows:44px 1fr 26px;height:100vh}
+/* title bar */
+.tb{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;height:44px;padding:0 14px;background:var(--color-surface-1);border-bottom:1px solid var(--color-border-subtle);font-size:12px;color:var(--color-text-secondary)}
+.tb .l{display:flex;gap:14px;align-items:center}
+.traffic{display:flex;gap:8px}
+.traffic span{width:12px;height:12px;border-radius:50%}
+.traffic span:nth-child(1){background:#ff5f57}.traffic span:nth-child(2){background:#febc2e}.traffic span:nth-child(3){background:#28c840}
+.brand{display:flex;gap:8px;align-items:center;font-weight:600;color:var(--color-text)}
+.brand .orb{width:8px;height:8px;border-radius:50%;background:var(--color-brand);box-shadow:0 0 8px var(--color-brand)}
+.tb .c{display:flex;align-items:center;gap:10px;padding:6px 16px;background:var(--color-surface-2);border-radius:8px;min-width:360px;border:1px solid var(--color-border-subtle);font-family:var(--font-mono);font-size:12px;color:var(--color-text-secondary);cursor:text}
+.tb .r{display:flex;justify-content:flex-end;gap:8px;align-items:center}
+.avatar{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,var(--color-brand),#f59e0b)}
+.iconbtn{width:28px;height:28px;display:grid;place-items:center;border-radius:6px;cursor:pointer;color:var(--color-text-tertiary)}
+.iconbtn:hover{background:var(--color-surface-2);color:var(--color-text)}
+/* main */
+.main{display:grid;grid-template-columns:56px 240px 1fr;overflow:hidden;min-height:0}
+.rail{background:var(--color-surface-1);border-right:1px solid var(--color-border-subtle);display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:4px}
+.rail button{all:unset;width:40px;height:40px;display:grid;place-items:center;border-radius:10px;cursor:pointer;color:var(--color-text-tertiary);font-size:16px;position:relative}
+.rail button:hover{background:var(--color-surface-2);color:var(--color-text)}
+.rail button.active{background:var(--color-brand-ghost);color:var(--color-brand)}
+.rail button.active::before{content:'';position:absolute;left:-1px;top:8px;bottom:8px;width:2px;background:var(--color-brand);border-radius:2px}
+.rail .sp{flex:1}
+/* explorer */
+.exp{background:var(--color-surface-1);border-right:1px solid var(--color-border-subtle);overflow-y:auto;padding:10px 0}
+.exp h2{padding:8px 18px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:var(--color-text-tertiary);font-weight:500;margin-bottom:4px}
+.node{display:flex;align-items:center;gap:8px;padding:5px 18px;font-size:13px;color:var(--color-text-secondary);cursor:pointer;position:relative}
+.node:hover{background:var(--color-surface-2);color:var(--color-text)}
+.node.active{background:var(--color-brand-ghost);color:var(--color-text)}
+.node.active::before{content:'';position:absolute;left:0;top:3px;bottom:3px;width:2px;background:var(--color-brand)}
+.node .fico{width:14px;height:14px;display:grid;place-items:center;border-radius:3px;font-family:var(--font-mono);font-size:9px;font-weight:600}
+.node .fico.f{background:var(--color-brand);color:#fff}
+.node .fico.s{background:rgba(52,211,153,0.2);color:#34d399}
+.node .chev{width:10px;color:var(--color-text-ghost);font-size:9px}
+/* editor */
+.editor{display:flex;flex-direction:column;overflow:hidden}
+.tabbar{display:flex;background:var(--color-surface-1);border-bottom:1px solid var(--color-border-subtle);min-height:36px}
+.tab{display:flex;align-items:center;gap:8px;padding:0 14px;font-size:12px;color:var(--color-text-tertiary);cursor:pointer;border-right:1px solid var(--color-border-subtle);position:relative}
+.tab.active{background:var(--color-surface-0);color:var(--color-text)}
+.tab.active::after{content:'';position:absolute;left:0;right:0;top:0;height:1.5px;background:var(--color-brand)}
+.tab .dot{width:7px;height:7px;border-radius:50%;background:var(--color-text-ghost)}
+.tab.active .dot{background:var(--color-brand)}
+.surface{flex:1;overflow:auto;padding:24px 28px}
+.page h1{font-size:28px;font-weight:600;letter-spacing:-0.02em;margin-bottom:6px}
+.page h1 em{font-style:normal;color:var(--color-brand);font-weight:400}
+.page .lede{color:var(--color-text-secondary);font-size:14px;margin-bottom:24px;max-width:56ch}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+.stat{padding:16px;background:var(--color-surface-1);border:1px solid var(--color-border-subtle);border-radius:10px}
+.stat .lab{font-family:var(--font-mono);font-size:10px;color:var(--color-text-tertiary);letter-spacing:0.14em;text-transform:uppercase;margin-bottom:8px}
+.stat .val{font-size:28px;font-weight:600;letter-spacing:-0.02em;line-height:1}
+.stat .val em{font-style:normal;color:var(--color-brand);font-size:16px;font-weight:400;margin-left:2px}
+.stat .delta{font-family:var(--font-mono);font-size:11px;margin-top:8px}
+.up{color:var(--color-ok)}.down{color:var(--color-err)}
+.section-h{display:flex;justify-content:space-between;align-items:baseline;margin:18px 0 12px;padding-bottom:10px;border-bottom:1px solid var(--color-border-subtle)}
+.section-h h3{font-size:16px;font-weight:600}
+.section-h .id{font-family:var(--font-mono);font-size:10px;color:var(--color-text-tertiary);letter-spacing:0.14em}
+/* table */
+.tbl{width:100%;border-collapse:collapse;background:var(--color-surface-1);border:1px solid var(--color-border-subtle);border-radius:10px;overflow:hidden}
+.tbl thead th{text-align:left;padding:10px 14px;background:var(--color-surface-2);color:var(--color-text-tertiary);font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:0.14em;font-weight:500}
+.tbl tbody td{padding:10px 14px;border-top:1px solid var(--color-border-subtle);font-size:13px}
+.tbl tbody tr:hover{background:var(--color-surface-2)}
+.mono{font-family:var(--font-mono);font-size:12px}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;font-size:11px;font-family:var(--font-mono);border-radius:4px}
+.b-ok{background:rgba(52,211,153,0.15);color:#34d399}
+.b-warn{background:rgba(251,191,36,0.15);color:#fbbf24}
+.b-err{background:rgba(248,113,113,0.15);color:#f87171}
+/* status bar */
+.sb{display:flex;align-items:center;justify-content:space-between;height:26px;padding:0 12px;background:var(--color-surface-1);border-top:1px solid var(--color-border-subtle);font-family:var(--font-mono);font-size:11px;color:var(--color-text-tertiary)}
+.sb .g{display:flex;gap:14px}
+.sb .it{display:flex;align-items:center;gap:6px}
+.sb .it.brand{color:var(--color-brand)}
+.sb .dot{width:6px;height:6px;border-radius:50%;background:var(--color-ok);box-shadow:0 0 6px var(--color-ok)}
+/* palette */
+.palette-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.55);display:none;align-items:flex-start;justify-content:center;padding-top:120px;z-index:40;backdrop-filter:blur(2px)}
+.palette-overlay.open{display:flex}
+.palette{width:560px;background:var(--color-surface-1);border:1px solid var(--color-border-strong);border-radius:12px;box-shadow:var(--shadow-lg);overflow:hidden}
+.pal-input{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--color-border-subtle)}
+.pal-input .c{width:10px;height:10px;border-radius:50%;background:var(--color-brand);box-shadow:0 0 10px var(--color-brand);animation:pulse 2s ease infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.5;transform:scale(1.3)}}
+.pal-input input{all:unset;flex:1;font-size:15px;color:var(--color-text)}
+.pal-list{padding:6px;max-height:320px;overflow-y:auto}
+.pal-group{font-family:var(--font-mono);font-size:10px;letter-spacing:0.14em;color:var(--color-text-tertiary);padding:8px 12px 4px;text-transform:uppercase}
+.pal-item{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:6px;cursor:pointer;color:var(--color-text-secondary);font-size:14px}
+.pal-item:hover,.pal-item.active{background:var(--color-brand-ghost);color:var(--color-text)}
+.pal-item .ic{width:16px;height:16px;border-radius:3px;background:var(--color-surface-3)}
+.pal-item .hint{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--color-text-tertiary)}
+.kbd{display:inline-flex;align-items:center;min-width:18px;height:18px;padding:0 5px;font-size:10px;font-family:var(--font-mono);color:var(--color-text-secondary);background:var(--color-surface-2);border:1px solid var(--color-border);border-bottom-width:2px;border-radius:3px}
+/* logs */
+.logs{background:var(--color-surface-0);border:1px solid var(--color-border-subtle);border-radius:8px;padding:12px 14px;font-family:var(--font-mono);font-size:12px;line-height:1.6;height:260px;overflow:auto}
+.logs .ln{display:flex;gap:12px}
+.logs .t{color:var(--color-text-ghost)}
+.logs .lv{width:40px;font-weight:600}
+.logs .lv.info{color:var(--color-info)}.logs .lv.warn{color:var(--color-warn)}.logs .lv.err{color:var(--color-err)}.logs .lv.ok{color:var(--color-ok)}
+.logs .m{color:var(--color-text-secondary)}
+.logs .m em{font-style:normal;color:var(--color-text)}
+.filter{display:flex;gap:8px;margin-bottom:10px;align-items:center}
+.btn{all:unset;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;font-size:12px;cursor:pointer;border-radius:6px;border:1px solid transparent}
+.btn-primary{background:var(--color-brand);color:#fff}
+.btn-secondary{background:var(--color-surface-3);color:var(--color-text);border-color:var(--color-border)}
+.btn-ghost{background:transparent;color:var(--color-text-tertiary)}
+.btn-ghost:hover{background:var(--color-surface-2);color:var(--color-text)}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="tb">
+    <div class="l">
+      <div class="traffic"><span></span><span></span><span></span></div>
+      <div class="brand"><span class="orb"></span>llamactl</div>
+    </div>
+    <div class="c" onclick="openPalette()">
+      <span style="width:8px;height:8px;border-radius:50%;background:var(--color-brand);box-shadow:0 0 10px var(--color-brand)"></span>
+      <span style="color:var(--color-text)">fleet</span><span style="color:var(--color-text-ghost)">/</span><span id="crumb">services</span>
+      <span style="margin-left:auto;display:flex;gap:4px"><span class="kbd">⌘K</span></span>
+    </div>
+    <div class="r">
+      <div class="iconbtn">◎</div>
+      <div class="iconbtn">↗</div>
+      <div class="avatar"></div>
+    </div>
+  </div>
+  <div class="main">
+    <div class="rail">
+      <button data-view="services" class="active">☰</button>
+      <button data-view="logs">⌕</button>
+      <button onclick="openPalette()">◐</button>
+      <button>↺</button>
+      <button>⎇</button>
+      <div class="sp"></div>
+      <button>⚙</button>
+    </div>
+    <aside class="exp">
+      <h2>FLEET · us-west-2</h2>
+      <div class="node active" data-view="services"><span class="chev">▾</span><span class="fico f">S</span>services</div>
+      <div class="node" data-view="logs"><span class="chev">▾</span><span class="fico s">L</span>logs</div>
+      <div class="node"><span class="chev">▸</span><span class="fico f">D</span>deployments</div>
+      <div class="node"><span class="chev">▸</span><span class="fico f">C</span>config</div>
+      <div class="node"><span class="chev">▸</span><span class="fico f">A</span>alerts</div>
+      <h2 style="margin-top:12px">RECENT</h2>
+      <div class="node"><span class="chev"></span><span class="fico s">●</span>gateway · v2.1.4</div>
+      <div class="node"><span class="chev"></span><span class="fico s">●</span>render · v4.0.2</div>
+    </aside>
+    <div class="editor">
+      <div class="tabbar">
+        <div class="tab active" data-view="services"><span class="dot"></span>services</div>
+        <div class="tab" data-view="logs"><span class="dot"></span>logs · gateway</div>
+        <div class="tab"><span class="dot"></span>alerts</div>
+      </div>
+      <div class="surface" id="surface">
+        <!-- services page -->
+        <div class="page" data-page="services">
+          <h1>Services <em>— fleet overview</em></h1>
+          <div class="lede">184 active nodes across 3 regions. 4.7M requests in the last 24 hours. No open incidents.</div>
+          <div class="stats">
+            <div class="stat"><div class="lab">Requests · 24h</div><div class="val">4.7<em>M</em></div><div class="delta up">▲ 12.4%</div></div>
+            <div class="stat"><div class="lab">P95 latency</div><div class="val">842<em>ms</em></div><div class="delta down">▼ 4.2%</div></div>
+            <div class="stat"><div class="lab">Error rate</div><div class="val">0.014<em>%</em></div><div class="delta">— flat</div></div>
+            <div class="stat"><div class="lab">Active nodes</div><div class="val">184</div><div class="delta up">▲ 6 new</div></div>
+          </div>
+          <div class="section-h"><h3>Service registry</h3><span class="id">05.02</span></div>
+          <table class="tbl">
+            <thead><tr><th>Service</th><th>Status</th><th>Region</th><th>Version</th><th style="text-align:right">Rate</th><th style="text-align:right">P95</th><th style="text-align:right">Uptime</th></tr></thead>
+            <tbody>
+              <tr><td>llamactl-gateway</td><td><span class="badge b-ok">● running</span></td><td class="mono">us-west-2</td><td class="mono">v2.1.4</td><td class="mono" style="text-align:right">1.24M</td><td class="mono" style="text-align:right">842ms</td><td class="mono" style="text-align:right">99.98%</td></tr>
+              <tr><td>novaflow-render</td><td><span class="badge b-ok">● running</span></td><td class="mono">us-east-1</td><td class="mono">v4.0.2</td><td class="mono" style="text-align:right">682k</td><td class="mono" style="text-align:right">1.2s</td><td class="mono" style="text-align:right">99.94%</td></tr>
+              <tr><td>shared-auth-gateway</td><td><span class="badge b-warn">● degraded</span></td><td class="mono">eu-west-1</td><td class="mono">v1.8.0</td><td class="mono" style="text-align:right">2.81M</td><td class="mono" style="text-align:right">412ms</td><td class="mono" style="text-align:right">99.71%</td></tr>
+              <tr><td>scheduler-cron</td><td><span class="badge b-ok">● running</span></td><td class="mono">us-west-2</td><td class="mono">v1.2.0</td><td class="mono" style="text-align:right">14.2k</td><td class="mono" style="text-align:right">48ms</td><td class="mono" style="text-align:right">100.00%</td></tr>
+              <tr><td>legacy-archive</td><td><span class="badge b-err">● offline</span></td><td class="mono">us-central-1</td><td class="mono">v0.9.4</td><td class="mono" style="text-align:right">—</td><td class="mono" style="text-align:right">—</td><td class="mono" style="text-align:right">42.18%</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- logs page -->
+        <div class="page" data-page="logs" style="display:none">
+          <h1>Logs <em>— gateway</em></h1>
+          <div class="lede">Streaming live from svc.llamactl.gateway. Filter applied: level≥info, last 15m.</div>
+          <div class="filter">
+            <button class="btn btn-secondary">Level: ≥info</button>
+            <button class="btn btn-secondary">Range: 15m</button>
+            <span style="flex:1"></span>
+            <button class="btn btn-ghost">Clear</button>
+            <button class="btn btn-primary">▶ Live</button>
+          </div>
+          <div class="logs">
+            <div class="ln"><span class="t">22:14:03</span><span class="lv ok">ok</span><span class="m">request <em>GET /v2/chat</em> · 201 · 84ms · user <em>u_8f2a</em></span></div>
+            <div class="ln"><span class="t">22:14:03</span><span class="lv info">info</span><span class="m">dispatched to <em>shard-12</em> · queue_depth=4</span></div>
+            <div class="ln"><span class="t">22:14:02</span><span class="lv warn">warn</span><span class="m">rate limit approaching for <em>tenant=acme</em> · 92%</span></div>
+            <div class="ln"><span class="t">22:14:01</span><span class="lv info">info</span><span class="m">scheduler tick · 4 pending jobs</span></div>
+            <div class="ln"><span class="t">22:14:00</span><span class="lv err">err</span><span class="m">upstream timeout · <em>svc.shared.auth</em> · 5000ms · retrying 1/3</span></div>
+            <div class="ln"><span class="t">22:13:58</span><span class="lv ok">ok</span><span class="m">deploy completed · <em>gateway v2.1.4</em> · 184 nodes healthy</span></div>
+            <div class="ln"><span class="t">22:13:52</span><span class="lv info">info</span><span class="m">rolling deploy: phase 3/3 · batch 18 → green</span></div>
+            <div class="ln"><span class="t">22:13:44</span><span class="lv info">info</span><span class="m">rolling deploy: phase 2/3 · batch 12 → green</span></div>
+            <div class="ln"><span class="t">22:13:34</span><span class="lv info">info</span><span class="m">rolling deploy: phase 1/3 · batch 6 → green</span></div>
+            <div class="ln"><span class="t">22:13:22</span><span class="lv ok">ok</span><span class="m">pre-flight checks passed · <em>4/4</em></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="sb">
+    <div class="g">
+      <div class="it"><span class="dot"></span>main</div>
+      <div class="it">✓ 0 problems</div>
+      <div class="it">live · synced</div>
+    </div>
+    <div class="g">
+      <div class="it">us-west-2</div>
+      <div class="it">UTC−08:00</div>
+      <div class="it brand">llamactl · v2.1.4</div>
+    </div>
+  </div>
+</div>
+
+<!-- palette -->
+<div class="palette-overlay" id="palette">
+  <div class="palette">
+    <div class="pal-input">
+      <span class="c"></span>
+      <input value="deploy" id="palinput">
+      <span class="kbd">esc</span>
+    </div>
+    <div class="pal-list">
+      <div class="pal-group">Actions</div>
+      <div class="pal-item active"><span class="ic"></span>Deploy llamactl-gateway to production<span class="hint">⌘⇧D</span></div>
+      <div class="pal-item"><span class="ic"></span>Deploy novaflow-render (staging)<span class="hint">⌘D</span></div>
+      <div class="pal-item"><span class="ic"></span>Redeploy last build<span class="hint">⌘R</span></div>
+      <div class="pal-group">Recent</div>
+      <div class="pal-item"><span class="ic"></span>llamactl-gateway · v2.1.4<span class="hint">2m ago</span></div>
+      <div class="pal-item"><span class="ic"></span>novaflow-render · v4.0.2<span class="hint">15m ago</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+function setView(v){
+  document.querySelectorAll('.page').forEach(p=>p.style.display=(p.dataset.page===v)?'block':'none');
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.view===v));
+  document.querySelectorAll('.node[data-view]').forEach(n=>n.classList.toggle('active',n.dataset.view===v));
+  document.querySelectorAll('.rail button[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
+  document.getElementById('crumb').textContent = v;
+}
+document.querySelectorAll('[data-view]').forEach(el=>el.addEventListener('click',()=>setView(el.dataset.view)));
+
+const overlay = document.getElementById('palette');
+function openPalette(){ overlay.classList.add('open'); setTimeout(()=>document.getElementById('palinput').focus(),10); }
+overlay.addEventListener('click',e=>{ if(e.target===overlay) overlay.classList.remove('open'); });
+window.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();openPalette()}
+  if(e.key==='Escape') overlay.classList.remove('open');
+});
+</script>
+</body>
+</html>

@@ -1303,9 +1303,9 @@ export function EditorialHero({
       <h1
         style={{
           fontFamily: 'var(--font-display)',
-          fontWeight: 400,
+          fontWeight: 300,
           fontSize: 'clamp(48px, 7vw, 96px)',
-          letterSpacing: '-0.02em',
+          letterSpacing: '-0.03em',
           lineHeight: 0.98,
           margin: '0 0 20px',
           color: 'var(--color-text)',
@@ -1315,7 +1315,7 @@ export function EditorialHero({
         {titleAccent && (
           <>
             {' '}
-            <em style={{ fontStyle: 'italic', color: 'var(--color-brand)' }}>{titleAccent}</em>
+            <em className="t-brand" style={{ color: 'var(--color-brand)', fontWeight: 400, fontStyle: 'normal' }}>{titleAccent}</em>
           </>
         )}
       </h1>
@@ -1614,7 +1614,88 @@ git commit -m "feat(app/ui): add ThemeOrbs title-bar picker"
 
 ---
 
-## Task 14: Primitives sandbox module + palette entry
+## Task 14: Lockup (beacon wordmark)
+
+**Files:**
+- Create: `packages/app/src/ui/lockup.tsx`
+- Modify: `packages/app/src/ui/index.ts`
+
+The Beacon lockup: lowercase `beacon` in Inter 600 + an 8 px indigo orb with a matching box-shadow glow. Used leftmost in the TitleBar as the product mark.
+
+- [ ] **Step 1: Create the component**
+
+Create `packages/app/src/ui/lockup.tsx`:
+
+```typescript
+import * as React from 'react';
+import { cx } from './classes';
+
+export interface LockupProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Optional — default 14 px wordmark. */
+  size?: 'sm' | 'md';
+}
+
+/**
+ * The Beacon lockup: lowercase wordmark + brand orb with glow. The
+ * orb always renders in brand; the wordmark in the current text color
+ * so it reads against every theme surface.
+ */
+export function Lockup({ size = 'md', className, style, ...rest }: LockupProps): React.JSX.Element {
+  const fontSize = size === 'sm' ? 12 : 14;
+  const orbSize = size === 'sm' ? 7 : 8;
+  return (
+    <div
+      {...rest}
+      className={cx('bcn-lockup', className)}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 8,
+        fontFamily: 'var(--font-sans)',
+        fontWeight: 600,
+        fontSize,
+        letterSpacing: '-0.01em',
+        color: 'var(--color-text)',
+        userSelect: 'none',
+        ...style,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: orbSize,
+          height: orbSize,
+          borderRadius: '50%',
+          background: 'var(--color-brand)',
+          boxShadow: `0 0 ${orbSize + 2}px var(--color-brand)`,
+          flexShrink: 0,
+        }}
+      />
+      <span>beacon</span>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 2: Add to barrel**
+
+Append to `packages/app/src/ui/index.ts`:
+
+```typescript
+export { Lockup } from './lockup';
+export type { LockupProps } from './lockup';
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add packages/app/src/ui/lockup.tsx packages/app/src/ui/index.ts
+git commit -m "feat(app/ui): add Lockup (beacon wordmark + brand orb)"
+```
+
+---
+
+## Task 15: Primitives sandbox module + palette entry
 
 **Files:**
 - Create: `packages/app/src/modules/ui-primitives/index.tsx`
@@ -1749,7 +1830,7 @@ export default function UIPrimitivesSandbox(): React.JSX.Element {
 
       <Section title="AtmosphericPanel">
         <AtmosphericPanel>
-          <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 64 }}>Beacon</h2>
+          <h2 style={{ margin: 0, fontFamily: 'var(--font-display)', fontWeight: 300, fontSize: 64, letterSpacing: '-0.03em' }}>Beacon</h2>
           <p style={{ color: 'var(--color-text-secondary)', maxWidth: '50ch' }}>
             The atmospheric surface — gradient, two blurred blobs, noise overlay from tokens. Use for
             hero moments only.
@@ -1834,7 +1915,7 @@ git commit -m "feat(app): add UI Primitives sandbox (palette-only module)"
 
 ---
 
-## Task 15: End-of-phase verification
+## Task 16: End-of-phase verification
 
 - [ ] **Step 1: Typecheck**
 
@@ -1858,6 +1939,7 @@ For each theme (Sirius, Ember, Clinical, Scrubs):
 - Open UI Primitives sandbox.
 - Visually confirm every section paints correctly (no broken colors, no `#000000` fallback on surfaces, no clipped heroes, no missing borders where they should exist).
 - Clinical especially — status colors need to read on a light background.
+- EditorialHero title accent renders in brand color, upright (never italic).
 
 - [ ] **Step 5: Tag**
 
@@ -1869,13 +1951,14 @@ git tag beacon-p1
 
 ## Self-review against the spec
 
-- §4 Primitive inventory — all 14 primitives implemented:
+- §4 Primitive inventory — all 15 primitives implemented:
   - Button ✓ (Task 2) · Badge ✓ (Task 3) · StatusDot ✓ (Task 4) · Kbd ✓ (Task 5)
   - Input ✓ (Task 6) · Tabs/Tab ✓ (Task 7) · TreeItem ✓ (Task 8)
   - Card/Panel ✓ (Task 9) · AtmosphericPanel ✓ (Task 9)
   - StatCard ✓ (Task 10) · EditorialHero ✓ (Task 11)
-  - CommandBar ✓ (Task 12) · ThemeOrbs ✓ (Task 13)
-- §4 "Storybook-style sandbox reachable via the command palette" — Task 14.
+  - CommandBar ✓ (Task 12) · ThemeOrbs ✓ (Task 13) · Lockup ✓ (Task 14)
+- §4 "Storybook-style sandbox reachable via the command palette" — Task 15.
+- §11a Voice rule "emphasis is brand-painted, never italic" — enforced in EditorialHero via `.t-brand` / `fontStyle: 'normal'` (Task 11).
 - No module is forced to migrate in P1 — the library ships standalone and P3 will migrate callers.
 
 Deferred:

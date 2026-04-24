@@ -1,0 +1,19 @@
+<!doctype html><html data-theme="sirius"><head><meta charset="utf-8"><link rel="stylesheet" href="_base.css"><title>Radii</title>
+<style>
+body{padding:16px;gap:8px}
+.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;flex:1}
+.cell{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:8px}
+.sq{width:56px;height:56px;background:linear-gradient(135deg,#2d2d38,#1a1a20);border:1px solid rgba(255,255,255,0.08)}
+.name{font-family:var(--font-mono);font-size:10px;color:#a8a8b2}
+.val{font-family:var(--font-mono);font-size:9px;color:#70707a}
+</style></head><body>
+<div class="eyebrow">Radius scale · 4px base</div>
+<div class="grid">
+  <div class="cell"><div class="sq" style="border-radius:3px"></div><div class="name">sm</div><div class="val">3px</div></div>
+  <div class="cell"><div class="sq" style="border-radius:6px"></div><div class="name">md</div><div class="val">6px</div></div>
+  <div class="cell"><div class="sq" style="border-radius:10px"></div><div class="name">lg</div><div class="val">10px</div></div>
+  <div class="cell"><div class="sq" style="border-radius:16px"></div><div class="name">xl</div><div class="val">16px</div></div>
+  <div class="cell"><div class="sq" style="border-radius:24px"></div><div class="name">2xl</div><div class="val">24px</div></div>
+  <div class="cell"><div class="sq" style="border-radius:999px"></div><div class="name">pill</div><div class="val">999px</div></div>
+</div>
+</body></html>

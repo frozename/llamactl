@@ -1,0 +1,28 @@
+<!doctype html><html data-theme="sirius"><head><meta charset="utf-8"><link rel="stylesheet" href="_base.css"><title>Tree</title>
+<style>
+body{padding:14px;gap:6px;background:#141418}
+.tv{font-family:var(--font-mono);font-size:12px;color:#a8a8b2}
+.i{display:flex;align-items:center;gap:8px;padding:4px 10px;cursor:pointer;border-radius:4px}
+.i:hover{background:#22222a;color:#ededf0}
+.i.active{background:rgba(99,102,241,0.08);color:#ededf0;position:relative}
+.i.active::before{content:'';position:absolute;left:0;top:4px;bottom:4px;width:2px;background:#6366f1;border-radius:2px}
+.chev{color:#4a4a52;width:10px;font-size:9px}
+.dot{width:10px;height:10px;border-radius:2px;background:#70707a}
+.dot.folder{background:#6366f1}
+.indent{padding-left:18px}
+</style></head><body>
+<div class="eyebrow" style="padding:0 4px">Tree · explorer sidebar pattern</div>
+<div class="tv">
+  <div class="i"><span class="chev">▾</span><span class="dot folder"></span>llamactl</div>
+  <div class="indent">
+    <div class="i"><span class="chev">▾</span><span class="dot folder"></span>services</div>
+    <div class="indent">
+      <div class="i active"><span class="chev"></span><span class="dot"></span>gateway.ts</div>
+      <div class="i"><span class="chev"></span><span class="dot"></span>scheduler.ts</div>
+      <div class="i"><span class="chev"></span><span class="dot"></span>registry.ts</div>
+    </div>
+    <div class="i"><span class="chev">▸</span><span class="dot folder"></span>routes</div>
+    <div class="i"><span class="chev"></span><span class="dot"></span>config.yaml</div>
+  </div>
+</div>
+</body></html>

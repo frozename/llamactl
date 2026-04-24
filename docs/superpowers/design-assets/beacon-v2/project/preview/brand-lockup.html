@@ -1,0 +1,23 @@
+<!doctype html><html data-theme="sirius"><head><meta charset="utf-8"><link rel="stylesheet" href="_base.css"><title>Logo</title>
+<style>
+body{padding:0;align-items:center;justify-content:center}
+.stage{flex:1;width:100%;display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--color-border-subtle)}
+.tile{background:var(--color-surface-1);display:flex;align-items:center;justify-content:center;gap:10px;padding:18px}
+.tile.light{background:#faf9f7}
+.tile.light .wm{color:#14110d}
+.orb{width:12px;height:12px;border-radius:50%;background:var(--color-brand);box-shadow:0 0 12px var(--color-brand);flex-shrink:0}
+.wm{font-family:var(--font-sans);font-size:26px;font-weight:600;letter-spacing:-0.02em;color:var(--color-text)}
+.micro{position:absolute;top:10px;left:14px;font-family:var(--font-mono);font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--color-text-tertiary)}
+.tile{position:relative}
+.tile.light .micro{color:#8a867d}
+.tile.ember{background:#131210}.tile.ember .orb{background:#f59e0b;box-shadow:0 0 12px #f59e0b}.tile.ember .wm{color:#ece7da}
+.tile.scrubs{background:#0e1c18}.tile.scrubs .orb{background:#14b8a6;box-shadow:0 0 12px #14b8a6}.tile.scrubs .wm{color:#d4ede8}
+.tile.light .orb{background:#2563eb;box-shadow:0 0 10px rgba(37,99,235,0.5)}
+</style></head><body>
+<div class="stage">
+  <div class="tile"><span class="micro">Sirius</span><span class="orb"></span><span class="wm">beacon</span></div>
+  <div class="tile ember"><span class="micro">Ember</span><span class="orb"></span><span class="wm">beacon</span></div>
+  <div class="tile light"><span class="micro">Clinical</span><span class="orb"></span><span class="wm">beacon</span></div>
+  <div class="tile scrubs"><span class="micro">Scrubs</span><span class="orb"></span><span class="wm">beacon</span></div>
+</div>
+</body></html>

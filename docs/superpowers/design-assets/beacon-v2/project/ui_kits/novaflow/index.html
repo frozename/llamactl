@@ -1,0 +1,264 @@
+<!doctype html>
+<html data-theme="ember">
+<head>
+<meta charset="utf-8">
+<title>novaflow — UI kit</title>
+<link rel="stylesheet" href="../../colors_and_type.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;font-family:var(--font-sans);background:var(--color-surface-0);color:var(--color-text);font-size:13px}
+.app{display:grid;grid-template-rows:48px 1fr 40px;height:100vh}
+/* top bar */
+.tb{display:grid;grid-template-columns:280px 1fr 280px;align-items:center;padding:0 14px;background:var(--color-surface-1);border-bottom:1px solid var(--color-border-subtle)}
+.tb .l{display:flex;gap:14px;align-items:center}
+.brand{display:flex;gap:10px;align-items:center;font-weight:600;font-size:14px}
+.brand .orb{width:10px;height:10px;border-radius:50%;background:var(--color-brand);box-shadow:0 0 10px var(--color-brand)}
+.crumb{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--color-text-secondary)}
+.crumb .s{color:var(--color-text-ghost)}
+.crumb em{font-style:normal;color:var(--color-text)}
+.tb .c{display:flex;gap:4px;justify-content:center;align-items:center}
+.tool{width:36px;height:36px;display:grid;place-items:center;border-radius:8px;cursor:pointer;color:var(--color-text-tertiary);font-size:16px;position:relative;font-family:var(--font-mono)}
+.tool:hover{background:var(--color-surface-2);color:var(--color-text)}
+.tool.active{background:var(--color-brand);color:#fff;box-shadow:0 0 0 1px var(--color-brand),0 0 12px rgba(245,158,11,0.4)}
+.tool .sh{position:absolute;bottom:-2px;right:2px;font-family:var(--font-mono);font-size:8px;color:var(--color-text-ghost)}
+.tool.active .sh{color:#fff;opacity:0.7}
+.divider{width:1px;height:20px;background:var(--color-border-subtle);margin:0 4px}
+.tb .r{display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.btn{all:unset;display:inline-flex;align-items:center;gap:6px;padding:7px 13px;font-size:12px;cursor:pointer;border-radius:7px;font-weight:500}
+.btn-primary{background:var(--color-brand);color:#fff}
+.btn-secondary{background:var(--color-surface-3);color:var(--color-text);border:1px solid var(--color-border)}
+.btn-ghost{background:transparent;color:var(--color-text-tertiary)}
+.btn-ghost:hover{background:var(--color-surface-2);color:var(--color-text)}
+.avatar{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--color-brand),#ef4444)}
+/* main */
+.main{display:grid;grid-template-columns:240px 1fr 280px;overflow:hidden;min-height:0}
+/* left panel: layers */
+.lp{background:var(--color-surface-1);border-right:1px solid var(--color-border-subtle);overflow:hidden;display:flex;flex-direction:column}
+.lp h2{padding:14px 16px 8px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:var(--color-text-tertiary);font-weight:500;display:flex;justify-content:space-between;align-items:center}
+.lp h2 .add{color:var(--color-text-ghost);cursor:pointer;font-size:14px}
+.lp h2 .add:hover{color:var(--color-brand)}
+.lp .list{overflow-y:auto;flex:1}
+.layer{display:flex;align-items:center;gap:10px;padding:7px 16px;font-size:13px;color:var(--color-text-secondary);cursor:pointer;position:relative}
+.layer:hover{background:var(--color-surface-2);color:var(--color-text)}
+.layer.active{background:var(--color-brand-ghost);color:var(--color-text)}
+.layer.active::before{content:'';position:absolute;left:0;top:3px;bottom:3px;width:2px;background:var(--color-brand)}
+.layer .eye{width:12px;color:var(--color-text-ghost);font-family:var(--font-mono);font-size:11px}
+.layer .th{width:22px;height:22px;border-radius:4px;display:grid;place-items:center;font-family:var(--font-mono);font-size:10px;font-weight:600;color:#fff;flex-shrink:0}
+.layer .th.t{background:linear-gradient(135deg,#6366f1,#a855f7)}
+.layer .th.r{background:var(--color-brand)}
+.layer .th.i{background:linear-gradient(135deg,#10b981,#06b6d4)}
+.layer .th.g{background:var(--color-surface-3);color:var(--color-text-tertiary)}
+.layer .name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.layer .tag{font-family:var(--font-mono);font-size:9px;color:var(--color-text-tertiary);letter-spacing:0.1em}
+.layer.indent{padding-left:36px}
+/* canvas */
+.canvas{background:#0a0a0c;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.canvas::before{content:'';position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,0.04) 1px,transparent 1px);background-size:16px 16px;opacity:0.5}
+.artboard{position:relative;width:520px;height:320px;background:linear-gradient(135deg,#1a1a24,#0f0f15);border-radius:4px;box-shadow:0 0 0 1px rgba(255,255,255,0.05),var(--shadow-lg);overflow:hidden}
+.ab-label{position:absolute;top:-22px;left:0;font-family:var(--font-mono);font-size:10px;color:var(--color-text-ghost);letter-spacing:0.12em;text-transform:uppercase}
+.ab-size{position:absolute;bottom:-22px;left:0;font-family:var(--font-mono);font-size:10px;color:var(--color-text-ghost)}
+/* composition: hero render */
+.hero-h{position:absolute;top:40px;left:40px;right:40px;font-size:44px;font-weight:700;letter-spacing:-0.03em;line-height:0.95;color:#fff}
+.hero-h em{font-style:normal;color:var(--color-brand)}
+.hero-p{position:absolute;top:180px;left:40px;right:140px;font-size:12px;color:rgba(255,255,255,0.7);line-height:1.5}
+.hero-orb{position:absolute;top:40px;right:40px;width:80px;height:80px;border-radius:50%;background:radial-gradient(circle at 30% 30%,var(--color-brand),#c2410c 60%,#7c2d12);box-shadow:0 0 40px rgba(245,158,11,0.5)}
+.hero-cta{position:absolute;bottom:40px;left:40px;display:flex;gap:10px;align-items:center}
+.hero-cta .pill{padding:8px 16px;background:var(--color-brand);color:#fff;font-size:11px;font-weight:600;border-radius:999px}
+.hero-cta .ln{padding:8px 14px;color:rgba(255,255,255,0.8);font-size:11px}
+/* selection frame */
+.selection{position:absolute;top:36px;left:36px;width:380px;height:100px;border:1px solid var(--color-brand);pointer-events:none}
+.selection::before{content:'headline';position:absolute;top:-20px;left:0;font-family:var(--font-mono);font-size:10px;color:var(--color-brand);background:var(--color-brand-ghost);padding:2px 6px;border-radius:3px;letter-spacing:0.08em}
+.handle{position:absolute;width:8px;height:8px;background:var(--color-surface-0);border:1.5px solid var(--color-brand);border-radius:1px}
+.handle.tl{top:-4px;left:-4px}.handle.tr{top:-4px;right:-4px}.handle.bl{bottom:-4px;left:-4px}.handle.br{bottom:-4px;right:-4px}
+.handle.tm{top:-4px;left:50%;transform:translateX(-50%)}.handle.bm{bottom:-4px;left:50%;transform:translateX(-50%)}
+.handle.lm{left:-4px;top:50%;transform:translateY(-50%)}.handle.rm{right:-4px;top:50%;transform:translateY(-50%)}
+/* zoom chip */
+.zoom{position:absolute;bottom:12px;right:12px;display:flex;gap:2px;background:var(--color-surface-1);border:1px solid var(--color-border);border-radius:7px;padding:3px;font-family:var(--font-mono);font-size:11px}
+.zoom button{all:unset;padding:4px 8px;color:var(--color-text-secondary);cursor:pointer;border-radius:4px}
+.zoom button:hover{background:var(--color-surface-2)}
+.zoom .val{padding:4px 8px;color:var(--color-text)}
+/* right panel: inspector */
+.rp{background:var(--color-surface-1);border-left:1px solid var(--color-border-subtle);overflow-y:auto}
+.insp-h{padding:14px 16px 10px;border-bottom:1px solid var(--color-border-subtle)}
+.insp-h .type{font-family:var(--font-mono);font-size:10px;color:var(--color-brand);letter-spacing:0.14em;text-transform:uppercase;margin-bottom:4px}
+.insp-h .name{font-size:14px;font-weight:600}
+.sect{padding:14px 16px;border-bottom:1px solid var(--color-border-subtle)}
+.sect h3{font-family:var(--font-mono);font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--color-text-tertiary);margin-bottom:10px;font-weight:500;display:flex;justify-content:space-between;align-items:center}
+.sect h3 .more{color:var(--color-text-ghost);cursor:pointer}
+.field{display:grid;grid-template-columns:60px 1fr;gap:10px;align-items:center;margin-bottom:8px;font-size:12px}
+.field label{color:var(--color-text-tertiary)}
+.field .row{display:flex;gap:4px}
+.num{flex:1;display:flex;align-items:center;gap:4px;padding:5px 8px;background:var(--color-surface-2);border:1px solid transparent;border-radius:5px;font-family:var(--font-mono);font-size:11px;color:var(--color-text)}
+.num:focus-within,.num.focused{border-color:var(--color-brand);background:var(--color-surface-0)}
+.num .u{color:var(--color-text-ghost);font-size:10px}
+.swatch{width:22px;height:22px;border-radius:4px;box-shadow:0 0 0 1px rgba(255,255,255,0.1);flex-shrink:0}
+.colorrow{display:flex;gap:8px;align-items:center;padding:5px 8px;background:var(--color-surface-2);border-radius:5px;font-family:var(--font-mono);font-size:11px}
+.colorrow .hex{flex:1}
+.colorrow .op{color:var(--color-text-tertiary)}
+.seg{display:flex;background:var(--color-surface-2);border-radius:5px;padding:2px;font-size:11px}
+.seg button{all:unset;flex:1;padding:4px 8px;text-align:center;color:var(--color-text-tertiary);cursor:pointer;border-radius:3px;font-family:var(--font-mono)}
+.seg button.on{background:var(--color-brand);color:#fff}
+/* timeline */
+.tl{background:var(--color-surface-1);border-top:1px solid var(--color-border-subtle);display:flex;flex-direction:column;height:40px;padding:0 12px}
+.tl-row{display:flex;align-items:center;gap:14px;height:100%}
+.tl-ctrl{display:flex;gap:2px;align-items:center}
+.tl-ctrl button{all:unset;width:28px;height:28px;display:grid;place-items:center;border-radius:6px;cursor:pointer;color:var(--color-text-secondary);font-family:var(--font-mono);font-size:12px}
+.tl-ctrl button:hover{background:var(--color-surface-2)}
+.tl-ctrl button.play{background:var(--color-brand);color:#fff}
+.tc{font-family:var(--font-mono);font-size:11px;color:var(--color-text);letter-spacing:0.05em}
+.tc em{font-style:normal;color:var(--color-brand)}
+.track{flex:1;height:22px;background:var(--color-surface-2);border-radius:4px;position:relative;overflow:hidden}
+.track::before{content:'';position:absolute;inset:0;background-image:linear-gradient(to right,var(--color-border-subtle) 1px,transparent 1px);background-size:10% 100%}
+.clip{position:absolute;top:3px;bottom:3px;background:var(--color-brand);border-radius:2px;opacity:0.8}
+.clip.b{background:#6366f1}
+.playhead{position:absolute;top:-2px;bottom:-2px;width:1.5px;background:#fff;box-shadow:0 0 4px #fff}
+.playhead::before{content:'';position:absolute;top:-4px;left:-4px;width:9px;height:5px;background:#fff;clip-path:polygon(0 0,100% 0,50% 100%)}
+.kbd{display:inline-flex;align-items:center;min-width:16px;height:16px;padding:0 4px;font-size:9px;font-family:var(--font-mono);color:var(--color-text-secondary);background:var(--color-surface-2);border:1px solid var(--color-border);border-bottom-width:2px;border-radius:3px}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="tb">
+    <div class="l">
+      <div class="brand"><span class="orb"></span>novaflow</div>
+      <div class="crumb">
+        <span>atlas-launch</span><span class="s">/</span><em>hero frame</em>
+      </div>
+    </div>
+    <div class="c">
+      <div class="tool" title="Select">↖<span class="sh">V</span></div>
+      <div class="tool active" title="Frame">▦<span class="sh">F</span></div>
+      <div class="tool" title="Text">T<span class="sh">T</span></div>
+      <div class="tool" title="Pen">✎<span class="sh">P</span></div>
+      <div class="tool" title="Shape">◆<span class="sh">R</span></div>
+      <div class="divider"></div>
+      <div class="tool" title="Image">▣<span class="sh">I</span></div>
+      <div class="tool" title="Mask">◐<span class="sh">M</span></div>
+      <div class="tool" title="Comment">◊<span class="sh">C</span></div>
+    </div>
+    <div class="r">
+      <button class="btn btn-ghost">Share</button>
+      <button class="btn btn-secondary">▶ Preview</button>
+      <button class="btn btn-primary">Render</button>
+      <div class="avatar"></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <aside class="lp">
+      <h2>LAYERS<span class="add">+</span></h2>
+      <div class="list">
+        <div class="layer"><span class="eye">◉</span><span class="th g">▦</span><span class="name">hero frame</span><span class="tag">520×320</span></div>
+        <div class="layer active indent"><span class="eye">◉</span><span class="th t">T</span><span class="name">headline</span><span class="tag">44pt</span></div>
+        <div class="layer indent"><span class="eye">◉</span><span class="th t">T</span><span class="name">body copy</span><span class="tag">12pt</span></div>
+        <div class="layer indent"><span class="eye">◉</span><span class="th r">●</span><span class="name">orb — ember</span></div>
+        <div class="layer indent"><span class="eye">◉</span><span class="th r">◆</span><span class="name">cta · primary</span></div>
+        <div class="layer indent"><span class="eye">—</span><span class="th g">□</span><span class="name" style="color:var(--color-text-ghost)">bg grid (hidden)</span></div>
+
+        <div class="layer"><span class="eye">▾</span><span class="th g">▦</span><span class="name">social · 1080²</span></div>
+        <div class="layer"><span class="eye">▸</span><span class="th g">▦</span><span class="name">story · 9:16</span></div>
+        <div class="layer"><span class="eye">▸</span><span class="th g">▦</span><span class="name">email banner · 600w</span></div>
+      </div>
+    </aside>
+
+    <div class="canvas">
+      <div class="artboard">
+        <div class="ab-label">hero frame</div>
+        <div class="hero-h">Atlas is <em>live.</em><br>Ship anywhere.</div>
+        <div class="hero-p">A control plane for model ops. Deploy, observe, and roll back across regions — without leaving the terminal.</div>
+        <div class="hero-orb"></div>
+        <div class="hero-cta">
+          <div class="pill">Get started →</div>
+          <div class="ln">docs ↗</div>
+        </div>
+        <!-- selection overlay -->
+        <div class="selection">
+          <div class="handle tl"></div><div class="handle tr"></div><div class="handle bl"></div><div class="handle br"></div>
+          <div class="handle tm"></div><div class="handle bm"></div><div class="handle lm"></div><div class="handle rm"></div>
+        </div>
+        <div class="ab-size">520 × 320 · 2x</div>
+      </div>
+      <div class="zoom">
+        <button>−</button><span class="val">125%</span><button>+</button>
+      </div>
+    </div>
+
+    <aside class="rp">
+      <div class="insp-h">
+        <div class="type">Text · selected</div>
+        <div class="name">headline</div>
+      </div>
+      <div class="sect">
+        <h3>Transform<span class="more">⋯</span></h3>
+        <div class="field"><label>Position</label><div class="row"><div class="num">40 <span class="u">x</span></div><div class="num">40 <span class="u">y</span></div></div></div>
+        <div class="field"><label>Size</label><div class="row"><div class="num focused">380 <span class="u">w</span></div><div class="num">100 <span class="u">h</span></div></div></div>
+        <div class="field"><label>Rotation</label><div class="row"><div class="num">0° <span class="u"></span></div></div></div>
+      </div>
+      <div class="sect">
+        <h3>Typography</h3>
+        <div class="field"><label>Family</label><div class="row"><div class="num" style="flex:1">Inter Display</div></div></div>
+        <div class="field"><label>Size</label><div class="row"><div class="num">44 <span class="u">px</span></div><div class="num">0.95 <span class="u">lh</span></div></div></div>
+        <div class="field"><label>Tracking</label><div class="row"><div class="num">−0.03 <span class="u">em</span></div></div></div>
+        <div class="field"><label>Weight</label>
+          <div class="seg"><button>300</button><button>400</button><button>500</button><button class="on">700</button></div>
+        </div>
+      </div>
+      <div class="sect">
+        <h3>Fill</h3>
+        <div class="colorrow"><div class="swatch" style="background:#ffffff"></div><span class="hex">#FFFFFF</span><span class="op">100%</span></div>
+        <div style="height:6px"></div>
+        <div class="colorrow"><div class="swatch" style="background:var(--color-brand)"></div><span class="hex">#F59E0B</span><span class="op">100%</span></div>
+      </div>
+      <div class="sect">
+        <h3>Effects</h3>
+        <div class="colorrow"><div class="swatch" style="background:rgba(245,158,11,0.4)"></div><span class="hex">glow · ember</span><span class="op">40%</span></div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="tl">
+    <div class="tl-row">
+      <div class="tl-ctrl">
+        <button>⏮</button><button class="play">▶</button><button>⏭</button>
+      </div>
+      <div class="tc"><em>00:04</em>:12 / 00:12:00</div>
+      <div class="track">
+        <div class="clip b" style="left:4%;width:28%"></div>
+        <div class="clip" style="left:38%;width:40%"></div>
+        <div class="clip b" style="left:82%;width:12%"></div>
+        <div class="playhead" style="left:34%"></div>
+      </div>
+      <span class="kbd">space</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// simple tool cycling
+document.querySelectorAll('.tool').forEach(t=>{
+  t.addEventListener('click',()=>{
+    document.querySelectorAll('.tool').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+  });
+});
+// layer selection
+document.querySelectorAll('.layer').forEach(l=>{
+  l.addEventListener('click',()=>{
+    document.querySelectorAll('.layer').forEach(x=>x.classList.remove('active'));
+    l.classList.add('active');
+  });
+});
+// keyboard tool shortcuts (V F T P R I M C)
+const map={v:0,f:1,t:2,p:3,r:4,i:5,m:6,c:7};
+window.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT') return;
+  const k=e.key.toLowerCase();
+  if(map[k]!=null){
+    const tools=document.querySelectorAll('.tool');
+    tools.forEach(x=>x.classList.remove('active'));
+    tools[map[k]].classList.add('active');
+  }
+});
+</script>
+</body>
+</html>

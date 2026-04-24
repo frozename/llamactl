@@ -1,0 +1,21 @@
+<!doctype html><html data-theme="sirius"><head><meta charset="utf-8"><link rel="stylesheet" href="_base.css"><title>Stat cards</title>
+<style>
+body{padding:16px;gap:8px}
+.row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;flex:1}
+.stat{padding:14px;background:#141418;border:1px solid rgba(255,255,255,0.03);border-radius:10px;display:flex;flex-direction:column;gap:4px}
+.lab{font-family:var(--font-mono);font-size:9px;color:#70707a;letter-spacing:0.14em;text-transform:uppercase}
+.val{font-size:28px;font-weight:600;letter-spacing:-0.02em;color:#ededf0;line-height:1}
+.val em{font-style:normal;color:#6366f1;font-size:16px;font-weight:400;margin-left:2px}
+.delta{font-family:var(--font-mono);font-size:10px;color:#a8a8b2;margin-top:auto}
+.up{color:#34d399}.down{color:#f87171}
+.spark{height:20px;margin-top:4px;display:flex;align-items:flex-end;gap:1px}
+.spark div{flex:1;background:#6366f1;opacity:0.6;border-radius:1px}
+</style></head><body>
+<div class="eyebrow">Pattern · stat cards — telemetry overview</div>
+<div class="row">
+  <div class="stat"><div class="lab">Requests · 24h</div><div class="val">4.7<em>M</em></div><div class="spark"><div style="height:40%"></div><div style="height:55%"></div><div style="height:48%"></div><div style="height:62%"></div><div style="height:70%"></div><div style="height:65%"></div><div style="height:78%"></div><div style="height:85%"></div><div style="height:92%"></div><div style="height:100%"></div></div><div class="delta up">▲ 12.4%</div></div>
+  <div class="stat"><div class="lab">P95 latency</div><div class="val">842<em>ms</em></div><div class="spark"><div style="height:80%"></div><div style="height:75%"></div><div style="height:82%"></div><div style="height:68%"></div><div style="height:72%"></div><div style="height:65%"></div><div style="height:60%"></div><div style="height:55%"></div><div style="height:58%"></div><div style="height:50%"></div></div><div class="delta down">▼ 4.2%</div></div>
+  <div class="stat"><div class="lab">Error rate</div><div class="val">0.014<em>%</em></div><div class="spark"><div style="height:20%"></div><div style="height:22%"></div><div style="height:18%"></div><div style="height:25%"></div><div style="height:20%"></div><div style="height:23%"></div><div style="height:21%"></div><div style="height:19%"></div><div style="height:22%"></div><div style="height:21%"></div></div><div class="delta">— flat</div></div>
+  <div class="stat"><div class="lab">Active nodes</div><div class="val">184</div><div class="spark"><div style="height:60%"></div><div style="height:62%"></div><div style="height:65%"></div><div style="height:68%"></div><div style="height:72%"></div><div style="height:75%"></div><div style="height:80%"></div><div style="height:85%"></div><div style="height:90%"></div><div style="height:95%"></div></div><div class="delta up">▲ 6 new</div></div>
+</div>
+</body></html>

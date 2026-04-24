@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="40" viewBox="0 0 200 40">
+  <defs>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="b"></feGaussianBlur>
+      <feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+    </filter>
+  </defs>
+  <circle cx="14" cy="20" r="5" fill="#6366f1" filter="url(#glow)"></circle>
+  <text x="28" y="27" font-family="Inter, system-ui, sans-serif" font-size="20" font-weight="600" fill="#ededf0" letter-spacing="-0.02em">beacon</text>
+</svg>

@@ -1,0 +1,26 @@
+<!doctype html><html data-theme="sirius"><head><meta charset="utf-8"><link rel="stylesheet" href="_base.css"><title>Badges & status</title>
+<style>
+body{padding:16px;gap:12px;justify-content:center}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;font-size:11px;font-family:var(--font-mono);font-weight:500;border-radius:4px;letter-spacing:0.04em}
+.b-default{background:#22222a;color:#a8a8b2}
+.b-brand{background:rgba(99,102,241,0.15);color:#6366f1}
+.b-ok{background:rgba(52,211,153,0.15);color:#34d399}
+.b-warn{background:rgba(251,191,36,0.15);color:#fbbf24}
+.b-err{background:rgba(248,113,113,0.15);color:#f87171}
+.dot{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:#a8a8b2}
+.dot::before{content:'';width:8px;height:8px;border-radius:50%}
+.dot.ok::before{background:#34d399;box-shadow:0 0 8px #34d399}
+.dot.warn::before{background:#fbbf24;box-shadow:0 0 8px #fbbf24}
+.dot.err::before{background:#f87171;box-shadow:0 0 8px #f87171}
+.dot.idle::before{background:#4a4a52}
+</style></head><body>
+<div class="eyebrow">Badges</div>
+<div class="row">
+  <span class="badge b-default">draft</span><span class="badge b-brand">beta</span><span class="badge b-ok">● running</span><span class="badge b-warn">● pending</span><span class="badge b-err">● failed</span><span class="badge b-default">v2.1.4</span>
+</div>
+<div class="eyebrow">Status dot</div>
+<div class="row" style="gap:18px">
+  <div class="dot ok">Online</div><div class="dot warn">Degraded</div><div class="dot err">Offline</div><div class="dot idle">Idle</div>
+</div>
+</body></html>

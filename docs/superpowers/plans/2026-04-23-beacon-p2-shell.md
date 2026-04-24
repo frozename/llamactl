@@ -1327,7 +1327,7 @@ Create `packages/app/src/shell/beacon/title-bar.tsx`:
 
 ```typescript
 import * as React from 'react';
-import { CommandBar, ThemeOrbs } from '@/ui';
+import { CommandBar, Lockup, ThemeOrbs } from '@/ui';
 import { useThemeStore } from '@/stores/theme-store';
 import { useTabStore } from '@/stores/tab-store';
 import { NodeSelector } from '@/shell/node-selector';
@@ -1347,18 +1347,18 @@ export function TitleBar(): React.JSX.Element {
   const [, setPaletteOpen] = useCommandPaletteOpen();
 
   const activeTab = tabs.find((t) => t.tabKey === activeKey);
-  const crumbs = [
-    { label: 'beacon' },
-    ...(activeTab ? [{ label: activeTab.title, current: true }] : []),
-  ];
+  // The leftmost slot is now the Lockup (wordmark + orb), so the
+  // breadcrumb no longer repeats "beacon" — it starts at the active
+  // tab and trails from there.
+  const crumbs = activeTab ? [{ label: activeTab.title, current: true }] : [];
 
   return (
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: 'auto 1fr auto auto auto auto',
+        gridTemplateColumns: 'auto auto 1fr auto auto auto auto',
         alignItems: 'center',
-        gap: 10,
+        gap: 14,
         height: 44,
         padding: '0 14px',
         background: 'var(--color-surface-1)',
@@ -1369,6 +1369,12 @@ export function TitleBar(): React.JSX.Element {
       {/* Traffic-light space — reserved so the drag region starts here,
            and the macOS lights overlay at `titleBarStyle: 'hiddenInset'`. */}
       <div style={{ width: 72 }} />
+
+      {/* Beacon lockup — leftmost product mark, not draggable so it
+           receives clicks (future: opens an "about" overlay). */}
+      <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <Lockup />
+      </div>
 
       <div
         style={{ justifySelf: 'start', WebkitAppRegion: 'no-drag' } as React.CSSProperties}

@@ -1,0 +1,18 @@
+<!doctype html><html data-theme="sirius"><head><meta charset="utf-8"><link rel="stylesheet" href="_base.css"><title>Input & tabs</title>
+<style>
+body{padding:16px;gap:14px}
+.input{width:100%;padding:9px 12px;font-size:13px;font-family:var(--font-sans);background:#1a1a20;color:#ededf0;border:1px solid rgba(255,255,255,0.06);border-radius:8px;outline:none}
+.input:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,0.08);background:#141418}
+.input::placeholder{color:#70707a}
+.tabs{display:flex;gap:2px;border-bottom:1px solid rgba(255,255,255,0.04)}
+.mt{padding:8px 14px;font-size:12px;color:#70707a;cursor:pointer;border-bottom:1.5px solid transparent;margin-bottom:-1px}
+.mt.active{color:#ededf0;border-bottom-color:#6366f1}
+</style></head><body>
+<div class="eyebrow">Input · focused / default / disabled</div>
+<input class="input" value="llamactl-prod-us-west" autofocus>
+<input class="input" placeholder="Filter services…">
+<div class="eyebrow">Tabs · underlined, brand-accented</div>
+<div class="tabs">
+  <div class="mt">Overview</div><div class="mt active">Logs</div><div class="mt">Metrics</div><div class="mt">Config</div><div class="mt">Alerts</div>
+</div>
+</body></html>

@@ -1,0 +1,20 @@
+<!doctype html><html data-theme="sirius"><head><meta charset="utf-8"><link rel="stylesheet" href="_base.css"><title>Semantic colors</title>
+<style>
+body{gap:10px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;flex:1}
+.c{border-radius:8px;padding:14px;display:flex;flex-direction:column;justify-content:space-between;min-height:100px}
+.c .lab{font-family:var(--font-mono);font-size:10px;letter-spacing:0.14em;text-transform:uppercase}
+.c .val{font-family:var(--font-mono);font-size:13px;font-weight:500}
+.c .name{font-size:14px;font-weight:600}
+.c.ok{background:#34d399;color:#07271b}
+.c.warn{background:#fbbf24;color:#3b2807}
+.c.err{background:#f87171;color:#3a0a0a}
+.c.info{background:#60a5fa;color:#082240}
+</style></head><body>
+<div class="grid">
+  <div class="c ok"><div class="lab">Success</div><div><div class="name">OK</div><div class="val">#34d399</div></div></div>
+  <div class="c warn"><div class="lab">Warning</div><div><div class="name">Warn</div><div class="val">#fbbf24</div></div></div>
+  <div class="c err"><div class="lab">Error</div><div><div class="name">Err</div><div class="val">#f87171</div></div></div>
+  <div class="c info"><div class="lab">Info</div><div><div class="name">Info</div><div class="val">#60a5fa</div></div></div>
+</div>
+</body></html>

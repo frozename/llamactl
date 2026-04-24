@@ -1,0 +1,19 @@
+<!doctype html><html data-theme="sirius"><head><meta charset="utf-8"><link rel="stylesheet" href="_base.css"><title>Shadows</title>
+<style>
+body{padding:20px;gap:12px;background:#0c0c0f}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;flex:1;align-items:center;justify-content:center;padding:10px 0}
+.cell{display:flex;flex-direction:column;align-items:center;gap:10px}
+.sq{width:120px;height:60px;background:#141418;border:1px solid rgba(255,255,255,0.06);border-radius:10px}
+.s1{box-shadow:0 1px 2px rgba(0,0,0,0.20)}
+.s2{box-shadow:0 8px 24px rgba(0,0,0,0.32)}
+.s3{box-shadow:0 20px 60px rgba(0,0,0,0.50)}
+.name{font-family:var(--font-mono);font-size:10px;color:#a8a8b2}
+.val{font-family:var(--font-mono);font-size:9px;color:#70707a;text-align:center}
+</style></head><body>
+<div class="eyebrow">Elevation · 3 tiers</div>
+<div class="grid">
+  <div class="cell"><div class="sq s1"></div><div class="name">shadow-sm</div><div class="val">cards at rest</div></div>
+  <div class="cell"><div class="sq s2"></div><div class="name">shadow-md</div><div class="val">menus, popovers</div></div>
+  <div class="cell"><div class="sq s3"></div><div class="name">shadow-lg</div><div class="val">modals, overlays</div></div>
+</div>
+</body></html>

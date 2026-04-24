@@ -1,0 +1,18 @@
+<!doctype html><html data-theme="sirius"><head><meta charset="utf-8"><link rel="stylesheet" href="_base.css"><title>Tabular data</title>
+<style>
+body{padding:16px;gap:8px;font-family:var(--font-mono)}
+.tbl{border:1px solid var(--color-border-subtle);border-radius:8px;overflow:hidden;font-size:12px}
+.r{display:grid;grid-template-columns:1fr 70px 70px 70px 70px;gap:12px;padding:8px 14px;background:var(--color-surface-1);border-bottom:1px solid var(--color-border-subtle);color:var(--color-text-secondary);align-items:center}
+.r:last-child{border:none}
+.r.head{color:var(--color-text-tertiary);font-size:9px;text-transform:uppercase;letter-spacing:0.14em;background:var(--color-surface-2)}
+.n{text-align:right;color:var(--color-text);font-feature-settings:'tnum'}
+.pos{color:#34d399}.neg{color:#f87171}
+</style></head><body>
+<div class="eyebrow">JetBrains Mono · tabular numerals</div>
+<div class="tbl">
+  <div class="r head"><div>service</div><div class="n">rate</div><div class="n">p95</div><div class="n">err</div><div class="n">Δ 24h</div></div>
+  <div class="r"><div>svc.llamactl.gateway</div><div class="n">1.24M</div><div class="n">842ms</div><div class="n">0.002%</div><div class="n pos">+2.4%</div></div>
+  <div class="r"><div>svc.novaflow.render</div><div class="n">682k</div><div class="n">1.2s</div><div class="n">0.014%</div><div class="n neg">−0.8%</div></div>
+  <div class="r"><div>svc.shared.auth</div><div class="n">2.81M</div><div class="n">412ms</div><div class="n">0.000%</div><div class="n pos">+5.1%</div></div>
+</div>
+</body></html>
