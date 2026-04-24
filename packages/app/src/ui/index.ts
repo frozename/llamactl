@@ -7,3 +7,5 @@ export { StatusDot } from './status-dot';
 export type { StatusDotProps, StatusDotTone } from './status-dot';
 export { Kbd } from './kbd';
 export type { KbdProps } from './kbd';
+export { Input } from './input';
+export type { InputProps } from './input';
