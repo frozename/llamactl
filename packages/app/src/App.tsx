@@ -3,7 +3,9 @@ import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { trpc, trpcClient } from '@/lib/trpc';
 import { IDELayout } from '@/shell/ide-layout';
+import { BeaconLayout } from '@/shell/beacon/layout';
 import { ThemeProvider } from '@/shell/theme-provider';
+import { useShellFlag } from '@/stores/shell-flag';
 
 export function App(): React.JSX.Element {
   const [queryClient] = useState(
@@ -21,12 +23,13 @@ export function App(): React.JSX.Element {
         },
       }),
   );
+  const beaconShell = useShellFlag((s) => s.beaconShell);
 
   return (
     <ThemeProvider>
       <trpc.Provider client={trpcClient} queryClient={queryClient}>
         <QueryClientProvider client={queryClient}>
-          <IDELayout />
+          {beaconShell ? <BeaconLayout /> : <IDELayout />}
         </QueryClientProvider>
       </trpc.Provider>
     </ThemeProvider>
