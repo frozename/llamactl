@@ -1,41 +1,8 @@
 @import "tailwindcss";
-
-/*
- * Dark-first IDE palette. Keep variables + utility classes in one
- * place so modules pull the same surface tones without re-declaring.
- */
-@theme {
-  --color-surface-0: #0b0f14;
-  --color-surface-1: #111821;
-  --color-surface-2: #1a2330;
-  --color-border: #1f2a37;
-  --color-fg: #e5eef5;
-  --color-fg-muted: #7f8b99;
-  --color-brand: #6ab0ff;
-  --color-brand-dim: #2a5a9a;
-  --color-accent: #60e3a6;
-  --color-warn: #f4b35f;
-  --color-danger: #ff6b6b;
-}
+@import "./themes/tokens.css";
 
 html,
 body,
 #root {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-
-.activity-icon {
-  @apply flex h-10 w-10 items-center justify-center rounded text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)];
-  transition: color 120ms ease;
-}
-
-.activity-icon[data-active="true"] {
-  @apply text-[color:var(--color-fg)];
-  box-shadow: inset 2px 0 0 var(--color-brand);
-}
-
-.mono {
-  font-family: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
 }
