@@ -75,10 +75,13 @@ const LazyUIPrimitives = lazy(() => import('./ui-primitives/index'));
 // Tabbed grouped pages — each bundles several formerly-top-level
 // modules into tabs. Activity bar shows only the group; the
 // palette jumps to the group + the chosen tab is sticky per-user.
-const LazyKnowledgePage = lazy(() => import('./knowledge-tabbed/index'));
 const LazyWorkloadsPage = lazy(() => import('./workloads-tabbed/index'));
 const LazyOpsChat = lazy(() => import('./ops-chat/index'));
 const LazyPlan = lazy(() => import('./plan/index'));
+
+// Flattened knowledge.* leaves.
+const LazyKnowledgeRetrieval = lazy(() => import('./knowledge/index'));
+const LazyKnowledgePipelines = lazy(() => import('./pipelines/index'));
 
 // Flattened models.* leaves — each was a tab inside models-tabbed.
 const LazyModelsCatalog = lazy(() => import('./models/index'));
@@ -168,17 +171,29 @@ export const APP_MODULES: AppModule[] = [
     beaconOrder: 30,
   },
   {
-    id: 'knowledge',
-    labelKey: 'Knowledge',
+    id: 'knowledge.retrieval',
+    labelKey: 'Retrieval',
     icon: Brain,
-    Component: LazyKnowledgePage,
+    Component: LazyKnowledgeRetrieval,
     shortcut: 5,
-    activityBar: true,
+    activityBar: false,
     group: 'core',
-    aliases: ['rag', 'retrieval', 'pipelines', 'ingest'],
+    aliases: ['rag', 'retrieval', 'knowledge'],
     beaconGroup: 'knowledge',
     beaconKind: 'static',
     beaconOrder: 10,
+  },
+  {
+    id: 'knowledge.pipelines',
+    labelKey: 'Pipelines',
+    icon: Brain,
+    Component: LazyKnowledgePipelines,
+    activityBar: false,
+    group: 'core',
+    aliases: ['pipelines', 'ingest'],
+    beaconGroup: 'knowledge',
+    beaconKind: 'static',
+    beaconOrder: 20,
   },
   {
     id: 'workloads',
