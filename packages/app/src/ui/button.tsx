@@ -34,12 +34,17 @@ export function Button({
   style,
   ...rest
 }: ButtonProps): React.JSX.Element {
+  // Sanitize before indexing the style records so JS callers passing an
+  // unknown variant/size can't silently lose styling. Mirrors the fallback
+  // baked into buttonClasses().
+  const v: ButtonVariant = variant in VARIANT_STYLE ? variant : 'primary';
+  const s: ButtonSize = size in SIZE_STYLE ? size : 'md';
   return (
     <button
       {...rest}
       disabled={disabled || loading}
-      className={cx(buttonClasses(variant, size), className)}
-      style={{ ...BASE_STYLE, ...VARIANT_STYLE[variant], ...SIZE_STYLE[size], ...style }}
+      className={cx(buttonClasses(v, s), className)}
+      style={{ ...BASE_STYLE, ...VARIANT_STYLE[v], ...SIZE_STYLE[s], ...style }}
     >
       {leadingIcon && <span className="bcn-btn__icon">{leadingIcon}</span>}
       <span>{children}</span>

@@ -8,6 +8,7 @@ import {
   EditorialHero,
   Input,
   Kbd,
+  Lockup,
   Panel,
   StatCard,
   StatusDot,
@@ -140,6 +141,23 @@ export default function UIPrimitivesSandbox(): React.JSX.Element {
             ]}
           />
           <ThemeOrbs activeId={themeId} onPick={(id: ThemeId) => setThemeId(id)} />
+        </Row>
+      </Section>
+
+      <Section title="Lockup + Card">
+        <Row>
+          <Card style={{ minWidth: 240 }}>
+            <Lockup />
+            <p style={{ margin: '12px 0 0', color: 'var(--color-text-secondary)' }}>
+              Tier-1 card surface.
+            </p>
+          </Card>
+          <Card tier={2} style={{ minWidth: 240 }}>
+            <Lockup size="sm" />
+            <p style={{ margin: '12px 0 0', color: 'var(--color-text-secondary)' }}>
+              Tier-2 elevated surface.
+            </p>
+          </Card>
         </Row>
       </Section>
     </div>

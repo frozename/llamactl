@@ -14,7 +14,7 @@ export type { TabsProps, TabProps } from './tabs';
 export { TreeItem } from './tree-item';
 export type { TreeItemProps } from './tree-item';
 export { Card, Panel } from './card';
-export type { CardProps } from './card';
+export type { CardProps, PanelProps } from './card';
 export { AtmosphericPanel } from './atmospheric-panel';
 export type { AtmosphericPanelProps } from './atmospheric-panel';
 export { StatCard, sparklineHeights } from './stat-card';

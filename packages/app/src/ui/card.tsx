@@ -27,6 +27,10 @@ export function Card({ tier = 1, bordered = true, className, style, children, ..
   );
 }
 
+/** Panel shares Card's prop shape — exported as a distinct alias so
+ *  consumers can type against Panel specifically. */
+export type PanelProps = CardProps;
+
 /** Same visual weight as Card but meant for a larger section container
  *  without the 28 px internal padding. Caller controls layout. */
 export function Panel({ tier = 1, bordered = true, className, style, children, ...rest }: CardProps): React.JSX.Element {

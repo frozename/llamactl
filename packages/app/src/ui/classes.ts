@@ -5,14 +5,14 @@
  * clsx as a dependency.
  */
 
-type Value = string | false | null | undefined | Record<string, boolean | null | undefined>;
+export type Value = string | false | null | undefined | Record<string, boolean | null | undefined>;
 
 export function cx(...values: Value[]): string {
   const out: string[] = [];
   for (const v of values) {
     if (!v) continue;
     if (typeof v === 'string') {
-      if (v.length > 0) out.push(v);
+      out.push(v);
       continue;
     }
     for (const [key, flag] of Object.entries(v)) {

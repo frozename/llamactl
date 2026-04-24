@@ -55,10 +55,13 @@ export function Tab({ value, className, children, ...rest }: TabProps): React.JS
         padding: '8px 14px',
         fontSize: 12,
         color: active ? 'var(--color-text)' : 'var(--color-text-tertiary)',
+        background: 'transparent',
+        // `border` shorthand must be cleared BEFORE the `borderBottom` longhand
+        // is set — otherwise assigning the shorthand resets the longhand to
+        // `none` and the active underline never paints.
+        border: 'none',
         borderBottom: active ? '1.5px solid var(--color-brand)' : '1.5px solid transparent',
         marginBottom: -1,
-        background: 'transparent',
-        border: 'none',
         cursor: 'pointer',
         transition: 'color 160ms',
       }}
