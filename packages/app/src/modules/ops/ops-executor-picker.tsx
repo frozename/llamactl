@@ -4,12 +4,13 @@ import { trpc } from '@/lib/trpc';
 import { useOpsExecutorStore } from '@/stores/ops-executor-store';
 
 /**
- * Shared node + model picker for the Ops Console. Rendered in the
- * tabbed-module header so Ops Chat + Planner share one executor
- * config. Filters out nodes that don't answer /v1/chat/completions
- * (RAG-only bindings). The planner router resolves the provider
- * server-side via `providerForNode`, so the UI never deals with
- * raw baseUrl / apiKeyEnv.
+ * Shared node + model picker for the Ops Console. Mounted in the
+ * Ops Chat and Planner module headers so both tabs share one
+ * executor config via `useOpsExecutorStore`. Filters out nodes that
+ * don't answer /v1/chat/completions (RAG-only bindings). The
+ * planner router resolves the provider server-side via
+ * `providerForNode`, so the UI never deals with raw baseUrl /
+ * apiKeyEnv.
  */
 export function OpsExecutorPicker(): React.JSX.Element {
   const { nodeId, model, setNode, setModel } = useOpsExecutorStore();
