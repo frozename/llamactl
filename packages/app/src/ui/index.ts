@@ -11,3 +11,5 @@ export { Input } from './input';
 export type { InputProps } from './input';
 export { Tabs, Tab } from './tabs';
 export type { TabsProps, TabProps } from './tabs';
+export { TreeItem } from './tree-item';
+export type { TreeItemProps } from './tree-item';
