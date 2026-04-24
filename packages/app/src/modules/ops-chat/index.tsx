@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc';
 import { useOpsExecutorStore } from '@/stores/ops-executor-store';
+import { OpsExecutorPicker } from '@/modules/ops/ops-executor-picker';
 
 /**
  * N.4 — Operator Console.
@@ -535,16 +536,19 @@ export default function OpsChat(): React.JSX.Element {
               .
             </p>
           </div>
-          {messages.length > 0 && (
-            <button
-              type="button"
-              onClick={onReset}
-              data-testid="ops-chat-reset"
-              className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
-            >
-              New conversation
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            <OpsExecutorPicker />
+            {messages.length > 0 && (
+              <button
+                type="button"
+                onClick={onReset}
+                data-testid="ops-chat-reset"
+                className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+              >
+                New conversation
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

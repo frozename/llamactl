@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc';
 import { useOpsExecutorStore } from '@/stores/ops-executor-store';
+import { OpsExecutorPicker } from '@/modules/ops/ops-executor-picker';
 
 /**
  * N.4.5 — operator-plan chat UI. Starts empty; each user message runs
@@ -320,16 +321,19 @@ export default function Plan(): React.JSX.Element {
               can approve or refine in a follow-up turn.
             </p>
           </div>
-          {turns.length > 0 && (
-            <button
-              type="button"
-              onClick={onReset}
-              data-testid="plan-reset"
-              className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
-            >
-              New conversation
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            <OpsExecutorPicker />
+            {turns.length > 0 && (
+              <button
+                type="button"
+                onClick={onReset}
+                data-testid="plan-reset"
+                className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+              >
+                New conversation
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

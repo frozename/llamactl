@@ -78,7 +78,8 @@ const LazyUIPrimitives = lazy(() => import('./ui-primitives/index'));
 const LazyModelsPage = lazy(() => import('./models-tabbed/index'));
 const LazyKnowledgePage = lazy(() => import('./knowledge-tabbed/index'));
 const LazyWorkloadsPage = lazy(() => import('./workloads-tabbed/index'));
-const LazyOpsPage = lazy(() => import('./ops-tabbed/index'));
+const LazyOpsChat = lazy(() => import('./ops-chat/index'));
+const LazyPlan = lazy(() => import('./plan/index'));
 
 /**
  * Registry — sharp distinction between "activity bar items" (always
@@ -89,10 +90,10 @@ const LazyOpsPage = lazy(() => import('./ops-tabbed/index'));
  * Rough triage:
  *   always visible: dashboard, chat, ops-chat, projects, knowledge,
  *                   workloads, nodes, logs + settings (bottom)
- *   palette only:   plan (subsumed by ops-chat), pipelines (into
- *                   knowledge later), composites (into workloads
- *                   later), models/presets/pulls/bench/lmstudio
- *                   (all about managing the catalog — unify later),
+ *   palette only:   plan, pipelines (into knowledge later),
+ *                   composites (into workloads later),
+ *                   models/presets/pulls/bench/lmstudio (all about
+ *                   managing the catalog — unify later),
  *                   server (local-only legacy), cost (→ bottom)
  */
 export const APP_MODULES: AppModule[] = [
@@ -126,14 +127,26 @@ export const APP_MODULES: AppModule[] = [
     id: 'ops-chat',
     labelKey: 'Ops Chat',
     icon: Terminal,
-    Component: LazyOpsPage,
+    Component: LazyOpsChat,
     shortcut: 3,
     activityBar: true,
     group: 'ops',
-    aliases: ['operator console', 'operator', 'plan', 'planner'],
+    aliases: ['operator console', 'operator'],
     beaconGroup: 'ops',
     beaconKind: 'static',
     beaconOrder: 10,
+  },
+  {
+    id: 'plan',
+    labelKey: 'Planner',
+    icon: Terminal,
+    Component: LazyPlan,
+    activityBar: false,
+    group: 'ops',
+    aliases: ['plan', 'planner'],
+    beaconGroup: 'ops',
+    beaconKind: 'static',
+    beaconOrder: 15,
   },
   {
     id: 'projects',
