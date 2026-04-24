@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { Input } from '@/ui';
 import { Search } from 'lucide-react';
-import { useCommandPaletteOpen } from '@/shell/command-palette';
 import { ExplorerTree } from './explorer-tree';
+import { SearchView } from './search-view';
 import { getRailView, type RailViewId } from './rail-views';
 
 interface ExplorerPanelProps {
@@ -29,7 +29,7 @@ export function ExplorerPanel({ activeView }: ExplorerPanelProps): React.JSX.Ele
     >
       <Header label={activeView} />
       {activeView === 'explorer' && <ExplorerBody />}
-      {activeView === 'search' && <SearchStub />}
+      {activeView === 'search' && <SearchView />}
       {activeView === 'sessions' && <StubBody message="Sessions view ships in P3. Recent chat and ops sessions will group here by time." />}
       {activeView === 'fleet' && <StubBody message="Fleet view ships in P3. Node tree + quick context switcher." />}
       {activeView === 'tokens' && <StubBody message="Tokens inspector slides from the right edge — look over there." />}
@@ -68,31 +68,6 @@ function ExplorerBody(): React.JSX.Element {
       </div>
       <ExplorerTree />
     </>
-  );
-}
-
-function SearchStub(): React.JSX.Element {
-  const [, setOpen] = useCommandPaletteOpen();
-  return (
-    <div style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontSize: 13, lineHeight: 1.6 }}>
-      <p>Global search lands in P3. Until then, the command palette covers most of the ground.</p>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        style={{
-          marginTop: 12,
-          padding: '6px 10px',
-          background: 'var(--color-brand-ghost)',
-          color: 'var(--color-brand)',
-          borderRadius: 'var(--r-md)',
-          border: 'none',
-          cursor: 'pointer',
-          fontSize: 12,
-        }}
-      >
-        Open command palette (⌘⇧P)
-      </button>
-    </div>
   );
 }
 
