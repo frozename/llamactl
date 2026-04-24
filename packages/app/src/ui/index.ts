@@ -9,3 +9,5 @@ export { Kbd } from './kbd';
 export type { KbdProps } from './kbd';
 export { Input } from './input';
 export type { InputProps } from './input';
+export { Tabs, Tab } from './tabs';
+export type { TabsProps, TabProps } from './tabs';
