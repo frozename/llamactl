@@ -3,6 +3,7 @@ import { Input } from '@/ui';
 import { Search } from 'lucide-react';
 import { ExplorerTree } from './explorer-tree';
 import { SearchView } from './search-view';
+import { SessionsView } from './sessions-view';
 import { getRailView, type RailViewId } from './rail-views';
 
 interface ExplorerPanelProps {
@@ -30,7 +31,7 @@ export function ExplorerPanel({ activeView }: ExplorerPanelProps): React.JSX.Ele
       <Header label={activeView} />
       {activeView === 'explorer' && <ExplorerBody />}
       {activeView === 'search' && <SearchView />}
-      {activeView === 'sessions' && <StubBody message="Sessions view ships in P3. Recent chat and ops sessions will group here by time." />}
+      {activeView === 'sessions' && <SessionsView />}
       {activeView === 'fleet' && <StubBody message="Fleet view ships in P3. Node tree + quick context switcher." />}
       {activeView === 'tokens' && <StubBody message="Tokens inspector slides from the right edge — look over there." />}
       {activeView === 'cost' && <StubBody message="Cost details render here in P3. For now, open Cost via the command palette." />}
