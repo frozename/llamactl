@@ -25,3 +25,5 @@ export { CommandBar } from './command-bar';
 export type { CommandBarProps, CommandBarCrumb } from './command-bar';
 export { ThemeOrbs } from './theme-orbs';
 export type { ThemeOrbsProps } from './theme-orbs';
+export { Lockup } from './lockup';
+export type { LockupProps } from './lockup';
