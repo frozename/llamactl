@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { trpc } from '@/lib/trpc';
 import { useUIStore } from '@/stores/ui-store';
+import { Badge, Button } from '@/ui';
 
 /**
  * Chat module. Scopes a conversation to a node + model; streams
@@ -340,13 +341,9 @@ function Sidebar(props: {
         <span className="text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
           Chats
         </span>
-        <button
-          type="button"
-          onClick={props.onNew}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)]"
-        >
-          + New
-        </button>
+        <Button type="button" variant="secondary" size="sm" onClick={props.onNew}>
+          New
+        </Button>
       </div>
       <ul className="flex-1 overflow-auto">
         {props.conversations.length === 0 && (
@@ -371,14 +368,16 @@ function Sidebar(props: {
                 {c.node} · {c.model}
               </div>
             </button>
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => props.onDelete(c.id)}
-              className="text-[color:var(--color-fg-muted)]"
-              title="delete conversation"
+              title="Delete conversation"
+              aria-label="Delete conversation"
             >
               ×
-            </button>
+            </Button>
           </li>
         ))}
       </ul>
@@ -509,15 +508,17 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
             ))
           )}
         </select>
-        <button
+        <Button
           type="button"
+          variant="primary"
+          size="sm"
           onClick={() => setPicked(choice)}
           disabled={isStarting || !choice}
+          loading={isStarting}
           data-testid="chat-empty-start-local"
-          className="rounded border border-[var(--color-accent)] bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg-inverted)] disabled:opacity-40"
         >
           {isStarting ? 'Starting…' : 'Start'}
-        </button>
+        </Button>
         <span className="text-[10px] text-[color:var(--color-fg-muted)]">
           or open <button
             type="button"
@@ -560,9 +561,7 @@ function TranscriptColumn(props: {
       data-pane={props.label}
     >
       <header className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-2 text-xs">
-        <span className="rounded bg-[var(--color-surface-2)] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-widest text-[color:var(--color-fg-muted)]">
-          {props.label}
-        </span>
+        <Badge variant="default">{props.label}</Badge>
         <span className="text-[color:var(--color-fg-muted)]">node</span>
         <select
           value={props.node}
@@ -727,13 +726,15 @@ function ComposerBar(props: {
         placeholder="Message (Shift+Enter for newline)…"
         className="h-16 flex-1 resize-none rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[color:var(--color-fg)]"
       />
-      <button
+      <Button
         type="submit"
+        variant="primary"
+        size="md"
         disabled={props.busy || !input.trim()}
-        className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-4 text-sm text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+        loading={props.busy}
       >
         {props.busy ? 'Streaming…' : 'Send'}
-      </button>
+      </Button>
     </form>
   );
 }
@@ -1096,8 +1097,10 @@ export default function Chat(): React.JSX.Element {
                         store.setRagBinding(active.id, node, topK)
                       }
                     />
-                    <button
+                    <Button
                       type="button"
+                      variant="secondary"
+                      size="sm"
                       onClick={() =>
                         store.setCompareWith(active.id, {
                           node: active.node,
@@ -1106,11 +1109,11 @@ export default function Chat(): React.JSX.Element {
                         })
                       }
                       data-testid="chat-compare"
-                      className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)]"
                       title="Compare against another node/model — both panes stream the same prompt"
+                      leadingIcon="⇄"
                     >
-                      ⇄ Compare
-                    </button>
+                      Compare
+                    </Button>
                   </>
                 ) : null
               }
@@ -1129,15 +1132,17 @@ export default function Chat(): React.JSX.Element {
                 onModelChange={(model) => store.updateCompareMeta(active.id, { model })}
                 onToggleCapability={(tag) => store.toggleCompareCapability(active.id, tag)}
                 headerExtras={
-                  <button
+                  <Button
                     type="button"
+                    variant="secondary"
+                    size="sm"
                     onClick={() => store.setCompareWith(active.id, null)}
                     data-testid="chat-compare-exit"
-                    className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)]"
                     title="Exit compare mode — discards pane B transcript"
+                    leadingIcon="×"
                   >
-                    × Exit compare
-                  </button>
+                    Exit compare
+                  </Button>
                 }
               />
             ) : null}
@@ -1158,14 +1163,15 @@ export default function Chat(): React.JSX.Element {
               tags (reasoning, vision, tools…) and orchestrators like
               embersynth will route by them. History stays on this laptop.
             </p>
-            <button
+            <Button
               type="button"
+              variant="primary"
+              size="md"
               onClick={newChat}
               data-testid="chat-new"
-              className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-4 py-2 text-sm text-[color:var(--color-fg-inverted)]"
             >
               New chat
-            </button>
+            </Button>
           </div>
         </div>
       )}
