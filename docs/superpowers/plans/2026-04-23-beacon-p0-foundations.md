@@ -16,13 +16,14 @@ Create:
 - `packages/app/src/themes/tokens.css` — the full Beacon token CSS (shared across all four families, noise overlay, font declarations, scrollbar)
 - `packages/app/src/themes/migrate.ts` — pure legacy-id mapping function + unit-testable
 - `packages/app/test/themes/migrate.test.ts` — unit test for the migration mapping
+- `tests/ui-flows/beacon-p0-verify.ts` — Electron-driven end-of-phase verification flow (data-theme, tokens, body background per family, Google Fonts link, legacy migration durability)
 
 Modify:
 - `packages/app/src/index.css` — replace the `@theme` block with an `@import "./themes/tokens.css"` line, drop `.activity-icon` class (becomes part of P2's rail), keep `.mono`
 - `packages/app/src/themes/index.ts` — rewrite `THEMES` with Sirius/Ember/Clinical/Scrubs, keep the `Theme` interface shape, keep `mapVariant` field, default = `sirius`
-- `packages/app/src/stores/theme-store.ts` — add `version: 2` + `migrate` function that calls `migrate.ts`, rename `localStorage` key to `beacon-theme` (Zustand `name`)
+- `packages/app/src/stores/theme-store.ts` — add `version: 2` + `migrate` function that calls `migrate.ts`, rename `localStorage` key to `beacon-theme` (Zustand `name`), **persist the migrated values to `beacon-theme` synchronously during the legacy read** so the migration survives a reload that happens before any user-driven state change
 - `packages/app/src/shell/theme-provider.tsx` — pass the noise overlay through, otherwise unchanged
-- `packages/app/src/index.html` — add Google Fonts preconnect + `<link>` for Inter + JetBrains Mono
+- `packages/app/src/index.html` — add Google Fonts preconnect + `<link>` for Inter + JetBrains Mono; **also add a synchronous early-read `<script>` that reads `localStorage['beacon-theme']` and sets `<html data-theme>` before the first paint** (prevents a 600ms flash of the default theme while Zustand asynchronously hydrates from localStorage on non-default themes)
 
 Delete: none in P0.
 
@@ -311,12 +312,12 @@ git commit -m "refactor(app): move tokens out of @theme block into tokens.css"
 
 ---
 
-## Task 3: Load Inter + JetBrains Mono from Google Fonts
+## Task 3: Load Inter + JetBrains Mono from Google Fonts, apply theme early
 
 **Files:**
 - Modify: `packages/app/src/index.html`
 
-- [ ] **Step 1: Update `index.html` with font `<link>` tags**
+- [ ] **Step 1: Update `index.html` with the theme-early-read `<script>` and font `<link>` tags**
 
 Replace the `<head>` block in `packages/app/src/index.html` with:
 
@@ -325,6 +326,21 @@ Replace the `<head>` block in `packages/app/src/index.html` with:
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>llamactl</title>
+  <script>
+    (function () {
+      try {
+        var raw = localStorage.getItem('beacon-theme');
+        if (!raw) return;
+        var parsed = JSON.parse(raw);
+        var id = parsed && parsed.state && parsed.state.themeId;
+        if (id === 'sirius' || id === 'ember' || id === 'clinical' || id === 'scrubs') {
+          document.documentElement.setAttribute('data-theme', id);
+        }
+      } catch (e) {
+        /* storage disabled / malformed — fall through to default theme */
+      }
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
@@ -335,6 +351,8 @@ Replace the `<head>` block in `packages/app/src/index.html` with:
 ```
 
 Two faces only. Per the frozen Beacon v2.0 system: Inter handles UI body, section heads, and display (heavier weight + tighter tracking at larger sizes); JetBrains Mono handles data / identifiers / telemetry. No display serif.
+
+The early-read `<script>` applies the persisted `data-theme` before the first paint. Without it, React mounts with `DEFAULT_THEME = 'sirius'`, Zustand hydrates from localStorage asynchronously, and the subsequent `data-theme` flip triggers the 600ms `transition` on `body.background` — producing a visible flash of Sirius on every reload for users on a non-default theme. The script is 12 lines and has no other job.
 
 Keep the `<body>` block exactly as-is (it still uses `bg-[var(--color-surface-0)]` etc., which now resolve via `tokens.css`).
 
@@ -572,7 +590,7 @@ git commit -m "feat(app): replace Glass/Neon/Ops with Sirius/Ember/Clinical/Scru
 
 ---
 
-## Task 6: Update the theme store — version bump + migrate hook
+## Task 6: Update the theme store — version bump + migrate hook, durable write
 
 **Files:**
 - Modify: `packages/app/src/stores/theme-store.ts`
@@ -610,9 +628,27 @@ interface PersistedShape {
   scanlines: boolean;
 }
 
+/** Writes the migrated shape to the new `beacon-theme` key in the
+ *  exact envelope Zustand persist expects, so the migration survives
+ *  a subsequent reload before any state change has triggered a
+ *  serialize. Without this, the store seeds from the legacy read but
+ *  never writes, and the next reload reverts to the default theme. */
+function writeBeaconTheme(shape: PersistedShape): void {
+  try {
+    localStorage.setItem(
+      'beacon-theme',
+      JSON.stringify({ state: shape, version: 1 }),
+    );
+  } catch {
+    /* storage quota / disabled — silently tolerate */
+  }
+}
+
 /** Reads the legacy localStorage key once on load, returns migrated
  *  values if present, otherwise undefined. Clears the legacy key on
- *  success so the migration is idempotent. */
+ *  success so the migration is idempotent, and writes the migrated
+ *  values to `beacon-theme` so the migration is durable across
+ *  reloads that occur before any subsequent state change. */
 function readLegacyAndClear(): PersistedShape | undefined {
   if (typeof localStorage === 'undefined') return undefined;
   const raw = localStorage.getItem('llamactl-theme');
@@ -625,8 +661,10 @@ function readLegacyAndClear(): PersistedShape | undefined {
       return undefined;
     }
     const { themeId, extras } = migrateLegacyThemeId(legacyId);
+    const shape: PersistedShape = { themeId, scanlines: extras.scanlines === true };
     localStorage.removeItem('llamactl-theme');
-    return { themeId, scanlines: extras.scanlines === true };
+    writeBeaconTheme(shape);
+    return shape;
   } catch {
     localStorage.removeItem('llamactl-theme');
     return undefined;
@@ -797,16 +835,30 @@ Expected: 5 tests pass.
 - [ ] **Step 3: Run the top-level test suite**
 
 Run: `bun run test`
-Expected: green. If any pre-existing unrelated test fails, note it and proceed — P0 only added green tests.
+Expected: green on every test that P0 could possibly affect. Pre-existing failures in CLI / network-bound smoke tests (catalog, env, recommendations, promote/uninstall) are unrelated to Beacon P0 surface and may be noted and ignored. P0's 7 commits only touch `packages/app/src/themes/*`, `theme-store.ts`, `theme-provider.tsx`, `index.css`, and `index.html`.
 
-- [ ] **Step 4: Full app smoke test**
+- [ ] **Step 4: Programmatic Beacon verification flow (authoritative)**
 
-Run: `bun run --cwd packages/app dev`
-Exercise:
-- Open Dashboard → fonts are Inter, surface is Sirius black.
-- Open the theme picker (title-bar button or `⌘K⌘T`), arrow through all four families, confirm live-preview works.
-- Hit Enter on Ember → app flips warm. Reload → state persists.
-- Open DevTools → check `html[data-theme]` attribute updates per picker.
+This is the verification gate for P0. It drives a built Electron bundle through `electron-mcp-server` and asserts every functional goal of P0 against the live renderer:
+
+1. First launch: `<html data-theme="sirius">`, `body` background = `rgb(12, 12, 15)` (Sirius `--color-surface-0`), `--color-brand` = `#6366f1`, body `font-family` includes `Inter`.
+2. Exactly one Google Fonts `<link>` pointing at `Inter:wght@300;400;500;600;700` + `JetBrains+Mono:wght@400;500;600&display=swap`.
+3. For every theme (`ember`, `clinical`, `scrubs`, `sirius`): seed `beacon-theme` → reload → `data-theme`, `--color-surface-0` token, body `background-color`, and `--color-brand` all match the spec values in §3.4 and `tokens.css`.
+4. Legacy migration for every legacy id (`glass`, `neon`, `ops`): seed `llamactl-theme` → reload → the legacy key is removed, `beacon-theme.state.themeId` holds the mapped Beacon id, `beacon-theme.state.scanlines` is `true` only for `neon`, and `<html data-theme>` matches.
+
+The flow is at `tests/ui-flows/beacon-p0-verify.ts`. Run it against a fresh `--userDataDir` so there's no stale `beacon-theme` from previous runs:
+
+```bash
+export ELECTRON_MCP_DIR=/path/to/electron-mcp-server
+bun run --cwd packages/app build                                    # rebuild so the bundle includes the P0 changes
+TMP_USERDATA=$(mktemp -d -t beacon-p0-XXXXXX)
+bun run tests/ui-flows/beacon-p0-verify.ts \
+  --executable="$(pwd)/packages/app/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron" \
+  --args="$(pwd)/packages/app" \
+  --userDataDir="$TMP_USERDATA"
+```
+
+Expected final line: `PASS — Beacon P0 verification green` (33 PASS checks, 0 FAIL). Any FAIL is a blocker — do not tag `beacon-p0` if the flow is red.
 
 - [ ] **Step 5: Final P0 commit marker**
 
@@ -824,9 +876,10 @@ git tag beacon-p0
 - §3.2 Type tokens — `--font-sans/-mono/-display` + scale in Task 1; Google Fonts loaded in Task 3.
 - §3.3 Spacing/radius/shadow — covered in Task 1.
 - §3.4 Four theme families — covered in Task 1 (CSS blocks) and Task 5 (TS registry).
-- §3.5 Legacy migration — covered in Tasks 4 + 6 (pure function + store hook).
+- §3.5 Legacy migration — covered in Tasks 4 + 6 (pure function + store hook + durable write to `beacon-theme` during the legacy read).
 - §5.6 Noise overlay — covered in Task 1 (`body::before`).
 - §10 `beacon.scanlines` / `beacon.migrated` — Task 6 handles both (migrated = deletion of old key; scanlines persisted inside `beacon-theme`).
+- Flash-of-wrong-theme on reload — prevented by the synchronous early-read `<script>` in Task 3. Without this, the 600ms `transition` on `body.background` animates from Sirius to the persisted theme on every reload.
 
 Deferred to later phases:
 - Primitives (`@app/ui`) → P1.
