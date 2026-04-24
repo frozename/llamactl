@@ -2,6 +2,8 @@ import * as React from 'react';
 import { useMemo, useState } from 'react';
 import { stringify as stringifyYaml } from 'yaml';
 import { trpc, trpcUIClient } from '@/lib/trpc';
+import { Badge, Button, EditorialHero } from '@/ui';
+import type { BadgeVariant } from '@/ui';
 
 /**
  * Projects module — the Electron surface for the trifold-
@@ -69,14 +71,10 @@ interface RoutePreviewResponse {
   decision: RoutingDecision | null;
 }
 
-function reasonClass(reason: RoutingDecision['reason']): string {
-  if (reason === 'matched') {
-    return 'bg-[var(--color-success)] text-[color:var(--color-fg-inverted)]';
-  }
-  if (reason === 'fallback-default') {
-    return 'bg-[var(--color-surface-2)] text-[color:var(--color-fg-muted)]';
-  }
-  return 'bg-[var(--color-danger)] text-[color:var(--color-fg-inverted)]';
+function reasonBadgeVariant(reason: RoutingDecision['reason']): BadgeVariant {
+  if (reason === 'matched') return 'ok';
+  if (reason === 'fallback-default') return 'default';
+  return 'err';
 }
 
 function formatElapsed(iso: string, now: number = Date.now()): string {
@@ -104,13 +102,9 @@ function RoutingHeatmap(props: { routing: Record<string, string> | undefined }):
   return (
     <div className="flex flex-wrap gap-1">
       {entries.map(([k, v]) => (
-        <span
-          key={k}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 mono text-[10px] text-[color:var(--color-fg-muted)]"
-          title={`${k} → ${v}`}
-        >
+        <Badge key={k} variant="default" title={`${k} → ${v}`}>
           {k} → {v}
-        </span>
+        </Badge>
       ))}
     </div>
   );
@@ -136,13 +130,13 @@ function RoutingPreviewCard(props: {
   }
   const d = data.decision;
   return (
-    <span
-      className={`inline-flex rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] ${reasonClass(d.reason)}`}
+    <Badge
+      variant={reasonBadgeVariant(d.reason)}
       title={`reason: ${d.reason}${d.budget ? ` · budget ${d.budget.usdToday?.toFixed(4) ?? '?'}/${d.budget.limit?.toFixed(2) ?? '?'} USD` : ''}`}
       data-testid={`projects-preview-${project}-${taskKind}`}
     >
       {d.target}
-    </span>
+    </Badge>
   );
 }
 
@@ -205,11 +199,7 @@ function RoutingJournalFeed(props: { project: string }): React.JSX.Element {
                 {d.target}
               </td>
               <td className="px-2 py-1">
-                <span
-                  className={`inline-flex rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] ${reasonClass(d.reason)}`}
-                >
-                  {d.reason}
-                </span>
+                <Badge variant={reasonBadgeVariant(d.reason)}>{d.reason}</Badge>
               </td>
             </tr>
           ))}
@@ -258,23 +248,29 @@ function ProjectDetail(props: {
           </div>
         </div>
         <div className="flex gap-2">
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={onRemove}
             disabled={removeMut.isPending}
             data-testid={`projects-remove-${project.metadata.name}`}
-            className="rounded border border-[var(--color-danger)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-danger)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            style={{
+              borderColor: 'var(--color-danger)',
+              color: 'var(--color-danger)',
+            }}
           >
             Remove
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="secondary"
+            size="sm"
             onClick={onClose}
             data-testid={`projects-detail-close`}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
           >
             Close
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -392,24 +388,27 @@ function ProjectRow(props: {
       </td>
       <td className="px-3 py-2 text-right">
         <div className="flex items-center justify-end gap-1">
-          <button
+          <Button
             type="button"
+            variant="primary"
+            size="sm"
             onClick={() => indexMut.mutate({ name: project.metadata.name })}
             disabled={indexMut.isPending || !hasRag}
+            loading={indexMut.isPending}
             data-testid={`projects-index-${project.metadata.name}`}
             title={hasRag ? 'Apply + run the auto-generated RAG pipeline' : 'No rag block declared; add one in the manifest to enable indexing'}
-            className="rounded bg-[var(--color-brand)] px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {indexMut.isPending ? '…' : 'Index'}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="secondary"
+            size="sm"
             onClick={onOpenDetail}
             data-testid={`projects-detail-button-${project.metadata.name}`}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
           >
             Detail
-          </button>
+          </Button>
         </div>
         {indexError && (
           <div className="mt-1 text-[10px] text-[color:var(--color-danger)]">
@@ -513,24 +512,26 @@ function GitRepoSuggestions({ onPick }: { onPick: (r: DetectedRepo) => void }): 
       </div>
       <div className="flex flex-wrap gap-1" data-testid="projects-git-suggestions">
         {visible.map((repo) => (
-          <button
+          <Button
             key={repo.path}
             type="button"
+            variant="secondary"
+            size="sm"
             onClick={() => onPick(repo)}
             title={repo.path}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[10px] text-[color:var(--color-fg)] hover:border-[var(--color-accent)]"
           >
             {repo.name}
-          </button>
+          </Button>
         ))}
         {!expanded && state.repos.length > visible.length && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={() => setExpanded(true)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-1 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
           >
             +{state.repos.length - visible.length} more
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -631,8 +632,10 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
               required
               className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
             />
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="sm"
               onClick={async () => {
                 const picked = await trpcUIClient.uiPickDirectory.mutate({
                   title: 'Pick a project directory',
@@ -647,11 +650,10 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
                 }
               }}
               data-testid="projects-create-pick-dir"
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg)] hover:border-[var(--color-accent)]"
               title="Pick directory\u2026"
             >
-              📁
-            </button>
+              Browse\u2026
+            </Button>
           </div>
         </Field>
         {!compact && (
@@ -691,14 +693,16 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
           </>
         )}
         <div className={compact ? '' : 'col-span-2 flex items-center gap-2 pt-1'}>
-          <button
+          <Button
             type="submit"
+            variant="primary"
+            size="sm"
             disabled={!canSubmit || apply.isPending}
+            loading={apply.isPending}
             data-testid="projects-create-submit"
-            className="rounded border border-[var(--color-accent)] bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg-inverted)] disabled:opacity-40"
           >
             {apply.isPending ? 'Creating…' : compact ? 'Add' : 'Create project'}
-          </button>
+          </Button>
           {status.kind === 'error' && (
             <span className="text-[11px] text-[color:var(--color-danger)]">{status.message}</span>
           )}
@@ -764,13 +768,27 @@ export default function Projects(): React.JSX.Element {
         </div>
       )}
       {!list.isLoading && !list.error && sorted.length === 0 && (
-        <div
-          className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6"
-          data-testid="projects-empty"
-        >
-          <div className="mb-4 text-sm text-[color:var(--color-fg)]">
-            No projects registered yet. Create one:
-          </div>
+        <div data-testid="projects-empty" className="space-y-4">
+          <EditorialHero
+            title="New project"
+            titleAccent="starts here"
+            lede="Projects bundle workloads, prompts, and knowledge into one namespace. Start with a blank template — you can attach a data pipeline later."
+            actions={
+              <Button
+                type="button"
+                variant="primary"
+                size="lg"
+                onClick={() => {
+                  const el = document.querySelector<HTMLInputElement>(
+                    '[data-testid="projects-create-name"]',
+                  );
+                  el?.focus();
+                }}
+              >
+                Create project
+              </Button>
+            }
+          />
           <CreateProjectForm />
         </div>
       )}
