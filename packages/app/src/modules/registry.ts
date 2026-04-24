@@ -40,6 +40,27 @@ export interface AppModule {
   activityBar?: boolean;
   group?: 'core' | 'models' | 'ops' | 'observability';
   aliases?: string[];
+
+  /** Beacon (P2+). Where this leaf renders in the Explorer tree.
+   *  Parallel to `group`; required for every leaf the Beacon Explorer
+   *  shows. Legacy IDELayout ignores it. */
+  beaconGroup?:
+    | 'workspace'
+    | 'ops'
+    | 'models'
+    | 'knowledge'
+    | 'observability'
+    | 'settings'
+    | 'hidden';
+
+  /** Beacon kind — `static` leaves are 1:1 with a tab; `dynamic-group`
+   *  leaves are containers whose children come from a runtime
+   *  query (workloads, nodes, ops sessions). Legacy shell ignores. */
+  beaconKind?: 'static' | 'dynamic-group';
+
+  /** Ordering hint inside the beaconGroup — lower values come first.
+   *  Ties fall back to the order in the registry array. */
+  beaconOrder?: number;
 }
 
 const LazyDashboard = lazy(() => import('./dashboard/index'));
@@ -85,6 +106,9 @@ export const APP_MODULES: AppModule[] = [
     activityBar: true,
     group: 'core',
     aliases: ['home', 'overview'],
+    beaconGroup: 'workspace',
+    beaconKind: 'static',
+    beaconOrder: 10,
   },
   {
     id: 'chat',
@@ -94,6 +118,9 @@ export const APP_MODULES: AppModule[] = [
     shortcut: 2,
     activityBar: true,
     group: 'core',
+    beaconGroup: 'workspace',
+    beaconKind: 'static',
+    beaconOrder: 20,
   },
   {
     id: 'ops-chat',
@@ -104,6 +131,9 @@ export const APP_MODULES: AppModule[] = [
     activityBar: true,
     group: 'ops',
     aliases: ['operator console', 'operator', 'plan', 'planner'],
+    beaconGroup: 'ops',
+    beaconKind: 'static',
+    beaconOrder: 10,
   },
   {
     id: 'projects',
@@ -113,6 +143,9 @@ export const APP_MODULES: AppModule[] = [
     shortcut: 4,
     activityBar: true,
     group: 'core',
+    beaconGroup: 'workspace',
+    beaconKind: 'static',
+    beaconOrder: 30,
   },
   {
     id: 'knowledge',
@@ -123,6 +156,9 @@ export const APP_MODULES: AppModule[] = [
     activityBar: true,
     group: 'core',
     aliases: ['rag', 'retrieval', 'pipelines', 'ingest'],
+    beaconGroup: 'knowledge',
+    beaconKind: 'static',
+    beaconOrder: 10,
   },
   {
     id: 'workloads',
@@ -133,6 +169,9 @@ export const APP_MODULES: AppModule[] = [
     activityBar: true,
     group: 'ops',
     aliases: ['modelruns', 'composites'],
+    beaconGroup: 'ops',
+    beaconKind: 'dynamic-group',
+    beaconOrder: 20,
   },
   {
     id: 'models',
@@ -143,6 +182,9 @@ export const APP_MODULES: AppModule[] = [
     activityBar: true,
     group: 'models',
     aliases: ['catalog', 'presets', 'pulls', 'bench', 'lmstudio'],
+    beaconGroup: 'models',
+    beaconKind: 'static',
+    beaconOrder: 10,
   },
   {
     id: 'nodes',
@@ -153,6 +195,9 @@ export const APP_MODULES: AppModule[] = [
     activityBar: true,
     group: 'ops',
     aliases: ['cluster', 'fleet'],
+    beaconGroup: 'ops',
+    beaconKind: 'dynamic-group',
+    beaconOrder: 30,
   },
   {
     id: 'logs',
@@ -162,6 +207,9 @@ export const APP_MODULES: AppModule[] = [
     shortcut: 9,
     activityBar: true,
     group: 'observability',
+    beaconGroup: 'observability',
+    beaconKind: 'static',
+    beaconOrder: 10,
   },
   // ── Activity bar: bottom ──────────────────────────────────
   {
@@ -172,6 +220,8 @@ export const APP_MODULES: AppModule[] = [
     activityBar: true,
     position: 'bottom',
     group: 'observability',
+    beaconGroup: 'hidden',
+    beaconKind: 'static',
   },
   {
     id: 'settings',
@@ -181,6 +231,8 @@ export const APP_MODULES: AppModule[] = [
     activityBar: true,
     position: 'bottom',
     group: 'core',
+    beaconGroup: 'hidden',
+    beaconKind: 'static',
   },
   {
     id: 'ui-primitives',
@@ -190,5 +242,7 @@ export const APP_MODULES: AppModule[] = [
     activityBar: false,
     group: 'core',
     aliases: ['sandbox', 'components', 'primitives', 'beacon'],
+    beaconGroup: 'hidden',
+    beaconKind: 'static',
   },
 ];
