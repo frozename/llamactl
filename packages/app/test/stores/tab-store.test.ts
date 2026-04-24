@@ -6,6 +6,8 @@ import {
   unpinTab,
   moveTab,
   reopenClosed,
+  closeOthers,
+  closeAll,
   type TabEntry,
   type TabState,
 } from '../../src/stores/tab-store';
@@ -118,5 +120,47 @@ describe('tab-store ops', () => {
   test('reopenClosed on empty closed is a no-op', () => {
     const out = reopenClosed(s);
     expect(out).toEqual(s);
+  });
+
+  test('closeOthers keeps pinned tabs and the keep key; others go to closed LRU', () => {
+    s = addOrFocus(s, entry('a'));
+    s = addOrFocus(s, entry('b'));
+    s = addOrFocus(s, entry('c'));
+    s = addOrFocus(s, entry('d'));
+    s = pinTab(s, 'a');
+    const out = closeOthers(s, 'c');
+    expect(out.tabs.map((t) => t.tabKey)).toEqual(['a', 'c']);
+    expect(out.tabs[0]?.pinned).toBe(true);
+    expect(out.activeKey).toBe('c');
+    expect(out.closed.map((t) => t.tabKey)).toEqual(['d', 'b']);
+  });
+
+  test('closeAll with keepPinned=true keeps only pinned', () => {
+    s = addOrFocus(s, entry('a'));
+    s = addOrFocus(s, entry('b'));
+    s = addOrFocus(s, entry('c'));
+    s = pinTab(s, 'b');
+    const out = closeAll(s);
+    expect(out.tabs.map((t) => t.tabKey)).toEqual(['b']);
+    expect(out.activeKey).toBe('b');
+    expect(out.closed.map((t) => t.tabKey).sort()).toEqual(['a', 'c']);
+  });
+
+  test('closeAll with keepPinned=false clears everything', () => {
+    s = addOrFocus(s, entry('a'));
+    s = addOrFocus(s, entry('b'));
+    s = pinTab(s, 'a');
+    const out = closeAll(s, false);
+    expect(out.tabs).toEqual([]);
+    expect(out.activeKey).toBeNull();
+    expect(out.closed.map((t) => t.tabKey).sort()).toEqual(['a', 'b']);
+  });
+
+  test('moveTab clamps toIndex beyond the end', () => {
+    s = addOrFocus(s, entry('a'));
+    s = addOrFocus(s, entry('b'));
+    s = addOrFocus(s, entry('c'));
+    const out = moveTab(s, 'a', 99);
+    expect(out.tabs.map((t) => t.tabKey)).toEqual(['b', 'c', 'a']);
   });
 });

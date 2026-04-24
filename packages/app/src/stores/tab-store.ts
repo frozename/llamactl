@@ -111,6 +111,26 @@ export function moveTab(s: TabState, key: string, toIndex: number): TabState {
   return { ...s, tabs: nextTabs };
 }
 
+export function closeOthers(s: TabState, keepKey: string): TabState {
+  const kept = s.tabs.filter((t) => t.tabKey === keepKey || t.pinned);
+  const dropped = s.tabs.filter((t) => t.tabKey !== keepKey && !t.pinned);
+  return {
+    tabs: kept,
+    activeKey: keepKey,
+    closed: [...dropped.reverse(), ...s.closed].slice(0, CLOSED_MAX),
+  };
+}
+
+export function closeAll(s: TabState, keepPinned = true): TabState {
+  const kept = keepPinned ? s.tabs.filter((t) => t.pinned) : [];
+  const dropped = s.tabs.filter((t) => !t.pinned || !keepPinned);
+  return {
+    tabs: kept,
+    activeKey: kept[0]?.tabKey ?? null,
+    closed: [...dropped.reverse(), ...s.closed].slice(0, CLOSED_MAX),
+  };
+}
+
 export function reopenClosed(s: TabState): TabState {
   if (s.closed.length === 0) return s;
   const [mostRecent, ...rest] = s.closed;
@@ -147,24 +167,8 @@ export const useTabStore = create<Store>()(
       unpin: (key) => set((s) => unpinTab(s, key)),
       move: (key, to) => set((s) => moveTab(s, key, to)),
       reopen: () => set((s) => reopenClosed(s)),
-      closeOthers: (keepKey) => set((s) => {
-        const kept = s.tabs.filter((t) => t.tabKey === keepKey || t.pinned);
-        const dropped = s.tabs.filter((t) => t.tabKey !== keepKey && !t.pinned);
-        return {
-          tabs: kept,
-          activeKey: keepKey,
-          closed: [...dropped.reverse(), ...s.closed].slice(0, CLOSED_MAX),
-        };
-      }),
-      closeAll: (keepPinned = true) => set((s) => {
-        const kept = keepPinned ? s.tabs.filter((t) => t.pinned) : [];
-        const dropped = s.tabs.filter((t) => !t.pinned || !keepPinned);
-        return {
-          tabs: kept,
-          activeKey: kept[0]?.tabKey ?? null,
-          closed: [...dropped.reverse(), ...s.closed].slice(0, CLOSED_MAX),
-        };
-      }),
+      closeOthers: (keepKey) => set((s) => closeOthers(s, keepKey)),
+      closeAll: (keepPinned = true) => set((s) => closeAll(s, keepPinned)),
     }),
     {
       name: 'beacon-tabs',
