@@ -89,15 +89,15 @@ function formatScore(score: number): string {
 /** Classify score into a Tailwind badge palette matching the project conventions. */
 function scoreBadgeClass(score: number): string {
   if (!Number.isFinite(score)) {
-    return 'bg-[var(--color-surface-2)] text-[color:var(--color-fg-muted)]';
+    return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
   }
   if (score >= 0.75) {
-    return 'bg-[var(--color-success)] text-[color:var(--color-fg-inverted)]';
+    return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
   }
   if (score >= 0.45) {
-    return 'bg-[var(--color-warning,var(--color-accent))] text-[color:var(--color-fg-inverted)]';
+    return 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]';
   }
-  return 'bg-[var(--color-surface-2)] text-[color:var(--color-fg-muted)]';
+  return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
 }
 
 function truncateContent(content: string, max = 300): string {
@@ -223,7 +223,7 @@ function CollectionHeader(props: {
   if (list.isLoading) {
     return (
       <div
-        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-fg-muted)]"
+        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-text-secondary)]"
         data-testid="knowledge-collection-header"
       >
         Loading collection info…
@@ -236,11 +236,11 @@ function CollectionHeader(props: {
   if (!targeted) {
     return (
       <div
-        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-fg-muted)]"
+        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-text-secondary)]"
         data-testid="knowledge-collection-header"
       >
         No collection picked yet — switch to the Collections tab to see what's
-        available on <span className="mono text-[color:var(--color-fg)]">{nodeName}</span>.
+        available on <span className="mono text-[color:var(--color-text)]">{nodeName}</span>.
       </div>
     );
   }
@@ -265,11 +265,11 @@ function CollectionHeader(props: {
       className="space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
       data-testid="knowledge-collection-header"
     >
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-[color:var(--color-fg-muted)]">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-[color:var(--color-text-secondary)]">
         <span>
           collection{' '}
           <span
-            className="mono text-[color:var(--color-fg)]"
+            className="mono text-[color:var(--color-text)]"
             data-testid="knowledge-collection-name"
           >
             {targeted.name}
@@ -278,7 +278,7 @@ function CollectionHeader(props: {
         <span>
           count{' '}
           <span
-            className="mono text-[color:var(--color-fg)]"
+            className="mono text-[color:var(--color-text)]"
             data-testid="knowledge-collection-count"
           >
             {count !== null ? count.toLocaleString() : '—'}
@@ -287,7 +287,7 @@ function CollectionHeader(props: {
         <span>
           dims{' '}
           <span
-            className="mono text-[color:var(--color-fg)]"
+            className="mono text-[color:var(--color-text)]"
             data-testid="knowledge-collection-dims"
           >
             {dims !== null ? dims : '—'}
@@ -297,14 +297,14 @@ function CollectionHeader(props: {
           embedder{' '}
           {embedder ? (
             <span
-              className="mono text-[color:var(--color-fg)]"
+              className="mono text-[color:var(--color-text)]"
               data-testid="knowledge-collection-embedder"
             >
               {embedder.node}/{embedder.model}
             </span>
           ) : (
             <span
-              className="mono text-[color:var(--color-fg-muted)]"
+              className="mono text-[color:var(--color-text-secondary)]"
               data-testid="knowledge-collection-embedder"
             >
               none
@@ -317,7 +317,7 @@ function CollectionHeader(props: {
           {metaEntries.map(([k, v]) => (
             <span
               key={k}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 mono text-[10px] text-[color:var(--color-fg-muted)]"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 mono text-[10px] text-[color:var(--color-text-secondary)]"
             >
               {k}: {typeof v === 'string' ? v : JSON.stringify(v)}
             </span>
@@ -326,7 +326,7 @@ function CollectionHeader(props: {
       )}
       {warnings.length > 0 && (
         <ul
-          className="space-y-0.5 text-xs text-[color:var(--color-warning,var(--color-accent))]"
+          className="space-y-0.5 text-xs text-[color:var(--color-warn,var(--color-ok))]"
           data-testid="knowledge-collection-warnings"
         >
           {warnings.map((w, i) => (
@@ -421,7 +421,7 @@ function QueryTab(props: {
         data-testid="knowledge-query-form"
       >
         <label className="block text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
             Query
           </span>
           <textarea
@@ -429,12 +429,12 @@ function QueryTab(props: {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Ask the knowledge base…"
             rows={3}
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-fg)]"
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
           />
         </label>
         <div className="grid grid-cols-12 gap-3">
           <label className="col-span-4 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               topK ({topK})
             </span>
             <input
@@ -447,7 +447,7 @@ function QueryTab(props: {
             />
           </label>
           <label className="col-span-4 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Collection (optional)
             </span>
             <input
@@ -455,7 +455,7 @@ function QueryTab(props: {
               value={collection}
               onChange={(e) => onCollectionChange(e.target.value)}
               placeholder="defaults to node's collection"
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
             />
           </label>
           <div className="col-span-4 flex items-end">
@@ -470,7 +470,7 @@ function QueryTab(props: {
           </div>
         </div>
         <label className="block text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
             Filter (metadata JSON, optional)
           </span>
           <input
@@ -481,10 +481,10 @@ function QueryTab(props: {
               setFilterError(null);
             }}
             placeholder='e.g. {"source":"docs","lang":"en"}'
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-fg)]"
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
           />
           {filterError && (
-            <span className="mt-1 block text-xs text-[color:var(--color-danger)]">
+            <span className="mt-1 block text-xs text-[color:var(--color-err)]">
               {filterError}
             </span>
           )}
@@ -493,7 +493,7 @@ function QueryTab(props: {
 
       {submitError && (
         <div
-          className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]"
+          className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]"
           data-testid="knowledge-query-error"
         >
           Failed to reach <span className="mono">{nodeName}</span>: {submitError}
@@ -501,12 +501,12 @@ function QueryTab(props: {
       )}
 
       {lastResponse && !submitError && (
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 text-xs text-[color:var(--color-fg-muted)]">
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 text-xs text-[color:var(--color-text-secondary)]">
           <span>
             {results.length} result{results.length === 1 ? '' : 's'}
           </span>
           <span> · collection </span>
-          <span className="mono text-[color:var(--color-fg)]">
+          <span className="mono text-[color:var(--color-text)]">
             {lastResponse.collection}
           </span>
         </div>
@@ -514,7 +514,7 @@ function QueryTab(props: {
 
       <div className="space-y-2" data-testid="knowledge-query-results">
         {results.length === 0 && lastResponse && (
-          <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-sm text-[color:var(--color-fg-muted)]">
+          <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-sm text-[color:var(--color-text-secondary)]">
             No results. Try lowering the similarity threshold or widening the query.
           </div>
         )}
@@ -537,11 +537,11 @@ function QueryTab(props: {
                   >
                     {formatScore(r.score)}
                   </span>
-                  <span className="mono text-xs text-[color:var(--color-fg)]">
+                  <span className="mono text-xs text-[color:var(--color-text)]">
                     {r.document.id}
                   </span>
                   {typeof r.distance === 'number' && (
-                    <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+                    <span className="text-[10px] text-[color:var(--color-text-secondary)]">
                       distance {r.distance.toFixed(4)}
                     </span>
                   )}
@@ -550,17 +550,17 @@ function QueryTab(props: {
                   <button
                     type="button"
                     onClick={() => setOpenResult(isOpen ? null : key)}
-                    className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+                    className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
                   >
                     {isOpen ? 'Hide metadata' : 'Show metadata'}
                   </button>
                 )}
               </div>
-              <div className="mt-2 text-sm whitespace-pre-wrap text-[color:var(--color-fg)]">
+              <div className="mt-2 text-sm whitespace-pre-wrap text-[color:var(--color-text)]">
                 {truncateContent(r.document.content)}
               </div>
               {isOpen && hasMeta && (
-                <pre className="mt-2 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-fg)]">
+                <pre className="mt-2 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]">
                   {JSON.stringify(r.document.metadata, null, 2)}
                 </pre>
               )}
@@ -588,14 +588,14 @@ function CollectionsTab(props: {
 
   if (list.isLoading) {
     return (
-      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-fg-muted)]">
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
         Loading collections…
       </div>
     );
   }
   if (list.error) {
     return (
-      <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+      <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
         Failed to reach <span className="mono">{nodeName}</span>:{' '}
         {list.error.message}
       </div>
@@ -606,7 +606,7 @@ function CollectionsTab(props: {
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-sm text-[color:var(--color-fg-muted)]">
+      <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-sm text-[color:var(--color-text-secondary)]">
         No collections yet on <span className="mono">{nodeName}</span>. Index a
         document in the Indexing tab to create one.
       </div>
@@ -619,7 +619,7 @@ function CollectionsTab(props: {
       data-testid="knowledge-collections-table"
     >
       <table className="w-full mono text-sm">
-        <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-fg-muted)]">
+        <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
           <tr>
             <th className="px-3 py-2 font-medium">Name</th>
             <th className="px-3 py-2 font-medium">Count</th>
@@ -633,20 +633,20 @@ function CollectionsTab(props: {
               key={c.name}
               className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
             >
-              <td className="px-3 py-2 text-[color:var(--color-accent)] break-all">
+              <td className="px-3 py-2 text-[color:var(--color-ok)] break-all">
                 {c.name}
               </td>
-              <td className="px-3 py-2 text-[color:var(--color-fg)]">
+              <td className="px-3 py-2 text-[color:var(--color-text)]">
                 {typeof c.count === 'number' ? c.count : '—'}
               </td>
-              <td className="px-3 py-2 text-[color:var(--color-fg)]">
+              <td className="px-3 py-2 text-[color:var(--color-text)]">
                 {typeof c.dimensions === 'number' ? c.dimensions : '—'}
               </td>
               <td className="px-3 py-2 text-right">
                 <button
                   type="button"
                   onClick={() => onPick(c.name)}
-                  className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+                  className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
                 >
                   Use in Query
                 </button>
@@ -721,7 +721,7 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
         data-testid="knowledge-indexing-form"
       >
         <label className="block text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
             Documents to index (JSON array or plain text paragraphs)
           </span>
           <textarea
@@ -732,9 +732,9 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
             }}
             rows={10}
             placeholder={`Paragraph-per-document:\n\nFirst paragraph becomes one doc.\n\nBlank lines separate documents.\n\nOr JSON:\n[{"id":"note-1","content":"…","metadata":{"source":"runbook"}}]`}
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
           />
-          <span className="mt-1 block text-xs text-[color:var(--color-fg-muted)]">
+          <span className="mt-1 block text-xs text-[color:var(--color-text-secondary)]">
             {previewCount != null
               ? `${previewCount} document${previewCount === 1 ? '' : 's'} will be stored.`
               : 'Starts with [ to parse as JSON; otherwise split on blank lines.'}
@@ -742,7 +742,7 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
         </label>
         <div className="grid grid-cols-12 gap-3">
           <label className="col-span-8 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Collection (optional)
             </span>
             <input
@@ -750,7 +750,7 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
               value={collection}
               onChange={(e) => setCollection(e.target.value)}
               placeholder="defaults to node's collection"
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
             />
           </label>
           <div className="col-span-4 flex items-end">
@@ -765,29 +765,29 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
           </div>
         </div>
         {parseError && (
-          <div className="text-xs text-[color:var(--color-danger)]">
+          <div className="text-xs text-[color:var(--color-err)]">
             {parseError}
           </div>
         )}
       </form>
 
       {submitError && (
-        <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+        <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
           Failed to reach <span className="mono">{nodeName}</span>: {submitError}
         </div>
       )}
 
       {lastResult && (
         <div
-          className="rounded-md border border-[var(--color-success)] bg-[var(--color-surface-1)] p-3"
+          className="rounded-md border border-[var(--color-ok)] bg-[var(--color-surface-1)] p-3"
           data-testid="knowledge-indexing-result"
         >
-          <div className="text-sm text-[color:var(--color-fg)]">
+          <div className="text-sm text-[color:var(--color-text)]">
             Stored {lastResult.ids.length} document
             {lastResult.ids.length === 1 ? '' : 's'} in{' '}
             <span className="mono">{lastResult.collection}</span>.
           </div>
-          <div className="mt-2 flex flex-wrap gap-1 mono text-[10px] text-[color:var(--color-fg-muted)]">
+          <div className="mt-2 flex flex-wrap gap-1 mono text-[10px] text-[color:var(--color-text-secondary)]">
             {lastResult.ids.map((id) => (
               <span
                 key={id}
@@ -878,32 +878,32 @@ function EmbedderPanel(props: {
       data-testid="knowledge-embedder-panel"
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="text-xs text-[color:var(--color-fg-muted)]">
+        <div className="text-xs text-[color:var(--color-text-secondary)]">
           <div className="mb-1 uppercase tracking-wider">Embedder</div>
           {shown ? (
             <div
-              className="text-[color:var(--color-fg)]"
+              className="text-[color:var(--color-text)]"
               data-testid="knowledge-embedder-current"
             >
               node{' '}
-              <span className="mono text-[color:var(--color-accent)]">
+              <span className="mono text-[color:var(--color-ok)]">
                 {shown.node}
               </span>
               <span> · model </span>
-              <span className="mono text-[color:var(--color-accent)]">
+              <span className="mono text-[color:var(--color-ok)]">
                 {shown.model}
               </span>
             </div>
           ) : (
             <div
-              className="text-[color:var(--color-fg-muted)]"
+              className="text-[color:var(--color-text-secondary)]"
               data-testid="knowledge-embedder-current"
             >
               none
             </div>
           )}
           {node.provider === 'chroma' && (
-            <div className="mt-1 text-[10px] text-[color:var(--color-fg-muted)]">
+            <div className="mt-1 text-[10px] text-[color:var(--color-text-secondary)]">
               Chroma embeds internally — this binding is ignored by chroma
               nodes, but persists for operator visibility.
             </div>
@@ -920,7 +920,7 @@ function EmbedderPanel(props: {
               }}
               disabled={mutation.isPending}
               data-testid="knowledge-embedder-edit"
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               Edit embedder
             </button>
@@ -932,7 +932,7 @@ function EmbedderPanel(props: {
                 setError(null);
               }}
               disabled={mutation.isPending}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               Cancel
             </button>
@@ -943,7 +943,7 @@ function EmbedderPanel(props: {
               onClick={onClear}
               disabled={mutation.isPending}
               data-testid="knowledge-embedder-clear"
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               Clear embedder
             </button>
@@ -961,14 +961,14 @@ function EmbedderPanel(props: {
           data-testid="knowledge-embedder-form"
         >
           <label className="col-span-5 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Node
             </span>
             <select
               value={draftNode}
               onChange={(e) => setDraftNode(e.target.value)}
               data-testid="knowledge-embedder-node-select"
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
             >
               <option value="">(pick a node)</option>
               {draftNode &&
@@ -983,7 +983,7 @@ function EmbedderPanel(props: {
             </select>
           </label>
           <label className="col-span-5 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Model
             </span>
             <input
@@ -992,7 +992,7 @@ function EmbedderPanel(props: {
               onChange={(e) => setDraftModel(e.target.value)}
               placeholder="e.g. nomic-embed-text-v1.5"
               data-testid="knowledge-embedder-model-input"
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
             />
           </label>
           <div className="col-span-2 flex items-end">
@@ -1010,7 +1010,7 @@ function EmbedderPanel(props: {
 
       {error && (
         <div
-          className="mt-2 text-xs text-[color:var(--color-danger)]"
+          className="mt-2 text-xs text-[color:var(--color-err)]"
           data-testid="knowledge-embedder-error"
         >
           {error}
@@ -1076,13 +1076,13 @@ export default function Knowledge(): React.JSX.Element {
 
   return (
     <div className="h-full overflow-auto p-6" data-testid="knowledge-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         Knowledge
       </div>
-      <h1 className="mb-2 text-2xl font-semibold text-[color:var(--color-fg)]">
+      <h1 className="mb-2 text-2xl font-semibold text-[color:var(--color-text)]">
         Retrieval-Augmented Generation
       </h1>
-      <p className="mb-6 text-xs text-[color:var(--color-fg-muted)]">
+      <p className="mb-6 text-xs text-[color:var(--color-text-secondary)]">
         Query, browse, and index documents against the RAG nodes registered in
         your kubeconfig. Supported providers:{' '}
         <span className="mono">chroma</span> and{' '}
@@ -1090,7 +1090,7 @@ export default function Knowledge(): React.JSX.Element {
       </p>
 
       {nodes.isLoading && (
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-fg-muted)]">
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
           Loading nodes…
         </div>
       )}
@@ -1100,21 +1100,21 @@ export default function Knowledge(): React.JSX.Element {
           className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6"
           data-testid="knowledge-empty-state"
         >
-          <div className="text-sm text-[color:var(--color-fg)]">
+          <div className="text-sm text-[color:var(--color-text)]">
             No knowledge bases yet — register one with{' '}
             <span className="mono">llamactl node add …</span>.
           </div>
-          <p className="mt-2 text-xs text-[color:var(--color-fg-muted)]">
+          <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
             Example for a Chroma node backed by the chroma-mcp server:
           </p>
-          <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-fg)]">{`llamactl node add kb-chroma \\
+          <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]">{`llamactl node add kb-chroma \\
   --rag=chroma \\
   --endpoint="chroma-mcp run --persist-directory /path/to/chroma-data"`}</pre>
-          <p className="mt-2 text-xs text-[color:var(--color-fg-muted)]">
+          <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
             Or a pgvector node against a running Postgres with the{' '}
             <span className="mono">vector</span> extension:
           </p>
-          <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-fg)]">{`llamactl node add kb-pg \\
+          <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]">{`llamactl node add kb-pg \\
   --rag=pgvector \\
   --endpoint="postgres://kb_user:$PG_PASSWORD@db.local:5432/kb_main"`}</pre>
         </div>
@@ -1124,14 +1124,14 @@ export default function Knowledge(): React.JSX.Element {
         <>
           <div className="mb-4 grid grid-cols-12 gap-3">
             <label className="col-span-6 text-sm">
-              <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+              <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
                 RAG node
               </span>
               <select
                 value={selected.name}
                 onChange={(e) => setSelectedNode(e.target.value)}
                 data-testid="knowledge-node-select"
-                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-fg)]"
+                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
               >
                 {ragNodes.map((n) => (
                   <option key={n.name} value={n.name}>
@@ -1141,14 +1141,14 @@ export default function Knowledge(): React.JSX.Element {
                 ))}
               </select>
             </label>
-            <div className="col-span-6 flex items-end gap-2 text-xs text-[color:var(--color-fg-muted)]">
+            <div className="col-span-6 flex items-end gap-2 text-xs text-[color:var(--color-text-secondary)]">
               <span>
-                kind <span className="mono text-[color:var(--color-fg)]">rag</span>
+                kind <span className="mono text-[color:var(--color-text)]">rag</span>
               </span>
               {selected.provider && (
                 <span>
                   · provider{' '}
-                  <span className="mono text-[color:var(--color-fg)]">
+                  <span className="mono text-[color:var(--color-text)]">
                     {selected.provider}
                   </span>
                 </span>
@@ -1180,8 +1180,8 @@ export default function Knowledge(): React.JSX.Element {
                   data-testid={`knowledge-tab-${tab.id}`}
                   className={
                     active
-                      ? 'border-b-2 border-[var(--color-brand)] px-3 py-2 text-sm font-medium text-[color:var(--color-fg)]'
-                      : 'border-b-2 border-transparent px-3 py-2 text-sm text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]'
+                      ? 'border-b-2 border-[var(--color-brand)] px-3 py-2 text-sm font-medium text-[color:var(--color-text)]'
+                      : 'border-b-2 border-transparent px-3 py-2 text-sm text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]'
                   }
                 >
                   {tab.label}

@@ -174,20 +174,20 @@ function Sidebar(props: {
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-1)]">
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2">
-        <span className="text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+        <span className="text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
           Pipelines
         </span>
         <button
           type="button"
           onClick={props.onNew}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)]"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text)]"
         >
           + New
         </button>
       </div>
       <ul className="flex-1 overflow-auto">
         {props.pipelines.length === 0 && (
-          <li className="p-3 text-xs text-[color:var(--color-fg-muted)]">
+          <li className="p-3 text-xs text-[color:var(--color-text-secondary)]">
             No pipelines yet.
           </li>
         )}
@@ -201,17 +201,17 @@ function Sidebar(props: {
             <button
               type="button"
               onClick={() => props.onSelect(p.id)}
-              className="flex-1 truncate text-left text-[color:var(--color-fg)]"
+              className="flex-1 truncate text-left text-[color:var(--color-text)]"
             >
               <div className="truncate">{p.name}</div>
-              <div className="truncate text-[10px] text-[color:var(--color-fg-muted)]">
+              <div className="truncate text-[10px] text-[color:var(--color-text-secondary)]">
                 {p.stages.length} stage{p.stages.length === 1 ? '' : 's'}
               </div>
             </button>
             <button
               type="button"
               onClick={() => props.onDelete(p.id)}
-              className="text-[color:var(--color-fg-muted)]"
+              className="text-[color:var(--color-text-secondary)]"
               title="delete pipeline"
             >
               ×
@@ -247,14 +247,14 @@ function StageCard(props: {
   return (
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)]">
       <header className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-xs">
-        <span className="rounded bg-[var(--color-surface-2)] px-1.5 py-0.5 font-mono text-[10px] text-[color:var(--color-fg-muted)]">
+        <span className="rounded bg-[var(--color-surface-2)] px-1.5 py-0.5 font-mono text-[10px] text-[color:var(--color-text-secondary)]">
           #{props.index + 1}
         </span>
-        <span className="text-[color:var(--color-fg-muted)]">node</span>
+        <span className="text-[color:var(--color-text-secondary)]">node</span>
         <select
           value={props.stage.node}
           onChange={(e) => props.onUpdate({ node: e.target.value })}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)]"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-text)]"
         >
           {props.nodes.map((n) => (
             <option key={n.name} value={n.name}>
@@ -262,11 +262,11 @@ function StageCard(props: {
             </option>
           ))}
         </select>
-        <span className="ml-2 text-[color:var(--color-fg-muted)]">model</span>
+        <span className="ml-2 text-[color:var(--color-text-secondary)]">model</span>
         <select
           value={props.stage.model}
           onChange={(e) => props.onUpdate({ model: e.target.value })}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)]"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-text)]"
         >
           {models.length === 0 && <option value={props.stage.model}>{props.stage.model || '(none)'}</option>}
           {models.map((m) => (
@@ -278,7 +278,7 @@ function StageCard(props: {
         <button
           type="button"
           onClick={props.onRemove}
-          className="ml-auto text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-danger)]"
+          className="ml-auto text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-err)]"
           title="remove stage"
         >
           × remove
@@ -289,10 +289,10 @@ function StageCard(props: {
           value={props.stage.systemPrompt}
           onChange={(e) => props.onUpdate({ systemPrompt: e.target.value })}
           placeholder="System prompt (optional)…"
-          className="h-16 resize-none rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[color:var(--color-fg)]"
+          className="h-16 resize-none rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[color:var(--color-text)]"
         />
         <div className="flex flex-wrap items-center gap-1 text-[10px]">
-          <span className="text-[color:var(--color-fg-muted)]">capabilities:</span>
+          <span className="text-[color:var(--color-text-secondary)]">capabilities:</span>
           {CAPABILITY_TAGS.map((tag) => {
             const active = props.stage.capabilities.includes(tag);
             return (
@@ -302,8 +302,8 @@ function StageCard(props: {
                 onClick={() => props.onToggleCapability(tag)}
                 className={`rounded-full border px-2 py-0.5 font-mono transition-colors ${
                   active
-                    ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-[color:var(--color-fg-inverted)]'
-                    : 'border-[var(--color-border)] bg-[var(--color-surface-2)] text-[color:var(--color-fg-muted)]'
+                    ? 'border-[var(--color-ok)] bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]'
+                    : 'border-[var(--color-border)] bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]'
                 }`}
               >
                 {tag.replace('_', '-')}
@@ -313,7 +313,7 @@ function StageCard(props: {
         </div>
         <div
           className={`min-h-[3rem] whitespace-pre-wrap rounded border border-dashed border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-2 text-xs ${
-            props.output ? 'text-[color:var(--color-fg)]' : 'text-[color:var(--color-fg-muted)]'
+            props.output ? 'text-[color:var(--color-text)]' : 'text-[color:var(--color-text-secondary)]'
           }`}
         >
           {props.output || (props.running ? 'streaming…' : 'no output yet')}
@@ -489,7 +489,7 @@ export default function Pipelines(): React.JSX.Element {
   );
 
   if (nodeList.isLoading) {
-    return <div className="p-6 text-sm text-[color:var(--color-fg-muted)]">Loading…</div>;
+    return <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>;
   }
 
   return (
@@ -508,16 +508,16 @@ export default function Pipelines(): React.JSX.Element {
             <input
               value={active.name}
               onChange={(e) => store.rename(active.id, e.target.value)}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-sm text-[color:var(--color-fg)]"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-sm text-[color:var(--color-text)]"
             />
-            <span className="ml-2 text-[color:var(--color-fg-muted)]">
+            <span className="ml-2 text-[color:var(--color-text-secondary)]">
               {active.stages.length} stage{active.stages.length === 1 ? '' : 's'}
             </span>
             <button
               type="button"
               onClick={addStage}
               data-testid="pipelines-add-stage"
-              className="ml-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)]"
+              className="ml-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text)]"
             >
               + Add stage
             </button>
@@ -531,7 +531,7 @@ export default function Pipelines(): React.JSX.Element {
                   ? 'Add a stage first'
                   : 'Emit ~/.llamactl/mcp/pipelines/<slug>.json so @llamactl/mcp mounts this as a tool.'
               }
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)] disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               {exportMcp.isPending ? 'Saving…' : '⇪ Save as MCP tool'}
             </button>
@@ -541,8 +541,8 @@ export default function Pipelines(): React.JSX.Element {
               data-testid="pipelines-save-mcp-result"
               className={
                 exportInfo.kind === 'ok'
-                  ? 'flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-1 text-[11px] text-[color:var(--color-accent)]'
-                  : 'flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-1 text-[11px] text-[color:var(--color-danger)]'
+                  ? 'flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-1 text-[11px] text-[color:var(--color-ok)]'
+                  : 'flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-1 text-[11px] text-[color:var(--color-err)]'
               }
             >
               {exportInfo.kind === 'ok' ? (
@@ -558,7 +558,7 @@ export default function Pipelines(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => exportActiveAsMcp(true)}
-                  className="rounded border border-[var(--color-border)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]"
+                  className="rounded border border-[var(--color-border)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]"
                 >
                   Overwrite
                 </button>
@@ -566,7 +566,7 @@ export default function Pipelines(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={() => setExportInfo(null)}
-                  className="text-[color:var(--color-fg-muted)]"
+                  className="text-[color:var(--color-text-secondary)]"
                 >
                   ×
                 </button>
@@ -575,7 +575,7 @@ export default function Pipelines(): React.JSX.Element {
           )}
           <div className="flex flex-1 flex-col gap-3 overflow-auto bg-[var(--color-surface-0)] p-6">
             {runError && (
-              <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+              <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
                 {runError}
               </div>
             )}
@@ -604,12 +604,12 @@ export default function Pipelines(): React.JSX.Element {
               value={initialInput}
               onChange={(e) => setInitialInput(e.target.value)}
               placeholder="Initial input for stage 1…"
-              className="h-16 flex-1 resize-none rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[color:var(--color-fg)]"
+              className="h-16 flex-1 resize-none rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[color:var(--color-text)]"
             />
             <button
               type="submit"
               disabled={runningId !== null || !initialInput.trim() || active.stages.length === 0}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-4 text-sm text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-4 text-sm text-[color:var(--color-text-inverse)] disabled:opacity-50"
             >
               {runningId === active.id ? `Stage ${currentIdx + 1}/${active.stages.length}…` : 'Run'}
             </button>
@@ -621,10 +621,10 @@ export default function Pipelines(): React.JSX.Element {
           data-testid="pipelines-empty"
         >
           <div className="max-w-md space-y-3 text-center">
-            <h2 className="text-lg font-semibold text-[color:var(--color-fg)]">
+            <h2 className="text-lg font-semibold text-[color:var(--color-text)]">
               Chain model calls into a pipeline
             </h2>
-            <p className="text-sm text-[color:var(--color-fg-muted)]">
+            <p className="text-sm text-[color:var(--color-text-secondary)]">
               Each stage consumes the previous stage's final assistant
               message. Useful for summarise → review → rewrite, vision-caption
               → reasoning, cheap-draft → cloud-polish.
@@ -633,7 +633,7 @@ export default function Pipelines(): React.JSX.Element {
               type="button"
               onClick={newPipeline}
               data-testid="pipelines-new"
-              className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-4 py-2 text-sm text-[color:var(--color-fg-inverted)]"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-4 py-2 text-sm text-[color:var(--color-text-inverse)]"
             >
               New pipeline
             </button>

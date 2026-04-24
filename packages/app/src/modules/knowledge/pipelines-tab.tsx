@@ -101,7 +101,7 @@ function RunningBadge(props: { entry: RunningEntry }): React.JSX.Element {
     // instead. Elapsed counter shows how long it's been stuck.
     return (
       <span
-        className="inline-flex items-center gap-1 rounded border border-[var(--color-danger)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-danger)]"
+        className="inline-flex items-center gap-1 rounded border border-[var(--color-err)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-err)]"
         data-testid={`pipelines-orphan-${entry.name}`}
         title={`journal shows run-started ${entry.startedAt} but no run-complete — agent likely crashed mid-run. Re-run to clear.`}
       >
@@ -149,7 +149,7 @@ function LastRunBadge(props: { rec: PipelineRecord }): React.JSX.Element {
   if (!rec.lastRun) {
     return (
       <span
-        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]"
+        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]"
         data-testid="pipelines-lastrun-none"
       >
         never run
@@ -159,8 +159,8 @@ function LastRunBadge(props: { rec: PipelineRecord }): React.JSX.Element {
   const { summary, at } = rec.lastRun;
   const ok = summary.errors === 0;
   const cls = ok
-    ? 'bg-[var(--color-success)] text-[color:var(--color-fg-inverted)]'
-    : 'bg-[var(--color-danger)] text-[color:var(--color-fg-inverted)]';
+    ? 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]'
+    : 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
   const costStr = summary.estimated_cost ? formatCost(summary.estimated_cost) : null;
   const tooltipParts: string[] = [
     `${summary.total_docs} docs`,
@@ -177,13 +177,13 @@ function LastRunBadge(props: { rec: PipelineRecord }): React.JSX.Element {
       >
         {ok ? 'ok' : `${summary.errors} err`}
       </span>
-      <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+      <span className="text-[10px] text-[color:var(--color-text-secondary)]">
         {summary.total_docs}/{summary.total_chunks} · {formatRelative(at)}
         {costStr && (
           <>
             {' · '}
             <span
-              className="mono text-[color:var(--color-fg)]"
+              className="mono text-[color:var(--color-text)]"
               data-testid={`pipelines-lastrun-cost-${rec.name}`}
               title={`source: ${summary.estimated_cost!.source}`}
             >
@@ -214,34 +214,34 @@ function LogsPanel(props: {
       data-testid={`pipelines-logs-panel-${name}`}
     >
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2">
-        <div className="text-xs text-[color:var(--color-fg-muted)]">
-          Logs for <span className="mono text-[color:var(--color-fg)]">{name}</span>
+        <div className="text-xs text-[color:var(--color-text-secondary)]">
+          Logs for <span className="mono text-[color:var(--color-text)]">{name}</span>
           {data?.path && <span className="ml-2 mono">{data.path}</span>}
         </div>
         <button
           type="button"
           onClick={onClose}
           data-testid={`pipelines-logs-close-${name}`}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
         >
           Close
         </button>
       </div>
       {logs.isLoading && (
-        <div className="p-3 text-sm text-[color:var(--color-fg-muted)]">Loading…</div>
+        <div className="p-3 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
       )}
       {logs.error && (
-        <div className="p-3 text-sm text-[color:var(--color-danger)]">
+        <div className="p-3 text-sm text-[color:var(--color-err)]">
           {logs.error.message}
         </div>
       )}
       {!logs.isLoading && !logs.error && entries.length === 0 && (
-        <div className="p-3 text-sm text-[color:var(--color-fg-muted)]">
+        <div className="p-3 text-sm text-[color:var(--color-text-secondary)]">
           Journal empty — the pipeline hasn't run yet.
         </div>
       )}
       {entries.length > 0 && (
-        <pre className="max-h-96 overflow-auto p-3 mono text-[10px] text-[color:var(--color-fg)]">
+        <pre className="max-h-96 overflow-auto p-3 mono text-[10px] text-[color:var(--color-text)]">
           {entries.map((e) => `${JSON.stringify(e)}\n`).join('')}
         </pre>
       )}
@@ -331,13 +331,13 @@ function PipelineRow(props: {
         className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
         data-testid={`pipelines-row-${rec.name}`}
       >
-        <td className="px-3 py-2 text-[color:var(--color-accent)] break-all">
+        <td className="px-3 py-2 text-[color:var(--color-ok)] break-all">
           {rec.name}
         </td>
-        <td className="px-3 py-2 text-[color:var(--color-fg)] text-xs">
+        <td className="px-3 py-2 text-[color:var(--color-text)] text-xs">
           {sources}
         </td>
-        <td className="px-3 py-2 mono text-xs text-[color:var(--color-fg-muted)]">
+        <td className="px-3 py-2 mono text-xs text-[color:var(--color-text-secondary)]">
           {schedule}
         </td>
         <td className="px-3 py-2">
@@ -349,7 +349,7 @@ function PipelineRow(props: {
         </td>
         <td className="px-3 py-2 text-right">
           <div className="flex items-center justify-end gap-1">
-            <label className="flex items-center gap-1 text-[10px] text-[color:var(--color-fg-muted)]">
+            <label className="flex items-center gap-1 text-[10px] text-[color:var(--color-text-secondary)]">
               <input
                 type="checkbox"
                 checked={dryRun}
@@ -373,7 +373,7 @@ function PipelineRow(props: {
               type="button"
               onClick={onLogsToggle}
               data-testid={`pipelines-logs-toggle-${rec.name}`}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
             >
               {logsOpen ? 'Hide logs' : 'Logs'}
             </button>
@@ -382,7 +382,7 @@ function PipelineRow(props: {
               onClick={onRemove}
               disabled={removeMut.isPending}
               data-testid={`pipelines-remove-${rec.name}`}
-              className="rounded border border-[var(--color-danger)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-danger)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded border border-[var(--color-err)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-err)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Remove
             </button>
@@ -391,7 +391,7 @@ function PipelineRow(props: {
       </tr>
       {actionError && (
         <tr className="bg-[var(--color-surface-1)]">
-          <td colSpan={5} className="px-3 py-2 text-xs text-[color:var(--color-danger)]">
+          <td colSpan={5} className="px-3 py-2 text-xs text-[color:var(--color-err)]">
             {actionError}
           </td>
         </tr>
@@ -450,7 +450,7 @@ function DraftPanel(props: {
           type="button"
           onClick={() => setOpen(true)}
           data-testid="pipelines-draft-open"
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
         >
           Draft from description…
         </button>
@@ -464,7 +464,7 @@ function DraftPanel(props: {
       data-testid="pipelines-draft-panel"
     >
       <div className="mb-2 flex items-baseline justify-between">
-        <div className="text-xs text-[color:var(--color-fg-muted)]">
+        <div className="text-xs text-[color:var(--color-text-secondary)]">
           Draft a pipeline manifest from a description. The drafter is
           deterministic — extracts URLs, paths, schedule aliases, and
           rag node hints. Review the YAML, then apply via CLI or the
@@ -473,14 +473,14 @@ function DraftPanel(props: {
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
         >
           Close
         </button>
       </div>
       <div className="grid grid-cols-12 gap-2">
         <label className="col-span-8 text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
             Description
           </span>
           <textarea
@@ -489,11 +489,11 @@ function DraftPanel(props: {
             rows={2}
             data-testid="pipelines-draft-description"
             placeholder="e.g. crawl https://docs.example.com into kb-pg daily"
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
           />
         </label>
         <label className="col-span-2 text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
             Name (optional)
           </span>
           <input
@@ -501,7 +501,7 @@ function DraftPanel(props: {
             value={nameOverride}
             onChange={(e) => setNameOverride(e.target.value)}
             data-testid="pipelines-draft-name"
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
           />
         </label>
         <div className="col-span-2 flex items-end">
@@ -517,11 +517,11 @@ function DraftPanel(props: {
         </div>
       </div>
       {error && (
-        <div className="mt-2 text-xs text-[color:var(--color-danger)]">{error}</div>
+        <div className="mt-2 text-xs text-[color:var(--color-err)]">{error}</div>
       )}
       {warnings.length > 0 && (
         <ul
-          className="mt-2 space-y-1 text-xs text-[color:var(--color-fg-muted)]"
+          className="mt-2 space-y-1 text-xs text-[color:var(--color-text-secondary)]"
           data-testid="pipelines-draft-warnings"
         >
           {warnings.map((w, i) => (
@@ -531,7 +531,7 @@ function DraftPanel(props: {
       )}
       {yaml && (
         <pre
-          className="mt-2 max-h-64 overflow-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-fg)]"
+          className="mt-2 max-h-64 overflow-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]"
           data-testid="pipelines-draft-yaml"
         >
           {yaml}
@@ -599,7 +599,7 @@ export function PipelinesTab(props: {
         >
           + New pipeline
         </button>
-        <span className="text-xs text-[color:var(--color-fg-muted)]">
+        <span className="text-xs text-[color:var(--color-text-secondary)]">
           Step through destination → sources → transforms → review, then apply.
         </span>
       </div>
@@ -615,27 +615,27 @@ export function PipelinesTab(props: {
       />
 
       {list.isLoading && (
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-fg-muted)]">
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
           Loading pipelines…
         </div>
       )}
       {list.error && (
-        <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+        <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
           {list.error.message}
         </div>
       )}
       {!list.isLoading && !list.error && sorted.length === 0 && (
         <div
-          className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6 text-sm text-[color:var(--color-fg-muted)]"
+          className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6 text-sm text-[color:var(--color-text-secondary)]"
           data-testid="pipelines-empty"
         >
-          <div className="text-[color:var(--color-fg)]">
+          <div className="text-[color:var(--color-text)]">
             No pipelines applied yet.
           </div>
           <p className="mt-2 text-xs">
             Apply one from the CLI:
           </p>
-          <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-fg)]">{`llamactl rag pipeline apply -f templates/rag-pipelines/llamactl-docs.yaml`}</pre>
+          <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]">{`llamactl rag pipeline apply -f templates/rag-pipelines/llamactl-docs.yaml`}</pre>
           <p className="mt-2 text-xs">
             Or use the Draft button above to scaffold a new manifest from a
             description.
@@ -648,7 +648,7 @@ export function PipelinesTab(props: {
           data-testid="pipelines-table"
         >
           <table className="w-full text-sm">
-            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-fg-muted)]">
+            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
               <tr>
                 <th className="px-3 py-2 font-medium mono">Name</th>
                 <th className="px-3 py-2 font-medium">Sources</th>

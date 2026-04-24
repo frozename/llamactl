@@ -58,7 +58,7 @@ export function OpsExecutorPicker(): React.JSX.Element {
   if (nodes.length === 0) {
     return (
       <span
-        className="text-xs text-[color:var(--color-fg-muted)]"
+        className="text-xs text-[color:var(--color-text-secondary)]"
         data-testid="ops-executor-empty"
       >
         no executable nodes — add one in Nodes
@@ -72,7 +72,7 @@ export function OpsExecutorPicker(): React.JSX.Element {
         value={nodeId ?? ''}
         onChange={(e) => setNode(e.target.value || null)}
         data-testid="ops-executor-node"
-        className="rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+        className="rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
       >
         <option value="">pick a node…</option>
         {nodes.map((n) => (
@@ -86,7 +86,7 @@ export function OpsExecutorPicker(): React.JSX.Element {
         onChange={(e) => setModel(e.target.value || null)}
         disabled={!nodeId || models.length === 0}
         data-testid="ops-executor-model"
-        className="rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)] disabled:opacity-50"
+        className="rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)] disabled:opacity-50"
       >
         {models.length === 0 && <option value="">…</option>}
         {models.map((m) => (

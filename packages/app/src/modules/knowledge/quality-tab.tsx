@@ -74,18 +74,18 @@ function hitRateBadge(rate: number): { cls: string; label: string } {
   const pct = Math.round(rate * 100);
   if (rate >= 0.9) {
     return {
-      cls: 'bg-[var(--color-success)] text-[color:var(--color-fg-inverted)]',
+      cls: 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]',
       label: `${pct}%`,
     };
   }
   if (rate >= 0.6) {
     return {
-      cls: 'bg-[var(--color-warning,var(--color-accent))] text-[color:var(--color-fg-inverted)]',
+      cls: 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]',
       label: `${pct}%`,
     };
   }
   return {
-    cls: 'bg-[var(--color-danger)] text-[color:var(--color-fg-inverted)]',
+    cls: 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]',
     label: `${pct}%`,
   };
 }
@@ -133,10 +133,10 @@ export function QualityTab(props: {
 
   return (
     <div className="space-y-4" data-testid="knowledge-quality-root">
-      <div className="flex flex-wrap items-baseline gap-2 text-xs text-[color:var(--color-fg-muted)]">
+      <div className="flex flex-wrap items-baseline gap-2 text-xs text-[color:var(--color-text-secondary)]">
         <span>
           Measure retrieval quality: paste a{' '}
-          <span className="mono text-[color:var(--color-fg)]">RagBench</span>{' '}
+          <span className="mono text-[color:var(--color-text)]">RagBench</span>{' '}
           manifest, click Run, and scan the hit rate + per-query
           breakdown. No writes — purely a read-only gate against
           the named rag node.
@@ -145,7 +145,7 @@ export function QualityTab(props: {
           type="button"
           onClick={onLoadStarter}
           data-testid="knowledge-quality-starter"
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
         >
           Load starter
         </button>
@@ -153,7 +153,7 @@ export function QualityTab(props: {
 
       <div className="grid grid-cols-12 gap-3">
         <label className="col-span-9 text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
             RagBench manifest (YAML)
           </span>
           <textarea
@@ -164,7 +164,7 @@ export function QualityTab(props: {
             }}
             rows={14}
             data-testid="knowledge-quality-yaml"
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
           />
         </label>
         <div className="col-span-3 flex flex-col items-stretch justify-start gap-2">
@@ -177,7 +177,7 @@ export function QualityTab(props: {
           >
             {running ? 'Running…' : 'Run bench'}
           </button>
-          <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+          <span className="text-[10px] text-[color:var(--color-text-secondary)]">
             Targets <span className="mono">{nodeName}</span>
             {collection.trim() && (
               <>
@@ -191,7 +191,7 @@ export function QualityTab(props: {
 
       {error && (
         <div
-          className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]"
+          className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]"
           data-testid="knowledge-quality-error"
         >
           {error}
@@ -203,7 +203,7 @@ export function QualityTab(props: {
           className="space-y-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
           data-testid="knowledge-quality-report"
         >
-          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-[color:var(--color-fg-muted)]">
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-[color:var(--color-text-secondary)]">
             <span
               className={`rounded border border-[var(--color-border)] px-2 py-0.5 text-xs font-medium ${rateBadge.cls}`}
               data-testid="knowledge-quality-hitrate"
@@ -213,7 +213,7 @@ export function QualityTab(props: {
             <span>
               MRR{' '}
               <span
-                className="mono text-[color:var(--color-fg)]"
+                className="mono text-[color:var(--color-text)]"
                 data-testid="knowledge-quality-mrr"
               >
                 {report.mrr.toFixed(4)}
@@ -221,19 +221,19 @@ export function QualityTab(props: {
             </span>
             <span>
               scored{' '}
-              <span className="mono text-[color:var(--color-fg)]">
+              <span className="mono text-[color:var(--color-text)]">
                 {report.hits}/{report.totalQueries - report.errors}
               </span>
             </span>
             {report.errors > 0 && (
-              <span className="text-[color:var(--color-danger)]">
+              <span className="text-[color:var(--color-err)]">
                 errors{' '}
                 <span className="mono">{report.errors}</span>
               </span>
             )}
             <span>
               elapsed{' '}
-              <span className="mono text-[color:var(--color-fg)]">
+              <span className="mono text-[color:var(--color-text)]">
                 {report.elapsed_ms}ms
               </span>
             </span>
@@ -244,7 +244,7 @@ export function QualityTab(props: {
             data-testid="knowledge-quality-per-query"
           >
             <table className="w-full text-xs">
-              <thead className="bg-[var(--color-surface-2)] text-left text-[color:var(--color-fg-muted)]">
+              <thead className="bg-[var(--color-surface-2)] text-left text-[color:var(--color-text-secondary)]">
                 <tr>
                   <th className="w-12 px-2 py-1 font-medium">#</th>
                   <th className="px-2 py-1 font-medium">Query</th>
@@ -258,10 +258,10 @@ export function QualityTab(props: {
                   const hit = q.hitRank !== null;
                   const err = q.error !== undefined;
                   const cls = err
-                    ? 'text-[color:var(--color-danger)]'
+                    ? 'text-[color:var(--color-err)]'
                     : hit
-                      ? 'text-[color:var(--color-fg)]'
-                      : 'text-[color:var(--color-fg-muted)]';
+                      ? 'text-[color:var(--color-text)]'
+                      : 'text-[color:var(--color-text-secondary)]';
                   return (
                     <tr
                       key={`${i}-${q.query}`}
@@ -272,7 +272,7 @@ export function QualityTab(props: {
                         {q.query}
                         {err && (
                           <span
-                            className="ml-2 text-[10px] text-[color:var(--color-danger)]"
+                            className="ml-2 text-[10px] text-[color:var(--color-err)]"
                             title={q.error}
                           >
                             [{q.error}]

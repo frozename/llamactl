@@ -39,13 +39,13 @@ interface WorkloadRow {
 function phaseBadgeClass(phase: Phase): string {
   switch (phase) {
     case 'Running':
-      return 'bg-[var(--color-success)] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
     case 'Mismatch':
-      return 'bg-[var(--color-warning,var(--color-accent))] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]';
     case 'Unreachable':
-      return 'bg-[var(--color-danger)] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
     default:
-      return 'bg-[var(--color-surface-2)] text-[color:var(--color-fg-muted)]';
+      return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
   }
 }
 
@@ -144,26 +144,26 @@ function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
       }}
       className="mt-4 space-y-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
     >
-      <div className="text-sm font-medium text-[color:var(--color-fg)]">
+      <div className="text-sm font-medium text-[color:var(--color-text)]">
         Apply a workload
       </div>
       <div className="flex flex-wrap items-end gap-2 text-xs">
         <div className="flex flex-col">
-          <label className="text-[color:var(--color-fg-muted)]">name</label>
+          <label className="text-[color:var(--color-text-secondary)]">name</label>
           <input
             type="text"
             placeholder="gemma-qa"
             value={tplName}
             onChange={(e) => setTplName(e.target.value)}
-            className="w-40 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+            className="w-40 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
           />
         </div>
         <div className="flex flex-col">
-          <label className="text-[color:var(--color-fg-muted)]">node</label>
+          <label className="text-[color:var(--color-text-secondary)]">node</label>
           <select
             value={tplNode}
             onChange={(e) => setTplNode(e.target.value)}
-            className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+            className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
           >
             {nodeOptions.map((n) => (
               <option key={n} value={n}>
@@ -173,20 +173,20 @@ function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
           </select>
         </div>
         <div className="flex flex-1 flex-col">
-          <label className="text-[color:var(--color-fg-muted)]">target (rel path)</label>
+          <label className="text-[color:var(--color-text-secondary)]">target (rel path)</label>
           <input
             type="text"
             placeholder="gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
             value={tplTarget}
             onChange={(e) => setTplTarget(e.target.value)}
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-fg)]"
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-text)]"
           />
         </div>
         <button
           type="button"
           onClick={() => { void onTemplate(); }}
           disabled={template.isFetching}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-[color:var(--color-fg)] disabled:opacity-50"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-[color:var(--color-text)] disabled:opacity-50"
         >
           {template.isFetching ? 'Generating…' : 'Generate YAML'}
         </button>
@@ -195,13 +195,13 @@ function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
         placeholder="apiVersion: llamactl/v1&#10;kind: ModelRun&#10;metadata:&#10;  name: gemma-qa&#10;spec:&#10;  node: local&#10;  target:&#10;    kind: rel&#10;    value: …"
         value={yaml}
         onChange={(e) => setYaml(e.target.value)}
-        className="h-48 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-xs text-[color:var(--color-fg)]"
+        className="h-48 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-xs text-[color:var(--color-text)]"
       />
       <div className="flex items-center gap-2 text-sm">
         <button
           type="submit"
           disabled={apply.isPending}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 text-[color:var(--color-text-inverse)] disabled:opacity-50"
         >
           {apply.isPending ? 'Applying…' : 'Apply'}
         </button>
@@ -209,12 +209,12 @@ function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
           type="button"
           onClick={onValidate}
           disabled={validate.isFetching}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-[color:var(--color-fg)] disabled:opacity-50"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-[color:var(--color-text)] disabled:opacity-50"
         >
           {validate.isFetching ? 'Validating…' : 'Validate'}
         </button>
-        {error && <span className="text-xs text-[color:var(--color-danger)]">{error}</span>}
-        {success && <span className="text-xs text-[color:var(--color-success)]">{success}</span>}
+        {error && <span className="text-xs text-[color:var(--color-err)]">{error}</span>}
+        {success && <span className="text-xs text-[color:var(--color-ok)]">{success}</span>}
       </div>
     </form>
   );
@@ -248,20 +248,20 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
     >
       <div className="flex items-baseline justify-between gap-4">
         <div className="flex items-baseline gap-2">
-          <span className="font-mono text-sm text-[color:var(--color-fg)]">{row.name}</span>
+          <span className="font-mono text-sm text-[color:var(--color-text)]">{row.name}</span>
           <span
             className={`rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] ${phaseBadgeClass(row.phase)}`}
           >
             {row.phase}
           </span>
-          <span className="text-xs text-[color:var(--color-fg-muted)]">
+          <span className="text-xs text-[color:var(--color-text-secondary)]">
             node <span className="font-mono">{row.node}</span>
           </span>
           {row.workerCount > 0 && (
             <span
               data-testid="workloads-row-workers-badge"
               title={`workers: ${row.workerNodes.join(', ')}`}
-              className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]"
+              className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]"
             >
               <Layers className="h-3 w-3" aria-hidden="true" />
               <span>
@@ -274,13 +274,13 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
           <button
             type="button"
             onClick={() => setShowDescribe((v) => !v)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
           >
             {showDescribe ? 'Hide' : 'Describe'}
           </button>
           {confirmDelete ? (
             <>
-              <label className="flex items-center gap-1 text-[10px] text-[color:var(--color-fg-muted)]">
+              <label className="flex items-center gap-1 text-[10px] text-[color:var(--color-text-secondary)]">
                 <input
                   type="checkbox"
                   checked={keepRunning}
@@ -292,14 +292,14 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
                 type="button"
                 onClick={() => del.mutate({ name: row.name, keepRunning })}
                 disabled={del.isPending}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-danger)] px-2 py-1 text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+                className="rounded border border-[var(--color-border)] bg-[var(--color-err)] px-2 py-1 text-[color:var(--color-text-inverse)] disabled:opacity-50"
               >
                 {del.isPending ? 'Deleting…' : 'Confirm delete'}
               </button>
               <button
                 type="button"
                 onClick={() => setConfirmDelete(false)}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
               >
                 Cancel
               </button>
@@ -308,14 +308,14 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
             <button
               type="button"
               onClick={() => setConfirmDelete(true)}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg-muted)]"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text-secondary)]"
             >
               Delete
             </button>
           )}
         </div>
       </div>
-      <div className="mt-1 text-xs text-[color:var(--color-fg-muted)]">
+      <div className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
         <span>rel: </span>
         <span className="font-mono">{row.rel}</span>
         {row.endpoint && (
@@ -335,9 +335,9 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
       {showDescribe && (
         <div className="mt-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 text-xs">
           {describe.isLoading ? (
-            <span className="text-[color:var(--color-fg-muted)]">Loading…</span>
+            <span className="text-[color:var(--color-text-secondary)]">Loading…</span>
           ) : describe.error ? (
-            <span className="text-[color:var(--color-danger)]">{describe.error.message}</span>
+            <span className="text-[color:var(--color-err)]">{describe.error.message}</span>
           ) : describe.data ? (
             <div className="space-y-2">
               <WorkersPanel
@@ -346,14 +346,14 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
                 }
               />
               <div>
-                <div className="font-medium text-[color:var(--color-fg)]">Manifest</div>
-                <pre className="mt-1 overflow-x-auto whitespace-pre font-mono text-[10px] text-[color:var(--color-fg)]">
+                <div className="font-medium text-[color:var(--color-text)]">Manifest</div>
+                <pre className="mt-1 overflow-x-auto whitespace-pre font-mono text-[10px] text-[color:var(--color-text)]">
                   {YAML.stringify(describe.data.manifest)}
                 </pre>
               </div>
               <div>
-                <div className="font-medium text-[color:var(--color-fg)]">Live status</div>
-                <pre className="mt-1 overflow-x-auto whitespace-pre font-mono text-[10px] text-[color:var(--color-fg)]">
+                <div className="font-medium text-[color:var(--color-text)]">Live status</div>
+                <pre className="mt-1 overflow-x-auto whitespace-pre font-mono text-[10px] text-[color:var(--color-text)]">
                   {JSON.stringify(describe.data.liveStatus, null, 2)}
                 </pre>
               </div>
@@ -362,10 +362,10 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
         </div>
       )}
       {del.error && (
-        <div className="mt-2 text-xs text-[color:var(--color-danger)]">{del.error.message}</div>
+        <div className="mt-2 text-xs text-[color:var(--color-err)]">{del.error.message}</div>
       )}
       {del.data && del.data.stops.length > 0 && (
-        <ul className="mt-2 space-y-0.5 text-xs text-[color:var(--color-fg-muted)]">
+        <ul className="mt-2 space-y-0.5 text-xs text-[color:var(--color-text-secondary)]">
           {del.data.stops.map((s, i) => (
             <li key={i}>{s}</li>
           ))}
@@ -423,18 +423,18 @@ function ReconcilerToolbar(): React.JSX.Element {
       <div className="flex items-center gap-2">
         <span
           className={`h-1.5 w-1.5 rounded-full ${
-            running ? 'bg-[var(--color-success)]' : 'bg-[var(--color-fg-muted)]'
+            running ? 'bg-[var(--color-ok)]' : 'bg-[var(--color-text-secondary)]'
           }`}
         />
-        <span className="text-[color:var(--color-fg)]">
+        <span className="text-[color:var(--color-text)]">
           auto-heal {running ? 'on' : 'off'}
         </span>
-        <span className="text-[color:var(--color-fg-muted)]">
+        <span className="text-[color:var(--color-text-secondary)]">
           · every {intervalSec}s · last {lastPass}
           {errors > 0 && (
             <>
               {' · '}
-              <span className="text-[color:var(--color-danger)]">{errors} errors</span>
+              <span className="text-[color:var(--color-err)]">{errors} errors</span>
             </>
           )}
           {' · '}
@@ -446,7 +446,7 @@ function ReconcilerToolbar(): React.JSX.Element {
           type="button"
           onClick={() => kick.mutate()}
           disabled={kick.isPending}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)] disabled:opacity-50"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text)] disabled:opacity-50"
           title="run one reconcile pass now"
         >
           {kick.isPending ? '…' : 'Kick'}
@@ -456,7 +456,7 @@ function ReconcilerToolbar(): React.JSX.Element {
             type="button"
             onClick={() => stop.mutate()}
             disabled={stop.isPending}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] disabled:opacity-50"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] disabled:opacity-50"
           >
             Stop
           </button>
@@ -465,7 +465,7 @@ function ReconcilerToolbar(): React.JSX.Element {
             type="button"
             onClick={() => start.mutate({ intervalSeconds: 10 })}
             disabled={start.isPending}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-inverse)] disabled:opacity-50"
           >
             Start
           </button>
@@ -485,12 +485,12 @@ export default function Workloads(): React.JSX.Element {
 
   if (list.isLoading) {
     return (
-      <div className="p-6 text-sm text-[color:var(--color-fg-muted)]">Loading…</div>
+      <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
     );
   }
   if (list.error) {
     return (
-      <div className="p-6 text-sm text-[color:var(--color-danger)]">
+      <div className="p-6 text-sm text-[color:var(--color-err)]">
         Failed to load workloads: {list.error.message}
       </div>
     );
@@ -502,8 +502,8 @@ export default function Workloads(): React.JSX.Element {
     <div className="flex flex-col gap-4 p-6" data-testid="workloads-root">
       <div className="flex items-baseline justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-[color:var(--color-fg)]">Workloads</h1>
-          <div className="text-xs text-[color:var(--color-fg-muted)]">
+          <h1 className="text-lg font-semibold text-[color:var(--color-text)]">Workloads</h1>
+          <div className="text-xs text-[color:var(--color-text-secondary)]">
             Declarative ModelRun manifests (
             <span className="font-mono">
               {workloadsDir.data?.dir ?? '…'}/*.yaml
@@ -514,7 +514,7 @@ export default function Workloads(): React.JSX.Element {
         <button
           type="button"
           onClick={() => setShowApply((v) => !v)}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-fg)]"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-text)]"
         >
           {showApply ? 'Cancel' : 'Apply workload'}
         </button>
@@ -527,10 +527,10 @@ export default function Workloads(): React.JSX.Element {
             data-testid="workloads-empty"
             className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6"
           >
-            <h2 className="text-sm font-semibold text-[color:var(--color-fg)]">
+            <h2 className="text-sm font-semibold text-[color:var(--color-text)]">
               Declare a workload to self-heal
             </h2>
-            <p className="mt-1 text-xs text-[color:var(--color-fg-muted)]">
+            <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
               A <span className="font-mono">ModelRun</span> manifest pins a model
               to a node. The reconciler keeps it running, restarts it on crash,
               and corrects drift when extra args change. Use it for long-lived
@@ -541,7 +541,7 @@ export default function Workloads(): React.JSX.Element {
               type="button"
               onClick={() => setShowApply(true)}
               data-testid="workloads-apply"
-              className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg-inverted)]"
+              className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 text-xs font-medium text-[color:var(--color-text-inverse)]"
             >
               Apply workload
             </button>

@@ -59,21 +59,21 @@ function TailscaleCard({ node, active }: { node: N; active: boolean }): React.JS
     <div
       className="relative rounded-lg border bg-[var(--color-surface-1)] px-3 py-2.5 shadow-sm transition-all hover:shadow-md"
       style={{
-        borderColor: active ? 'var(--color-accent)' : 'var(--color-border)',
+        borderColor: active ? 'var(--color-ok)' : 'var(--color-border)',
         boxShadow: active
-          ? '0 0 0 1px var(--color-accent), 0 4px 12px -4px color-mix(in srgb, var(--color-accent) 40%, transparent)'
+          ? '0 0 0 1px var(--color-ok), 0 4px 12px -4px color-mix(in srgb, var(--color-ok) 40%, transparent)'
           : '0 1px 2px rgba(0,0,0,0.05)',
         minWidth: 150,
       }}
     >
       <div className="flex items-baseline justify-between gap-2">
-        <span className="font-mono text-sm text-[color:var(--color-fg)]">{node.name}</span>
+        <span className="font-mono text-sm text-[color:var(--color-text)]">{node.name}</span>
         <span
           className="h-1.5 w-1.5 rounded-full"
-          style={{ background: node.isLocal ? 'var(--color-accent)' : '#34d399' }}
+          style={{ background: node.isLocal ? 'var(--color-ok)' : '#34d399' }}
         />
       </div>
-      <div className="mt-1 text-[10px] uppercase tracking-wider text-[color:var(--color-fg-muted)]">
+      <div className="mt-1 text-[10px] uppercase tracking-wider text-[color:var(--color-text-secondary)]">
         {kindLabel[node.effectiveKind]}
         {node.isLocal ? ' · this host' : ''}
       </div>
@@ -112,7 +112,7 @@ export function NodeMapTailscale({ nodes }: { nodes: N[] }): React.JSX.Element {
 function Section({ label, accent, children }: { label: string; accent: string; children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="mb-5 last:mb-0">
-      <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         <span className="inline-block h-0.5 w-4 rounded-full" style={{ background: accent }} />
         {label}
       </div>
@@ -240,12 +240,12 @@ function Hex({ node, active }: { node: N; active: boolean }): React.JSX.Element 
         border: `1px solid ${active ? color : 'var(--color-border)'}`,
       }}
     >
-      <div className="font-mono text-[11px] font-medium text-[color:var(--color-fg)] px-2">{node.name}</div>
-      <div className="mt-0.5 flex items-center gap-1 text-[9px] uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <div className="font-mono text-[11px] font-medium text-[color:var(--color-text)] px-2">{node.name}</div>
+      <div className="mt-0.5 flex items-center gap-1 text-[9px] uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
         {node.effectiveKind}
       </div>
-      <div className="mt-2 flex flex-col gap-0.5 text-[9px] text-[color:var(--color-fg-muted)]">
+      <div className="mt-2 flex flex-col gap-0.5 text-[9px] text-[color:var(--color-text-secondary)]">
         <Pill label="load" value={node.isLocal ? '12%' : '—'} />
         <Pill label="rt" value={node.effectiveKind === 'agent' ? '28 tk/s' : '—'} />
       </div>
@@ -256,7 +256,7 @@ function Hex({ node, active }: { node: N; active: boolean }): React.JSX.Element 
 function Pill({ label, value }: { label: string; value: string }): React.JSX.Element {
   return (
     <span className="rounded bg-[color:var(--color-surface-2)] px-1.5 py-0.5">
-      <span className="opacity-60">{label}</span> <span className="font-mono text-[color:var(--color-fg)]">{value}</span>
+      <span className="opacity-60">{label}</span> <span className="font-mono text-[color:var(--color-text)]">{value}</span>
     </span>
   );
 }
@@ -290,7 +290,7 @@ export function NodeMapPreviews(): React.JSX.Element {
   return (
     <div data-testid="node-map-previews">
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-[color:var(--color-fg-muted)]">preview style:</span>
+        <span className="text-[color:var(--color-text-secondary)]">preview style:</span>
         {(['A', 'B', 'C'] as const).map((p) => (
           <button
             key={p}
@@ -298,9 +298,9 @@ export function NodeMapPreviews(): React.JSX.Element {
             onClick={() => setPick(p)}
             className="rounded border px-2 py-1"
             style={{
-              borderColor: pick === p ? 'var(--color-accent)' : 'var(--color-border)',
-              background: pick === p ? 'color-mix(in srgb, var(--color-accent) 15%, transparent)' : 'var(--color-surface-1)',
-              color: 'var(--color-fg)',
+              borderColor: pick === p ? 'var(--color-ok)' : 'var(--color-border)',
+              background: pick === p ? 'color-mix(in srgb, var(--color-ok) 15%, transparent)' : 'var(--color-surface-1)',
+              color: 'var(--color-text)',
             }}
           >
             {p === 'A' ? 'A · glass cards' : p === 'B' ? 'B · cyberpunk' : 'C · hex grid'}

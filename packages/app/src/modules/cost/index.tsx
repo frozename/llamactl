@@ -27,13 +27,13 @@ interface CostGroup {
 function tierColor(tier: Tier): string {
   switch (tier) {
     case 'deregister':
-      return 'bg-[var(--color-danger)] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
     case 'force_private':
-      return 'bg-[var(--color-warning,var(--color-accent))] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]';
     case 'warn':
-      return 'bg-[var(--color-accent)] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
     default:
-      return 'bg-[var(--color-surface-2)] text-[color:var(--color-fg-muted)]';
+      return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
   }
 }
 
@@ -43,10 +43,10 @@ function barColor(fraction: number | undefined, thresholds: {
   deregister: number;
 }): string {
   if (fraction === undefined) return 'bg-[var(--color-surface-3,var(--color-surface-2))]';
-  if (fraction >= thresholds.deregister) return 'bg-[var(--color-danger)]';
-  if (fraction >= thresholds.force_private) return 'bg-[var(--color-warning,var(--color-accent))]';
-  if (fraction >= thresholds.warn) return 'bg-[var(--color-accent)]';
-  return 'bg-[var(--color-success,var(--color-accent))]';
+  if (fraction >= thresholds.deregister) return 'bg-[var(--color-err)]';
+  if (fraction >= thresholds.force_private) return 'bg-[var(--color-warn,var(--color-ok))]';
+  if (fraction >= thresholds.warn) return 'bg-[var(--color-ok)]';
+  return 'bg-[var(--color-ok,var(--color-ok))]';
 }
 
 function fmtUsd(n: number | undefined): string {
@@ -108,8 +108,8 @@ function BudgetBar({
   return (
     <div data-testid={testId} className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between">
-        <span className="text-sm text-[color:var(--color-fg)]">{label}</span>
-        <span className="text-xs text-[color:var(--color-fg-muted)]">{readout}</span>
+        <span className="text-sm text-[color:var(--color-text)]">{label}</span>
+        <span className="text-xs text-[color:var(--color-text-secondary)]">{readout}</span>
       </div>
       <div className="h-2 w-full overflow-hidden rounded bg-[var(--color-surface-2)]">
         <div
@@ -138,7 +138,7 @@ function TopSpenders({
     return (
       <div
         data-testid={`${testId}-empty`}
-        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-4 text-sm text-[color:var(--color-fg-muted)]"
+        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-4 text-sm text-[color:var(--color-text-secondary)]"
       >
         {title}: no usage recorded yet.
       </div>
@@ -146,16 +146,16 @@ function TopSpenders({
   }
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
         {title}
       </h3>
       <ul data-testid={testId} className="divide-y divide-[var(--color-border)] rounded border border-[var(--color-border)] bg-[var(--color-surface-1)]">
         {rows.map((g) => (
           <li key={g.key} className="flex items-center justify-between px-3 py-2">
-            <span className="truncate text-sm text-[color:var(--color-fg)]" title={g.key}>
+            <span className="truncate text-sm text-[color:var(--color-text)]" title={g.key}>
               {g.key}
             </span>
-            <span className="text-xs text-[color:var(--color-fg-muted)]">
+            <span className="text-xs text-[color:var(--color-text-secondary)]">
               {fmtUsd(g.estimatedCostUsd)} · {g.requestCount} req · {g.totalTokens.toLocaleString()} tok
             </span>
           </li>
@@ -171,14 +171,14 @@ function JournalPane(): React.JSX.Element {
 
   if (journal.isLoading) {
     return (
-      <div data-testid="cost-journal-loading" className="text-sm text-[color:var(--color-fg-muted)]">
+      <div data-testid="cost-journal-loading" className="text-sm text-[color:var(--color-text-secondary)]">
         Loading journal…
       </div>
     );
   }
   if (journal.error) {
     return (
-      <div data-testid="cost-journal-error" className="text-sm text-[color:var(--color-danger)]">
+      <div data-testid="cost-journal-error" className="text-sm text-[color:var(--color-err)]">
         journal error: {journal.error.message}
       </div>
     );
@@ -186,7 +186,7 @@ function JournalPane(): React.JSX.Element {
   const data = journal.data ?? { entries: [], path: '' };
   if (data.entries.length === 0) {
     return (
-      <div data-testid="cost-journal-empty" className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-4 text-sm text-[color:var(--color-fg-muted)]">
+      <div data-testid="cost-journal-empty" className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-4 text-sm text-[color:var(--color-text-secondary)]">
         No guardian ticks recorded yet. Run <code>llamactl cost-guardian tick</code> or enable the loop
         to start populating <code>{data.path || '~/.llamactl/healer/cost-journal.jsonl'}</code>.
       </div>
@@ -195,10 +195,10 @@ function JournalPane(): React.JSX.Element {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
           Guardian journal
         </h3>
-        <label className="flex items-center gap-2 text-xs text-[color:var(--color-fg-muted)]">
+        <label className="flex items-center gap-2 text-xs text-[color:var(--color-text-secondary)]">
           last
           <select
             data-testid="cost-journal-limit"
@@ -245,9 +245,9 @@ function JournalRow({ entry }: { entry: unknown }): React.JSX.Element {
           <span className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tierColor(tier)}`}>
             {tier}
           </span>{' '}
-          <span className="text-[color:var(--color-fg)]">{e.decision?.reason ?? ''}</span>
+          <span className="text-[color:var(--color-text)]">{e.decision?.reason ?? ''}</span>
         </div>
-        <time className="shrink-0 text-[color:var(--color-fg-muted)]">{e.decision?.ts?.slice(11, 19) ?? ''}</time>
+        <time className="shrink-0 text-[color:var(--color-text-secondary)]">{e.decision?.ts?.slice(11, 19) ?? ''}</time>
       </div>
     );
   }
@@ -256,22 +256,22 @@ function JournalRow({ entry }: { entry: unknown }): React.JSX.Element {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <span className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-            e.ok ? 'bg-[var(--color-success,var(--color-accent))] text-[color:var(--color-fg-inverted)]' : 'bg-[var(--color-danger)] text-[color:var(--color-fg-inverted)]'
+            e.ok ? 'bg-[var(--color-ok,var(--color-ok))] text-[color:var(--color-text-inverse)]' : 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]'
           }`}>
             {e.action}
           </span>{' '}
-          <span className="text-[color:var(--color-fg)]">{e.ok ? 'ok' : (e.error ?? 'failed')}</span>
+          <span className="text-[color:var(--color-text)]">{e.ok ? 'ok' : (e.error ?? 'failed')}</span>
         </div>
-        <time className="shrink-0 text-[color:var(--color-fg-muted)]">{e.ts?.slice(11, 19) ?? ''}</time>
+        <time className="shrink-0 text-[color:var(--color-text-secondary)]">{e.ts?.slice(11, 19) ?? ''}</time>
       </div>
     );
   }
   return (
     <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0 text-[color:var(--color-danger)]">
+      <div className="min-w-0 text-[color:var(--color-err)]">
         error: {e.message ?? 'unknown'}
       </div>
-      <time className="shrink-0 text-[color:var(--color-fg-muted)]">{e.ts?.slice(11, 19) ?? ''}</time>
+      <time className="shrink-0 text-[color:var(--color-text-secondary)]">{e.ts?.slice(11, 19) ?? ''}</time>
     </div>
   );
 }
@@ -289,14 +289,14 @@ export default function CostDashboard(): React.JSX.Element {
 
   if (status.isLoading) {
     return (
-      <div data-testid="cost-loading" className="p-6 text-sm text-[color:var(--color-fg-muted)]">
+      <div data-testid="cost-loading" className="p-6 text-sm text-[color:var(--color-text-secondary)]">
         Loading cost snapshot…
       </div>
     );
   }
   if (status.error) {
     return (
-      <div data-testid="cost-error" className="p-6 text-sm text-[color:var(--color-danger)]">
+      <div data-testid="cost-error" className="p-6 text-sm text-[color:var(--color-err)]">
         Failed to load cost snapshot: {status.error.message}
       </div>
     );
@@ -312,8 +312,8 @@ export default function CostDashboard(): React.JSX.Element {
     >
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-[color:var(--color-fg)]">Cost dashboard</h1>
-          <p className="text-sm text-[color:var(--color-fg-muted)]">
+          <h1 className="text-lg font-semibold text-[color:var(--color-text)]">Cost dashboard</h1>
+          <p className="text-sm text-[color:var(--color-text-secondary)]">
             Pricing-aware spend snapshot for the local usage corpus. Polls every 30s.
           </p>
         </div>
@@ -346,7 +346,7 @@ export default function CostDashboard(): React.JSX.Element {
           thresholds={d.config.thresholds}
           testId="cost-budget-weekly"
         />
-        <div className="sm:col-span-2 text-xs text-[color:var(--color-fg-muted)]">
+        <div className="sm:col-span-2 text-xs text-[color:var(--color-text-secondary)]">
           Thresholds (% of budget): warn ≥ {fmtPercent(d.config.thresholds.warn)} ·
           force_private ≥ {fmtPercent(d.config.thresholds.force_private)} ·
           deregister ≥ {fmtPercent(d.config.thresholds.deregister)}
@@ -354,7 +354,7 @@ export default function CostDashboard(): React.JSX.Element {
           {d.config.autoForcePrivate ? ' · auto force_private on' : ''}
           {d.config.autoDeregister ? ' · auto deregister on' : ''}
         </div>
-        <p className="sm:col-span-2 text-sm text-[color:var(--color-fg)]" data-testid="cost-reason">
+        <p className="sm:col-span-2 text-sm text-[color:var(--color-text)]" data-testid="cost-reason">
           {d.decision.reason}
         </p>
       </section>
@@ -379,7 +379,7 @@ export default function CostDashboard(): React.JSX.Element {
       </section>
 
       <footer
-        className="text-xs text-[color:var(--color-fg-muted)]"
+        className="text-xs text-[color:var(--color-text-secondary)]"
         data-testid="cost-window"
       >
         Daily window: {d.daily.windowSince.slice(0, 19)}Z → {d.daily.windowUntil.slice(0, 19)}Z ·

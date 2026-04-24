@@ -185,7 +185,7 @@ export function CommandPalette({
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Type a command…"
             data-testid="command-palette-input"
-            className="w-full bg-transparent px-2 py-1.5 text-sm text-[color:var(--color-fg)] outline-none placeholder:text-[color:var(--color-fg-muted)]"
+            className="w-full bg-transparent px-2 py-1.5 text-sm text-[color:var(--color-text)] outline-none placeholder:text-[color:var(--color-text-secondary)]"
           />
         </div>
         <div
@@ -193,7 +193,7 @@ export function CommandPalette({
           data-testid="command-palette-results"
         >
           {filtered.length === 0 ? (
-            <div className="px-4 py-6 text-center text-xs text-[color:var(--color-fg-muted)]">
+            <div className="px-4 py-6 text-center text-xs text-[color:var(--color-text-secondary)]">
               No matches for “{query}”
             </div>
           ) : (
@@ -213,10 +213,10 @@ export function CommandPalette({
                   className="flex w-full items-center justify-between px-4 py-1.5 text-left"
                   style={{
                     background: isActive
-                      ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)'
+                      ? 'color-mix(in srgb, var(--color-ok) 14%, transparent)'
                       : 'transparent',
                     borderLeft: isActive
-                      ? '2px solid var(--color-accent)'
+                      ? '2px solid var(--color-ok)'
                       : '2px solid transparent',
                   }}
                 >
@@ -224,17 +224,17 @@ export function CommandPalette({
                     <span
                       className="text-sm"
                       style={{
-                        color: isActive ? 'var(--color-fg)' : 'var(--color-fg-muted)',
+                        color: isActive ? 'var(--color-text)' : 'var(--color-text-secondary)',
                       }}
                     >
                       {cmd.label}
                     </span>
-                    <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-fg-muted)] opacity-60">
+                    <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-text-secondary)] opacity-60">
                       {cmd.group}
                     </span>
                   </div>
                   {cmd.hint && (
-                    <span className="font-mono text-[10px] text-[color:var(--color-fg-muted)]">
+                    <span className="font-mono text-[10px] text-[color:var(--color-text-secondary)]">
                       {cmd.hint}
                     </span>
                   )}
@@ -243,7 +243,7 @@ export function CommandPalette({
             })
           )}
         </div>
-        <div className="flex items-center justify-between border-t border-[var(--color-border)] px-4 py-1.5 text-[10px] text-[color:var(--color-fg-muted)]">
+        <div className="flex items-center justify-between border-t border-[var(--color-border)] px-4 py-1.5 text-[10px] text-[color:var(--color-text-secondary)]">
           <span>↑↓ navigate · ↵ run · esc close</span>
           <span>{filtered.length} of {commands.length}</span>
         </div>

@@ -94,7 +94,7 @@ function RoutingHeatmap(props: { routing: Record<string, string> | undefined }):
   const entries = Object.entries(props.routing ?? {});
   if (entries.length === 0) {
     return (
-      <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+      <span className="text-[10px] text-[color:var(--color-text-secondary)]">
         no policy
       </span>
     );
@@ -121,11 +121,11 @@ function RoutingPreviewCard(props: {
   );
   const data = q.data as RoutePreviewResponse | undefined;
   if (q.isLoading) {
-    return <span className="text-[10px] text-[color:var(--color-fg-muted)]">…</span>;
+    return <span className="text-[10px] text-[color:var(--color-text-secondary)]">…</span>;
   }
   if (q.error || !data?.decision) {
     return (
-      <span className="text-[10px] text-[color:var(--color-fg-muted)]">—</span>
+      <span className="text-[10px] text-[color:var(--color-text-secondary)]">—</span>
     );
   }
   const d = data.decision;
@@ -150,7 +150,7 @@ function RoutingJournalFeed(props: { project: string }): React.JSX.Element {
   const entries = data?.entries ?? [];
   if (q.isLoading) {
     return (
-      <div className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-fg-muted)]">
+      <div className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-text-secondary)]">
         Loading decisions…
       </div>
     );
@@ -158,7 +158,7 @@ function RoutingJournalFeed(props: { project: string }): React.JSX.Element {
   if (entries.length === 0) {
     return (
       <div
-        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-fg-muted)]"
+        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-text-secondary)]"
         data-testid="projects-journal-empty"
       >
         No routing decisions journaled yet — trigger a chat against{' '}
@@ -175,7 +175,7 @@ function RoutingJournalFeed(props: { project: string }): React.JSX.Element {
       data-testid="projects-journal"
     >
       <table className="w-full text-xs">
-        <thead className="bg-[var(--color-surface-2)] text-left text-[color:var(--color-fg-muted)]">
+        <thead className="bg-[var(--color-surface-2)] text-left text-[color:var(--color-text-secondary)]">
           <tr>
             <th className="w-24 px-2 py-1 font-medium">Elapsed</th>
             <th className="w-32 px-2 py-1 font-medium">Task kind</th>
@@ -189,13 +189,13 @@ function RoutingJournalFeed(props: { project: string }): React.JSX.Element {
               key={`${d.ts}-${i}`}
               className="border-t border-[var(--color-border)]"
             >
-              <td className="px-2 py-1 mono text-[10px] text-[color:var(--color-fg-muted)]">
+              <td className="px-2 py-1 mono text-[10px] text-[color:var(--color-text-secondary)]">
                 {formatElapsed(d.ts)}
               </td>
-              <td className="px-2 py-1 mono text-[10px] text-[color:var(--color-fg)]">
+              <td className="px-2 py-1 mono text-[10px] text-[color:var(--color-text)]">
                 {d.taskKind}
               </td>
-              <td className="px-2 py-1 mono text-[10px] text-[color:var(--color-fg)] break-all">
+              <td className="px-2 py-1 mono text-[10px] text-[color:var(--color-text)] break-all">
                 {d.target}
               </td>
               <td className="px-2 py-1">
@@ -237,13 +237,13 @@ function ProjectDetail(props: {
     >
       <div className="flex items-baseline justify-between gap-3">
         <div>
-          <div className="text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+          <div className="text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
             Project
           </div>
-          <div className="mono text-lg text-[color:var(--color-fg)]">
+          <div className="mono text-lg text-[color:var(--color-text)]">
             {project.metadata.name}
           </div>
-          <div className="mono text-xs text-[color:var(--color-fg-muted)]">
+          <div className="mono text-xs text-[color:var(--color-text-secondary)]">
             {project.spec.path}
           </div>
         </div>
@@ -256,8 +256,8 @@ function ProjectDetail(props: {
             disabled={removeMut.isPending}
             data-testid={`projects-remove-${project.metadata.name}`}
             style={{
-              borderColor: 'var(--color-danger)',
-              color: 'var(--color-danger)',
+              borderColor: 'var(--color-err)',
+              color: 'var(--color-err)',
             }}
           >
             Remove
@@ -276,7 +276,7 @@ function ProjectDetail(props: {
 
       {taskKinds.length > 0 && (
         <div>
-          <div className="mb-2 text-xs uppercase tracking-wider text-[color:var(--color-fg-muted)]">
+          <div className="mb-2 text-xs uppercase tracking-wider text-[color:var(--color-text-secondary)]">
             Routing policy preview
           </div>
           <div
@@ -284,7 +284,7 @@ function ProjectDetail(props: {
             data-testid="projects-policy-table"
           >
             <table className="w-full text-xs">
-              <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-fg-muted)]">
+              <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
                 <tr>
                   <th className="w-40 px-2 py-1 font-medium">Task kind</th>
                   <th className="px-2 py-1 font-medium">Declared target</th>
@@ -297,10 +297,10 @@ function ProjectDetail(props: {
                     key={k}
                     className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
                   >
-                    <td className="px-2 py-1 mono text-[color:var(--color-fg)]">
+                    <td className="px-2 py-1 mono text-[color:var(--color-text)]">
                       {k}
                     </td>
-                    <td className="px-2 py-1 mono text-[10px] text-[color:var(--color-fg-muted)]">
+                    <td className="px-2 py-1 mono text-[10px] text-[color:var(--color-text-secondary)]">
                       {project.spec.routing?.[k]}
                     </td>
                     <td className="px-2 py-1">
@@ -318,18 +318,18 @@ function ProjectDetail(props: {
       )}
 
       <div>
-        <div className="mb-2 text-xs uppercase tracking-wider text-[color:var(--color-fg-muted)]">
+        <div className="mb-2 text-xs uppercase tracking-wider text-[color:var(--color-text-secondary)]">
           Routing decisions (live)
         </div>
         <RoutingJournalFeed project={project.metadata.name} />
       </div>
 
       <div>
-        <div className="mb-2 text-xs uppercase tracking-wider text-[color:var(--color-fg-muted)]">
+        <div className="mb-2 text-xs uppercase tracking-wider text-[color:var(--color-text-secondary)]">
           Manifest
         </div>
         <pre
-          className="max-h-64 overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 mono text-[10px] text-[color:var(--color-fg)]"
+          className="max-h-64 overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 mono text-[10px] text-[color:var(--color-text)]"
           data-testid={`projects-manifest-${project.metadata.name}`}
         >
           {stringifyYaml(project)}
@@ -359,7 +359,7 @@ function ProjectRow(props: {
       className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
       data-testid={`projects-row-${project.metadata.name}`}
     >
-      <td className="px-3 py-2 text-[color:var(--color-accent)] break-all">
+      <td className="px-3 py-2 text-[color:var(--color-ok)] break-all">
         <button
           type="button"
           onClick={onOpenDetail}
@@ -369,16 +369,16 @@ function ProjectRow(props: {
           {project.metadata.name}
         </button>
       </td>
-      <td className="px-3 py-2 text-[color:var(--color-fg-muted)] mono text-[10px] break-all">
+      <td className="px-3 py-2 text-[color:var(--color-text-secondary)] mono text-[10px] break-all">
         {project.spec.path}
       </td>
       <td className="px-3 py-2 text-[10px]">
         {hasRag ? (
-          <span className="mono text-[color:var(--color-fg)]">
+          <span className="mono text-[color:var(--color-text)]">
             {project.spec.rag!.node}/{project.spec.rag!.collection}
           </span>
         ) : (
-          <span className="text-[color:var(--color-fg-muted)]">
+          <span className="text-[color:var(--color-text-secondary)]">
             no rag block
           </span>
         )}
@@ -411,7 +411,7 @@ function ProjectRow(props: {
           </Button>
         </div>
         {indexError && (
-          <div className="mt-1 text-[10px] text-[color:var(--color-danger)]">
+          <div className="mt-1 text-[10px] text-[color:var(--color-err)]">
             {indexError}
           </div>
         )}
@@ -494,7 +494,7 @@ function GitRepoSuggestions({ onPick }: { onPick: (r: DetectedRepo) => void }): 
 
   if (state.kind === 'loading') {
     return (
-      <div className="mb-3 text-[10px] text-[color:var(--color-fg-muted)]">
+      <div className="mb-3 text-[10px] text-[color:var(--color-text-secondary)]">
         Scanning for git repos\u2026
       </div>
     );
@@ -506,7 +506,7 @@ function GitRepoSuggestions({ onPick }: { onPick: (r: DetectedRepo) => void }): 
   const visible = expanded ? state.repos : state.repos.slice(0, 8);
   return (
     <div className="mb-3">
-      <div className="mb-1.5 flex items-baseline gap-2 text-[10px] uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <div className="mb-1.5 flex items-baseline gap-2 text-[10px] uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         <span>Detected git repos</span>
         <span className="opacity-60">({state.repos.length} across {state.rootsShown.length} root{state.rootsShown.length === 1 ? '' : 's'})</span>
       </div>
@@ -618,7 +618,7 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
             placeholder="novaflow"
             data-testid="projects-create-name"
             required
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
           />
         </Field>
         <Field label="Path" required>
@@ -630,7 +630,7 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
               placeholder="/Users/you/repos/novaflow"
               data-testid="projects-create-path"
               required
-              className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
             <Button
               type="button"
@@ -664,14 +664,14 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
                 value={purpose}
                 onChange={(e) => setPurpose(e.target.value)}
                 placeholder="e.g. at-home diagnostic services platform"
-                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg)]"
+                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text)]"
               />
             </Field>
             <Field label="RAG node (optional)">
               <select
                 value={ragNode}
                 onChange={(e) => setRagNode(e.target.value)}
-                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg)]"
+                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text)]"
               >
                 <option value="">— skip RAG binding —</option>
                 {ragNodes.map((n) => (
@@ -686,7 +686,7 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
                   value={ragCollection}
                   onChange={(e) => setRagCollection(e.target.value)}
                   placeholder="novaflow_docs"
-                  className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+                  className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
                 />
               </Field>
             )}
@@ -704,10 +704,10 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
             {apply.isPending ? 'Creating…' : compact ? 'Add' : 'Create project'}
           </Button>
           {status.kind === 'error' && (
-            <span className="text-[11px] text-[color:var(--color-danger)]">{status.message}</span>
+            <span className="text-[11px] text-[color:var(--color-err)]">{status.message}</span>
           )}
           {status.kind === 'ok' && (
-            <span className="text-[11px] text-[color:var(--color-success)]">✓ {status.message}</span>
+            <span className="text-[11px] text-[color:var(--color-ok)]">✓ {status.message}</span>
           )}
         </div>
       </div>
@@ -718,9 +718,9 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }): React.JSX.Element {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         {label}
-        {required && <span className="ml-0.5 text-[color:var(--color-danger)]">*</span>}
+        {required && <span className="ml-0.5 text-[color:var(--color-err)]">*</span>}
       </span>
       {children}
     </label>
@@ -742,13 +742,13 @@ export default function Projects(): React.JSX.Element {
 
   return (
     <div className="h-full overflow-auto p-6" data-testid="projects-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         Projects
       </div>
-      <h1 className="mb-2 text-2xl font-semibold text-[color:var(--color-fg)]">
+      <h1 className="mb-2 text-2xl font-semibold text-[color:var(--color-text)]">
         Local projects
       </h1>
-      <p className="mb-6 text-xs text-[color:var(--color-fg-muted)]">
+      <p className="mb-6 text-xs text-[color:var(--color-text-secondary)]">
         Registered project directories with per-task routing policies.
         Register via{' '}
         <span className="mono">llamactl project add &lt;name&gt; --path &lt;abs&gt;</span>;
@@ -758,12 +758,12 @@ export default function Projects(): React.JSX.Element {
       </p>
 
       {list.isLoading && (
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-fg-muted)]">
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
           Loading projects…
         </div>
       )}
       {list.error && (
-        <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+        <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
           {list.error.message}
         </div>
       )}
@@ -803,7 +803,7 @@ export default function Projects(): React.JSX.Element {
           data-testid="projects-table"
         >
           <table className="w-full text-sm">
-            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-fg-muted)]">
+            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
               <tr>
                 <th className="w-48 px-3 py-2 font-medium">Name</th>
                 <th className="px-3 py-2 font-medium">Path</th>

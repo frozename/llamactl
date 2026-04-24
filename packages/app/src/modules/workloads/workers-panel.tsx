@@ -36,10 +36,10 @@ export function WorkersPanel(props: WorkersPanelProps): React.JSX.Element | null
       data-testid="workloads-workers-panel"
       className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2"
     >
-      <div className="font-medium text-[color:var(--color-fg)]">
+      <div className="font-medium text-[color:var(--color-text)]">
         Workers ({workers.length})
       </div>
-      <p className="mt-0.5 text-[10px] text-[color:var(--color-fg-muted)]">
+      <p className="mt-0.5 text-[10px] text-[color:var(--color-text-secondary)]">
         Static manifest shape; run{' '}
         <code className="font-mono">llamactl node test &lt;name&gt;</code> or{' '}
         <code className="font-mono">
@@ -50,7 +50,7 @@ export function WorkersPanel(props: WorkersPanelProps): React.JSX.Element | null
       <div className="mt-2 overflow-x-auto">
         <table className="w-full border-collapse text-[10px]">
           <thead>
-            <tr className="text-left text-[color:var(--color-fg-muted)]">
+            <tr className="text-left text-[color:var(--color-text-secondary)]">
               <th className="border-b border-[var(--color-border)] py-1 pr-3 font-medium">
                 node
               </th>
@@ -70,18 +70,18 @@ export function WorkersPanel(props: WorkersPanelProps): React.JSX.Element | null
               const extra = w.extraArgs ?? [];
               return (
                 <tr key={w.node} className="align-top">
-                  <td className="py-1 pr-3 font-mono text-[color:var(--color-fg)]">
+                  <td className="py-1 pr-3 font-mono text-[color:var(--color-text)]">
                     {w.node}
                   </td>
-                  <td className="py-1 pr-3 font-mono text-[color:var(--color-fg)]">
+                  <td className="py-1 pr-3 font-mono text-[color:var(--color-text)]">
                     {w.rpcHost}:{w.rpcPort}
                   </td>
-                  <td className="py-1 pr-3 font-mono text-[color:var(--color-fg)]">
+                  <td className="py-1 pr-3 font-mono text-[color:var(--color-text)]">
                     {w.timeoutSeconds}
                   </td>
-                  <td className="py-1 font-mono text-[color:var(--color-fg)]">
+                  <td className="py-1 font-mono text-[color:var(--color-text)]">
                     {extra.length === 0 ? (
-                      <em className="not-italic text-[color:var(--color-fg-muted)]">
+                      <em className="not-italic text-[color:var(--color-text-secondary)]">
                         default
                       </em>
                     ) : (

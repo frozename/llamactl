@@ -118,25 +118,25 @@ function PromotionsEditor(): React.JSX.Element {
 
   return (
     <section>
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
         Preset promotions ({rows.length})
       </h2>
 
       {error && (
-        <div className="mb-3 rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+        <div className="mb-3 rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
           {error}
         </div>
       )}
 
       {rows.length === 0 ? (
-        <div className="mb-4 rounded-md border border-dashed border-[var(--color-border)] p-4 text-[color:var(--color-fg-muted)]">
+        <div className="mb-4 rounded-md border border-dashed border-[var(--color-border)] p-4 text-[color:var(--color-text-secondary)]">
           No active promotions. Use the form below or{' '}
           <span className="mono">llamactl catalog promote</span> to add one.
         </div>
       ) : (
         <div className="mb-4 overflow-hidden rounded-md border border-[var(--color-border)]">
           <table className="w-full mono text-sm">
-            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-fg-muted)]">
+            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
               <tr>
                 <th className="px-3 py-2 font-medium">Profile</th>
                 <th className="px-3 py-2 font-medium">Preset</th>
@@ -156,10 +156,10 @@ function PromotionsEditor(): React.JSX.Element {
                   >
                     <td className="px-3 py-2 text-[color:var(--color-brand)]">{p.profile}</td>
                     <td className="px-3 py-2">{p.preset}</td>
-                    <td className="px-3 py-2 text-[color:var(--color-accent)] break-all">
+                    <td className="px-3 py-2 text-[color:var(--color-ok)] break-all">
                       {p.rel}
                     </td>
-                    <td className="px-3 py-2 text-[color:var(--color-fg-muted)]">
+                    <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">
                       {p.updated_at ?? ''}
                     </td>
                     <td className="px-3 py-2 text-right">
@@ -174,7 +174,7 @@ function PromotionsEditor(): React.JSX.Element {
                                 preset: p.preset as Preset,
                               })
                             }
-                            className="rounded border border-[var(--color-danger)] px-2 py-0.5 text-xs text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)]"
+                            className="rounded border border-[var(--color-err)] px-2 py-0.5 text-xs text-[color:var(--color-err)] hover:bg-[var(--color-surface-2)]"
                           >
                             Confirm
                           </button>
@@ -182,7 +182,7 @@ function PromotionsEditor(): React.JSX.Element {
                             type="button"
                             disabled={busy}
                             onClick={() => setPendingDelete(null)}
-                            className="rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)]"
+                            className="rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-text-secondary)] hover:bg-[var(--color-surface-2)]"
                           >
                             Cancel
                           </button>
@@ -192,7 +192,7 @@ function PromotionsEditor(): React.JSX.Element {
                           type="button"
                           disabled={busy}
                           onClick={() => setPendingDelete(key)}
-                          className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-fg-muted)] hover:border-[var(--color-border)] hover:text-[color:var(--color-fg)]"
+                          className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-text-secondary)] hover:border-[var(--color-border)] hover:text-[color:var(--color-text)]"
                           aria-label={`Remove promotion ${key}`}
                         >
                           Remove
@@ -214,12 +214,12 @@ function PromotionsEditor(): React.JSX.Element {
         }}
         className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
       >
-        <div className="mb-3 text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+        <div className="mb-3 text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
           Add / update promotion
         </div>
         <div className="grid grid-cols-12 gap-3">
           <label className="col-span-3 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">Profile</span>
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">Profile</span>
             <select
               value={profile}
               onChange={(e) => setProfile(e.target.value as Profile)}
@@ -234,7 +234,7 @@ function PromotionsEditor(): React.JSX.Element {
             </select>
           </label>
           <label className="col-span-2 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">Preset</span>
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">Preset</span>
             <select
               value={preset}
               onChange={(e) => setPreset(e.target.value as Preset)}
@@ -249,7 +249,7 @@ function PromotionsEditor(): React.JSX.Element {
             </select>
           </label>
           <label className="col-span-5 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">Rel</span>
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">Rel</span>
             <input
               list="rel-suggestions"
               value={rel}
@@ -274,7 +274,7 @@ function PromotionsEditor(): React.JSX.Element {
             </button>
           </div>
         </div>
-        <div className="mt-3 text-xs text-[color:var(--color-fg-muted)]">
+        <div className="mt-3 text-xs text-[color:var(--color-text-secondary)]">
           Existing (profile, preset) pairs are replaced in place. Rels autocomplete from the
           catalog.
         </div>
@@ -287,27 +287,27 @@ export default function Settings(): React.JSX.Element {
   const env = trpc.env.useQuery();
 
   if (env.isLoading) {
-    return <div className="p-6 text-[color:var(--color-fg-muted)]">Loading…</div>;
+    return <div className="p-6 text-[color:var(--color-text-secondary)]">Loading…</div>;
   }
   const values = (env.data ?? {}) as Record<string, string>;
 
   return (
     <div className="h-full overflow-auto p-6" data-testid="settings-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         Settings
       </div>
-      <h1 className="mb-2 text-2xl font-semibold text-[color:var(--color-fg)]">Environment</h1>
-      <p className="mb-6 text-xs text-[color:var(--color-fg-muted)]">
+      <h1 className="mb-2 text-2xl font-semibold text-[color:var(--color-text)]">Environment</h1>
+      <p className="mb-6 text-xs text-[color:var(--color-text-secondary)]">
         Read-only snapshot of the shell environment llamactl is running under. Values
         come from your shell (e.g. <span className="mono">LLAMA_CPP_MODELS</span>) and
         <span className="mono"> ~/.llamactl/env</span>; rows marked
-        <span className="italic text-[color:var(--color-fg-muted)]"> unset</span> fall back to defaults.
+        <span className="italic text-[color:var(--color-text-secondary)]"> unset</span> fall back to defaults.
       </p>
 
       <div className="space-y-6">
         {GROUPS.map((group) => (
           <section key={group.title}>
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
               {group.title}
             </h2>
             <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
@@ -323,14 +323,14 @@ export default function Settings(): React.JSX.Element {
                         data-set={isSet ? 'true' : 'false'}
                         className="border-b border-[var(--color-border)] last:border-b-0 bg-[var(--color-surface-1)]"
                       >
-                        <td className="w-72 px-3 py-1.5 text-[color:var(--color-fg-muted)]">
+                        <td className="w-72 px-3 py-1.5 text-[color:var(--color-text-secondary)]">
                           {key}
                         </td>
                         <td
                           className={
                             isSet
-                              ? 'px-3 py-1.5 text-[color:var(--color-fg)] break-all'
-                              : 'px-3 py-1.5 italic text-[color:var(--color-fg-muted)]'
+                              ? 'px-3 py-1.5 text-[color:var(--color-text)] break-all'
+                              : 'px-3 py-1.5 italic text-[color:var(--color-text-secondary)]'
                           }
                         >
                           {isSet ? raw : 'unset'}

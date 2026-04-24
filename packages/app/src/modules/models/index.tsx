@@ -48,8 +48,8 @@ function ScopeTabs(): React.JSX.Element {
             onClick={() => setScope(tab.id)}
             className={
               isActive
-                ? 'rounded border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-1 font-medium text-[color:var(--color-fg)]'
-                : 'rounded border border-transparent px-3 py-1 text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-1)] hover:text-[color:var(--color-fg)]'
+                ? 'rounded border border-[var(--color-ok)] bg-[var(--color-surface-2)] px-3 py-1 font-medium text-[color:var(--color-text)]'
+                : 'rounded border border-transparent px-3 py-1 text-[color:var(--color-text-secondary)] hover:bg-[var(--color-surface-1)] hover:text-[color:var(--color-text)]'
             }
           >
             {tab.label}
@@ -104,26 +104,26 @@ export default function Models(): React.JSX.Element {
 
   return (
     <div className="h-full overflow-auto p-6" data-testid="models-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         Models
       </div>
-      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-fg)]">
+      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-text)]">
         Catalog ({catalog.data?.length ?? 0})
       </h1>
       <ScopeTabs />
 
       {error && (
-        <div className="mb-3 rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+        <div className="mb-3 rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
           {error}
         </div>
       )}
 
       {report && (
-        <div className="mb-3 rounded-md border border-[var(--color-accent)] bg-[var(--color-surface-1)] px-3 py-2 text-sm">
-          <div className="mb-1 text-[color:var(--color-accent)]">
+        <div className="mb-3 rounded-md border border-[var(--color-ok)] bg-[var(--color-surface-1)] px-3 py-2 text-sm">
+          <div className="mb-1 text-[color:var(--color-ok)]">
             Uninstalled {report.rel}
           </div>
-          <ul className="mono text-xs text-[color:var(--color-fg-muted)]">
+          <ul className="mono text-xs text-[color:var(--color-text-secondary)]">
             {report.actions.map((a, i) => (
               <li key={i}>{a}</li>
             ))}
@@ -133,7 +133,7 @@ export default function Models(): React.JSX.Element {
 
       <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
         <table className="w-full mono text-sm">
-          <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-fg-muted)]">
+          <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
             <tr>
               <th className="px-3 py-2 font-medium">Label</th>
               <th className="px-3 py-2 font-medium">Family</th>
@@ -153,9 +153,9 @@ export default function Models(): React.JSX.Element {
                   className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
                 >
                   <td className="px-3 py-2">{row.label}</td>
-                  <td className="px-3 py-2 text-[color:var(--color-fg-muted)]">{row.family}</td>
+                  <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">{row.family}</td>
                   <td className="px-3 py-2">{row.class}</td>
-                  <td className="px-3 py-2 text-[color:var(--color-fg-muted)]">{row.scope}</td>
+                  <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">{row.scope}</td>
                   <td className="px-3 py-2 text-[color:var(--color-brand)] break-all">
                     {row.rel}
                   </td>
@@ -164,7 +164,7 @@ export default function Models(): React.JSX.Element {
                       (isPending ? (
                         <span className="inline-flex items-center gap-1">
                           {needsForce && (
-                            <label className="flex items-center gap-1 text-xs text-[color:var(--color-fg-muted)]">
+                            <label className="flex items-center gap-1 text-xs text-[color:var(--color-text-secondary)]">
                               <input
                                 type="checkbox"
                                 checked={force}
@@ -179,7 +179,7 @@ export default function Models(): React.JSX.Element {
                             onClick={() =>
                               uninstallMutation.mutate({ rel: row.rel, force })
                             }
-                            className="rounded border border-[var(--color-danger)] px-2 py-0.5 text-xs text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                            className="rounded border border-[var(--color-err)] px-2 py-0.5 text-xs text-[color:var(--color-err)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                           >
                             {uninstallMutation.isPending ? 'Removing…' : 'Confirm'}
                           </button>
@@ -190,7 +190,7 @@ export default function Models(): React.JSX.Element {
                               setPendingRel(null);
                               setForce(false);
                             }}
-                            className="rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)]"
+                            className="rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-text-secondary)] hover:bg-[var(--color-surface-2)]"
                           >
                             Cancel
                           </button>
@@ -203,7 +203,7 @@ export default function Models(): React.JSX.Element {
                             setReport(null);
                             setError(null);
                           }}
-                          className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-fg-muted)] hover:border-[var(--color-border)] hover:text-[color:var(--color-fg)]"
+                          className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-text-secondary)] hover:border-[var(--color-border)] hover:text-[color:var(--color-text)]"
                         >
                           Uninstall
                         </button>
@@ -214,7 +214,7 @@ export default function Models(): React.JSX.Element {
             })}
             {catalog.isSuccess && (catalog.data?.length ?? 0) === 0 && (
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-[color:var(--color-fg-muted)]">
+                <td colSpan={6} className="px-3 py-6 text-center text-[color:var(--color-text-secondary)]">
                   No entries for scope "{scope}".
                 </td>
               </tr>

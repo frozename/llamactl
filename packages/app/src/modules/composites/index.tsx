@@ -122,29 +122,29 @@ spec:
 function phaseBadgeClass(phase: Phase | undefined): string {
   switch (phase) {
     case 'Ready':
-      return 'bg-[var(--color-success)] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
     case 'Degraded':
-      return 'bg-[var(--color-warning,var(--color-accent))] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]';
     case 'Failed':
-      return 'bg-[var(--color-danger)] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
     case 'Pending':
     case 'Applying':
-      return 'bg-[var(--color-accent)] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
     default:
-      return 'bg-[var(--color-surface-2)] text-[color:var(--color-fg-muted)]';
+      return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
   }
 }
 
 function componentStateBadgeClass(state: ComponentState): string {
   switch (state) {
     case 'Ready':
-      return 'bg-[var(--color-success)] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
     case 'Failed':
-      return 'bg-[var(--color-danger)] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
     case 'Applying':
-      return 'bg-[var(--color-accent)] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]';
     default:
-      return 'bg-[var(--color-surface-2)] text-[color:var(--color-fg-muted)]';
+      return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
   }
 }
 
@@ -240,8 +240,8 @@ function TabBar(props: {
             data-testid={`composites-tab-${tab.id}`}
             className={
               isActive
-                ? 'border-b-2 border-[var(--color-brand)] px-3 py-2 text-sm font-medium text-[color:var(--color-fg)]'
-                : 'border-b-2 border-transparent px-3 py-2 text-sm text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]'
+                ? 'border-b-2 border-[var(--color-brand)] px-3 py-2 text-sm font-medium text-[color:var(--color-text)]'
+                : 'border-b-2 border-transparent px-3 py-2 text-sm text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]'
             }
           >
             {tab.label}
@@ -261,14 +261,14 @@ function ListTab(props: {
 
   if (list.isLoading) {
     return (
-      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-fg-muted)]">
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
         Loading composites…
       </div>
     );
   }
   if (list.error) {
     return (
-      <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+      <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
         Failed to load composites: {list.error.message}
       </div>
     );
@@ -282,20 +282,20 @@ function ListTab(props: {
         className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6"
         data-testid="composites-empty-state"
       >
-        <div className="text-sm text-[color:var(--color-fg)]">
+        <div className="text-sm text-[color:var(--color-text)]">
           No composites yet.
         </div>
-        <p className="mt-2 text-xs text-[color:var(--color-fg-muted)]">
+        <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
           A composite bundles services, workloads, RAG nodes, and
           gateways into one declarative unit. Apply one from a YAML
           file:
         </p>
-        <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-fg)]">{`llamactl composite apply -f <file>.yaml`}</pre>
+        <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]">{`llamactl composite apply -f <file>.yaml`}</pre>
         <button
           type="button"
           onClick={onCreate}
           data-testid="composites-empty-apply"
-          className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg-inverted)]"
+          className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 text-xs font-medium text-[color:var(--color-text-inverse)]"
         >
           Open Apply tab
         </button>
@@ -309,7 +309,7 @@ function ListTab(props: {
       data-testid="composites-list-table"
     >
       <table className="w-full mono text-sm">
-        <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-fg-muted)]">
+        <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
           <tr>
             <th className="px-3 py-2 font-medium">Name</th>
             <th className="px-3 py-2 font-medium">Components</th>
@@ -328,13 +328,13 @@ function ListTab(props: {
                 data-testid={`composites-row-${c.metadata.name}`}
                 className="cursor-pointer border-t border-[var(--color-border)] bg-[var(--color-surface-1)] hover:bg-[var(--color-surface-2)]"
               >
-                <td className="px-3 py-2 text-[color:var(--color-accent)] break-all">
+                <td className="px-3 py-2 text-[color:var(--color-ok)] break-all">
                   {c.metadata.name}
                 </td>
-                <td className="px-3 py-2 text-[color:var(--color-fg)]">
+                <td className="px-3 py-2 text-[color:var(--color-text)]">
                   {count}
                 </td>
-                <td className="px-3 py-2 text-[color:var(--color-fg-muted)]">
+                <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">
                   {formatTimestamp(c.status?.appliedAt)}
                 </td>
                 <td className="px-3 py-2">
@@ -365,21 +365,21 @@ function DryRunPreview(props: { result: DryRunResult }): React.JSX.Element {
       className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
       data-testid="composites-dryrun-preview"
     >
-      <div className="mb-2 text-xs text-[color:var(--color-fg-muted)]">
+      <div className="mb-2 text-xs text-[color:var(--color-text-secondary)]">
         Dry-run succeeded — composite{' '}
-        <span className="mono text-[color:var(--color-fg)]">
+        <span className="mono text-[color:var(--color-text)]">
           {result.manifest.metadata.name}
         </span>{' '}
         would apply {countComponents(result.manifest.spec)} component(s).
       </div>
       <div className="mb-2">
-        <div className="mb-1 text-xs font-medium text-[color:var(--color-fg)]">
+        <div className="mb-1 text-xs font-medium text-[color:var(--color-text)]">
           Topological order
         </div>
-        <ol className="space-y-0.5 mono text-xs text-[color:var(--color-fg)]">
+        <ol className="space-y-0.5 mono text-xs text-[color:var(--color-text)]">
           {result.order.map((ref, i) => (
             <li key={`${ref.kind}/${ref.name}`} className="flex gap-2">
-              <span className="text-[color:var(--color-fg-muted)]">
+              <span className="text-[color:var(--color-text-secondary)]">
                 {i + 1}.
               </span>
               <span
@@ -395,14 +395,14 @@ function DryRunPreview(props: { result: DryRunResult }): React.JSX.Element {
       </div>
       {result.impliedEdges.length > 0 && (
         <div>
-          <div className="mb-1 text-xs font-medium text-[color:var(--color-fg)]">
+          <div className="mb-1 text-xs font-medium text-[color:var(--color-text)]">
             Implied dependency edges
           </div>
-          <ul className="space-y-0.5 mono text-[10px] text-[color:var(--color-fg-muted)]">
+          <ul className="space-y-0.5 mono text-[10px] text-[color:var(--color-text-secondary)]">
             {result.impliedEdges.map((e, i) => (
               <li key={i}>
                 {e.from.kind}/{e.from.name}{' '}
-                <span className="text-[color:var(--color-fg)]">→</span>{' '}
+                <span className="text-[color:var(--color-text)]">→</span>{' '}
                 {e.to.kind}/{e.to.name}
               </li>
             ))}
@@ -422,8 +422,8 @@ function WetRunSummary(props: {
     <div
       className={
         result.ok
-          ? 'rounded-md border border-[var(--color-success)] bg-[var(--color-surface-1)] p-3'
-          : 'rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] p-3'
+          ? 'rounded-md border border-[var(--color-ok)] bg-[var(--color-surface-1)] p-3'
+          : 'rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] p-3'
       }
       data-testid="composites-wetrun-summary"
     >
@@ -433,29 +433,29 @@ function WetRunSummary(props: {
         >
           {result.status.phase}
         </span>
-        <span className="text-[color:var(--color-fg)]">
+        <span className="text-[color:var(--color-text)]">
           {result.ok ? 'apply succeeded' : 'apply failed'}
         </span>
         {result.rolledBack && (
-          <span className="text-xs text-[color:var(--color-warning,var(--color-accent))]">
+          <span className="text-xs text-[color:var(--color-warn,var(--color-ok))]">
             · rolled back
           </span>
         )}
       </div>
       {failed.length > 0 && (
         <div className="mt-2 space-y-1">
-          <div className="text-xs font-medium text-[color:var(--color-danger)]">
+          <div className="text-xs font-medium text-[color:var(--color-err)]">
             Failed components ({failed.length})
           </div>
-          <ul className="space-y-0.5 mono text-[11px] text-[color:var(--color-fg)]">
+          <ul className="space-y-0.5 mono text-[11px] text-[color:var(--color-text)]">
             {failed.map((f, i) => (
               <li key={i}>
-                <span className="text-[color:var(--color-fg-muted)]">
+                <span className="text-[color:var(--color-text-secondary)]">
                   {f.ref.kind}/
                 </span>
                 {f.ref.name}
                 {f.message && (
-                  <span className="text-[color:var(--color-danger)]">
+                  <span className="text-[color:var(--color-err)]">
                     : {f.message}
                   </span>
                 )}
@@ -587,7 +587,7 @@ function ApplyTab(props: {
         data-testid="composites-apply-selector"
       >
         <label className="text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
             Mode
           </span>
           <div className="flex gap-1" role="radiogroup" aria-label="Composite mode">
@@ -603,8 +603,8 @@ function ApplyTab(props: {
               data-testid="composites-mode-new"
               className={
                 mode === 'new'
-                  ? 'rounded border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg)]'
-                  : 'rounded border border-[var(--color-border)] px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]'
+                  ? 'rounded border border-[var(--color-ok)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-text)]'
+                  : 'rounded border border-[var(--color-border)] px-3 py-1 text-xs text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]'
               }
             >
               New composite
@@ -617,8 +617,8 @@ function ApplyTab(props: {
               data-testid="composites-mode-edit"
               className={
                 mode === 'edit'
-                  ? 'rounded border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg)]'
-                  : 'rounded border border-[var(--color-border)] px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]'
+                  ? 'rounded border border-[var(--color-ok)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[color:var(--color-text)]'
+                  : 'rounded border border-[var(--color-border)] px-3 py-1 text-xs text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]'
               }
             >
               Edit existing
@@ -627,7 +627,7 @@ function ApplyTab(props: {
         </label>
         {mode === 'edit' && (
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Composite
             </span>
             <ExistingComposites
@@ -637,7 +637,7 @@ function ApplyTab(props: {
           </label>
         )}
         <label className="text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
             Runtime
           </span>
           <select
@@ -651,7 +651,7 @@ function ApplyTab(props: {
               )
             }
             data-testid="composites-runtime-picker"
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg)]"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text)]"
             title="Per-composite runtime override. `auto` inherits LLAMACTL_RUNTIME_BACKEND (defaults to 'docker')."
           >
             <option value="auto">auto (env fallback)</option>
@@ -667,7 +667,7 @@ function ApplyTab(props: {
         data-testid="composites-yaml-editor"
         rows={20}
         spellCheck={false}
-        className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+        className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
       />
 
       <div className="flex items-center gap-2">
@@ -678,7 +678,7 @@ function ApplyTab(props: {
           }}
           disabled={apply.isPending}
           data-testid="composites-dryrun"
-          className="rounded border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-accent)] disabled:opacity-50"
+          className="rounded border border-[var(--color-ok)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-ok)] disabled:opacity-50"
         >
           {apply.isPending && apply.variables?.dryRun
             ? 'Validating…'
@@ -695,7 +695,7 @@ function ApplyTab(props: {
             dryRunYaml !== yamlText
           }
           data-testid="composites-apply"
-          className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-[color:var(--color-fg-inverted)] disabled:opacity-40"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 text-xs font-medium text-[color:var(--color-text-inverse)] disabled:opacity-40"
           title={
             dryRunOk && dryRunYaml === yamlText
               ? 'Wet-apply the composite'
@@ -707,7 +707,7 @@ function ApplyTab(props: {
             : 'Apply'}
         </button>
         {error && (
-          <span className="text-xs text-[color:var(--color-danger)]">{error}</span>
+          <span className="text-xs text-[color:var(--color-err)]">{error}</span>
         )}
       </div>
 
@@ -783,7 +783,7 @@ function ExistingComposites(props: {
   const rows = (list.data ?? []) as CompositeShape[];
   if (rows.length === 0) {
     return (
-      <span className="mono text-xs text-[color:var(--color-fg-muted)]">
+      <span className="mono text-xs text-[color:var(--color-text-secondary)]">
         no composites — create a new one
       </span>
     );
@@ -793,7 +793,7 @@ function ExistingComposites(props: {
       value={props.selected ?? ''}
       onChange={(e) => props.onChange(e.target.value)}
       data-testid="composites-existing-select"
-      className="w-64 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+      className="w-64 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
     >
       <option value="" disabled>
         Select a composite
@@ -842,7 +842,7 @@ function ComponentTree(props: {
       rows: spec.services.map((s) => ({
         ref: { kind: 'service', name: s.name },
         meta: (
-          <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+          <span className="text-[10px] text-[color:var(--color-text-secondary)]">
             {s.kind} on <span className="mono">{s.node}</span>
           </span>
         ),
@@ -853,7 +853,7 @@ function ComponentTree(props: {
       rows: spec.workloads.map((w) => ({
         ref: { kind: 'workload', name: w.node },
         meta: (
-          <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+          <span className="text-[10px] text-[color:var(--color-text-secondary)]">
             <span className="mono">{w.target.kind}:{w.target.value}</span>
           </span>
         ),
@@ -864,7 +864,7 @@ function ComponentTree(props: {
       rows: spec.ragNodes.map((r) => ({
         ref: { kind: 'rag', name: r.name },
         meta: (
-          <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+          <span className="text-[10px] text-[color:var(--color-text-secondary)]">
             node <span className="mono">{r.node}</span>
             {r.backingService && (
               <>
@@ -881,7 +881,7 @@ function ComponentTree(props: {
       rows: spec.gateways.map((g) => ({
         ref: { kind: 'gateway', name: g.name },
         meta: (
-          <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+          <span className="text-[10px] text-[color:var(--color-text-secondary)]">
             {g.provider} on <span className="mono">{g.node}</span>
             {g.upstreamWorkloads.length > 0 && (
               <>
@@ -902,11 +902,11 @@ function ComponentTree(props: {
     <div className="space-y-3" data-testid="composites-component-tree">
       {sections.map((section) => (
         <div key={section.title}>
-          <div className="mb-1 text-xs font-medium text-[color:var(--color-fg)]">
+          <div className="mb-1 text-xs font-medium text-[color:var(--color-text)]">
             {section.title} ({section.rows.length})
           </div>
           {section.rows.length === 0 ? (
-            <div className="rounded border border-dashed border-[var(--color-border)] p-2 text-[10px] text-[color:var(--color-fg-muted)]">
+            <div className="rounded border border-dashed border-[var(--color-border)] p-2 text-[10px] text-[color:var(--color-text-secondary)]">
               none declared
             </div>
           ) : (
@@ -918,7 +918,7 @@ function ComponentTree(props: {
                   className="flex items-center gap-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-1"
                 >
                   {badge(row.ref)}
-                  <span className="mono text-xs text-[color:var(--color-fg)]">
+                  <span className="mono text-xs text-[color:var(--color-text)]">
                     {row.ref.name}
                   </span>
                   {row.meta}
@@ -961,7 +961,7 @@ function LiveStatusStream(props: {
   if (error) {
     return (
       <div
-        className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-danger)]"
+        className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-err)]"
         data-testid="composites-live-status-error"
       >
         Live status unavailable: {error}
@@ -970,7 +970,7 @@ function LiveStatusStream(props: {
   }
   if (events.length === 0) {
     return (
-      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-fg-muted)]">
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-text-secondary)]">
         Waiting for status events…
       </div>
     );
@@ -983,10 +983,10 @@ function LiveStatusStream(props: {
       {events.map((ev, i) => (
         <li
           key={i}
-          className="text-[color:var(--color-fg-muted)]"
+          className="text-[color:var(--color-text-secondary)]"
           data-testid={`composites-live-event-${ev.type}`}
         >
-          <span className="text-[color:var(--color-fg)]">{ev.type}</span>
+          <span className="text-[color:var(--color-text)]">{ev.type}</span>
           {'phase' in ev && ` · ${String(ev.phase)}`}
           {'ref' in ev && ` · ${ev.ref.kind}/${ev.ref.name}`}
           {'message' in ev && ev.message && ` · ${ev.message}`}
@@ -1030,7 +1030,7 @@ function DestroySection(props: {
         type="button"
         onClick={() => setArmed(true)}
         data-testid="composites-destroy-arm"
-        className="rounded border border-[var(--color-danger)] px-3 py-1 text-xs text-[color:var(--color-danger)]"
+        className="rounded border border-[var(--color-err)] px-3 py-1 text-xs text-[color:var(--color-err)]"
       >
         Destroy composite…
       </button>
@@ -1039,10 +1039,10 @@ function DestroySection(props: {
 
   return (
     <div
-      className="space-y-2 rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] p-3"
+      className="space-y-2 rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] p-3"
       data-testid="composites-destroy-confirm"
     >
-      <div className="text-xs text-[color:var(--color-fg)]">
+      <div className="text-xs text-[color:var(--color-text)]">
         Destructive action: this will tear down every component declared in{' '}
         <span className="mono">{name}</span> and remove the manifest. Type the
         composite name below to confirm.
@@ -1054,14 +1054,14 @@ function DestroySection(props: {
           onChange={(e) => setTyped(e.target.value)}
           data-testid="composites-destroy-input"
           placeholder={name}
-          className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+          className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
         />
         <button
           type="button"
           onClick={() => destroy.mutate({ name, dryRun: false })}
           disabled={!matches || destroy.isPending}
           data-testid="composites-destroy-confirm-button"
-          className="rounded border border-[var(--color-danger)] bg-[var(--color-danger)] px-3 py-1 text-xs text-[color:var(--color-fg-inverted)] disabled:opacity-40"
+          className="rounded border border-[var(--color-err)] bg-[var(--color-err)] px-3 py-1 text-xs text-[color:var(--color-text-inverse)] disabled:opacity-40"
         >
           {destroy.isPending ? 'Destroying…' : 'Confirm destroy'}
         </button>
@@ -1072,13 +1072,13 @@ function DestroySection(props: {
             setTyped('');
             setError(null);
           }}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-fg)]"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-text)]"
         >
           Cancel
         </button>
       </div>
       {error && (
-        <div className="text-xs text-[color:var(--color-danger)]">{error}</div>
+        <div className="text-xs text-[color:var(--color-err)]">{error}</div>
       )}
     </div>
   );
@@ -1098,11 +1098,11 @@ function DetailTab(props: {
 
   if (!name) {
     return (
-      <div className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-fg-muted)]">
+      <div className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
         No composite selected. Pick one from the{' '}
         <button
           type="button"
-          className="text-[color:var(--color-accent)] underline"
+          className="text-[color:var(--color-ok)] underline"
           onClick={() => onPickFromList('')}
         >
           List tab
@@ -1114,14 +1114,14 @@ function DetailTab(props: {
 
   if (query.isLoading) {
     return (
-      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-fg-muted)]">
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
         Loading <span className="mono">{name}</span>…
       </div>
     );
   }
   if (query.error) {
     return (
-      <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+      <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
         Failed to load composite <span className="mono">{name}</span>:{' '}
         {query.error.message}
       </div>
@@ -1130,7 +1130,7 @@ function DetailTab(props: {
   const manifest = query.data as CompositeShape | null | undefined;
   if (!manifest) {
     return (
-      <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-sm text-[color:var(--color-fg-muted)]">
+      <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-sm text-[color:var(--color-text-secondary)]">
         Composite <span className="mono">{name}</span> not found.
       </div>
     );
@@ -1150,7 +1150,7 @@ function DetailTab(props: {
     <div className="space-y-4" data-testid={`composites-detail-${name}`}>
       <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="mono text-lg text-[color:var(--color-fg)]">
+          <h2 className="mono text-lg text-[color:var(--color-text)]">
             {manifest.metadata.name}
           </h2>
           <span
@@ -1158,7 +1158,7 @@ function DetailTab(props: {
           >
             {manifest.status?.phase ?? 'Unapplied'}
           </span>
-          <span className="text-xs text-[color:var(--color-fg-muted)]">
+          <span className="text-xs text-[color:var(--color-text-secondary)]">
             last applied {formatTimestamp(manifest.status?.appliedAt)}
           </span>
         </div>
@@ -1167,7 +1167,7 @@ function DetailTab(props: {
             {Object.entries(labels).map(([k, v]) => (
               <span
                 key={k}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 mono text-[10px] text-[color:var(--color-fg-muted)]"
+                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 mono text-[10px] text-[color:var(--color-text-secondary)]"
               >
                 {k}={v}
               </span>
@@ -1182,7 +1182,7 @@ function DetailTab(props: {
       />
 
       <div>
-        <div className="mb-1 text-xs font-medium text-[color:var(--color-fg)]">
+        <div className="mb-1 text-xs font-medium text-[color:var(--color-text)]">
           Live status
         </div>
         <LiveStatusStream name={manifest.metadata.name} />
@@ -1193,13 +1193,13 @@ function DetailTab(props: {
           type="button"
           onClick={() => setShowYaml((v) => !v)}
           data-testid="composites-yaml-toggle"
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[10px] text-[color:var(--color-fg)]"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[10px] text-[color:var(--color-text)]"
         >
           {showYaml ? 'Hide YAML' : 'View YAML'}
         </button>
         {showYaml && (
           <pre
-            className="mt-2 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-fg)]"
+            className="mt-2 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]"
             data-testid="composites-yaml-view"
           >
             {YAML.stringify(serializable)}
@@ -1230,13 +1230,13 @@ export default function Composites(): React.JSX.Element {
       className="h-full overflow-auto p-6"
       data-testid="composites-root"
     >
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         Composites
       </div>
-      <h1 className="mb-2 text-2xl font-semibold text-[color:var(--color-fg)]">
+      <h1 className="mb-2 text-2xl font-semibold text-[color:var(--color-text)]">
         Declarative multi-component applies
       </h1>
-      <p className="mb-6 text-xs text-[color:var(--color-fg-muted)]">
+      <p className="mb-6 text-xs text-[color:var(--color-text-secondary)]">
         Bundle services, workloads, RAG nodes, and gateways into one
         manifest. The applier orders components via the dependency DAG
         and rolls back on failure.

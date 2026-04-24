@@ -101,9 +101,9 @@ function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
       }}
       className="mt-4 space-y-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
     >
-      <div className="text-sm font-medium text-[color:var(--color-fg)]">
+      <div className="text-sm font-medium text-[color:var(--color-text)]">
         Register a cloud provider
-        <span className="ml-2 text-[10px] text-[color:var(--color-fg-muted)]">
+        <span className="ml-2 text-[10px] text-[color:var(--color-text-secondary)]">
           (OpenAI / Anthropic / Together / groq / Mistral / any OpenAI-compat)
         </span>
       </div>
@@ -113,12 +113,12 @@ function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
           placeholder="node name (e.g. openai-prod)"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+          className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
         />
         <select
           value={provider}
           onChange={(e) => setProvider(e.target.value as CloudProvider)}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
         >
           <option value="openai">openai</option>
           <option value="anthropic">anthropic</option>
@@ -134,7 +134,7 @@ function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
           placeholder="baseUrl (blank to use provider default)"
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
-          className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-fg)]"
+          className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-text)]"
         />
       </div>
       <div className="flex flex-wrap gap-2 text-xs">
@@ -143,26 +143,26 @@ function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
           placeholder="apiKeyRef ($ENV_VAR or file path)"
           value={apiKeyRef}
           onChange={(e) => setApiKeyRef(e.target.value)}
-          className="w-72 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-fg)]"
+          className="w-72 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-text)]"
         />
         <input
           type="text"
           placeholder="display name (optional)"
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
-          className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+          className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
         />
       </div>
       <div className="flex items-center gap-3 text-sm">
         <button
           type="submit"
           disabled={add.isPending}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 text-[color:var(--color-text-inverse)] disabled:opacity-50"
         >
           {add.isPending ? 'Probing…' : 'Register cloud node'}
         </button>
-        {error && <span className="text-xs text-[color:var(--color-danger)]">{error}</span>}
-        {success && <span className="text-xs text-[color:var(--color-success)]">{success}</span>}
+        {error && <span className="text-xs text-[color:var(--color-err)]">{error}</span>}
+        {success && <span className="text-xs text-[color:var(--color-ok)]">{success}</span>}
       </div>
     </form>
   );
@@ -218,7 +218,7 @@ function RegisterPanel(props: { onDone: () => void }): React.JSX.Element {
       }}
       className="mt-4 space-y-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
     >
-      <div className="text-sm font-medium text-[color:var(--color-fg)]">
+      <div className="text-sm font-medium text-[color:var(--color-text)]">
         Register a remote node
       </div>
       <div className="flex gap-2">
@@ -227,9 +227,9 @@ function RegisterPanel(props: { onDone: () => void }): React.JSX.Element {
           placeholder="node name (e.g., mac-mini)"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-sm text-[color:var(--color-fg)]"
+          className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-sm text-[color:var(--color-text)]"
         />
-        <label className="flex items-center gap-1 text-xs text-[color:var(--color-fg-muted)]">
+        <label className="flex items-center gap-1 text-xs text-[color:var(--color-text-secondary)]">
           <input
             type="checkbox"
             checked={force}
@@ -242,18 +242,18 @@ function RegisterPanel(props: { onDone: () => void }): React.JSX.Element {
         placeholder="Paste the `llamactl node add <name> --bootstrap …` line or just the blob"
         value={blob}
         onChange={(e) => setBlob(e.target.value)}
-        className="h-28 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-xs text-[color:var(--color-fg)]"
+        className="h-28 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-xs text-[color:var(--color-text)]"
       />
       <div className="flex items-center gap-3 text-sm">
         <button
           type="submit"
           disabled={add.isPending}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 text-[color:var(--color-fg-inverted)] disabled:opacity-50"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 text-[color:var(--color-text-inverse)] disabled:opacity-50"
         >
           {add.isPending ? 'Registering…' : 'Register'}
         </button>
-        {error && <span className="text-xs text-[color:var(--color-danger)]">{error}</span>}
-        {success && <span className="text-xs text-[color:var(--color-success)]">{success}</span>}
+        {error && <span className="text-xs text-[color:var(--color-err)]">{error}</span>}
+        {success && <span className="text-xs text-[color:var(--color-ok)]">{success}</span>}
       </div>
     </form>
   );
@@ -291,42 +291,42 @@ function OpenAIConfigPanel(props: { node: string }): React.JSX.Element {
   return (
     <div className="mt-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 text-xs">
       <div className="flex items-center justify-between">
-        <span className="font-medium text-[color:var(--color-fg)]">OpenAI config</span>
+        <span className="font-medium text-[color:var(--color-text)]">OpenAI config</span>
         <button
           type="button"
           onClick={() => { void load(); }}
           disabled={cfg.isFetching}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)] disabled:opacity-50"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-0.5 text-[10px] text-[color:var(--color-text)] disabled:opacity-50"
         >
           {cfg.isFetching ? 'Loading…' : revealed ? 'Hide' : 'Reveal'}
         </button>
       </div>
       {cfg.error && (
-        <div className="mt-1 text-[color:var(--color-danger)]">{cfg.error.message}</div>
+        <div className="mt-1 text-[color:var(--color-err)]">{cfg.error.message}</div>
       )}
       {revealed && cfg.data && (
-        <div className="mt-2 space-y-2 font-mono text-[11px] text-[color:var(--color-fg)]">
+        <div className="mt-2 space-y-2 font-mono text-[11px] text-[color:var(--color-text)]">
           <div>
-            <div className="text-[10px] text-[color:var(--color-fg-muted)]">base_url</div>
+            <div className="text-[10px] text-[color:var(--color-text-secondary)]">base_url</div>
             <div className="flex items-center gap-2">
               <span className="break-all">{cfg.data.baseUrl}</span>
               <button
                 type="button"
                 onClick={() => { void copy(cfg.data!.baseUrl); }}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1.5 py-0.5 text-[9px] text-[color:var(--color-fg-muted)]"
+                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1.5 py-0.5 text-[9px] text-[color:var(--color-text-secondary)]"
               >
                 copy
               </button>
             </div>
           </div>
           <div>
-            <div className="text-[10px] text-[color:var(--color-fg-muted)]">api_key (bearer)</div>
+            <div className="text-[10px] text-[color:var(--color-text-secondary)]">api_key (bearer)</div>
             <div className="flex items-center gap-2">
               <span className="break-all">{cfg.data.apiKey}</span>
               <button
                 type="button"
                 onClick={() => { void copy(cfg.data!.apiKey); }}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1.5 py-0.5 text-[9px] text-[color:var(--color-fg-muted)]"
+                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1.5 py-0.5 text-[9px] text-[color:var(--color-text-secondary)]"
               >
                 copy
               </button>
@@ -334,12 +334,12 @@ function OpenAIConfigPanel(props: { node: string }): React.JSX.Element {
           </div>
           {cfg.data.caCertPem && (
             <div>
-              <div className="flex items-center justify-between text-[10px] text-[color:var(--color-fg-muted)]">
+              <div className="flex items-center justify-between text-[10px] text-[color:var(--color-text-secondary)]">
                 <span>ca_cert.pem (fingerprint {cfg.data.caFingerprint ?? '—'})</span>
                 <button
                   type="button"
                   onClick={() => { void copy(cfg.data!.caCertPem ?? ''); }}
-                  className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1.5 py-0.5 text-[9px] text-[color:var(--color-fg-muted)]"
+                  className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1.5 py-0.5 text-[9px] text-[color:var(--color-text-secondary)]"
                 >
                   copy PEM
                 </button>
@@ -347,12 +347,12 @@ function OpenAIConfigPanel(props: { node: string }): React.JSX.Element {
               <textarea
                 readOnly
                 value={cfg.data.caCertPem}
-                className="mt-1 h-20 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-0)] px-2 py-1 text-[10px] text-[color:var(--color-fg)]"
+                className="mt-1 h-20 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-0)] px-2 py-1 text-[10px] text-[color:var(--color-text)]"
               />
             </div>
           )}
           <details>
-            <summary className="cursor-pointer text-[10px] text-[color:var(--color-fg-muted)]">
+            <summary className="cursor-pointer text-[10px] text-[color:var(--color-text-secondary)]">
               Python example
             </summary>
             <pre className="mt-1 overflow-x-auto whitespace-pre rounded border border-[var(--color-border)] bg-[var(--color-surface-0)] px-2 py-1 text-[10px]">
@@ -360,7 +360,7 @@ function OpenAIConfigPanel(props: { node: string }): React.JSX.Element {
             </pre>
           </details>
           <details>
-            <summary className="cursor-pointer text-[10px] text-[color:var(--color-fg-muted)]">
+            <summary className="cursor-pointer text-[10px] text-[color:var(--color-text-secondary)]">
               curl example
             </summary>
             <pre className="mt-1 overflow-x-auto whitespace-pre rounded border border-[var(--color-border)] bg-[var(--color-surface-0)] px-2 py-1 text-[10px]">
@@ -459,30 +459,30 @@ function NodeRow(props: {
             title={reachabilityTitle}
             className={`inline-block h-2 w-2 translate-y-[-1px] rounded-full ${
               reachability === 'ok'
-                ? 'bg-[var(--color-success,var(--color-accent))]'
+                ? 'bg-[var(--color-ok,var(--color-ok))]'
                 : reachability === 'fail'
-                  ? 'bg-[var(--color-danger)]'
-                  : 'bg-[var(--color-fg-muted)]'
+                  ? 'bg-[var(--color-err)]'
+                  : 'bg-[var(--color-text-secondary)]'
             }`}
           />
-          <span className="font-mono text-sm text-[color:var(--color-fg)]">{props.name}</span>
+          <span className="font-mono text-sm text-[color:var(--color-text)]">{props.name}</span>
           {isDefault && (
-            <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]">
+            <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]">
               default
             </span>
           )}
           {isLocal && (
-            <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]">
+            <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]">
               local
             </span>
           )}
           {isGateway && (
-            <span className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)]">
+            <span className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-inverse)]">
               gateway · {props.cloud?.provider ?? '?'}
             </span>
           )}
           {isProvider && (
-            <span className="ml-4 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]">
+            <span className="ml-4 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]">
               provider
             </span>
           )}
@@ -492,7 +492,7 @@ function NodeRow(props: {
             type="button"
             onClick={runTest}
             disabled={test.isFetching}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)] disabled:opacity-50"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)] disabled:opacity-50"
           >
             {test.isFetching ? 'Testing…' : 'Test'}
           </button>
@@ -503,14 +503,14 @@ function NodeRow(props: {
                   <button
                     type="button"
                     onClick={() => remove.mutate({ name: props.name })}
-                    className="rounded border border-[var(--color-border)] bg-[var(--color-danger)] px-2 py-1 text-[color:var(--color-fg-inverted)]"
+                    className="rounded border border-[var(--color-border)] bg-[var(--color-err)] px-2 py-1 text-[color:var(--color-text-inverse)]"
                   >
                     Confirm remove
                   </button>
                   <button
                     type="button"
                     onClick={() => setConfirmRm(false)}
-                    className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+                    className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
                   >
                     Cancel
                   </button>
@@ -519,7 +519,7 @@ function NodeRow(props: {
                 <button
                   type="button"
                   onClick={() => setConfirmRm(true)}
-                  className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg-muted)]"
+                  className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text-secondary)]"
                 >
                   Remove
                 </button>
@@ -528,7 +528,7 @@ function NodeRow(props: {
           )}
         </div>
       </div>
-      <div className="mt-1 text-xs text-[color:var(--color-fg-muted)]">
+      <div className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
         {isProvider
           ? 'via gateway'
           : isGateway
@@ -545,9 +545,9 @@ function NodeRow(props: {
       {testResult && (
         <div className="mt-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 text-xs">
           {typeof testResult === 'string' ? (
-            <span className="text-[color:var(--color-danger)]">{testResult}</span>
+            <span className="text-[color:var(--color-err)]">{testResult}</span>
           ) : (
-            <div className="space-y-0.5 font-mono text-[color:var(--color-fg)]">
+            <div className="space-y-0.5 font-mono text-[color:var(--color-text)]">
               <div>profile: {testResult.profile}</div>
               <div>platform: {testResult.platform}</div>
               <div>memory: {humanBytes(testResult.memBytes)}</div>
@@ -588,26 +588,26 @@ function DiscoverPanel(): React.JSX.Element {
   return (
     <div className="mt-4 space-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
       <div className="flex items-center justify-between">
-        <div className="text-sm font-medium text-[color:var(--color-fg)]">
+        <div className="text-sm font-medium text-[color:var(--color-text)]">
           Discover LAN agents
-          <span className="ml-2 text-[10px] text-[color:var(--color-fg-muted)]">(mDNS / Bonjour)</span>
+          <span className="ml-2 text-[10px] text-[color:var(--color-text-secondary)]">(mDNS / Bonjour)</span>
         </div>
         <button
           type="button"
           onClick={scan}
           disabled={discover.isFetching}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-fg)] disabled:opacity-50"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-text)] disabled:opacity-50"
         >
           {discover.isFetching ? 'Scanning…' : 'Scan (3s)'}
         </button>
       </div>
       {discover.error && (
-        <div className="text-xs text-[color:var(--color-danger)]">
+        <div className="text-xs text-[color:var(--color-err)]">
           {discover.error.message}
         </div>
       )}
       {discover.data && rows.length === 0 && (
-        <div className="text-xs text-[color:var(--color-fg-muted)]">
+        <div className="text-xs text-[color:var(--color-text-secondary)]">
           No agents found. Make sure the remote machine has <span className="font-mono">llamactl agent serve</span> running on the same network.
         </div>
       )}
@@ -619,13 +619,13 @@ function DiscoverPanel(): React.JSX.Element {
               className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs"
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[color:var(--color-fg)]">{r.nodeName}</span>
-                <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+                <span className="font-mono text-[color:var(--color-text)]">{r.nodeName}</span>
+                <span className="text-[10px] text-[color:var(--color-text-secondary)]">
                   {r.alreadyRegistered ? 'registered' : 'new'}
                   {r.version ? ` · v${r.version}` : ''}
                 </span>
               </div>
-              <div className="mt-1 font-mono text-[10px] text-[color:var(--color-fg-muted)]">
+              <div className="mt-1 font-mono text-[10px] text-[color:var(--color-text-secondary)]">
                 {r.url}
                 {r.fingerprint && (
                   <>
@@ -634,7 +634,7 @@ function DiscoverPanel(): React.JSX.Element {
                   </>
                 )}
               </div>
-              <div className="mt-1 text-[10px] text-[color:var(--color-fg-muted)]">
+              <div className="mt-1 text-[10px] text-[color:var(--color-text-secondary)]">
                 To register: run <span className="font-mono">llamactl agent init</span> on {r.nodeName}, then paste the bootstrap above.
               </div>
             </li>
@@ -653,12 +653,12 @@ export default function Nodes(): React.JSX.Element {
 
   if (list.isLoading) {
     return (
-      <div className="p-6 text-sm text-[color:var(--color-fg-muted)]">Loading…</div>
+      <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
     );
   }
   if (list.error) {
     return (
-      <div className="p-6 text-sm text-[color:var(--color-danger)]">
+      <div className="p-6 text-sm text-[color:var(--color-err)]">
         Failed to load nodes: {list.error.message}
       </div>
     );
@@ -668,8 +668,8 @@ export default function Nodes(): React.JSX.Element {
     <div className="flex h-full flex-col gap-4 overflow-auto p-6" data-testid="nodes-root">
       <div className="flex items-baseline justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-[color:var(--color-fg)]">Nodes</h1>
-          <div className="text-xs text-[color:var(--color-fg-muted)]">
+          <h1 className="text-lg font-semibold text-[color:var(--color-text)]">Nodes</h1>
+          <div className="text-xs text-[color:var(--color-text-secondary)]">
             context <span className="font-mono">{data.context}</span> · cluster{' '}
             <span className="font-mono">{data.cluster}</span> · default{' '}
             <span className="font-mono">{data.defaultNode}</span>
@@ -679,21 +679,21 @@ export default function Nodes(): React.JSX.Element {
           <button
             type="button"
             onClick={() => setShowDiscover((v) => !v)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-fg)]"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-text)]"
           >
             {showDiscover ? 'Hide discover' : 'Discover'}
           </button>
           <button
             type="button"
             onClick={() => setShowCloud((v) => !v)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-fg)]"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-text)]"
           >
             {showCloud ? 'Cancel cloud' : 'Register cloud'}
           </button>
           <button
             type="button"
             onClick={() => setShowRegister((v) => !v)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-fg)]"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-text)]"
           >
             {showRegister ? 'Cancel' : 'Register agent'}
           </button>
@@ -704,7 +704,7 @@ export default function Nodes(): React.JSX.Element {
       {showRegister && <RegisterPanel onDone={() => setShowRegister(false)} />}
       <div className="space-y-2">
         {data.nodes.length === 0 && (
-          <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 text-xs text-[color:var(--color-fg-muted)]">
+          <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 text-xs text-[color:var(--color-text-secondary)]">
             (no nodes registered)
           </div>
         )}

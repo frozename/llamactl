@@ -94,21 +94,21 @@ function SchedulerPanel(): React.JSX.Element {
   return (
     <section className="mb-6 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
       <div className="flex items-center justify-between">
-        <div className="text-sm font-medium text-[color:var(--color-fg)]">
+        <div className="text-sm font-medium text-[color:var(--color-text)]">
           Bench scheduler
         </div>
         <div className="flex items-center gap-2 text-[11px]">
           <span
-            className={`h-1.5 w-1.5 rounded-full ${running ? 'bg-[var(--color-success)]' : 'bg-[var(--color-fg-muted)]'}`}
+            className={`h-1.5 w-1.5 rounded-full ${running ? 'bg-[var(--color-ok)]' : 'bg-[var(--color-text-secondary)]'}`}
           />
-          <span className="text-[color:var(--color-fg-muted)]">
+          <span className="text-[color:var(--color-text-secondary)]">
             {running ? `running · last ${lastTick}` : 'stopped'}
           </span>
           <button
             type="button"
             onClick={() => kick.mutate()}
             disabled={kick.isPending}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)]"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text)]"
           >
             {kick.isPending ? '…' : 'Kick'}
           </button>
@@ -116,7 +116,7 @@ function SchedulerPanel(): React.JSX.Element {
             <button
               type="button"
               onClick={() => stop.mutate()}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]"
             >
               Stop
             </button>
@@ -124,7 +124,7 @@ function SchedulerPanel(): React.JSX.Element {
             <button
               type="button"
               onClick={() => start.mutate({ tickIntervalSeconds: 60 })}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)]"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-inverse)]"
             >
               Start
             </button>
@@ -138,13 +138,13 @@ function SchedulerPanel(): React.JSX.Element {
           value={id}
           onChange={(e) => setId(e.target.value)}
           data-testid="bench-schedule-id"
-          className="w-40 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+          className="w-40 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
         />
         <select
           value={node}
           onChange={(e) => setNode(e.target.value)}
           data-testid="bench-schedule-node"
-          className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-fg)]"
+          className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
         >
           {(nodes.data?.nodes ?? [{ name: 'local' }]).map((n) => (
             <option key={n.name} value={n.name}>
@@ -158,9 +158,9 @@ function SchedulerPanel(): React.JSX.Element {
           value={rel}
           onChange={(e) => setRel(e.target.value)}
           data-testid="bench-schedule-rel"
-          className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-fg)]"
+          className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-text)]"
         />
-        <label className="flex items-center gap-1 text-[color:var(--color-fg-muted)]">
+        <label className="flex items-center gap-1 text-[color:var(--color-text-secondary)]">
           every
           <input
             type="number"
@@ -168,7 +168,7 @@ function SchedulerPanel(): React.JSX.Element {
             max={168}
             value={hours}
             onChange={(e) => setHours(Math.max(1, Number(e.target.value) || 1))}
-            className="w-14 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-1 text-right text-[color:var(--color-fg)]"
+            className="w-14 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-1 text-right text-[color:var(--color-text)]"
           />
           hours
         </label>
@@ -182,17 +182,17 @@ function SchedulerPanel(): React.JSX.Element {
               ? 'Fill id and rel before adding a schedule.'
               : `Run bench for ${rel.trim()} on ${node.trim() || 'local'} every ${hours}h.`
           }
-          className="rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-3 py-1 font-medium text-[color:var(--color-fg-inverted)] disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-3 py-1 font-medium text-[color:var(--color-text-inverse)] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {add.isPending ? 'Adding…' : 'Add schedule'}
         </button>
       </div>
       {error && (
-        <div className="mt-2 text-xs text-[color:var(--color-danger)]">{error}</div>
+        <div className="mt-2 text-xs text-[color:var(--color-err)]">{error}</div>
       )}
       <div className="mt-3 space-y-1">
         {schedules.length === 0 && (
-          <div className="text-xs text-[color:var(--color-fg-muted)]">
+          <div className="text-xs text-[color:var(--color-text-secondary)]">
             No schedules yet. Add one above to run benches on a cadence.
           </div>
         )}
@@ -202,15 +202,15 @@ function SchedulerPanel(): React.JSX.Element {
             className="flex items-center justify-between rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs"
           >
             <div>
-              <span className="font-mono text-[color:var(--color-fg)]">{s.id}</span>
-              <span className="mx-1 text-[color:var(--color-fg-muted)]">·</span>
-              <span className="text-[color:var(--color-fg-muted)]">{s.node}</span>
-              <span className="mx-1 text-[color:var(--color-fg-muted)]">·</span>
+              <span className="font-mono text-[color:var(--color-text)]">{s.id}</span>
+              <span className="mx-1 text-[color:var(--color-text-secondary)]">·</span>
+              <span className="text-[color:var(--color-text-secondary)]">{s.node}</span>
+              <span className="mx-1 text-[color:var(--color-text-secondary)]">·</span>
               <span className="font-mono text-[11px]">{s.rel}</span>
-              <div className="text-[10px] text-[color:var(--color-fg-muted)]">
+              <div className="text-[10px] text-[color:var(--color-text-secondary)]">
                 every {Math.round(s.intervalSeconds / 3600)} hours · last {s.lastRunAt ?? '—'}
                 {s.lastError && (
-                  <span className="ml-2 text-[color:var(--color-danger)]">err: {s.lastError}</span>
+                  <span className="ml-2 text-[color:var(--color-err)]">err: {s.lastError}</span>
                 )}
               </div>
             </div>
@@ -218,14 +218,14 @@ function SchedulerPanel(): React.JSX.Element {
               <button
                 type="button"
                 onClick={() => toggle.mutate({ id: s.id, enabled: !s.enabled })}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg)]"
+                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-0.5 text-[10px] text-[color:var(--color-text)]"
               >
                 {s.enabled ? 'pause' : 'resume'}
               </button>
               <button
                 type="button"
                 onClick={() => remove.mutate({ id: s.id })}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)]"
+                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]"
               >
                 remove
               </button>
@@ -394,10 +394,10 @@ export default function Bench(): React.JSX.Element {
 
   return (
     <div className="h-full overflow-auto p-6" data-testid="bench-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         Bench
       </div>
-      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-fg)]">
+      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-text)]">
         Tune + measure
       </h1>
 
@@ -409,7 +409,7 @@ export default function Bench(): React.JSX.Element {
       >
         <div className="grid grid-cols-12 gap-3">
           <label className="col-span-7 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Target (rel or preset alias)
             </span>
             <input
@@ -431,7 +431,7 @@ export default function Bench(): React.JSX.Element {
             </datalist>
           </label>
           <label className="col-span-2 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">Mode</span>
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">Mode</span>
             <select
               value={mode}
               onChange={(e) => setMode(e.target.value as Mode)}
@@ -449,7 +449,7 @@ export default function Bench(): React.JSX.Element {
                 type="button"
                 onClick={cancel}
                 data-testid="bench-cancel"
-                className="flex-1 rounded border border-[var(--color-danger)] px-3 py-1 text-sm text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)]"
+                className="flex-1 rounded border border-[var(--color-err)] px-3 py-1 text-sm text-[color:var(--color-err)] hover:bg-[var(--color-surface-2)]"
               >
                 Cancel
               </button>
@@ -471,7 +471,7 @@ export default function Bench(): React.JSX.Element {
                   disabled={!canRun}
                   data-testid="bench-run-vision"
                   title={canRun ? 'Run vision bench.' : 'Enter a target first.'}
-                  className="flex-1 rounded border border-[var(--color-accent)] px-3 py-1 text-sm font-medium text-[color:var(--color-accent)] hover:bg-[var(--color-surface-2)] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex-1 rounded border border-[var(--color-ok)] px-3 py-1 text-sm font-medium text-[color:var(--color-ok)] hover:bg-[var(--color-surface-2)] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Run vision
                 </button>
@@ -482,19 +482,19 @@ export default function Bench(): React.JSX.Element {
       </form>
 
       {error && (
-        <div className="mb-3 rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+        <div className="mb-3 rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
           {error}
         </div>
       )}
       {summary && (
-        <div className="mb-3 rounded-md border border-[var(--color-accent)] bg-[var(--color-surface-1)] px-3 py-2 text-sm">
-          <div className="text-[color:var(--color-accent)]">Bench complete</div>
-          <div className="mono text-xs text-[color:var(--color-fg-muted)]">{summary}</div>
+        <div className="mb-3 rounded-md border border-[var(--color-ok)] bg-[var(--color-surface-1)] px-3 py-2 text-sm">
+          <div className="text-[color:var(--color-ok)]">Bench complete</div>
+          <div className="mono text-xs text-[color:var(--color-text-secondary)]">{summary}</div>
         </div>
       )}
 
       <div className="mb-6 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)]">
-        <div className="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+        <div className="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
           <span>Log</span>
           <span>
             {log.length} line{log.length === 1 ? '' : 's'}
@@ -505,7 +505,7 @@ export default function Bench(): React.JSX.Element {
           className="max-h-[40vh] overflow-auto border-t border-[var(--color-border)] px-3 py-2 mono text-xs"
         >
           {log.length === 0 ? (
-            <div className="text-[color:var(--color-fg-muted)]">
+            <div className="text-[color:var(--color-text-secondary)]">
               {busy ? 'Waiting for output…' : 'Run preset or vision to see streaming output here.'}
             </div>
           ) : (
@@ -516,10 +516,10 @@ export default function Bench(): React.JSX.Element {
                   line.kind === 'stderr' || line.kind === 'error'
                     ? 'text-[color:var(--color-warn)] whitespace-pre-wrap'
                     : line.kind === 'done'
-                      ? 'text-[color:var(--color-accent)] whitespace-pre-wrap'
+                      ? 'text-[color:var(--color-ok)] whitespace-pre-wrap'
                       : line.kind === 'start' || line.kind === 'profile'
                         ? 'text-[color:var(--color-brand)] whitespace-pre-wrap'
-                        : 'text-[color:var(--color-fg)] whitespace-pre-wrap'
+                        : 'text-[color:var(--color-text)] whitespace-pre-wrap'
                 }
               >
                 {line.text}
@@ -530,12 +530,12 @@ export default function Bench(): React.JSX.Element {
       </div>
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
           Recent history ({recentHistory.length})
         </h2>
         <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
           <table className="w-full mono text-xs">
-            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-fg-muted)]">
+            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
               <tr>
                 <th className="px-3 py-2 font-medium">Updated</th>
                 <th className="px-3 py-2 font-medium">Rel</th>
@@ -556,7 +556,7 @@ export default function Bench(): React.JSX.Element {
                     key={`${row.updated_at}-${i}`}
                     className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
                   >
-                    <td className="px-3 py-1.5 text-[color:var(--color-fg-muted)]">
+                    <td className="px-3 py-1.5 text-[color:var(--color-text-secondary)]">
                       {row.updated_at}
                     </td>
                     <td className="px-3 py-1.5 text-[color:var(--color-brand)] break-all">
@@ -564,11 +564,11 @@ export default function Bench(): React.JSX.Element {
                     </td>
                     <td className="px-3 py-1.5">{row.mode}</td>
                     <td className="px-3 py-1.5">{row.profile}</td>
-                    <td className="px-3 py-1.5 text-right text-[color:var(--color-accent)]">
+                    <td className="px-3 py-1.5 text-right text-[color:var(--color-ok)]">
                       {fmtTps(row.gen_ts)}
                     </td>
                     <td className="px-3 py-1.5 text-right">{fmtTps(row.prompt_ts)}</td>
-                    <td className="px-3 py-1.5 text-[color:var(--color-fg-muted)]">
+                    <td className="px-3 py-1.5 text-[color:var(--color-text-secondary)]">
                       {row.build}
                     </td>
                   </tr>
@@ -577,7 +577,7 @@ export default function Bench(): React.JSX.Element {
                 <tr>
                   <td
                     colSpan={7}
-                    className="px-3 py-6 text-center text-[color:var(--color-fg-muted)]"
+                    className="px-3 py-6 text-center text-[color:var(--color-text-secondary)]"
                   >
                     No benchmark history recorded yet.
                   </td>

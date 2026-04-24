@@ -48,14 +48,14 @@ const NODE_RADIUS = 28;
 const PROVIDER_RADIUS = 18;
 
 function colorForKind(kind: NodeKind, isLocal: boolean): string {
-  if (isLocal) return 'var(--color-accent)';
+  if (isLocal) return 'var(--color-ok)';
   switch (kind) {
     case 'agent':
-      return 'var(--color-success, #34d399)';
+      return 'var(--color-ok, #34d399)';
     case 'gateway':
-      return 'var(--color-warning, #fbbf24)';
+      return 'var(--color-warn, #fbbf24)';
     case 'provider':
-      return 'var(--color-fg-muted)';
+      return 'var(--color-text-secondary)';
     case 'rag':
       return 'var(--color-brand, #a78bfa)';
     case 'cloud':
@@ -157,7 +157,7 @@ function NodeBubble({ node, isActive, isHovered, onClick, onHover }: NodeBubbleP
       style={{ cursor: 'pointer' }}
     >
       {isActive && (
-        <circle r={r + 8} fill="none" stroke="var(--color-accent)" strokeWidth={2} opacity={0.6} />
+        <circle r={r + 8} fill="none" stroke="var(--color-ok)" strokeWidth={2} opacity={0.6} />
       )}
       <circle
         r={r}
@@ -172,7 +172,7 @@ function NodeBubble({ node, isActive, isHovered, onClick, onHover }: NodeBubbleP
         y={0}
         fontSize={kind === 'provider' ? 10 : 12}
         fontFamily="var(--font-sans, system-ui)"
-        fill="var(--color-fg-inverted, white)"
+        fill="var(--color-text-inverse, white)"
         style={{ pointerEvents: 'none', fontWeight: 500 }}
       >
         {abbreviate(node.name)}
@@ -181,7 +181,7 @@ function NodeBubble({ node, isActive, isHovered, onClick, onHover }: NodeBubbleP
         textAnchor="middle"
         y={r + 14}
         fontSize={11}
-        fill="var(--color-fg)"
+        fill="var(--color-text)"
         style={{ pointerEvents: 'none' }}
       >
         {node.name}
@@ -221,19 +221,19 @@ function NodeDetail({
       style={{ minWidth: 220 }}
     >
       <div className="flex items-baseline justify-between">
-        <div className="font-mono text-[color:var(--color-fg)]">{name}</div>
+        <div className="font-mono text-[color:var(--color-text)]">{name}</div>
         <button
           type="button"
           onClick={onClose}
-          className="text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+          className="text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
         >
           close
         </button>
       </div>
-      <div className="mt-1 text-[10px] text-[color:var(--color-fg-muted)]">
+      <div className="mt-1 text-[10px] text-[color:var(--color-text-secondary)]">
         kind={kind}
       </div>
-      <div className="mt-2 break-all rounded bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[10px] text-[color:var(--color-fg-muted)]">
+      <div className="mt-2 break-all rounded bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[10px] text-[color:var(--color-text-secondary)]">
         {endpoint}
       </div>
       {!isActive && (
@@ -241,13 +241,13 @@ function NodeDetail({
           type="button"
           onClick={onActivate}
           data-testid={`node-map-activate-${name}`}
-          className="mt-3 w-full rounded border border-[var(--color-accent)] bg-[var(--color-accent)] px-2 py-1 text-xs font-medium text-[color:var(--color-fg-inverted)] hover:opacity-90"
+          className="mt-3 w-full rounded border border-[var(--color-ok)] bg-[var(--color-ok)] px-2 py-1 text-xs font-medium text-[color:var(--color-text-inverse)] hover:opacity-90"
         >
           Set as active node
         </button>
       )}
       {isActive && (
-        <div className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-center text-[10px] text-[color:var(--color-fg-muted)]">
+        <div className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-center text-[10px] text-[color:var(--color-text-secondary)]">
           currently active
         </div>
       )}
@@ -357,11 +357,11 @@ export function NodeMap(): React.JSX.Element {
           />
         </div>
       )}
-      <div className="mt-2 flex flex-wrap gap-3 px-2 pb-1 text-[10px] text-[color:var(--color-fg-muted)]">
-        <LegendDot color="var(--color-accent)" label="active / local" />
-        <LegendDot color="var(--color-success, #34d399)" label="agent" />
-        <LegendDot color="var(--color-warning, #fbbf24)" label="gateway" />
-        <LegendDot color="var(--color-fg-muted)" label="provider (via gateway)" />
+      <div className="mt-2 flex flex-wrap gap-3 px-2 pb-1 text-[10px] text-[color:var(--color-text-secondary)]">
+        <LegendDot color="var(--color-ok)" label="active / local" />
+        <LegendDot color="var(--color-ok, #34d399)" label="agent" />
+        <LegendDot color="var(--color-warn, #fbbf24)" label="gateway" />
+        <LegendDot color="var(--color-text-secondary)" label="provider (via gateway)" />
         <LegendDot color="var(--color-brand, #a78bfa)" label="RAG" />
       </div>
     </div>

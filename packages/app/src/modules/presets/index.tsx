@@ -109,27 +109,27 @@ export default function Presets(): React.JSX.Element {
 
   return (
     <div className="h-full overflow-auto p-6" data-testid="presets-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         Presets
       </div>
-      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-fg)]">
+      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-text)]">
         Promotions &amp; candidates
       </h1>
 
       {error && (
-        <div className="mb-3 rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+        <div className="mb-3 rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
           {error}
         </div>
       )}
 
       {/* Current promotions — (profile × preset) matrix. */}
       <section className="mb-6">
-        <h2 className="mb-2 text-sm uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+        <h2 className="mb-2 text-sm uppercase tracking-widest text-[color:var(--color-text-secondary)]">
           Current promotions
         </h2>
         <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
           <table className="w-full mono text-sm">
-            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-fg-muted)]">
+            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
               <tr>
                 <th className="px-3 py-2 font-medium">Profile</th>
                 {PRESETS.map((p) => (
@@ -142,14 +142,14 @@ export default function Presets(): React.JSX.Element {
             <tbody>
               {PROFILES.map((profile) => (
                 <tr key={profile} className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]">
-                  <td className="px-3 py-2 text-[color:var(--color-fg-muted)]">{profile}</td>
+                  <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">{profile}</td>
                   {PRESETS.map((preset) => {
                     const row = (promotions.data ?? []).find(
                       (o) => o.profile === profile && o.preset === preset,
                     );
                     if (!row) {
                       return (
-                        <td key={preset} className="px-3 py-2 text-[color:var(--color-fg-muted)]">
+                        <td key={preset} className="px-3 py-2 text-[color:var(--color-text-secondary)]">
                           —
                         </td>
                       );
@@ -159,7 +159,7 @@ export default function Presets(): React.JSX.Element {
                       <td key={preset} className="px-3 py-2">
                         <div className="flex flex-col gap-0.5">
                           <span className="text-[color:var(--color-brand)] break-all">{row.rel}</span>
-                          <div className="flex items-center gap-2 text-[10px] text-[color:var(--color-fg-muted)]">
+                          <div className="flex items-center gap-2 text-[10px] text-[color:var(--color-text-secondary)]">
                             {tps !== undefined ? (
                               <span>{tps.toFixed(1)} tok/s</span>
                             ) : (
@@ -171,7 +171,7 @@ export default function Presets(): React.JSX.Element {
                                 deleteMutation.mutate({ profile, preset })
                               }
                               disabled={deleteMutation.isPending}
-                              className="rounded border border-transparent px-1 text-[10px] text-[color:var(--color-fg-muted)] hover:border-[var(--color-border)] hover:text-[color:var(--color-danger)] disabled:opacity-50"
+                              className="rounded border border-transparent px-1 text-[10px] text-[color:var(--color-text-secondary)] hover:border-[var(--color-border)] hover:text-[color:var(--color-err)] disabled:opacity-50"
                               title={`remove promotion for ${profile}/${preset}`}
                             >
                               ×
@@ -191,11 +191,11 @@ export default function Presets(): React.JSX.Element {
       {/* Filters — all drive the candidate table below. */}
       <section>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+          <h2 className="text-sm uppercase tracking-widest text-[color:var(--color-text-secondary)]">
             Candidates ({candidates.length})
           </h2>
           <div className="flex flex-wrap items-center gap-3 text-xs">
-            <label className="flex items-center gap-1 text-[color:var(--color-fg-muted)]">
+            <label className="flex items-center gap-1 text-[color:var(--color-text-secondary)]">
               min tok/s
               <input
                 type="number"
@@ -204,10 +204,10 @@ export default function Presets(): React.JSX.Element {
                 value={minTps}
                 onChange={(e) => setMinTps(Math.max(0, Number.parseFloat(e.target.value) || 0))}
                 data-testid="presets-min-tps"
-                className="w-16 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-0.5 text-right font-mono text-[color:var(--color-fg)]"
+                className="w-16 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-0.5 text-right font-mono text-[color:var(--color-text)]"
               />
             </label>
-            <label className="flex items-center gap-1 text-[color:var(--color-fg-muted)]">
+            <label className="flex items-center gap-1 text-[color:var(--color-text-secondary)]">
               <input
                 type="checkbox"
                 checked={installedOnly}
@@ -216,11 +216,11 @@ export default function Presets(): React.JSX.Element {
               />
               installed only
             </label>
-            <span className="text-[color:var(--color-fg-muted)]">class</span>
+            <span className="text-[color:var(--color-text-secondary)]">class</span>
             <select
               value={classFilter}
               onChange={(e) => setClassFilter(e.target.value as ClassFilter)}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)]"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-text)]"
             >
               <option value="all">all</option>
               <option value="reasoning">reasoning</option>
@@ -233,7 +233,7 @@ export default function Presets(): React.JSX.Element {
 
         <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
           <table className="w-full mono text-sm">
-            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-fg-muted)]">
+            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
               <tr>
                 <th className="px-3 py-2 font-medium">Rel</th>
                 <th className="px-3 py-2 font-medium">Class</th>
@@ -255,12 +255,12 @@ export default function Presets(): React.JSX.Element {
                     className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
                   >
                     <td className="px-3 py-2 text-[color:var(--color-brand)] break-all">{row.rel}</td>
-                    <td className="px-3 py-2 text-[color:var(--color-fg-muted)]">{row.class}</td>
-                    <td className="px-3 py-2 text-[color:var(--color-fg-muted)]">
+                    <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">{row.class}</td>
+                    <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">
                       {row.installed ? 'yes' : 'no'}
                     </td>
                     <td className="px-3 py-2 text-right">{gen}</td>
-                    <td className="px-3 py-2 text-right text-[color:var(--color-fg-muted)]">{pt}</td>
+                    <td className="px-3 py-2 text-right text-[color:var(--color-text-secondary)]">{pt}</td>
                     <td className="px-3 py-2 text-right">
                       <button
                         type="button"
@@ -269,7 +269,7 @@ export default function Presets(): React.JSX.Element {
                         }}
                         data-testid={`presets-start-${row.rel}`}
                         title={`Copy: llamactl server start '${row.rel}'`}
-                        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+                        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
                       >
                         {copiedRel === row.rel ? 'copied' : 'start'}
                       </button>
@@ -309,14 +309,14 @@ export default function Presets(): React.JSX.Element {
                                 rel: row.rel,
                               })
                             }
-                            className="rounded border border-[var(--color-accent)] px-2 py-0.5 text-[color:var(--color-accent)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                            className="rounded border border-[var(--color-ok)] px-2 py-0.5 text-[color:var(--color-ok)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                           >
                             {promoteMutation.isPending ? 'Setting…' : 'Set'}
                           </button>
                           <button
                             type="button"
                             onClick={() => setPendingRel(null)}
-                            className="rounded border border-[var(--color-border)] px-2 py-0.5 text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)]"
+                            className="rounded border border-[var(--color-border)] px-2 py-0.5 text-[color:var(--color-text-secondary)] hover:bg-[var(--color-surface-2)]"
                           >
                             Cancel
                           </button>
@@ -328,7 +328,7 @@ export default function Presets(): React.JSX.Element {
                             setPendingRel(row.rel);
                             setError(null);
                           }}
-                          className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-fg-muted)] hover:border-[var(--color-border)] hover:text-[color:var(--color-fg)]"
+                          className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-text-secondary)] hover:border-[var(--color-border)] hover:text-[color:var(--color-text)]"
                         >
                           Promote to…
                         </button>
@@ -339,7 +339,7 @@ export default function Presets(): React.JSX.Element {
               })}
               {bench.isSuccess && candidates.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-[color:var(--color-fg-muted)]">
+                  <td colSpan={6} className="px-3 py-6 text-center text-[color:var(--color-text-secondary)]">
                     No candidates for class "{classFilter}".
                   </td>
                 </tr>

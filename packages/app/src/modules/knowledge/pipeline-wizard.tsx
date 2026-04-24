@@ -304,10 +304,10 @@ export function PipelineWizardModal(props: {
       <div className="w-full max-w-4xl rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)] shadow-xl">
         <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
           <div>
-            <div className="text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+            <div className="text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
               New RAG Pipeline
             </div>
-            <div className="mono text-sm text-[color:var(--color-fg)]">
+            <div className="mono text-sm text-[color:var(--color-text)]">
               {form.name || '<unnamed>'}
             </div>
           </div>
@@ -315,7 +315,7 @@ export function PipelineWizardModal(props: {
             type="button"
             onClick={onClose}
             data-testid="pipeline-wizard-close"
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
           >
             Close
           </button>
@@ -336,8 +336,8 @@ export function PipelineWizardModal(props: {
                   active
                     ? 'rounded bg-[var(--color-brand)] px-2 py-1 text-xs font-medium text-[color:var(--color-surface-0)]'
                     : done
-                      ? 'rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg)]'
-                      : 'rounded border border-transparent px-2 py-1 text-xs text-[color:var(--color-fg-muted)]'
+                      ? 'rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text)]'
+                      : 'rounded border border-transparent px-2 py-1 text-xs text-[color:var(--color-text-secondary)]'
                 }
               >
                 {i + 1}. {s.label}
@@ -380,9 +380,9 @@ export function PipelineWizardModal(props: {
         </div>
 
         <div className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] px-4 py-3">
-          <div className="text-xs text-[color:var(--color-fg-muted)]">
+          <div className="text-xs text-[color:var(--color-text-secondary)]">
             {errors.length > 0 && (
-              <span className="text-[color:var(--color-danger)]">
+              <span className="text-[color:var(--color-err)]">
                 {errors.length} issue{errors.length === 1 ? '' : 's'} to fix
               </span>
             )}
@@ -396,7 +396,7 @@ export function PipelineWizardModal(props: {
               }}
               disabled={currentIdx === 0}
               data-testid="pipeline-wizard-back"
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               Back
             </button>
@@ -440,7 +440,7 @@ function DestinationStep(props: {
   return (
     <div className="space-y-3" data-testid="pipeline-wizard-destination">
       <label className="block text-sm">
-        <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+        <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
           Pipeline name
         </span>
         <input
@@ -449,18 +449,18 @@ function DestinationStep(props: {
           onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
           placeholder="e.g. llamactl-docs"
           data-testid="pipeline-wizard-name"
-          className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-fg)]"
+          className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
         />
       </label>
       <label className="block text-sm">
-        <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+        <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
           RAG node
         </span>
         <select
           value={form.ragNode}
           onChange={(e) => setForm((f) => ({ ...f, ragNode: e.target.value }))}
           data-testid="pipeline-wizard-ragnode"
-          className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-fg)]"
+          className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
         >
           <option value="">(select a node)</option>
           {availableRagNodes.map((n) => (
@@ -471,7 +471,7 @@ function DestinationStep(props: {
         </select>
       </label>
       <label className="block text-sm">
-        <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+        <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
           Collection
         </span>
         <input
@@ -480,7 +480,7 @@ function DestinationStep(props: {
           onChange={(e) => setForm((f) => ({ ...f, collection: e.target.value }))}
           placeholder="e.g. llamactl_docs"
           data-testid="pipeline-wizard-collection"
-          className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-fg)]"
+          className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
         />
       </label>
     </div>
@@ -501,14 +501,14 @@ function SourceEditor(props: {
     >
       <div className="mb-2 flex items-center justify-between">
         <label className="flex items-baseline gap-2 text-sm">
-          <span className="text-xs text-[color:var(--color-fg-muted)]">Kind</span>
+          <span className="text-xs text-[color:var(--color-text-secondary)]">Kind</span>
           <select
             value={source.kind}
             onChange={(e) =>
               onUpdate({ kind: e.target.value as SourceKind } as Partial<SourceState>)
             }
             data-testid={`pipeline-wizard-source-kind-${idx}`}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 mono text-xs text-[color:var(--color-fg)]"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 mono text-xs text-[color:var(--color-text)]"
           >
             <option value="filesystem">filesystem</option>
             <option value="http">http</option>
@@ -519,7 +519,7 @@ function SourceEditor(props: {
           type="button"
           onClick={onRemove}
           data-testid={`pipeline-wizard-source-remove-${idx}`}
-          className="rounded border border-[var(--color-danger)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-danger)] hover:opacity-90"
+          className="rounded border border-[var(--color-err)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-err)] hover:opacity-90"
         >
           Remove
         </button>
@@ -527,7 +527,7 @@ function SourceEditor(props: {
       {source.kind === 'filesystem' && (
         <div className="grid grid-cols-2 gap-2">
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Root path
             </span>
             <input
@@ -536,11 +536,11 @@ function SourceEditor(props: {
               onChange={(e) => onUpdate({ root: e.target.value })}
               placeholder="/path/to/docs"
               data-testid={`pipeline-wizard-source-root-${idx}`}
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Glob
             </span>
             <input
@@ -548,7 +548,7 @@ function SourceEditor(props: {
               value={source.glob}
               onChange={(e) => onUpdate({ glob: e.target.value })}
               data-testid={`pipeline-wizard-source-glob-${idx}`}
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
         </div>
@@ -556,7 +556,7 @@ function SourceEditor(props: {
       {source.kind === 'http' && (
         <div className="grid grid-cols-2 gap-2">
           <label className="col-span-2 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               URL
             </span>
             <input
@@ -565,11 +565,11 @@ function SourceEditor(props: {
               onChange={(e) => onUpdate({ url: e.target.value })}
               placeholder="https://docs.example.com"
               data-testid={`pipeline-wizard-source-url-${idx}`}
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Max depth
             </span>
             <input
@@ -580,11 +580,11 @@ function SourceEditor(props: {
               onChange={(e) =>
                 onUpdate({ max_depth: Math.max(0, Math.min(5, Number(e.target.value) || 0)) })
               }
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Rate limit (req/s)
             </span>
             <input
@@ -597,10 +597,10 @@ function SourceEditor(props: {
                   rate_limit_per_sec: Math.max(1, Number(e.target.value) || 2),
                 })
               }
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
-          <label className="col-span-2 flex items-center gap-2 text-xs text-[color:var(--color-fg-muted)]">
+          <label className="col-span-2 flex items-center gap-2 text-xs text-[color:var(--color-text-secondary)]">
             <input
               type="checkbox"
               checked={source.same_origin}
@@ -608,7 +608,7 @@ function SourceEditor(props: {
             />
             Same-origin only
           </label>
-          <label className="col-span-2 flex items-center gap-2 text-xs text-[color:var(--color-fg-muted)]">
+          <label className="col-span-2 flex items-center gap-2 text-xs text-[color:var(--color-text-secondary)]">
             <input
               type="checkbox"
               checked={source.ignore_robots}
@@ -621,7 +621,7 @@ function SourceEditor(props: {
       {source.kind === 'git' && (
         <div className="grid grid-cols-2 gap-2">
           <label className="col-span-2 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Repo URL
             </span>
             <input
@@ -630,11 +630,11 @@ function SourceEditor(props: {
               onChange={(e) => onUpdate({ repo: e.target.value })}
               placeholder="https://github.com/acme/docs.git"
               data-testid={`pipeline-wizard-source-repo-${idx}`}
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Ref (optional)
             </span>
             <input
@@ -642,11 +642,11 @@ function SourceEditor(props: {
               value={source.ref ?? ''}
               onChange={(e) => onUpdate({ ref: e.target.value })}
               placeholder="main"
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Subpath (optional)
             </span>
             <input
@@ -654,18 +654,18 @@ function SourceEditor(props: {
               value={source.subpath ?? ''}
               onChange={(e) => onUpdate({ subpath: e.target.value })}
               placeholder="docs"
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
           <label className="col-span-2 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Glob
             </span>
             <input
               type="text"
               value={source.glob}
               onChange={(e) => onUpdate({ glob: e.target.value })}
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
         </div>
@@ -699,7 +699,7 @@ function SourcesStep(props: {
             type="button"
             onClick={() => onAdd(k)}
             data-testid={`pipeline-wizard-source-add-${k}`}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
           >
             + {k}
           </button>
@@ -721,12 +721,12 @@ function TransformsStep(props: {
   return (
     <div className="space-y-4" data-testid="pipeline-wizard-transforms">
       <div>
-        <div className="mb-2 text-xs uppercase tracking-wider text-[color:var(--color-fg-muted)]">
+        <div className="mb-2 text-xs uppercase tracking-wider text-[color:var(--color-text-secondary)]">
           Chunking (markdown-chunk)
         </div>
         <div className="grid grid-cols-3 gap-2">
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Chunk size (chars)
             </span>
             <input
@@ -738,11 +738,11 @@ function TransformsStep(props: {
                 onChange({ ...transform, chunk_size: Math.max(100, Number(e.target.value) || 800) })
               }
               data-testid="pipeline-wizard-chunk-size"
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Overlap (chars)
             </span>
             <input
@@ -753,10 +753,10 @@ function TransformsStep(props: {
               onChange={(e) =>
                 onChange({ ...transform, overlap: Math.max(0, Number(e.target.value) || 0) })
               }
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
-          <label className="flex items-end gap-2 text-xs text-[color:var(--color-fg-muted)]">
+          <label className="flex items-end gap-2 text-xs text-[color:var(--color-text-secondary)]">
             <input
               type="checkbox"
               checked={transform.preserve_headings}
@@ -767,12 +767,12 @@ function TransformsStep(props: {
         </div>
       </div>
       <div>
-        <div className="mb-2 text-xs uppercase tracking-wider text-[color:var(--color-fg-muted)]">
+        <div className="mb-2 text-xs uppercase tracking-wider text-[color:var(--color-text-secondary)]">
           Schedule + dedupe
         </div>
         <div className="grid grid-cols-2 gap-2">
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Schedule (optional)
             </span>
             <input
@@ -781,11 +781,11 @@ function TransformsStep(props: {
               onChange={(e) => onScheduleChange(e.target.value)}
               placeholder="@daily / @hourly / @every 15m"
               data-testid="pipeline-wizard-schedule"
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               On duplicate
             </span>
             <select
@@ -794,7 +794,7 @@ function TransformsStep(props: {
                 onOnDuplicateChange(e.target.value as 'skip' | 'replace' | 'version')
               }
               data-testid="pipeline-wizard-on-duplicate"
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-fg)]"
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             >
               <option value="skip">skip</option>
               <option value="replace">replace</option>
@@ -817,7 +817,7 @@ function ReviewStep(props: {
     <div className="space-y-3" data-testid="pipeline-wizard-review">
       {errors.length > 0 && (
         <ul
-          className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] p-3 text-xs text-[color:var(--color-danger)]"
+          className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] p-3 text-xs text-[color:var(--color-err)]"
           data-testid="pipeline-wizard-errors"
         >
           {errors.map((e, i) => (
@@ -827,14 +827,14 @@ function ReviewStep(props: {
       )}
       {applyError && (
         <div
-          className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]"
+          className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]"
           data-testid="pipeline-wizard-apply-error"
         >
           {applyError}
         </div>
       )}
       <pre
-        className="overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 mono text-[10px] text-[color:var(--color-fg)]"
+        className="overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 mono text-[10px] text-[color:var(--color-text)]"
         data-testid="pipeline-wizard-yaml"
       >
         {yaml}

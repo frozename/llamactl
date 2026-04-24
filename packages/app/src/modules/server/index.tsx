@@ -152,10 +152,10 @@ export default function Server(): React.JSX.Element {
 
   return (
     <div className="h-full overflow-auto p-6" data-testid="server-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         Server
       </div>
-      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-fg)]">
+      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-text)]">
         llama.cpp lifecycle
       </h1>
 
@@ -164,7 +164,7 @@ export default function Server(): React.JSX.Element {
           className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
           data-testid="server-state-card"
         >
-          <div className="text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+          <div className="text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
             State
           </div>
           <div
@@ -172,20 +172,20 @@ export default function Server(): React.JSX.Element {
             data-state={s?.state ?? 'unknown'}
             className={`mt-1 text-lg font-semibold ${
               isUp
-                ? 'text-[color:var(--color-accent)]'
+                ? 'text-[color:var(--color-ok)]'
                 : s?.state === 'down'
-                  ? 'text-[color:var(--color-danger)]'
-                  : 'text-[color:var(--color-fg-muted)]'
+                  ? 'text-[color:var(--color-err)]'
+                  : 'text-[color:var(--color-text-secondary)]'
             }`}
           >
             {s?.state ?? '—'}
           </div>
         </div>
         <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
-          <div className="text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+          <div className="text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
             Endpoint
           </div>
-          <div className="mt-1 mono text-sm break-all text-[color:var(--color-fg)]">
+          <div className="mt-1 mono text-sm break-all text-[color:var(--color-text)]">
             {s?.endpoint ? (
               <a href={s.endpoint} target="_blank" rel="noreferrer" className="underline">
                 {s.endpoint}
@@ -195,7 +195,7 @@ export default function Server(): React.JSX.Element {
             )}
           </div>
           {s?.advertisedEndpoint && s.advertisedEndpoint !== s.endpoint && (
-            <div className="mt-1 text-[10px] text-[color:var(--color-fg-muted)]">
+            <div className="mt-1 text-[10px] text-[color:var(--color-text-secondary)]">
               LAN:{' '}
               <a
                 href={s.advertisedEndpoint}
@@ -209,10 +209,10 @@ export default function Server(): React.JSX.Element {
           )}
         </div>
         <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
-          <div className="text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+          <div className="text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
             PID
           </div>
-          <div className="mt-1 mono text-sm text-[color:var(--color-fg)]">
+          <div className="mt-1 mono text-sm text-[color:var(--color-text)]">
             {s?.pid ?? 'none'}
           </div>
         </div>
@@ -220,16 +220,16 @@ export default function Server(): React.JSX.Element {
           className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
           data-testid="server-http-card"
         >
-          <div className="text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+          <div className="text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
             HTTP
           </div>
           <div
             className={`mt-1 mono text-sm ${
               httpOk
-                ? 'text-[color:var(--color-accent)]'
+                ? 'text-[color:var(--color-ok)]'
                 : s?.health.httpCode == null
-                  ? 'text-[color:var(--color-fg-muted)]'
-                  : 'text-[color:var(--color-danger)]'
+                  ? 'text-[color:var(--color-text-secondary)]'
+                  : 'text-[color:var(--color-err)]'
             }`}
           >
             {httpLabel}
@@ -246,7 +246,7 @@ export default function Server(): React.JSX.Element {
       >
         <div className="grid grid-cols-12 gap-3">
           <label className="col-span-6 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Target
             </span>
             <input
@@ -267,7 +267,7 @@ export default function Server(): React.JSX.Element {
             </datalist>
           </label>
           <label className="col-span-2 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Timeout (s)
             </span>
             <input
@@ -280,7 +280,7 @@ export default function Server(): React.JSX.Element {
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
             />
           </label>
-          <label className="col-span-2 flex flex-col justify-end text-xs text-[color:var(--color-fg-muted)]">
+          <label className="col-span-2 flex flex-col justify-end text-xs text-[color:var(--color-text-secondary)]">
             <span className="mb-1">Tuned args</span>
             <label className="flex items-center gap-1">
               <input
@@ -307,34 +307,34 @@ export default function Server(): React.JSX.Element {
               disabled={busy || stopMutation.isPending || !isUp}
               data-testid="server-stop"
               title={!isUp ? 'Server is not running.' : 'Send SIGTERM, then SIGKILL after a 5s grace.'}
-              className="flex-1 rounded border border-[var(--color-danger)] px-3 py-1 text-sm text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)] disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex-1 rounded border border-[var(--color-err)] px-3 py-1 text-sm text-[color:var(--color-err)] hover:bg-[var(--color-surface-2)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               {stopMutation.isPending ? 'Stopping…' : 'Stop'}
             </button>
           </div>
         </div>
-        <div className="mt-2 text-xs text-[color:var(--color-fg-muted)]">
+        <div className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
           LLAMA_CPP_HOST={envData?.LLAMA_CPP_HOST ?? '?'}:
           {envData?.LLAMA_CPP_PORT ?? '?'}
         </div>
       </form>
 
       {error && (
-        <div className="mb-3 rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+        <div className="mb-3 rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
           {error}
         </div>
       )}
 
       <section className="mb-6 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
             Keep-alive supervisor
           </h2>
           <span
             className={
               ka?.running
-                ? 'mono text-xs text-[color:var(--color-accent)]'
-                : 'mono text-xs text-[color:var(--color-fg-muted)]'
+                ? 'mono text-xs text-[color:var(--color-ok)]'
+                : 'mono text-xs text-[color:var(--color-text-secondary)]'
             }
           >
             {ka?.running ? `running (pid=${ka.pid})` : 'stopped'}
@@ -342,7 +342,7 @@ export default function Server(): React.JSX.Element {
         </div>
         <div className="grid grid-cols-12 gap-3">
           <label className="col-span-7 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               Target
             </span>
             <input
@@ -357,7 +357,7 @@ export default function Server(): React.JSX.Element {
               type="button"
               onClick={() => keepAliveStartMutation.mutate({ target: target.trim() || 'current' })}
               disabled={ka?.running || keepAliveStartMutation.isPending}
-              className="flex-1 rounded bg-[var(--color-accent)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:opacity-50"
+              className="flex-1 rounded bg-[var(--color-ok)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:opacity-50"
             >
               {keepAliveStartMutation.isPending ? 'Starting…' : 'Start supervisor'}
             </button>
@@ -365,32 +365,32 @@ export default function Server(): React.JSX.Element {
               type="button"
               onClick={() => keepAliveStopMutation.mutate({ graceSeconds: 10 })}
               disabled={!ka?.running || keepAliveStopMutation.isPending}
-              className="flex-1 rounded border border-[var(--color-danger)] px-3 py-1 text-sm text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+              className="flex-1 rounded border border-[var(--color-err)] px-3 py-1 text-sm text-[color:var(--color-err)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
             >
               {keepAliveStopMutation.isPending ? 'Stopping…' : 'Stop supervisor'}
             </button>
           </div>
         </div>
         {ka?.state && (
-          <div className="mt-3 grid grid-cols-4 gap-2 text-xs text-[color:var(--color-fg-muted)]">
+          <div className="mt-3 grid grid-cols-4 gap-2 text-xs text-[color:var(--color-text-secondary)]">
             <div>
-              state=<span className="text-[color:var(--color-fg)]">{ka.state.state ?? '—'}</span>
+              state=<span className="text-[color:var(--color-text)]">{ka.state.state ?? '—'}</span>
             </div>
             <div>
-              model=<span className="text-[color:var(--color-fg)]">{ka.state.model ?? '—'}</span>
+              model=<span className="text-[color:var(--color-text)]">{ka.state.model ?? '—'}</span>
             </div>
             <div>
-              restarts=<span className="text-[color:var(--color-fg)]">{ka.state.restarts ?? 0}</span>
+              restarts=<span className="text-[color:var(--color-text)]">{ka.state.restarts ?? 0}</span>
             </div>
             <div>
-              backoff=<span className="text-[color:var(--color-fg)]">{ka.state.backoff_seconds ?? 0}s</span>
+              backoff=<span className="text-[color:var(--color-text)]">{ka.state.backoff_seconds ?? 0}s</span>
             </div>
           </div>
         )}
       </section>
 
       <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)]">
-        <div className="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+        <div className="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
           <span>Log</span>
           <span>
             {log.length} line{log.length === 1 ? '' : 's'}
@@ -401,7 +401,7 @@ export default function Server(): React.JSX.Element {
           className="max-h-[50vh] overflow-auto border-t border-[var(--color-border)] px-3 py-2 mono text-xs"
         >
           {log.length === 0 ? (
-            <div className="text-[color:var(--color-fg-muted)]">
+            <div className="text-[color:var(--color-text-secondary)]">
               {busy ? 'Waiting for events…' : 'Lifecycle events appear here during a start.'}
             </div>
           ) : (
@@ -410,12 +410,12 @@ export default function Server(): React.JSX.Element {
                 key={i}
                 className={
                   line.kind === 'error' || line.kind === 'timeout' || line.kind === 'exited'
-                    ? 'text-[color:var(--color-danger)] whitespace-pre-wrap'
+                    ? 'text-[color:var(--color-err)] whitespace-pre-wrap'
                     : line.kind === 'ready' || line.kind === 'done'
-                      ? 'text-[color:var(--color-accent)] whitespace-pre-wrap'
+                      ? 'text-[color:var(--color-ok)] whitespace-pre-wrap'
                       : line.kind === 'launch' || line.kind === 'retry'
                         ? 'text-[color:var(--color-brand)] whitespace-pre-wrap'
-                        : 'text-[color:var(--color-fg-muted)] whitespace-pre-wrap'
+                        : 'text-[color:var(--color-text-secondary)] whitespace-pre-wrap'
                 }
               >
                 {line.text}

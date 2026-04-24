@@ -34,12 +34,12 @@ function lineClass(kind: LogLine['kind']): string {
     case 'error':
       return 'text-[color:var(--color-warn)] whitespace-pre-wrap';
     case 'done':
-      return 'text-[color:var(--color-accent)] whitespace-pre-wrap';
+      return 'text-[color:var(--color-ok)] whitespace-pre-wrap';
     case 'start':
     case 'profile':
       return 'text-[color:var(--color-brand)] whitespace-pre-wrap';
     default:
-      return 'text-[color:var(--color-fg)] whitespace-pre-wrap';
+      return 'text-[color:var(--color-text)] whitespace-pre-wrap';
   }
 }
 
@@ -183,9 +183,9 @@ function PullCard({
 
   const stateColor =
     state === 'done'
-      ? 'text-[color:var(--color-accent)]'
+      ? 'text-[color:var(--color-ok)]'
       : state === 'error'
-        ? 'text-[color:var(--color-danger)]'
+        ? 'text-[color:var(--color-err)]'
         : 'text-[color:var(--color-brand)]';
 
   return (
@@ -193,7 +193,7 @@ function PullCard({
       <div className="flex items-center justify-between px-3 py-2 text-xs">
         <div className="flex items-center gap-3">
           <span className={`mono ${stateColor}`}>{state}</span>
-          <span className="mono text-[color:var(--color-fg-muted)] break-all">{label}</span>
+          <span className="mono text-[color:var(--color-text-secondary)] break-all">{label}</span>
         </div>
         <div className="flex items-center gap-1">
           {state === 'running' && (
@@ -206,7 +206,7 @@ function PullCard({
                 setState('error');
                 setError('Cancelled by user');
               }}
-              className="rounded border border-[var(--color-danger)] px-2 py-0.5 text-xs text-[color:var(--color-danger)] hover:bg-[var(--color-surface-2)]"
+              className="rounded border border-[var(--color-err)] px-2 py-0.5 text-xs text-[color:var(--color-err)] hover:bg-[var(--color-surface-2)]"
             >
               Cancel
             </button>
@@ -215,7 +215,7 @@ function PullCard({
             type="button"
             onClick={() => onDismiss(spec.id)}
             disabled={state === 'running'}
-            className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-fg-muted)] hover:border-[var(--color-border)] hover:text-[color:var(--color-fg)] disabled:opacity-40"
+            className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-text-secondary)] hover:border-[var(--color-border)] hover:text-[color:var(--color-text)] disabled:opacity-40"
             aria-label="Dismiss"
           >
             ×
@@ -225,7 +225,7 @@ function PullCard({
       {(summary || error) && (
         <div
           className={`mono border-t border-[var(--color-border)] px-3 py-1 text-xs ${
-            error ? 'text-[color:var(--color-danger)]' : 'text-[color:var(--color-accent)]'
+            error ? 'text-[color:var(--color-err)]' : 'text-[color:var(--color-ok)]'
           }`}
         >
           {error ?? summary}
@@ -236,7 +236,7 @@ function PullCard({
         className="max-h-[28vh] overflow-auto border-t border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-1.5 mono text-xs"
       >
         {log.length === 0 ? (
-          <div className="text-[color:var(--color-fg-muted)]">Waiting for output…</div>
+          <div className="text-[color:var(--color-text-secondary)]">Waiting for output…</div>
         ) : (
           log.map((line, i) => (
             <div key={i} className={lineClass(line.kind)}>
@@ -305,10 +305,10 @@ export default function Pulls(): React.JSX.Element {
 
   return (
     <div className="h-full overflow-auto p-6" data-testid="pulls-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         Pulls
       </div>
-      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-fg)]">
+      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-text)]">
         Download a model
       </h1>
 
@@ -333,8 +333,8 @@ export default function Pulls(): React.JSX.Element {
                 onClick={() => setMode(m)}
                 className={
                   isActive
-                    ? 'rounded border border-[var(--color-accent)] bg-[var(--color-surface-2)] px-3 py-1 font-medium text-[color:var(--color-fg)]'
-                    : 'rounded border border-transparent px-3 py-1 text-[color:var(--color-fg-muted)] hover:bg-[var(--color-surface-2)] hover:text-[color:var(--color-fg)]'
+                    ? 'rounded border border-[var(--color-ok)] bg-[var(--color-surface-2)] px-3 py-1 font-medium text-[color:var(--color-text)]'
+                    : 'rounded border border-transparent px-3 py-1 text-[color:var(--color-text-secondary)] hover:bg-[var(--color-surface-2)] hover:text-[color:var(--color-text)]'
                 }
               >
                 {m === 'file' ? 'Pull file' : m === 'candidate' ? 'Pull candidate' : 'Candidate test'}
@@ -344,7 +344,7 @@ export default function Pulls(): React.JSX.Element {
         </div>
         <div className="grid grid-cols-12 gap-3">
           <label className="col-span-5 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">Repo</span>
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">Repo</span>
             <input
               value={repo}
               onChange={(e) => setRepo(e.target.value)}
@@ -353,7 +353,7 @@ export default function Pulls(): React.JSX.Element {
             />
           </label>
           <label className="col-span-5 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
               {mode === 'file' ? 'File' : 'File (optional override)'}
             </span>
             <input
@@ -367,7 +367,7 @@ export default function Pulls(): React.JSX.Element {
           </label>
           {(mode === 'candidate' || mode === 'test') && (
             <label className="col-span-2 text-sm">
-              <span className="mb-1 block text-xs text-[color:var(--color-fg-muted)]">
+              <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
                 Profile
               </span>
               <select
@@ -397,24 +397,24 @@ export default function Pulls(): React.JSX.Element {
             </button>
           </div>
         </div>
-        <div className="mt-2 text-xs text-[color:var(--color-fg-muted)]">
+        <div className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
           Each Enqueue adds a new card below — runs are independent and can be cancelled
           individually.
         </div>
       </form>
 
       {error && (
-        <div className="mb-3 rounded-md border border-[var(--color-danger)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-danger)]">
+        <div className="mb-3 rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
           {error}
         </div>
       )}
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-fg-muted)]">
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
           Queue ({activeCount})
         </h2>
         {cards.length === 0 ? (
-          <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-[color:var(--color-fg-muted)]">
+          <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-[color:var(--color-text-secondary)]">
             No pulls yet. Fill out the form above and hit Enqueue.
           </div>
         ) : (

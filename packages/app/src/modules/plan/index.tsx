@@ -90,11 +90,11 @@ type Turn =
 function tierClass(tier: ToolCatalogEntry['tier']): string {
   switch (tier) {
     case 'mutation-destructive':
-      return 'bg-[var(--color-danger)] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
     case 'mutation-dry-run-safe':
-      return 'bg-[var(--color-warning,var(--color-accent))] text-[color:var(--color-fg-inverted)]';
+      return 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]';
     default:
-      return 'bg-[var(--color-surface-2)] text-[color:var(--color-fg-muted)]';
+      return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
   }
 }
 
@@ -132,11 +132,11 @@ function PlanCard({
   if (!result.ok) {
     return (
       <div
-        className="rounded border border-[color:var(--color-warning,var(--color-accent))] p-3 text-sm space-y-1 bg-[color:var(--color-surface-1)]"
+        className="rounded border border-[color:var(--color-warn,var(--color-ok))] p-3 text-sm space-y-1 bg-[color:var(--color-surface-1)]"
         data-testid="plan-failure"
       >
         <div className="font-medium">Planner failed: {result.reason}</div>
-        <div className="text-xs text-[color:var(--color-fg-muted)]">{result.message}</div>
+        <div className="text-xs text-[color:var(--color-text-secondary)]">{result.message}</div>
         {result.disallowedTools && result.disallowedTools.length > 0 && (
           <div className="text-xs">
             Disallowed tools: {result.disallowedTools.join(', ')}
@@ -152,12 +152,12 @@ function PlanCard({
     >
       <div className="flex items-center justify-between">
         <div className="font-medium">Plan</div>
-        <div className="text-xs text-[color:var(--color-fg-muted)]">
+        <div className="text-xs text-[color:var(--color-text-secondary)]">
           executor={result.executor} · {result.plan.steps.length} step
           {result.plan.steps.length === 1 ? '' : 's'}
         </div>
       </div>
-      <div className="text-xs text-[color:var(--color-fg-muted)]">{result.plan.reasoning}</div>
+      <div className="text-xs text-[color:var(--color-text-secondary)]">{result.plan.reasoning}</div>
       <ol className="space-y-2 mt-2 list-none pl-0" data-testid="plan-steps">
         {result.plan.steps.map((step, i) => (
           <li
@@ -174,7 +174,7 @@ function PlanCard({
                 </span>
               )}
             </div>
-            <div className="text-xs text-[color:var(--color-fg-muted)]">{step.annotation}</div>
+            <div className="text-xs text-[color:var(--color-text-secondary)]">{step.annotation}</div>
             {step.args && Object.keys(step.args).length > 0 && (
               <pre className="text-[11px] bg-[var(--color-surface-2)] rounded p-1 overflow-auto">
                 {JSON.stringify(step.args, null, 2)}
@@ -189,7 +189,7 @@ function PlanCard({
             type="button"
             onClick={onApprove}
             disabled={decision !== null}
-            className="rounded border border-[color:var(--color-border)] bg-[var(--color-success)] text-[color:var(--color-fg-inverted)] px-3 py-1 text-xs font-medium disabled:opacity-50"
+            className="rounded border border-[color:var(--color-border)] bg-[var(--color-ok)] text-[color:var(--color-text-inverse)] px-3 py-1 text-xs font-medium disabled:opacity-50"
             data-testid="plan-approve"
           >
             Approve
@@ -198,7 +198,7 @@ function PlanCard({
             type="button"
             onClick={onReject}
             disabled={decision !== null}
-            className="rounded border border-[color:var(--color-border)] bg-[var(--color-danger)] text-[color:var(--color-fg-inverted)] px-3 py-1 text-xs font-medium disabled:opacity-50"
+            className="rounded border border-[color:var(--color-border)] bg-[var(--color-err)] text-[color:var(--color-text-inverse)] px-3 py-1 text-xs font-medium disabled:opacity-50"
             data-testid="plan-reject"
           >
             Reject
@@ -207,8 +207,8 @@ function PlanCard({
             <span
               className={`text-xs ${
                 decision === 'approved'
-                  ? 'text-[color:var(--color-success)]'
-                  : 'text-[color:var(--color-danger)]'
+                  ? 'text-[color:var(--color-ok)]'
+                  : 'text-[color:var(--color-err)]'
               }`}
               data-testid="plan-decision"
             >
@@ -316,7 +316,7 @@ export default function Plan(): React.JSX.Element {
         <div className="flex items-baseline justify-between gap-3">
           <div>
             <h2 className="text-lg font-medium">Operator plan</h2>
-            <p className="text-xs text-[color:var(--color-fg-muted)] max-w-prose">
+            <p className="text-xs text-[color:var(--color-text-secondary)] max-w-prose">
               Describe an operational goal. Each reply is a validated plan you
               can approve or refine in a follow-up turn.
             </p>
@@ -328,7 +328,7 @@ export default function Plan(): React.JSX.Element {
                 type="button"
                 onClick={onReset}
                 data-testid="plan-reset"
-                className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+                className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
               >
                 New conversation
               </button>
@@ -344,10 +344,10 @@ export default function Plan(): React.JSX.Element {
       >
         {turns.length === 0 && (
           <div
-            className="rounded-md border border-dashed border-[color:var(--color-border)] p-6 text-sm text-[color:var(--color-fg-muted)]"
+            className="rounded-md border border-dashed border-[color:var(--color-border)] p-6 text-sm text-[color:var(--color-text-secondary)]"
             data-testid="plan-empty"
           >
-            <h3 className="text-sm font-semibold text-[color:var(--color-fg)]">
+            <h3 className="text-sm font-semibold text-[color:var(--color-text)]">
               Start with a goal
             </h3>
             <p className="mt-1 text-xs">
@@ -368,7 +368,7 @@ export default function Plan(): React.JSX.Element {
                 className="flex justify-end"
                 data-testid={`plan-turn-user-${turn.id}`}
               >
-                <div className="max-w-[70%] rounded-2xl bg-[color:var(--color-accent)] px-3 py-2 text-sm text-[color:var(--color-fg-inverted)] whitespace-pre-wrap">
+                <div className="max-w-[70%] rounded-2xl bg-[color:var(--color-ok)] px-3 py-2 text-sm text-[color:var(--color-text-inverse)] whitespace-pre-wrap">
                   {turn.text}
                 </div>
               </div>
@@ -397,14 +397,14 @@ export default function Plan(): React.JSX.Element {
             className="flex justify-start"
             data-testid="plan-pending"
           >
-            <div className="rounded-2xl bg-[color:var(--color-surface-2)] px-3 py-2 text-xs text-[color:var(--color-fg-muted)]">
+            <div className="rounded-2xl bg-[color:var(--color-surface-2)] px-3 py-2 text-xs text-[color:var(--color-text-secondary)]">
               Planning…
             </div>
           </div>
         )}
         {error && (
           <div
-            className="rounded border border-[color:var(--color-danger)] bg-[color:var(--color-surface-1)] p-2 text-xs text-[color:var(--color-danger)]"
+            className="rounded border border-[color:var(--color-err)] bg-[color:var(--color-surface-1)] p-2 text-xs text-[color:var(--color-err)]"
             data-testid="plan-error"
           >
             {error}
@@ -441,11 +441,11 @@ export default function Plan(): React.JSX.Element {
             disabled={submitDisabled}
             data-testid="plan-submit"
             title={submitDisabled ? 'Type a goal, then send' : 'Send (⌘/Ctrl+Enter)'}
-            className="rounded border border-[color:var(--color-border)] bg-[var(--color-accent)] text-[color:var(--color-fg-inverted)] px-3 py-1 text-sm font-medium shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded border border-[color:var(--color-border)] bg-[var(--color-ok)] text-[color:var(--color-text-inverse)] px-3 py-1 text-sm font-medium shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
           >
             {plan.isPending ? 'Planning…' : turns.length === 0 ? 'Generate plan' : 'Send'}
           </button>
-          <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+          <span className="text-[10px] text-[color:var(--color-text-secondary)]">
             ⌘/Ctrl+Enter to send · {turns.length} turn{turns.length === 1 ? '' : 's'}
           </span>
         </div>
@@ -458,8 +458,8 @@ export default function Plan(): React.JSX.Element {
             <li key={t.name} className="flex items-center gap-2">
               <span className={`px-1 rounded text-[10px] ${tierClass(t.tier)}`}>{t.tier}</span>
               <span className="font-mono">{t.name}</span>
-              <span className="text-[color:var(--color-fg-muted)]">—</span>
-              <span className="text-[color:var(--color-fg-muted)]">{t.description}</span>
+              <span className="text-[color:var(--color-text-secondary)]">—</span>
+              <span className="text-[color:var(--color-text-secondary)]">{t.description}</span>
             </li>
           ))}
         </ul>

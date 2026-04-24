@@ -338,7 +338,7 @@ function Sidebar(props: {
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-1)]">
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2">
-        <span className="text-xs uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+        <span className="text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
           Chats
         </span>
         <Button type="button" variant="secondary" size="sm" onClick={props.onNew}>
@@ -347,7 +347,7 @@ function Sidebar(props: {
       </div>
       <ul className="flex-1 overflow-auto">
         {props.conversations.length === 0 && (
-          <li className="p-3 text-xs text-[color:var(--color-fg-muted)]">
+          <li className="p-3 text-xs text-[color:var(--color-text-secondary)]">
             No chats yet.
           </li>
         )}
@@ -361,10 +361,10 @@ function Sidebar(props: {
             <button
               type="button"
               onClick={() => props.onSelect(c.id)}
-              className="flex-1 truncate text-left text-[color:var(--color-fg)]"
+              className="flex-1 truncate text-left text-[color:var(--color-text)]"
             >
               <div className="truncate">{c.title}</div>
-              <div className="truncate text-[10px] text-[color:var(--color-fg-muted)]">
+              <div className="truncate text-[10px] text-[color:var(--color-text-secondary)]">
                 {c.node} · {c.model}
               </div>
             </button>
@@ -396,13 +396,13 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
         : 'items-start';
   const bg =
     role === 'user'
-      ? 'bg-[var(--color-accent)] text-[color:var(--color-fg-inverted)]'
+      ? 'bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]'
       : role === 'error'
-        ? 'bg-[var(--color-danger)] text-[color:var(--color-fg-inverted)]'
-        : 'bg-[var(--color-surface-1)] text-[color:var(--color-fg)]';
+        ? 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]'
+        : 'bg-[var(--color-surface-1)] text-[color:var(--color-text)]';
   return (
     <div className={`flex flex-col ${align} gap-1`} data-role={role}>
-      <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         {role}
       </span>
       <div
@@ -411,7 +411,7 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
         {content || (role === 'assistant' ? '…' : '')}
       </div>
       {retrievedContext && (
-        <div className="max-w-[80%] rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[10px] text-[color:var(--color-fg-muted)]">
+        <div className="max-w-[80%] rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[10px] text-[color:var(--color-text-secondary)]">
           <button
             type="button"
             onClick={() => setShowContext((v) => !v)}
@@ -423,7 +423,7 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
               retrieved {retrievedContext.docs.length} doc
               {retrievedContext.docs.length === 1 ? '' : 's'} from
               {' '}
-              <span className="text-[color:var(--color-fg)]">
+              <span className="text-[color:var(--color-text)]">
                 {retrievedContext.sourceNode}
               </span>
               {' '}
@@ -436,7 +436,7 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
               {retrievedContext.docs.map((d) => (
                 <li key={d.id} className="flex flex-col gap-0.5 font-mono">
                   <span>
-                    <span className="text-[color:var(--color-fg)]">{d.id}</span>
+                    <span className="text-[color:var(--color-text)]">{d.id}</span>
                     <span className="ml-2">score={d.score.toFixed(3)}</span>
                   </span>
                   <span className="whitespace-pre-wrap">{d.contentPreview}</span>
@@ -489,7 +489,7 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
   const isStarting = picked !== '';
   return (
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
-      <div className="mb-2 text-xs text-[color:var(--color-fg)]">
+      <div className="mb-2 text-xs text-[color:var(--color-text)]">
         Start local llama-server
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -497,7 +497,7 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
           value={choice}
           onChange={(e) => setChoice(e.target.value)}
           disabled={isStarting}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-xs text-[color:var(--color-fg)] disabled:opacity-40"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-xs text-[color:var(--color-text)] disabled:opacity-40"
         >
           {rels.length === 0 ? (
             <option value="">(no catalog entries)</option>
@@ -518,7 +518,7 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
         >
           {isStarting ? 'Starting…' : 'Start'}
         </Button>
-        <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+        <span className="text-[10px] text-[color:var(--color-text-secondary)]">
           or open <button
             type="button"
             onClick={() =>
@@ -529,7 +529,7 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
                 openedAt: Date.now(),
               })
             }
-            className="underline hover:text-[color:var(--color-fg)]"
+            className="underline hover:text-[color:var(--color-text)]"
           >Models → Local Server</button> for the full flow.
         </span>
       </div>
@@ -565,11 +565,11 @@ function TranscriptColumn(props: {
     >
       <header className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-2 text-xs">
         <Badge variant="default">{props.label}</Badge>
-        <span className="text-[color:var(--color-fg-muted)]">node</span>
+        <span className="text-[color:var(--color-text-secondary)]">node</span>
         <select
           value={props.node}
           onChange={(e) => props.onNodeChange(e.target.value)}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)]"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-text)]"
         >
           {props.nodes.map((n) => (
             <option key={n.name} value={n.name}>
@@ -577,14 +577,14 @@ function TranscriptColumn(props: {
             </option>
           ))}
         </select>
-        <span className="ml-3 text-[color:var(--color-fg-muted)]">model</span>
+        <span className="ml-3 text-[color:var(--color-text-secondary)]">model</span>
         {props.modelsLoading ? (
-          <span className="text-[10px] text-[color:var(--color-fg-muted)]">loading…</span>
+          <span className="text-[10px] text-[color:var(--color-text-secondary)]">loading…</span>
         ) : (
           <select
             value={props.model}
             onChange={(e) => props.onModelChange(e.target.value)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)]"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-text)]"
           >
             {props.models.length === 0 ? (
               <option value="">(no models)</option>
@@ -605,7 +605,7 @@ function TranscriptColumn(props: {
       >
         {props.messages.length === 0 && (
           <div className="flex flex-col gap-3">
-            <div className="text-sm text-[color:var(--color-fg-muted)]">
+            <div className="text-sm text-[color:var(--color-text-secondary)]">
               {!props.modelsLoading && props.models.length === 0 && props.node === 'local'
                 ? 'Local llama-server isn\u2019t running yet \u2014 no models to chat with.'
                 : !props.modelsLoading && props.models.length === 0
@@ -622,7 +622,7 @@ function TranscriptColumn(props: {
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-1 border-t border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-[10px]">
-        <span className="text-[color:var(--color-fg-muted)]">capabilities:</span>
+        <span className="text-[color:var(--color-text-secondary)]">capabilities:</span>
         {CAPABILITY_TAGS.map((tag) => {
           const active = props.capabilities.includes(tag);
           return (
@@ -632,8 +632,8 @@ function TranscriptColumn(props: {
               onClick={() => props.onToggleCapability(tag)}
               className={`rounded-full border px-2 py-0.5 font-mono transition-colors ${
                 active
-                  ? 'border-[var(--color-accent)] bg-[var(--color-accent)] text-[color:var(--color-fg-inverted)]'
-                  : 'border-[var(--color-border)] bg-[var(--color-surface-2)] text-[color:var(--color-fg-muted)]'
+                  ? 'border-[var(--color-ok)] bg-[var(--color-ok)] text-[color:var(--color-text-inverse)]'
+                  : 'border-[var(--color-border)] bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]'
               }`}
               title={
                 active
@@ -660,7 +660,7 @@ function RagPicker(props: {
   if (ragNodes.length === 0) return null;
   return (
     <div className="flex items-center gap-1" data-testid="chat-rag-picker">
-      <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-fg-muted)]">
+      <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         rag
       </span>
       <select
@@ -668,7 +668,7 @@ function RagPicker(props: {
         onChange={(e) =>
           props.onChange(e.target.value || null, props.ragTopK)
         }
-        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)]"
+        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-text)]"
         title="Auto-retrieve context from this knowledge base on every turn"
       >
         <option value="">(off)</option>
@@ -680,7 +680,7 @@ function RagPicker(props: {
       </select>
       {props.ragNode && (
         <>
-          <span className="text-[10px] text-[color:var(--color-fg-muted)]">top</span>
+          <span className="text-[10px] text-[color:var(--color-text-secondary)]">top</span>
           <input
             type="number"
             min={1}
@@ -689,7 +689,7 @@ function RagPicker(props: {
             onChange={(e) =>
               props.onChange(props.ragNode, Number.parseInt(e.target.value, 10) || DEFAULT_RAG_TOP_K)
             }
-            className="w-10 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-0.5 font-mono text-[11px] text-[color:var(--color-fg)]"
+            className="w-10 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-0.5 font-mono text-[11px] text-[color:var(--color-text)]"
             title="How many top docs to inject"
           />
         </>
@@ -727,7 +727,7 @@ function ComposerBar(props: {
           }
         }}
         placeholder="Message (Shift+Enter for newline)…"
-        className="h-16 flex-1 resize-none rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[color:var(--color-fg)]"
+        className="h-16 flex-1 resize-none rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[color:var(--color-text)]"
       />
       <Button
         type="submit"
@@ -1059,7 +1059,7 @@ export default function Chat(): React.JSX.Element {
 
   if (nodeList.isLoading) {
     return (
-      <div className="p-6 text-sm text-[color:var(--color-fg-muted)]">Loading…</div>
+      <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
     );
   }
 
@@ -1158,10 +1158,10 @@ export default function Chat(): React.JSX.Element {
           data-testid="chat-empty"
         >
           <div className="max-w-md space-y-3 text-center">
-            <h2 className="text-lg font-semibold text-[color:var(--color-fg)]">
+            <h2 className="text-lg font-semibold text-[color:var(--color-text)]">
               Start a conversation
             </h2>
-            <p className="text-sm text-[color:var(--color-fg-muted)]">
+            <p className="text-sm text-[color:var(--color-text-secondary)]">
               Chat scopes a conversation to a node + model. Attach capability
               tags (reasoning, vision, tools…) and orchestrators like
               embersynth will route by them. History stays on this laptop.

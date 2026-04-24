@@ -121,12 +121,12 @@ const DEFAULT_CATALOG: Array<{
 function tierClass(tier: ToolTier): string {
   switch (tier) {
     case 'mutation-destructive':
-      return 'border-[var(--color-danger)] text-[color:var(--color-danger)]';
+      return 'border-[var(--color-err)] text-[color:var(--color-err)]';
     case 'mutation-dry-run-safe':
-      return 'border-[var(--color-warning,var(--color-accent))] text-[color:var(--color-warning,var(--color-accent))]';
+      return 'border-[var(--color-warn,var(--color-ok))] text-[color:var(--color-warn,var(--color-ok))]';
     case 'read':
     default:
-      return 'border-[var(--color-border)] text-[color:var(--color-fg-muted)]';
+      return 'border-[var(--color-border)] text-[color:var(--color-text-secondary)]';
   }
 }
 
@@ -158,13 +158,13 @@ function ProposalBubble({
       >
         {reasoning.length > 0 && (
           <p
-            className="text-xs text-[color:var(--color-fg-muted)] italic"
+            className="text-xs text-[color:var(--color-text-secondary)] italic"
             data-testid={`ops-chat-step-${iteration}-reasoning`}
           >
             {reasoning}
           </p>
         )}
-        <div className="text-sm text-[color:var(--color-fg)]">
+        <div className="text-sm text-[color:var(--color-text)]">
           {terminal ? 'Ran:' : 'I\u2019d like to run:'}
         </div>
         <div className="flex items-center gap-2">
@@ -176,7 +176,7 @@ function ProposalBubble({
             {tier}
           </span>
         </div>
-        <div className="text-xs text-[color:var(--color-fg-muted)]">{step.annotation}</div>
+        <div className="text-xs text-[color:var(--color-text-secondary)]">{step.annotation}</div>
         {step.args && Object.keys(step.args).length > 0 && (
           <pre
             className="text-[11px] bg-[var(--color-surface-2)] rounded p-1 overflow-auto max-h-40"
@@ -187,7 +187,7 @@ function ProposalBubble({
         )}
 
         {tier === 'mutation-destructive' && !terminal && (
-          <label className="flex items-center gap-1 text-[10px] text-[color:var(--color-fg-muted)]">
+          <label className="flex items-center gap-1 text-[10px] text-[color:var(--color-text-secondary)]">
             Type <span className="font-mono">{step.tool}</span> to unlock:
             <input
               type="text"
@@ -207,7 +207,7 @@ function ProposalBubble({
                 onClick={() => onApprove(true)}
                 disabled={running || state === 'preview-ready'}
                 data-testid={`ops-chat-step-${iteration}-preview`}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] disabled:opacity-50"
+                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] disabled:opacity-50"
               >
                 {state === 'previewing' ? 'Running…' : 'Preview (dry)'}
               </button>
@@ -222,10 +222,10 @@ function ProposalBubble({
               data-testid={`ops-chat-step-${iteration}-run`}
               className={
                 tier === 'mutation-destructive'
-                  ? 'rounded border border-[var(--color-danger)] px-2 py-0.5 text-[10px] text-[color:var(--color-danger)] disabled:opacity-40'
+                  ? 'rounded border border-[var(--color-err)] px-2 py-0.5 text-[10px] text-[color:var(--color-err)] disabled:opacity-40'
                   : tier === 'mutation-dry-run-safe'
-                    ? 'rounded border border-[var(--color-accent)] px-2 py-0.5 text-[10px] text-[color:var(--color-accent)] disabled:opacity-40'
-                    : 'rounded border border-[var(--color-border)] bg-[var(--color-accent)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-inverted)] disabled:opacity-40'
+                    ? 'rounded border border-[var(--color-ok)] px-2 py-0.5 text-[10px] text-[color:var(--color-ok)] disabled:opacity-40'
+                    : 'rounded border border-[var(--color-border)] bg-[var(--color-ok)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-inverse)] disabled:opacity-40'
               }
             >
               {state === 'running-wet'
@@ -239,7 +239,7 @@ function ProposalBubble({
               onClick={onReject}
               disabled={running}
               data-testid={`ops-chat-step-${iteration}-reject`}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] disabled:opacity-40"
+              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] disabled:opacity-40"
             >
               Reject
             </button>
@@ -254,7 +254,7 @@ function ProposalBubble({
         )}
         {state === 'rejected' && (
           <div
-            className="text-xs italic text-[color:var(--color-fg-muted)]"
+            className="text-xs italic text-[color:var(--color-text-secondary)]"
             data-testid={`ops-chat-step-${iteration}-rejected`}
           >
             Operator rejected \u2014 session closed.
@@ -280,7 +280,7 @@ function OutcomePanel({
       data-testid={`ops-chat-step-${iteration}-${kind === 'preview' ? 'preview-result' : 'result'}`}
       data-ok={outcome.ok ? 'true' : 'false'}
     >
-      <div className="text-[color:var(--color-fg-muted)]">
+      <div className="text-[color:var(--color-text-secondary)]">
         {outcome.ok ? '✓ ok' : '✗ failed'} · {outcome.durationMs}ms
         {kind === 'preview' ? ' · dry-run' : ''}
       </div>
@@ -289,7 +289,7 @@ function OutcomePanel({
           {JSON.stringify(outcome.result, null, 2).slice(0, 2000)}
         </pre>
       ) : (
-        <div className="text-[color:var(--color-danger)]">
+        <div className="text-[color:var(--color-err)]">
           {outcome.error?.code}: {outcome.error?.message}
         </div>
       )}
@@ -523,7 +523,7 @@ export default function OpsChat(): React.JSX.Element {
         <div className="flex items-baseline justify-between gap-3">
           <div>
             <h2 className="text-lg font-medium">Operator Console</h2>
-            <p className="text-xs text-[color:var(--color-fg-muted)] max-w-prose">
+            <p className="text-xs text-[color:var(--color-text-secondary)] max-w-prose">
               Natural-language goals become MCP tool calls. Reads run with one
               click; mutations preview dry-first; destructive actions require
               the operator to type the tool name to confirm. Every attempt \u2014
@@ -543,7 +543,7 @@ export default function OpsChat(): React.JSX.Element {
                 type="button"
                 onClick={onReset}
                 data-testid="ops-chat-reset"
-                className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)]"
+                className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
               >
                 New conversation
               </button>
@@ -559,10 +559,10 @@ export default function OpsChat(): React.JSX.Element {
       >
         {messages.length === 0 && (
           <div
-            className="rounded-md border border-dashed border-[color:var(--color-border)] p-6 text-sm text-[color:var(--color-fg-muted)]"
+            className="rounded-md border border-dashed border-[color:var(--color-border)] p-6 text-sm text-[color:var(--color-text-secondary)]"
             data-testid="ops-chat-empty"
           >
-            <h3 className="text-sm font-semibold text-[color:var(--color-fg)]">
+            <h3 className="text-sm font-semibold text-[color:var(--color-text)]">
               Drive the fleet by describing the goal
             </h3>
             <p className="mt-1 text-xs">
@@ -577,7 +577,7 @@ export default function OpsChat(): React.JSX.Element {
           if (msg.kind === 'user') {
             return (
               <div key={msg.id} className="flex justify-end">
-                <div className="max-w-[70%] rounded-2xl bg-[color:var(--color-accent)] px-3 py-2 text-sm text-[color:var(--color-fg-inverted)] whitespace-pre-wrap">
+                <div className="max-w-[70%] rounded-2xl bg-[color:var(--color-ok)] px-3 py-2 text-sm text-[color:var(--color-text-inverse)] whitespace-pre-wrap">
                   {msg.content}
                 </div>
               </div>
@@ -587,11 +587,11 @@ export default function OpsChat(): React.JSX.Element {
             return (
               <div key={msg.id} className="flex justify-start">
                 <div
-                  className="max-w-[70%] rounded-2xl border border-[color:var(--color-warning,var(--color-accent))] p-3 text-sm space-y-1 bg-[color:var(--color-surface-1)]"
+                  className="max-w-[70%] rounded-2xl border border-[color:var(--color-warn,var(--color-ok))] p-3 text-sm space-y-1 bg-[color:var(--color-surface-1)]"
                   data-testid={`ops-chat-refusal-${msg.id}`}
                 >
                   <div className="font-medium">Planner refused</div>
-                  <div className="text-xs text-[color:var(--color-fg-muted)]">{msg.reason}</div>
+                  <div className="text-xs text-[color:var(--color-text-secondary)]">{msg.reason}</div>
                 </div>
               </div>
             );
@@ -603,7 +603,7 @@ export default function OpsChat(): React.JSX.Element {
                 className="flex justify-center"
                 data-testid={`ops-chat-done-${msg.id}`}
               >
-                <div className="rounded-2xl bg-[color:var(--color-surface-2)] px-3 py-1 text-[10px] text-[color:var(--color-fg-muted)]">
+                <div className="rounded-2xl bg-[color:var(--color-surface-2)] px-3 py-1 text-[10px] text-[color:var(--color-text-secondary)]">
                   Loop closed · {msg.iterations} iteration{msg.iterations === 1 ? '' : 's'}
                 </div>
               </div>
@@ -621,14 +621,14 @@ export default function OpsChat(): React.JSX.Element {
         })}
         {streaming && !messages.some((m) => m.kind === 'proposal' && m.state === 'pending') && (
           <div className="flex justify-start" data-testid="ops-chat-pending">
-            <div className="rounded-2xl bg-[color:var(--color-surface-2)] px-3 py-2 text-xs text-[color:var(--color-fg-muted)]">
+            <div className="rounded-2xl bg-[color:var(--color-surface-2)] px-3 py-2 text-xs text-[color:var(--color-text-secondary)]">
               Planning…
             </div>
           </div>
         )}
         {error && (
           <div
-            className="rounded border border-[color:var(--color-danger)] bg-[color:var(--color-surface-1)] p-2 text-xs text-[color:var(--color-danger)]"
+            className="rounded border border-[color:var(--color-err)] bg-[color:var(--color-surface-1)] p-2 text-xs text-[color:var(--color-err)]"
             data-testid="ops-chat-error"
           >
             {error}
@@ -640,7 +640,7 @@ export default function OpsChat(): React.JSX.Element {
         className="border-t border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] px-4 py-2 text-xs"
         data-testid="ops-chat-audit-details"
       >
-        <summary className="cursor-pointer text-[color:var(--color-fg-muted)]">
+        <summary className="cursor-pointer text-[color:var(--color-text-secondary)]">
           Audit ({auditTail.data?.entries.length ?? 0})
         </summary>
         {auditTail.data?.entries.length ? (
@@ -652,19 +652,19 @@ export default function OpsChat(): React.JSX.Element {
               <li
                 key={`${entry.ts}-${i}`}
                 data-testid={`ops-chat-audit-entry-${i}`}
-                className="flex items-center gap-2 text-[color:var(--color-fg-muted)]"
+                className="flex items-center gap-2 text-[color:var(--color-text-secondary)]"
               >
                 <span>{entry.ts.slice(11, 19)}</span>
                 <span
                   className={
                     entry.ok
-                      ? 'text-[color:var(--color-success)]'
-                      : 'text-[color:var(--color-danger)]'
+                      ? 'text-[color:var(--color-ok)]'
+                      : 'text-[color:var(--color-err)]'
                   }
                 >
                   {entry.ok ? '✓' : '✗'}
                 </span>
-                <span className="text-[color:var(--color-fg)]">{entry.tool}</span>
+                <span className="text-[color:var(--color-text)]">{entry.tool}</span>
                 {entry.dryRun && (
                   <span className="rounded bg-[color:var(--color-surface-2)] px-1 text-[9px]">
                     dry
@@ -672,13 +672,13 @@ export default function OpsChat(): React.JSX.Element {
                 )}
                 <span className="ml-auto">{entry.durationMs}ms</span>
                 {!entry.ok && entry.errorCode && (
-                  <span className="text-[color:var(--color-danger)]">{entry.errorCode}</span>
+                  <span className="text-[color:var(--color-err)]">{entry.errorCode}</span>
                 )}
               </li>
             ))}
           </ul>
         ) : (
-          <p className="mt-2 text-[color:var(--color-fg-muted)]">
+          <p className="mt-2 text-[color:var(--color-text-secondary)]">
             No audit entries yet \u2014 run a step to start populating{' '}
             {auditTail.data?.path ? (
               <span className="font-mono">{auditTail.data.path}</span>
@@ -702,7 +702,7 @@ export default function OpsChat(): React.JSX.Element {
               onClick={() => setDraft(cp.prompt)}
               disabled={streaming}
               data-testid={`ops-chat-canned-${i}`}
-              className="rounded-full border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-fg-muted)] hover:text-[color:var(--color-fg)] disabled:opacity-40"
+              className="rounded-full border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)] disabled:opacity-40"
             >
               {cp.label}
             </button>
@@ -735,11 +735,11 @@ export default function OpsChat(): React.JSX.Element {
             onClick={onSubmit}
             disabled={submitDisabled}
             data-testid="ops-chat-submit"
-            className="rounded border border-[color:var(--color-border)] bg-[var(--color-accent)] text-[color:var(--color-fg-inverted)] px-3 py-1 text-sm font-medium shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded border border-[color:var(--color-border)] bg-[var(--color-ok)] text-[color:var(--color-text-inverse)] px-3 py-1 text-sm font-medium shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
           >
             {streaming ? 'Streaming…' : messages.length === 0 ? 'Plan' : 'Send'}
           </button>
-          <span className="text-[10px] text-[color:var(--color-fg-muted)]">
+          <span className="text-[10px] text-[color:var(--color-text-secondary)]">
             ⌘/Ctrl+Enter to send · {messages.length} message{messages.length === 1 ? '' : 's'}
           </span>
         </div>

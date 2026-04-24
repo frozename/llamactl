@@ -87,13 +87,13 @@ export function NodeSelector(): React.JSX.Element | null {
     <button
       type="button"
       onClick={() => setActiveModule('dashboard')}
-      className="flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-fg)] hover:border-[var(--color-accent)]"
+      className="flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text)] hover:border-[var(--color-ok)]"
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       data-testid="node-selector-root"
       data-node-count={totalCount}
       title={`${totalCount} node${totalCount === 1 ? '' : 's'} in the cluster (${agentCount} agent, ${gatewayCount} gateway) \u2014 click to open the cluster map`}
     >
-      <span className="text-[10px] text-[color:var(--color-fg-muted)]">cluster</span>
+      <span className="text-[10px] text-[color:var(--color-text-secondary)]">cluster</span>
       <span className="font-mono text-[11px]">
         {totalCount} node{totalCount === 1 ? '' : 's'}
       </span>
