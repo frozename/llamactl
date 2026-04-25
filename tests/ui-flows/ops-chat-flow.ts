@@ -180,18 +180,54 @@ async function main(): Promise<void> {
       timeout: 10_000,
     });
 
-    // Open Operator Console.
-    await client.call('electron_click', {
+    // Navigate to Ops Chat via the command palette (Beacon shell).
+    await client.call('electron_evaluate_renderer', {
       sessionId,
-      selector: 'button[aria-label="Operator Console"]',
+      expression: `(() => {
+        const e = new KeyboardEvent('keydown', {
+          key: 'p',
+          code: 'KeyP',
+          shiftKey: true,
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        });
+        document.dispatchEvent(e);
+      })()`,
+    });
+    await client.call('electron_wait_for_selector', {
+      sessionId,
+      selector: '[data-testid="command-palette"]',
+      state: 'visible',
+      timeout: 3_000,
+    });
+    await client.call('electron_fill', {
+      sessionId,
+      selector: '[data-testid="command-palette-input"]',
+      value: 'Ops Chat',
+    });
+    await client.call('electron_evaluate_renderer', {
+      sessionId,
+      expression: `(() => {
+        const e = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+        });
+        const input = document.querySelector('[data-testid="command-palette-input"]');
+        const target = input ?? window;
+        target.dispatchEvent(e);
+      })()`,
     });
     await client.call('electron_wait_for_selector', {
       sessionId,
       selector: '[data-testid="ops-chat-root"]',
       state: 'visible',
-      timeout: 5_000,
+      timeout: 8_000,
     });
-    check('ops-chat-root visible after navigation', true);
+    check('ops-chat-root visible after palette navigation', true);
 
     // Empty state on fresh open.
     await client.call('electron_wait_for_selector', {
