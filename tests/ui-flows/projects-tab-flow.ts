@@ -175,10 +175,47 @@ async function main(): Promise<void> {
       timeout: 10_000,
     });
 
-    // Open Projects from the activity bar.
-    await client.call('electron_click', {
+    // Navigate to Projects via the command palette (Beacon shell).
+    // Inline openPalette / paletteType / paletteConfirm — no import needed.
+    await client.call('electron_evaluate_renderer', {
       sessionId,
-      selector: 'button[aria-label="Projects"]',
+      expression: `(() => {
+        const e = new KeyboardEvent('keydown', {
+          key: 'p',
+          code: 'KeyP',
+          shiftKey: true,
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        });
+        document.dispatchEvent(e);
+      })()`,
+    });
+    await client.call('electron_wait_for_selector', {
+      sessionId,
+      selector: '[data-testid="command-palette"]',
+      state: 'visible',
+      timeout: 3_000,
+    });
+    await client.call('electron_fill', {
+      sessionId,
+      selector: '[data-testid="command-palette-input"]',
+      value: 'Projects',
+    });
+    await client.call('electron_evaluate_renderer', {
+      sessionId,
+      expression: `(() => {
+        const e = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+        });
+        const input = document.querySelector('[data-testid="command-palette-input"]');
+        const target = input ?? window;
+        target.dispatchEvent(e);
+      })()`,
     });
     await client.call('electron_wait_for_selector', {
       sessionId,
@@ -188,14 +225,15 @@ async function main(): Promise<void> {
     });
     check('Projects module root renders', true);
 
-    // Either empty state or table — both mean the list query resolved.
+    // Either empty state (wraps EditorialHero) or table — both mean the
+    // list query resolved.
     await client.call('electron_wait_for_selector', {
       sessionId,
       selector: '[data-testid="projects-empty"], [data-testid="projects-table"]',
       state: 'visible',
       timeout: 5_000,
     });
-    check('projects-empty or projects-table renders', true);
+    check('projects-empty (EditorialHero) or projects-table renders', true);
 
     // If the operator has registered at least one project, click the
     // first row's Detail button and confirm the detail card mounts.
