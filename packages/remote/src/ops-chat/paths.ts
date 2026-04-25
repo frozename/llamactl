@@ -31,3 +31,13 @@ export function defaultOpsChatAuditPath(
   if (override) return override;
   return join(defaultOpsChatDir(env), 'audit.jsonl');
 }
+
+export function defaultSessionsDir(env: NodeJS.ProcessEnv = process.env): string {
+  const devStorage = env.DEV_STORAGE?.trim();
+  if (devStorage) return join(devStorage, 'ops-chat', 'sessions');
+  return join(homedir(), '.llamactl', 'ops-chat', 'sessions');
+}
+
+export function defaultSessionDir(env: NodeJS.ProcessEnv, sessionId: string): string {
+  return join(defaultSessionsDir(env), sessionId);
+}
