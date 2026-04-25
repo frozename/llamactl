@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import * as YAML from 'yaml';
 import { trpc } from '@/lib/trpc';
+import { Badge, Button, StatusDot, Input, Kbd } from '@/ui';
 
 /**
  * Composites module (Phase 7 of composite-infra.md).
@@ -119,34 +120,9 @@ spec:
   onFailure: rollback
 `;
 
-function phaseBadgeClass(phase: Phase | undefined): string {
-  switch (phase) {
-    case 'Ready':
-      return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
-    case 'Degraded':
-      return 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]';
-    case 'Failed':
-      return 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
-    case 'Pending':
-    case 'Applying':
-      return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
-    default:
-      return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
-  }
-}
 
-function componentStateBadgeClass(state: ComponentState): string {
-  switch (state) {
-    case 'Ready':
-      return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
-    case 'Failed':
-      return 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
-    case 'Applying':
-      return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
-    default:
-      return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
-  }
-}
+
+
 
 function countComponents(spec: CompositeSpecShape): number {
   return (
@@ -233,7 +209,7 @@ function TabBar(props: {
       {tabs.map((tab) => {
         const isActive = tab.id === active;
         return (
-          <button
+          <Button
             key={tab.id}
             type="button"
             onClick={() => onChange(tab.id)}
@@ -245,7 +221,7 @@ function TabBar(props: {
             }
           >
             {tab.label}
-          </button>
+          </Button>
         );
       })}
     </div>
@@ -261,14 +237,14 @@ function ListTab(props: {
 
   if (list.isLoading) {
     return (
-      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4  text-[color:var(--color-text-secondary)]" style={{ fontSize: 14 }}>
         Loading composites…
       </div>
     );
   }
   if (list.error) {
     return (
-      <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
+      <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2  text-[color:var(--color-err)]" style={{ fontSize: 14 }}>
         Failed to load composites: {list.error.message}
       </div>
     );
@@ -282,23 +258,23 @@ function ListTab(props: {
         className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6"
         data-testid="composites-empty-state"
       >
-        <div className="text-sm text-[color:var(--color-text)]">
+        <div className=" text-[color:var(--color-text)]" style={{ fontSize: 14 }}>
           No composites yet.
         </div>
-        <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
+        <p className="mt-2  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
           A composite bundles services, workloads, RAG nodes, and
           gateways into one declarative unit. Apply one from a YAML
           file:
         </p>
         <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]">{`llamactl composite apply -f <file>.yaml`}</pre>
-        <button
+        <Button variant="primary" size="sm"
           type="button"
           onClick={onCreate}
           data-testid="composites-empty-apply"
-          className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 text-xs font-medium text-[color:var(--color-brand-contrast)]"
+          
         >
           Open Apply tab
-        </button>
+        </Button>
       </div>
     );
   }
@@ -308,7 +284,7 @@ function ListTab(props: {
       className="overflow-hidden rounded-md border border-[var(--color-border)]"
       data-testid="composites-list-table"
     >
-      <table className="w-full mono text-sm">
+      <table className="w-full mono " style={{ fontSize: 14 }}>
         <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
           <tr>
             <th className="px-3 py-2 font-medium">Name</th>
@@ -339,10 +315,7 @@ function ListTab(props: {
                 </td>
                 <td className="px-3 py-2">
                   <span
-                    className={`rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] ${phaseBadgeClass(phase)}`}
-                  >
-                    {phase ?? 'Unapplied'}
-                  </span>
+                    className="flex items-center gap-1 text-[10px]"><StatusDot tone={phase === 'Ready' || phase === 'Pending' || phase === 'Applying' ? 'ok' : phase === 'Failed' ? 'err' : phase === 'Degraded' ? 'warn' : 'idle'} />{phase ?? 'Unapplied'}</span>
                 </td>
               </tr>
             );
@@ -365,7 +338,7 @@ function DryRunPreview(props: { result: DryRunResult }): React.JSX.Element {
       className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
       data-testid="composites-dryrun-preview"
     >
-      <div className="mb-2 text-xs text-[color:var(--color-text-secondary)]">
+      <div className="mb-2  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
         Dry-run succeeded — composite{' '}
         <span className="mono text-[color:var(--color-text)]">
           {result.manifest.metadata.name}
@@ -373,10 +346,10 @@ function DryRunPreview(props: { result: DryRunResult }): React.JSX.Element {
         would apply {countComponents(result.manifest.spec)} component(s).
       </div>
       <div className="mb-2">
-        <div className="mb-1 text-xs font-medium text-[color:var(--color-text)]">
+        <div className="mb-1  font-medium text-[color:var(--color-text)]" style={{ fontSize: 12 }}>
           Topological order
         </div>
-        <ol className="space-y-0.5 mono text-xs text-[color:var(--color-text)]">
+        <ol className="space-y-0.5 mono  text-[color:var(--color-text)]" style={{ fontSize: 12 }}>
           {result.order.map((ref, i) => (
             <li key={`${ref.kind}/${ref.name}`} className="flex gap-2">
               <span className="text-[color:var(--color-text-secondary)]">
@@ -395,7 +368,7 @@ function DryRunPreview(props: { result: DryRunResult }): React.JSX.Element {
       </div>
       {result.impliedEdges.length > 0 && (
         <div>
-          <div className="mb-1 text-xs font-medium text-[color:var(--color-text)]">
+          <div className="mb-1  font-medium text-[color:var(--color-text)]" style={{ fontSize: 12 }}>
             Implied dependency edges
           </div>
           <ul className="space-y-0.5 mono text-[10px] text-[color:var(--color-text-secondary)]">
@@ -427,24 +400,21 @@ function WetRunSummary(props: {
       }
       data-testid="composites-wetrun-summary"
     >
-      <div className="flex items-center gap-2 text-sm">
+      <div className="flex items-center gap-2 " style={{ fontSize: 14 }}>
         <span
-          className={`rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] ${phaseBadgeClass(result.status.phase)}`}
-        >
-          {result.status.phase}
-        </span>
+          className="flex items-center gap-1 text-[10px]"><StatusDot tone={result.status.phase === 'Ready' || result.status.phase === 'Pending' || result.status.phase === 'Applying' ? 'ok' : result.status.phase === 'Failed' ? 'err' : result.status.phase === 'Degraded' ? 'warn' : 'idle'} />{result.status.phase}</span>
         <span className="text-[color:var(--color-text)]">
           {result.ok ? 'apply succeeded' : 'apply failed'}
         </span>
         {result.rolledBack && (
-          <span className="text-xs text-[color:var(--color-warn,var(--color-ok))]">
+          <span className=" text-[color:var(--color-warn,var(--color-ok))]" style={{ fontSize: 12 }}>
             · rolled back
           </span>
         )}
       </div>
       {failed.length > 0 && (
         <div className="mt-2 space-y-1">
-          <div className="text-xs font-medium text-[color:var(--color-err)]">
+          <div className=" font-medium text-[color:var(--color-err)]" style={{ fontSize: 12 }}>
             Failed components ({failed.length})
           </div>
           <ul className="space-y-0.5 mono text-[11px] text-[color:var(--color-text)]">
@@ -586,12 +556,12 @@ function ApplyTab(props: {
         className="flex flex-wrap items-end gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
         data-testid="composites-apply-selector"
       >
-        <label className="text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+        <label  style={{ fontSize: 14 }}>
+          <span className="mb-1 block  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
             Mode
           </span>
           <div className="flex gap-1" role="radiogroup" aria-label="Composite mode">
-            <button
+            <Button
               type="button"
               role="radio"
               aria-checked={mode === 'new'}
@@ -608,8 +578,8 @@ function ApplyTab(props: {
               }
             >
               New composite
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               role="radio"
               aria-checked={mode === 'edit'}
@@ -622,12 +592,12 @@ function ApplyTab(props: {
               }
             >
               Edit existing
-            </button>
+            </Button>
           </div>
         </label>
         {mode === 'edit' && (
-          <label className="text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+          <label  style={{ fontSize: 14 }}>
+            <span className="mb-1 block  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
               Composite
             </span>
             <ExistingComposites
@@ -636,8 +606,8 @@ function ApplyTab(props: {
             />
           </label>
         )}
-        <label className="text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+        <label  style={{ fontSize: 14 }}>
+          <span className="mb-1 block  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
             Runtime
           </span>
           <select
@@ -651,7 +621,7 @@ function ApplyTab(props: {
               )
             }
             data-testid="composites-runtime-picker"
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text)]"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1  text-[color:var(--color-text)]" style={{ fontSize: 12 }}
             title="Per-composite runtime override. `auto` inherits LLAMACTL_RUNTIME_BACKEND (defaults to 'docker')."
           >
             <option value="auto">auto (env fallback)</option>
@@ -667,24 +637,24 @@ function ApplyTab(props: {
         data-testid="composites-yaml-editor"
         rows={20}
         spellCheck={false}
-        className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
+        className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono  text-[color:var(--color-text)]" style={{ fontSize: 12 }}
       />
 
       <div className="flex items-center gap-2">
-        <button
+        <Button
           type="button"
           onClick={() => {
             void runDry();
           }}
           disabled={apply.isPending}
           data-testid="composites-dryrun"
-          className="rounded border border-[var(--color-brand)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-ok)] disabled:opacity-50"
+          className="rounded border border-[var(--color-brand)] bg-[var(--color-surface-2)] px-3 py-1  text-[color:var(--color-ok)] disabled:opacity-50" style={{ fontSize: 12 }}
         >
           {apply.isPending && apply.variables?.dryRun
             ? 'Validating…'
             : 'Dry-run'}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={() => {
             void runWet();
@@ -695,7 +665,7 @@ function ApplyTab(props: {
             dryRunYaml !== yamlText
           }
           data-testid="composites-apply"
-          className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 text-xs font-medium text-[color:var(--color-brand-contrast)] disabled:opacity-40"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1  font-medium text-[color:var(--color-brand-contrast)] disabled:opacity-40" style={{ fontSize: 12 }}
           title={
             dryRunOk && dryRunYaml === yamlText
               ? 'Wet-apply the composite'
@@ -705,9 +675,9 @@ function ApplyTab(props: {
           {apply.isPending && apply.variables?.dryRun === false
             ? 'Applying…'
             : 'Apply'}
-        </button>
+        </Button>
         {error && (
-          <span className="text-xs text-[color:var(--color-err)]">{error}</span>
+          <span className=" text-[color:var(--color-err)]" style={{ fontSize: 12 }}>{error}</span>
         )}
       </div>
 
@@ -783,7 +753,7 @@ function ExistingComposites(props: {
   const rows = (list.data ?? []) as CompositeShape[];
   if (rows.length === 0) {
     return (
-      <span className="mono text-xs text-[color:var(--color-text-secondary)]">
+      <span className="mono  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
         no composites — create a new one
       </span>
     );
@@ -793,7 +763,7 @@ function ExistingComposites(props: {
       value={props.selected ?? ''}
       onChange={(e) => props.onChange(e.target.value)}
       data-testid="composites-existing-select"
-      className="w-64 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
+      className="w-64 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono  text-[color:var(--color-text)]" style={{ fontSize: 12 }}
     >
       <option value="" disabled>
         Select a composite
@@ -825,7 +795,7 @@ function ComponentTree(props: {
     const state: ComponentState = match?.state ?? 'Pending';
     return (
       <span
-        className={`rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] ${componentStateBadgeClass(state)}`}
+        className={`rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]`}
         title={match?.message ?? state}
       >
         {state}
@@ -902,7 +872,7 @@ function ComponentTree(props: {
     <div className="space-y-3" data-testid="composites-component-tree">
       {sections.map((section) => (
         <div key={section.title}>
-          <div className="mb-1 text-xs font-medium text-[color:var(--color-text)]">
+          <div className="mb-1  font-medium text-[color:var(--color-text)]" style={{ fontSize: 12 }}>
             {section.title} ({section.rows.length})
           </div>
           {section.rows.length === 0 ? (
@@ -918,7 +888,7 @@ function ComponentTree(props: {
                   className="flex items-center gap-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-1"
                 >
                   {badge(row.ref)}
-                  <span className="mono text-xs text-[color:var(--color-text)]">
+                  <span className="mono  text-[color:var(--color-text)]" style={{ fontSize: 12 }}>
                     {row.ref.name}
                   </span>
                   {row.meta}
@@ -961,7 +931,7 @@ function LiveStatusStream(props: {
   if (error) {
     return (
       <div
-        className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-err)]"
+        className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2  text-[color:var(--color-err)]" style={{ fontSize: 12 }}
         data-testid="composites-live-status-error"
       >
         Live status unavailable: {error}
@@ -970,7 +940,7 @@ function LiveStatusStream(props: {
   }
   if (events.length === 0) {
     return (
-      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-text-secondary)]">
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
         Waiting for status events…
       </div>
     );
@@ -1026,14 +996,14 @@ function DestroySection(props: {
 
   if (!armed) {
     return (
-      <button
+      <Button
         type="button"
         onClick={() => setArmed(true)}
         data-testid="composites-destroy-arm"
-        className="rounded border border-[var(--color-err)] px-3 py-1 text-xs text-[color:var(--color-err)]"
+        className="rounded border border-[var(--color-err)] px-3 py-1  text-[color:var(--color-err)]" style={{ fontSize: 12 }}
       >
         Destroy composite…
-      </button>
+      </Button>
     );
   }
 
@@ -1042,43 +1012,43 @@ function DestroySection(props: {
       className="space-y-2 rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] p-3"
       data-testid="composites-destroy-confirm"
     >
-      <div className="text-xs text-[color:var(--color-text)]">
+      <div className=" text-[color:var(--color-text)]" style={{ fontSize: 12 }}>
         Destructive action: this will tear down every component declared in{' '}
         <span className="mono">{name}</span> and remove the manifest. Type the
         composite name below to confirm.
       </div>
       <div className="flex items-center gap-2">
-        <input
+        <Input
           type="text"
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
           data-testid="composites-destroy-input"
           placeholder={name}
-          className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
+          className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono  text-[color:var(--color-text)]" style={{ fontSize: 12 }}
         />
-        <button
+        <Button
           type="button"
           onClick={() => destroy.mutate({ name, dryRun: false })}
           disabled={!matches || destroy.isPending}
           data-testid="composites-destroy-confirm-button"
-          className="rounded border border-[var(--color-err)] bg-[var(--color-err)] px-3 py-1 text-xs text-[color:var(--color-text-inverse)] disabled:opacity-40"
+          className="rounded border border-[var(--color-err)] bg-[var(--color-err)] px-3 py-1  text-[color:var(--color-text-inverse)] disabled:opacity-40" style={{ fontSize: 12 }}
         >
           {destroy.isPending ? 'Destroying…' : 'Confirm destroy'}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={() => {
             setArmed(false);
             setTyped('');
             setError(null);
           }}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-text)]"
+          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1  text-[color:var(--color-text)]" style={{ fontSize: 12 }}
         >
           Cancel
-        </button>
+        </Button>
       </div>
       {error && (
-        <div className="text-xs text-[color:var(--color-err)]">{error}</div>
+        <div className=" text-[color:var(--color-err)]" style={{ fontSize: 12 }}>{error}</div>
       )}
     </div>
   );
@@ -1098,15 +1068,15 @@ function DetailTab(props: {
 
   if (!name) {
     return (
-      <div className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
+      <div className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-4  text-[color:var(--color-text-secondary)]" style={{ fontSize: 14 }}>
         No composite selected. Pick one from the{' '}
-        <button
+        <Button variant="secondary" size="sm"
           type="button"
-          className="text-[color:var(--color-ok)] underline"
+          
           onClick={() => onPickFromList('')}
         >
           List tab
-        </button>
+        </Button>
         .
       </div>
     );
@@ -1114,14 +1084,14 @@ function DetailTab(props: {
 
   if (query.isLoading) {
     return (
-      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4  text-[color:var(--color-text-secondary)]" style={{ fontSize: 14 }}>
         Loading <span className="mono">{name}</span>…
       </div>
     );
   }
   if (query.error) {
     return (
-      <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
+      <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2  text-[color:var(--color-err)]" style={{ fontSize: 14 }}>
         Failed to load composite <span className="mono">{name}</span>:{' '}
         {query.error.message}
       </div>
@@ -1130,7 +1100,7 @@ function DetailTab(props: {
   const manifest = query.data as CompositeShape | null | undefined;
   if (!manifest) {
     return (
-      <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-sm text-[color:var(--color-text-secondary)]">
+      <div className="rounded-md border border-dashed border-[var(--color-border)] p-4  text-[color:var(--color-text-secondary)]" style={{ fontSize: 14 }}>
         Composite <span className="mono">{name}</span> not found.
       </div>
     );
@@ -1154,11 +1124,8 @@ function DetailTab(props: {
             {manifest.metadata.name}
           </h2>
           <span
-            className={`rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] ${phaseBadgeClass(manifest.status?.phase)}`}
-          >
-            {manifest.status?.phase ?? 'Unapplied'}
-          </span>
-          <span className="text-xs text-[color:var(--color-text-secondary)]">
+            className="flex items-center gap-1 text-[10px]"><StatusDot tone={manifest.status?.phase === 'Ready' || manifest.status?.phase === 'Pending' || manifest.status?.phase === 'Applying' ? 'ok' : manifest.status?.phase === 'Failed' ? 'err' : manifest.status?.phase === 'Degraded' ? 'warn' : 'idle'} />{manifest.status?.phase ?? 'Unapplied'}</span>
+          <span className=" text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
             last applied {formatTimestamp(manifest.status?.appliedAt)}
           </span>
         </div>
@@ -1182,21 +1149,21 @@ function DetailTab(props: {
       />
 
       <div>
-        <div className="mb-1 text-xs font-medium text-[color:var(--color-text)]">
+        <div className="mb-1  font-medium text-[color:var(--color-text)]" style={{ fontSize: 12 }}>
           Live status
         </div>
         <LiveStatusStream name={manifest.metadata.name} />
       </div>
 
       <div>
-        <button
+        <Button
           type="button"
           onClick={() => setShowYaml((v) => !v)}
           data-testid="composites-yaml-toggle"
           className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[10px] text-[color:var(--color-text)]"
         >
           {showYaml ? 'Hide YAML' : 'View YAML'}
-        </button>
+        </Button>
         {showYaml && (
           <pre
             className="mt-2 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]"
@@ -1230,13 +1197,13 @@ export default function Composites(): React.JSX.Element {
       className="h-full overflow-auto p-6"
       data-testid="workloads-composites-root"
     >
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+      <div className="mb-1  uppercase tracking-widest text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
         Composites
       </div>
       <h1 className="mb-2 text-2xl font-semibold text-[color:var(--color-text)]">
         Declarative multi-component applies
       </h1>
-      <p className="mb-6 text-xs text-[color:var(--color-text-secondary)]">
+      <p className="mb-6  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
         Bundle services, workloads, RAG nodes, and gateways into one
         manifest. The applier orders components via the dependency DAG
         and rolls back on failure.

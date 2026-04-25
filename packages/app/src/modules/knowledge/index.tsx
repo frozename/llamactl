@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useMemo, useState } from 'react';
 import { trpc } from '@/lib/trpc';
+import { Badge, Button, StatusDot, Input, Kbd } from '@/ui';
 import { PipelinesTab } from './pipelines-tab';
 import { QualityTab } from './quality-tab';
 
@@ -223,7 +224,7 @@ function CollectionHeader(props: {
   if (list.isLoading) {
     return (
       <div
-        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-text-secondary)]"
+        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}
         data-testid="knowledge-collection-header"
       >
         Loading collection info…
@@ -236,11 +237,11 @@ function CollectionHeader(props: {
   if (!targeted) {
     return (
       <div
-        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-text-secondary)]"
+        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}
         data-testid="knowledge-collection-header"
       >
         No collection picked yet — switch to the Collections tab to see what's
-        available on <span className="mono text-[color:var(--color-text)]">{nodeName}</span>.
+        available on <Badge variant="default" className="mono">{nodeName}</Badge>.
       </div>
     );
   }
@@ -265,7 +266,7 @@ function CollectionHeader(props: {
       className="space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
       data-testid="knowledge-collection-header"
     >
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-[color:var(--color-text-secondary)]">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
         <span>
           collection{' '}
           <span
@@ -326,7 +327,7 @@ function CollectionHeader(props: {
       )}
       {warnings.length > 0 && (
         <ul
-          className="space-y-0.5 text-xs text-[color:var(--color-warn,var(--color-ok))]"
+          className="space-y-0.5  text-[color:var(--color-warn,var(--color-ok))]" style={{ fontSize: 12 }}
           data-testid="knowledge-collection-warnings"
         >
           {warnings.map((w, i) => (
@@ -420,8 +421,8 @@ function QueryTab(props: {
         className="space-y-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
         data-testid="knowledge-query-form"
       >
-        <label className="block text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+        <label className="block " style={{ fontSize: 14 }}>
+          <span className="mb-1 block  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
             Query
           </span>
           <textarea
@@ -433,11 +434,11 @@ function QueryTab(props: {
           />
         </label>
         <div className="grid grid-cols-12 gap-3">
-          <label className="col-span-4 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+          <label className="col-span-4 " style={{ fontSize: 14 }}>
+            <span className="mb-1 block  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
               topK ({topK})
             </span>
-            <input
+            <Input
               type="range"
               min={1}
               max={100}
@@ -446,11 +447,11 @@ function QueryTab(props: {
               className="w-full"
             />
           </label>
-          <label className="col-span-4 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+          <label className="col-span-4 " style={{ fontSize: 14 }}>
+            <span className="mb-1 block  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
               Collection (optional)
             </span>
-            <input
+            <Input
               type="text"
               value={collection}
               onChange={(e) => onCollectionChange(e.target.value)}
@@ -459,21 +460,21 @@ function QueryTab(props: {
             />
           </label>
           <div className="col-span-4 flex items-end">
-            <button
+            <Button variant="primary" size="sm"
               type="submit"
               disabled={isSearching}
               data-testid="knowledge-query-submit"
-              className="w-full rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              
             >
               {isSearching ? 'Searching…' : 'Search'}
-            </button>
+            </Button>
           </div>
         </div>
-        <label className="block text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+        <label className="block " style={{ fontSize: 14 }}>
+          <span className="mb-1 block  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
             Filter (metadata JSON, optional)
           </span>
-          <input
+          <Input
             type="text"
             value={filterText}
             onChange={(e) => {
@@ -484,7 +485,7 @@ function QueryTab(props: {
             className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
           />
           {filterError && (
-            <span className="mt-1 block text-xs text-[color:var(--color-err)]">
+            <span className="mt-1 block  text-[color:var(--color-err)]" style={{ fontSize: 12 }}>
               {filterError}
             </span>
           )}
@@ -493,28 +494,27 @@ function QueryTab(props: {
 
       {submitError && (
         <div
-          className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]"
+          className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2  text-[color:var(--color-err)]" style={{ fontSize: 14 }}
           data-testid="knowledge-query-error"
         >
-          Failed to reach <span className="mono">{nodeName}</span>: {submitError}
+          Failed to reach <Badge variant="default" className="mono">{nodeName}</Badge>: {submitError}
         </div>
       )}
 
       {lastResponse && !submitError && (
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 text-xs text-[color:var(--color-text-secondary)]">
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
           <span>
             {results.length} result{results.length === 1 ? '' : 's'}
           </span>
           <span> · collection </span>
-          <span className="mono text-[color:var(--color-text)]">
-            {lastResponse.collection}
-          </span>
+          <Badge variant="default" className="mono">{lastResponse.collection}
+          </Badge>
         </div>
       )}
 
       <div className="space-y-2" data-testid="knowledge-query-results">
         {results.length === 0 && lastResponse && (
-          <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-sm text-[color:var(--color-text-secondary)]">
+          <div className="rounded-md border border-dashed border-[var(--color-border)] p-4  text-[color:var(--color-text-secondary)]" style={{ fontSize: 14 }}>
             No results. Try lowering the similarity threshold or widening the query.
           </div>
         )}
@@ -537,9 +537,8 @@ function QueryTab(props: {
                   >
                     {formatScore(r.score)}
                   </span>
-                  <span className="mono text-xs text-[color:var(--color-text)]">
-                    {r.document.id}
-                  </span>
+                  <Badge variant="default" className="mono">{r.document.id}
+                  </Badge>
                   {typeof r.distance === 'number' && (
                     <span className="text-[10px] text-[color:var(--color-text-secondary)]">
                       distance {r.distance.toFixed(4)}
@@ -547,16 +546,16 @@ function QueryTab(props: {
                   )}
                 </div>
                 {hasMeta && (
-                  <button
+                  <Button
                     type="button"
                     onClick={() => setOpenResult(isOpen ? null : key)}
                     className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
                   >
                     {isOpen ? 'Hide metadata' : 'Show metadata'}
-                  </button>
+                  </Button>
                 )}
               </div>
-              <div className="mt-2 text-sm whitespace-pre-wrap text-[color:var(--color-text)]">
+              <div className="mt-2  whitespace-pre-wrap text-[color:var(--color-text)]" style={{ fontSize: 14 }}>
                 {truncateContent(r.document.content)}
               </div>
               {isOpen && hasMeta && (
@@ -588,15 +587,15 @@ function CollectionsTab(props: {
 
   if (list.isLoading) {
     return (
-      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4  text-[color:var(--color-text-secondary)]" style={{ fontSize: 14 }}>
         Loading collections…
       </div>
     );
   }
   if (list.error) {
     return (
-      <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
-        Failed to reach <span className="mono">{nodeName}</span>:{' '}
+      <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2  text-[color:var(--color-err)]" style={{ fontSize: 14 }}>
+        Failed to reach <Badge variant="default" className="mono">{nodeName}</Badge>:{' '}
         {list.error.message}
       </div>
     );
@@ -606,8 +605,8 @@ function CollectionsTab(props: {
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-sm text-[color:var(--color-text-secondary)]">
-        No collections yet on <span className="mono">{nodeName}</span>. Index a
+      <div className="rounded-md border border-dashed border-[var(--color-border)] p-4  text-[color:var(--color-text-secondary)]" style={{ fontSize: 14 }}>
+        No collections yet on <Badge variant="default" className="mono">{nodeName}</Badge>. Index a
         document in the Indexing tab to create one.
       </div>
     );
@@ -618,7 +617,7 @@ function CollectionsTab(props: {
       className="overflow-hidden rounded-md border border-[var(--color-border)]"
       data-testid="knowledge-collections-table"
     >
-      <table className="w-full mono text-sm">
+      <table className="w-full mono " style={{ fontSize: 14 }}>
         <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
           <tr>
             <th className="px-3 py-2 font-medium">Name</th>
@@ -643,13 +642,13 @@ function CollectionsTab(props: {
                 {typeof c.dimensions === 'number' ? c.dimensions : '—'}
               </td>
               <td className="px-3 py-2 text-right">
-                <button
+                <Button
                   type="button"
                   onClick={() => onPick(c.name)}
                   className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
                 >
                   Use in Query
-                </button>
+                </Button>
               </td>
             </tr>
           ))}
@@ -720,8 +719,8 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
         className="space-y-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
         data-testid="knowledge-indexing-form"
       >
-        <label className="block text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+        <label className="block " style={{ fontSize: 14 }}>
+          <span className="mb-1 block  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
             Documents to index (JSON array or plain text paragraphs)
           </span>
           <textarea
@@ -732,20 +731,20 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
             }}
             rows={10}
             placeholder={`Paragraph-per-document:\n\nFirst paragraph becomes one doc.\n\nBlank lines separate documents.\n\nOr JSON:\n[{"id":"note-1","content":"…","metadata":{"source":"runbook"}}]`}
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono  text-[color:var(--color-text)]" style={{ fontSize: 12 }}
           />
-          <span className="mt-1 block text-xs text-[color:var(--color-text-secondary)]">
+          <span className="mt-1 block  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
             {previewCount != null
               ? `${previewCount} document${previewCount === 1 ? '' : 's'} will be stored.`
               : 'Starts with [ to parse as JSON; otherwise split on blank lines.'}
           </span>
         </label>
         <div className="grid grid-cols-12 gap-3">
-          <label className="col-span-8 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+          <label className="col-span-8 " style={{ fontSize: 14 }}>
+            <span className="mb-1 block  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
               Collection (optional)
             </span>
-            <input
+            <Input
               type="text"
               value={collection}
               onChange={(e) => setCollection(e.target.value)}
@@ -754,26 +753,26 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
             />
           </label>
           <div className="col-span-4 flex items-end">
-            <button
+            <Button variant="primary" size="sm"
               type="submit"
               disabled={store.isPending}
               data-testid="knowledge-indexing-submit"
-              className="w-full rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              
             >
               {store.isPending ? 'Storing…' : 'Store documents'}
-            </button>
+            </Button>
           </div>
         </div>
         {parseError && (
-          <div className="text-xs text-[color:var(--color-err)]">
+          <div className=" text-[color:var(--color-err)]" style={{ fontSize: 12 }}>
             {parseError}
           </div>
         )}
       </form>
 
       {submitError && (
-        <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
-          Failed to reach <span className="mono">{nodeName}</span>: {submitError}
+        <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2  text-[color:var(--color-err)]" style={{ fontSize: 14 }}>
+          Failed to reach <Badge variant="default" className="mono">{nodeName}</Badge>: {submitError}
         </div>
       )}
 
@@ -782,10 +781,10 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
           className="rounded-md border border-[var(--color-ok)] bg-[var(--color-surface-1)] p-3"
           data-testid="knowledge-indexing-result"
         >
-          <div className="text-sm text-[color:var(--color-text)]">
+          <div className=" text-[color:var(--color-text)]" style={{ fontSize: 14 }}>
             Stored {lastResult.ids.length} document
             {lastResult.ids.length === 1 ? '' : 's'} in{' '}
-            <span className="mono">{lastResult.collection}</span>.
+            <Badge variant="default" className="mono">{lastResult.collection}</Badge>.
           </div>
           <div className="mt-2 flex flex-wrap gap-1 mono text-[10px] text-[color:var(--color-text-secondary)]">
             {lastResult.ids.map((id) => (
@@ -878,7 +877,7 @@ function EmbedderPanel(props: {
       data-testid="knowledge-embedder-panel"
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="text-xs text-[color:var(--color-text-secondary)]">
+        <div className=" text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
           <div className="mb-1 uppercase tracking-wider">Embedder</div>
           {shown ? (
             <div
@@ -886,13 +885,11 @@ function EmbedderPanel(props: {
               data-testid="knowledge-embedder-current"
             >
               node{' '}
-              <span className="mono text-[color:var(--color-ok)]">
-                {shown.node}
-              </span>
+              <Badge variant="default" className="mono">{shown.node}
+              </Badge>
               <span> · model </span>
-              <span className="mono text-[color:var(--color-ok)]">
-                {shown.model}
-              </span>
+              <Badge variant="default" className="mono">{shown.model}
+              </Badge>
             </div>
           ) : (
             <div
@@ -911,7 +908,7 @@ function EmbedderPanel(props: {
         </div>
         <div className="flex gap-1">
           {!editing ? (
-            <button
+            <Button
               type="button"
               onClick={() => {
                 setDraftNode(shown?.node ?? '');
@@ -923,9 +920,9 @@ function EmbedderPanel(props: {
               className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               Edit embedder
-            </button>
+            </Button>
           ) : (
-            <button
+            <Button
               type="button"
               onClick={() => {
                 setEditing(false);
@@ -935,18 +932,18 @@ function EmbedderPanel(props: {
               className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               Cancel
-            </button>
+            </Button>
           )}
           {shown && !editing && (
-            <button
+            <Button variant="secondary" size="sm"
               type="button"
               onClick={onClear}
               disabled={mutation.isPending}
               data-testid="knowledge-embedder-clear"
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)] disabled:cursor-not-allowed disabled:opacity-50"
+              
             >
               Clear embedder
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -960,8 +957,8 @@ function EmbedderPanel(props: {
           className="mt-3 grid grid-cols-12 gap-3"
           data-testid="knowledge-embedder-form"
         >
-          <label className="col-span-5 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+          <label className="col-span-5 " style={{ fontSize: 14 }}>
+            <span className="mb-1 block  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
               Node
             </span>
             <select
@@ -982,11 +979,11 @@ function EmbedderPanel(props: {
               ))}
             </select>
           </label>
-          <label className="col-span-5 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+          <label className="col-span-5 " style={{ fontSize: 14 }}>
+            <span className="mb-1 block  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
               Model
             </span>
-            <input
+            <Input
               type="text"
               value={draftModel}
               onChange={(e) => setDraftModel(e.target.value)}
@@ -996,21 +993,21 @@ function EmbedderPanel(props: {
             />
           </label>
           <div className="col-span-2 flex items-end">
-            <button
+            <Button variant="primary" size="sm"
               type="submit"
               disabled={mutation.isPending}
               data-testid="knowledge-embedder-save"
-              className="w-full rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              
             >
               {mutation.isPending ? 'Saving…' : 'Save'}
-            </button>
+            </Button>
           </div>
         </form>
       )}
 
       {error && (
         <div
-          className="mt-2 text-xs text-[color:var(--color-err)]"
+          className="mt-2  text-[color:var(--color-err)]" style={{ fontSize: 12 }}
           data-testid="knowledge-embedder-error"
         >
           {error}
@@ -1076,21 +1073,21 @@ export default function Knowledge(): React.JSX.Element {
 
   return (
     <div className="h-full overflow-auto p-6" data-testid="knowledge-retrieval-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+      <div className="mb-1  uppercase tracking-widest text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
         Knowledge
       </div>
       <h1 className="mb-2 text-2xl font-semibold text-[color:var(--color-text)]">
         Retrieval-Augmented Generation
       </h1>
-      <p className="mb-6 text-xs text-[color:var(--color-text-secondary)]">
+      <p className="mb-6  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
         Query, browse, and index documents against the RAG nodes registered in
         your kubeconfig. Supported providers:{' '}
-        <span className="mono">chroma</span> and{' '}
-        <span className="mono">pgvector</span>.
+        <Badge variant="default" className="mono">chroma</Badge> and{' '}
+        <Badge variant="default" className="mono">pgvector</Badge>.
       </p>
 
       {nodes.isLoading && (
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4  text-[color:var(--color-text-secondary)]" style={{ fontSize: 14 }}>
           Loading nodes…
         </div>
       )}
@@ -1100,19 +1097,19 @@ export default function Knowledge(): React.JSX.Element {
           className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6"
           data-testid="knowledge-empty-state"
         >
-          <div className="text-sm text-[color:var(--color-text)]">
+          <div className=" text-[color:var(--color-text)]" style={{ fontSize: 14 }}>
             No knowledge bases yet — register one with{' '}
-            <span className="mono">llamactl node add …</span>.
+            <Badge variant="default" className="mono">llamactl node add …</Badge>.
           </div>
-          <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
+          <p className="mt-2  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
             Example for a Chroma node backed by the chroma-mcp server:
           </p>
           <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]">{`llamactl node add kb-chroma \\
   --rag=chroma \\
   --endpoint="chroma-mcp run --persist-directory /path/to/chroma-data"`}</pre>
-          <p className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
+          <p className="mt-2  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
             Or a pgvector node against a running Postgres with the{' '}
-            <span className="mono">vector</span> extension:
+            <Badge variant="default" className="mono">vector</Badge> extension:
           </p>
           <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]">{`llamactl node add kb-pg \\
   --rag=pgvector \\
@@ -1123,8 +1120,8 @@ export default function Knowledge(): React.JSX.Element {
       {ragNodes.length > 0 && selected && (
         <>
           <div className="mb-4 grid grid-cols-12 gap-3">
-            <label className="col-span-6 text-sm">
-              <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+            <label className="col-span-6 " style={{ fontSize: 14 }}>
+              <span className="mb-1 block  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
                 RAG node
               </span>
               <select
@@ -1141,16 +1138,15 @@ export default function Knowledge(): React.JSX.Element {
                 ))}
               </select>
             </label>
-            <div className="col-span-6 flex items-end gap-2 text-xs text-[color:var(--color-text-secondary)]">
+            <div className="col-span-6 flex items-end gap-2  text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
               <span>
-                kind <span className="mono text-[color:var(--color-text)]">rag</span>
+                kind <Badge variant="default" className="mono">rag</Badge>
               </span>
               {selected.provider && (
                 <span>
                   · provider{' '}
-                  <span className="mono text-[color:var(--color-text)]">
-                    {selected.provider}
-                  </span>
+                  <Badge variant="default" className="mono">{selected.provider}
+                  </Badge>
                 </span>
               )}
             </div>
@@ -1173,7 +1169,7 @@ export default function Knowledge(): React.JSX.Element {
             ).map((tab) => {
               const active = tab.id === activeTab;
               return (
-                <button
+                <Button
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveTab(tab.id)}
@@ -1185,7 +1181,7 @@ export default function Knowledge(): React.JSX.Element {
                   }
                 >
                   {tab.label}
-                </button>
+                </Button>
               );
             })}
           </div>

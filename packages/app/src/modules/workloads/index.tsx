@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Layers } from 'lucide-react';
 import * as YAML from 'yaml';
 import { trpc } from '@/lib/trpc';
+import { Badge, Button, StatusDot, Input } from '@/ui';
 import { WorkersPanel, type WorkerManifest } from './workers-panel';
 
 /**
@@ -34,19 +35,6 @@ interface WorkloadRow {
    */
   workerCount: number;
   workerNodes: string[];
-}
-
-function phaseBadgeClass(phase: Phase): string {
-  switch (phase) {
-    case 'Running':
-      return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
-    case 'Mismatch':
-      return 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]';
-    case 'Unreachable':
-      return 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
-    default:
-      return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
-  }
 }
 
 function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
@@ -144,18 +132,17 @@ function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
       }}
       className="mt-4 space-y-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
     >
-      <div className="text-sm font-medium text-[color:var(--color-text)]">
+      <div className="font-medium text-[color:var(--color-text)]" style={{ fontSize: 14 }}>
         Apply a workload
       </div>
-      <div className="flex flex-wrap items-end gap-2 text-xs">
+      <div className="flex flex-wrap items-end gap-2" style={{ fontSize: 12 }}>
         <div className="flex flex-col">
           <label className="text-[color:var(--color-text-secondary)]">name</label>
-          <input
+          <Input
             type="text"
             placeholder="gemma-qa"
             value={tplName}
             onChange={(e) => setTplName(e.target.value)}
-            className="w-40 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
           />
         </div>
         <div className="flex flex-col">
@@ -174,47 +161,50 @@ function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
         </div>
         <div className="flex flex-1 flex-col">
           <label className="text-[color:var(--color-text-secondary)]">target (rel path)</label>
-          <input
+          <Input
             type="text"
             placeholder="gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
             value={tplTarget}
             onChange={(e) => setTplTarget(e.target.value)}
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-text)]"
           />
         </div>
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="sm"
           onClick={() => { void onTemplate(); }}
           disabled={template.isFetching}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-[color:var(--color-text)] disabled:opacity-50"
         >
           {template.isFetching ? 'Generating…' : 'Generate YAML'}
-        </button>
+        </Button>
       </div>
       <textarea
         placeholder="apiVersion: llamactl/v1&#10;kind: ModelRun&#10;metadata:&#10;  name: gemma-qa&#10;spec:&#10;  node: local&#10;  target:&#10;    kind: rel&#10;    value: …"
         value={yaml}
         onChange={(e) => setYaml(e.target.value)}
-        className="h-48 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-xs text-[color:var(--color-text)]"
+        className="h-48 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-text)]"
+        style={{ fontSize: 12 }}
       />
-      <div className="flex items-center gap-2 text-sm">
-        <button
+      <div className="flex items-center gap-2" style={{ fontSize: 14 }}>
+        <Button
           type="submit"
+          variant="primary"
+          size="sm"
           disabled={apply.isPending}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 text-[color:var(--color-brand-contrast)] disabled:opacity-50"
         >
           {apply.isPending ? 'Applying…' : 'Apply'}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="secondary"
+          size="sm"
           onClick={onValidate}
           disabled={validate.isFetching}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-[color:var(--color-text)] disabled:opacity-50"
         >
           {validate.isFetching ? 'Validating…' : 'Validate'}
-        </button>
-        {error && <span className="text-xs text-[color:var(--color-err)]">{error}</span>}
-        {success && <span className="text-xs text-[color:var(--color-ok)]">{success}</span>}
+        </Button>
+        {error && <span className="text-[color:var(--color-err)]" style={{ fontSize: 12 }}>{error}</span>}
+        {success && <span className="text-[color:var(--color-ok)]" style={{ fontSize: 12 }}>{success}</span>}
       </div>
     </form>
   );
@@ -248,20 +238,20 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
     >
       <div className="flex items-baseline justify-between gap-4">
         <div className="flex items-baseline gap-2">
-          <span className="font-mono text-sm text-[color:var(--color-text)]">{row.name}</span>
-          <span
-            className={`rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] ${phaseBadgeClass(row.phase)}`}
-          >
+          <Badge variant="default" className="font-mono text-[color:var(--color-text)]" style={{ fontSize: 14 }}>{row.name}</Badge>
+          <span className="flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1.5 py-0.5 text-[color:var(--color-text)]" style={{ fontSize: 10 }}>
+            <StatusDot tone={row.phase === 'Running' ? 'ok' : row.phase === 'Mismatch' ? 'warn' : row.phase === 'Unreachable' ? 'err' : 'idle'} />
             {row.phase}
           </span>
-          <span className="text-xs text-[color:var(--color-text-secondary)]">
+          <span className="text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
             node <span className="font-mono">{row.node}</span>
           </span>
           {row.workerCount > 0 && (
             <span
               data-testid="workloads-row-workers-badge"
               title={`workers: ${row.workerNodes.join(', ')}`}
-              className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]"
+              className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[color:var(--color-text-secondary)]"
+              style={{ fontSize: 10 }}
             >
               <Layers className="h-3 w-3" aria-hidden="true" />
               <span>
@@ -270,17 +260,18 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
             </span>
           )}
         </div>
-        <div className="flex gap-1 text-xs">
-          <button
+        <div className="flex gap-1" style={{ fontSize: 12 }}>
+          <Button
             type="button"
+            variant="secondary"
+            size="sm"
             onClick={() => setShowDescribe((v) => !v)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
           >
             {showDescribe ? 'Hide' : 'Describe'}
-          </button>
+          </Button>
           {confirmDelete ? (
             <>
-              <label className="flex items-center gap-1 text-[10px] text-[color:var(--color-text-secondary)]">
+              <label className="flex items-center gap-1 text-[color:var(--color-text-secondary)]" style={{ fontSize: 10 }}>
                 <input
                   type="checkbox"
                   checked={keepRunning}
@@ -288,36 +279,39 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
                 />
                 keep server running
               </label>
-              <button
+              <Button
                 type="button"
+                variant="destructive"
+                size="sm"
                 onClick={() => del.mutate({ name: row.name, keepRunning })}
                 disabled={del.isPending}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-err)] px-2 py-1 text-[color:var(--color-text-inverse)] disabled:opacity-50"
               >
                 {del.isPending ? 'Deleting…' : 'Confirm delete'}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="secondary"
+                size="sm"
                 onClick={() => setConfirmDelete(false)}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
               >
                 Cancel
-              </button>
+              </Button>
             </>
           ) : (
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="sm"
               onClick={() => setConfirmDelete(true)}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text-secondary)]"
             >
               Delete
-            </button>
+            </Button>
           )}
         </div>
       </div>
-      <div className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
+      <div className="mt-1 text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
         <span>rel: </span>
-        <span className="font-mono">{row.rel}</span>
+        <Badge variant="brand" className="font-mono">{row.rel}</Badge>
         {row.endpoint && (
           <>
             <span> · endpoint: </span>
@@ -333,7 +327,7 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
         )}
       </div>
       {showDescribe && (
-        <div className="mt-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 text-xs">
+        <div className="mt-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2" style={{ fontSize: 12 }}>
           {describe.isLoading ? (
             <span className="text-[color:var(--color-text-secondary)]">Loading…</span>
           ) : describe.error ? (
@@ -347,13 +341,13 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
               />
               <div>
                 <div className="font-medium text-[color:var(--color-text)]">Manifest</div>
-                <pre className="mt-1 overflow-x-auto whitespace-pre font-mono text-[10px] text-[color:var(--color-text)]">
+                <pre className="mt-1 overflow-x-auto whitespace-pre font-mono text-[color:var(--color-text)]" style={{ fontSize: 10 }}>
                   {YAML.stringify(describe.data.manifest)}
                 </pre>
               </div>
               <div>
                 <div className="font-medium text-[color:var(--color-text)]">Live status</div>
-                <pre className="mt-1 overflow-x-auto whitespace-pre font-mono text-[10px] text-[color:var(--color-text)]">
+                <pre className="mt-1 overflow-x-auto whitespace-pre font-mono text-[color:var(--color-text)]" style={{ fontSize: 10 }}>
                   {JSON.stringify(describe.data.liveStatus, null, 2)}
                 </pre>
               </div>
@@ -362,10 +356,10 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
         </div>
       )}
       {del.error && (
-        <div className="mt-2 text-xs text-[color:var(--color-err)]">{del.error.message}</div>
+        <div className="mt-2 text-[color:var(--color-err)]" style={{ fontSize: 12 }}>{del.error.message}</div>
       )}
       {del.data && del.data.stops.length > 0 && (
-        <ul className="mt-2 space-y-0.5 text-xs text-[color:var(--color-text-secondary)]">
+        <ul className="mt-2 space-y-0.5 text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
           {del.data.stops.map((s, i) => (
             <li key={i}>{s}</li>
           ))}
@@ -419,13 +413,9 @@ function ReconcilerToolbar(): React.JSX.Element {
           .join(' · ');
 
   return (
-    <div className="flex items-center justify-between rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs">
+    <div className="flex items-center justify-between rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2" style={{ fontSize: 12 }}>
       <div className="flex items-center gap-2">
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${
-            running ? 'bg-[var(--color-ok)]' : 'bg-[var(--color-text-secondary)]'
-          }`}
-        />
+        <StatusDot tone={running ? 'ok' : 'idle'} />
         <span className="text-[color:var(--color-text)]">
           auto-heal {running ? 'on' : 'off'}
         </span>
@@ -442,33 +432,36 @@ function ReconcilerToolbar(): React.JSX.Element {
         </span>
       </div>
       <div className="flex gap-1">
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="sm"
           onClick={() => kick.mutate()}
           disabled={kick.isPending}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text)] disabled:opacity-50"
           title="run one reconcile pass now"
         >
           {kick.isPending ? '…' : 'Kick'}
-        </button>
+        </Button>
         {running ? (
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="sm"
             onClick={() => stop.mutate()}
             disabled={stop.isPending}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] disabled:opacity-50"
           >
             Stop
-          </button>
+          </Button>
         ) : (
-          <button
+          <Button
             type="button"
+            variant="primary"
+            size="sm"
             onClick={() => start.mutate({ intervalSeconds: 10 })}
             disabled={start.isPending}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-2 py-0.5 text-[10px] text-[color:var(--color-brand-contrast)] disabled:opacity-50"
           >
             Start
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -486,14 +479,14 @@ export default function Workloads(): React.JSX.Element {
   if (list.isLoading) {
     return (
       <div className="h-full" data-testid="workloads-model-runs-root">
-        <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
+        <div className="p-6 text-[color:var(--color-text-secondary)]" style={{ fontSize: 14 }}>Loading…</div>
       </div>
     );
   }
   if (list.error) {
     return (
       <div className="h-full" data-testid="workloads-model-runs-root">
-        <div className="p-6 text-sm text-[color:var(--color-err)]">
+        <div className="p-6 text-[color:var(--color-err)]" style={{ fontSize: 14 }}>
           Failed to load workloads: {list.error.message}
         </div>
       </div>
@@ -507,7 +500,7 @@ export default function Workloads(): React.JSX.Element {
       <div className="flex items-baseline justify-between">
         <div>
           <h1 className="text-lg font-semibold text-[color:var(--color-text)]">Workloads</h1>
-          <div className="text-xs text-[color:var(--color-text-secondary)]">
+          <div className="text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
             Declarative ModelRun manifests (
             <span className="font-mono">
               {workloadsDir.data?.dir ?? '…'}/*.yaml
@@ -515,13 +508,14 @@ export default function Workloads(): React.JSX.Element {
             )
           </div>
         </div>
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="sm"
           onClick={() => setShowApply((v) => !v)}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-text)]"
         >
           {showApply ? 'Cancel' : 'Apply workload'}
-        </button>
+        </Button>
       </div>
       {showApply && <ApplyPanel onDone={() => setShowApply(false)} />}
       <ReconcilerToolbar />
@@ -531,24 +525,25 @@ export default function Workloads(): React.JSX.Element {
             data-testid="workloads-empty"
             className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6"
           >
-            <h2 className="text-sm font-semibold text-[color:var(--color-text)]">
+            <h2 className="font-semibold text-[color:var(--color-text)]" style={{ fontSize: 14 }}>
               Declare a workload to self-heal
             </h2>
-            <p className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
+            <p className="mt-1 text-[color:var(--color-text-secondary)]" style={{ fontSize: 12 }}>
               A <span className="font-mono">ModelRun</span> manifest pins a model
               to a node. The reconciler keeps it running, restarts it on crash,
               and corrects drift when extra args change. Use it for long-lived
               endpoints that shouldn't depend on someone typing{' '}
               <span className="font-mono">llamactl server start</span>.
             </p>
-            <button
+            <Button
               type="button"
+              variant="primary"
+              size="sm"
               onClick={() => setShowApply(true)}
               data-testid="workloads-apply"
-              className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 text-xs font-medium text-[color:var(--color-brand-contrast)]"
             >
               Apply workload
-            </button>
+            </Button>
           </div>
         )}
         {rows.map((row) => (
