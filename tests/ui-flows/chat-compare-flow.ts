@@ -245,9 +245,15 @@ async function main(): Promise<void> {
       await client.call('electron_close', { sessionId });
       return;
     }
-    await client.call('electron_click', {
+    // Dispatch via DOM click() — electron_click's clickability check has
+    // been flaky on the small chat-new button in headless macOS CI.
+    await client.call('electron_evaluate_renderer', {
       sessionId,
-      selector: '[data-testid="chat-new"]',
+      expression: `(() => {
+        const el = document.querySelector('[data-testid="chat-new"]');
+        if (!el) throw new Error('chat-new vanished between wait and click');
+        el.click();
+      })()`,
     });
     await client.call('electron_wait_for_selector', {
       sessionId,
