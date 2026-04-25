@@ -250,15 +250,11 @@ function ProjectDetail(props: {
         <div className="flex gap-2">
           <Button
             type="button"
-            variant="outline"
+            variant="destructive"
             size="sm"
             onClick={onRemove}
             disabled={removeMut.isPending}
             data-testid={`projects-remove-${project.metadata.name}`}
-            style={{
-              borderColor: 'var(--color-err)',
-              color: 'var(--color-err)',
-            }}
           >
             Remove
           </Button>

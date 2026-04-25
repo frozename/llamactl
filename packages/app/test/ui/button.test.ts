@@ -2,7 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import { buttonClasses, type ButtonVariant, type ButtonSize } from '../../src/ui/button';
 
 describe('buttonClasses', () => {
-  const variants: ButtonVariant[] = ['primary', 'secondary', 'ghost', 'outline'];
+  const variants: ButtonVariant[] = ['primary', 'secondary', 'ghost', 'outline', 'destructive'];
   const sizes: ButtonSize[] = ['sm', 'md', 'lg'];
 
   test('every variant × size combination returns a non-empty class list', () => {

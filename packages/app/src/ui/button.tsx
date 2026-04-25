@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { cx } from './classes';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'outline';
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'outline' | 'destructive';
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -15,7 +15,7 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 /** Pure — exported so the variant mapping is unit-testable without
  *  mounting React. */
 export function buttonClasses(variant: ButtonVariant, size: ButtonSize): string {
-  const v: ButtonVariant = ['primary', 'secondary', 'ghost', 'outline'].includes(variant)
+  const v: ButtonVariant = ['primary', 'secondary', 'ghost', 'outline', 'destructive'].includes(variant)
     ? variant
     : 'primary';
   const s: ButtonSize = ['sm', 'md', 'lg'].includes(size) ? size : 'md';
@@ -81,6 +81,11 @@ const VARIANT_STYLE: Record<ButtonVariant, React.CSSProperties> = {
     background: 'transparent',
     color: 'var(--color-text)',
     borderColor: 'var(--color-border-strong)',
+  },
+  destructive: {
+    background: 'transparent',
+    color: 'var(--color-err)',
+    borderColor: 'var(--color-err)',
   },
 };
 

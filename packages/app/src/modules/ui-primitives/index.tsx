@@ -51,6 +51,7 @@ export default function UIPrimitivesSandbox(): React.JSX.Element {
           <Button variant="secondary">Secondary</Button>
           <Button variant="ghost">Ghost</Button>
           <Button variant="outline">Outline</Button>
+          <Button variant="destructive">Destructive</Button>
         </Row>
         <Row>
           <Button variant="primary" size="sm">Small</Button>
