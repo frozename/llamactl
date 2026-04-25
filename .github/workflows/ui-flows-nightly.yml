@@ -1,0 +1,52 @@
+name: ui-flows-nightly
+
+# Tier B UI flows. Runs the 5 surviving flow scripts nightly. Advisory
+# (does not block PRs). See spec at
+# docs/superpowers/specs/2026-04-25-ui-e2e-smoke-design.md.
+
+on:
+  schedule:
+    - cron: '30 9 * * *'   # 09:30 UTC, after cross-repo-smoke
+  workflow_dispatch:
+
+jobs:
+  flows:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout llamactl
+        uses: actions/checkout@v4
+        with:
+          path: llamactl
+
+      - name: Checkout electron-mcp (pinned)
+        uses: actions/checkout@v4
+        with:
+          repository: frozename/electron-mcp
+          ref: fceaaa3ed06d1ce85fe7ece8934c2a40ea2b351d
+          path: electron-mcp
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install llamactl
+        working-directory: llamactl
+        run: bun install --frozen-lockfile
+
+      - name: Install electron-mcp
+        working-directory: electron-mcp
+        run: bun install --frozen-lockfile
+
+      - name: Run Tier B flows
+        working-directory: llamactl
+        env:
+          ELECTRON_MCP_DIR: ${{ github.workspace }}/electron-mcp
+        run: scripts/smoke-ui-flows.sh
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tier-b-screenshots
+          path: llamactl/tests/ui-flows/**/*.png
+          if-no-files-found: ignore
