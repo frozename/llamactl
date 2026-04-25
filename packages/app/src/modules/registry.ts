@@ -60,6 +60,12 @@ export interface AppModule {
   /** Ordering hint inside the beaconGroup — lower values come first.
    *  Ties fall back to the order in the registry array. */
   beaconOrder?: number;
+
+  /** Tier-A smoke: a `data-testid` selector that proves the module
+   *  mounted correctly. The smoke harness asserts this element is
+   *  visible after navigating to the module. Required for every
+   *  module that ships in the activity bar or palette. */
+  smokeAffordance: string;
 }
 
 const LazyDashboard = lazy(() => import('./dashboard/index'));
