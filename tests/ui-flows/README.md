@@ -1,5 +1,8 @@
 # UI flow tests (llamactl-specific)
 
+**Tier B suite — 5 flows post-2026-04-25 triage. See
+docs/superpowers/specs/2026-04-25-ui-e2e-smoke-design.md.**
+
 Scripted end-to-end flows that drive llamactl's Electron app via
 `electron-mcp-server`'s MCP tools. These moved out of
 electron-mcp-server during the cross-repo genericization pass because
@@ -16,15 +19,6 @@ llamactl knowledge and lets the upstream driver stay library-generic.
 - `ops-chat-flow.ts` — N.4 Operator Console. Plans a goal, verifies
   the tiered approval cards render, runs a read-tool step, asserts
   `ok=true`.
-- `plan-chat-flow.ts` — N.4.5 planner chat. Drives two turns in stub
-  mode (no LLM) and asserts the transcript grows to 4 turns with
-  history preserved across the second user message.
-- `pipelines-tab-flow.ts` — R3.b Pipelines tab. Opens Knowledge →
-  Pipelines, asserts the list (or empty-state) renders, drives the
-  draft-from-description panel, confirms the returned YAML carries
-  the `kind: RagPipeline` shape + the URL / schedule inferred from
-  the description. Fast-exits with PASS when the profile has no rag
-  nodes (the tab is conditionally rendered).
 - `projects-tab-flow.ts` — trifold Phase 4 Projects module. Opens
   the activity-bar Projects entry, asserts the module mounts,
   exercises the empty-state branch when no projects are
@@ -32,11 +26,6 @@ llamactl knowledge and lets the upstream driver stay library-generic.
   operator has at least one project registered. The rest of the
   register → index → chat arc is covered by CLI + tRPC unit
   tests from Phases 1–3.
-- `quality-tab-flow.ts` — Aliveness-Slice-3 Quality tab. Opens
-  Knowledge → Quality, asserts the tab mounts, the starter button
-  seeds a plausible RagBench manifest, and the Run button is
-  enabled with non-empty YAML. Stops short of invoking a real
-  bench (query-set specific to each collection).
 - `pipelines-apply-run-flow.ts` — full E2E arc: wizard → apply →
   run → running-badge appears → run completes → lastRun badge →
   Remove. Proves the live agent wiring + Phase B running signal

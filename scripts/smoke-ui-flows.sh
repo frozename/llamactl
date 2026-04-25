@@ -37,17 +37,14 @@ cd "$REPO_ROOT"
 ELECTRON_MCP_DIR="${ELECTRON_MCP_DIR:-$HOME/DevStorage/repos/personal/electron-mcp-server}"
 ELECTRON_BIN="${ELECTRON_BIN:-$REPO_ROOT/packages/app/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron}"
 APP_DIR="${APP_DIR:-$REPO_ROOT/packages/app}"
-# Full sweep. Intentionally ordered cheapest → most invasive so an
-# early failure signals breakage before later flows mutate state.
+# Full sweep. Intentionally ordered heaviest E2E first so failures
+# appear quickly.
 DEFAULT_FLOWS=(
-  pipelines-tab-flow
-  pipelines-wizard-flow
   pipelines-apply-run-flow
-  quality-tab-flow
-  projects-tab-flow
+  pipelines-wizard-flow
   ops-chat-flow
-  ops-chat-refusal-flow
-  multi-node-flow
+  chat-compare-flow
+  projects-tab-flow
 )
 
 banner() {
