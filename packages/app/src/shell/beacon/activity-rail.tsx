@@ -50,7 +50,7 @@ function RailButton({ view, active, onChange }: { view: typeof RAIL_VIEWS[number
       aria-label={view.label}
       title={view.label}
       onClick={() => onChange(view.id)}
-      data-testid={`bcn-rail-${view.id}`}
+      data-testid={`rail-icon-${view.id}`}
       style={{
         width: 40,
         height: 40,

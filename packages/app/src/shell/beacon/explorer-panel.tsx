@@ -19,6 +19,7 @@ interface ExplorerPanelProps {
 export function ExplorerPanel({ activeView }: ExplorerPanelProps): React.JSX.Element {
   return (
     <aside
+      data-testid={`rail-panel-${activeView}`}
       style={{
         width: 280,
         background: 'var(--color-surface-1)',
