@@ -543,3 +543,28 @@ export async function dispatchOpsChatTool(
     };
   }
 }
+
+import { appendOpsChatAudit, hashArguments } from './audit.js';
+
+export function auditOpsChatToolRun(args: {
+  tool: string;
+  arguments: unknown;
+  dryRun: boolean;
+  ok: boolean;
+  durationMs: number;
+  errorCode?: string;
+  errorMessage?: string;
+  sessionId?: string;
+}): void {
+  appendOpsChatAudit({
+    ts: new Date().toISOString(),
+    tool: args.tool,
+    dryRun: args.dryRun,
+    argumentsHash: hashArguments(args.arguments),
+    ok: args.ok,
+    durationMs: args.durationMs,
+    errorCode: args.errorCode,
+    errorMessage: args.errorMessage,
+    sessionId: args.sessionId,
+  });
+}

@@ -41,10 +41,9 @@ import { dirname, join } from 'node:path';
 import {
   KNOWN_OPS_CHAT_TOOLS,
   dispatchOpsChatTool,
+  auditOpsChatToolRun,
 } from './ops-chat/dispatch.js';
 import {
-  appendOpsChatAudit,
-  hashArguments,
   readOpsChatAudit,
   type OpsChatAuditEntry,
 } from './ops-chat/audit.js';
@@ -2236,6 +2235,7 @@ export const router = t.router({
         name: z.string().min(1),
         arguments: z.record(z.string(), z.unknown()).default({}),
         dryRun: z.boolean().default(false),
+        sessionId: z.string().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -2245,21 +2245,16 @@ export const router = t.router({
         arguments: input.arguments,
         dryRun: input.dryRun,
       });
-      const entry: OpsChatAuditEntry = {
-        ts: new Date().toISOString(),
+      auditOpsChatToolRun({
         tool: input.name,
+        arguments: input.arguments,
         dryRun: input.dryRun,
-        argumentsHash: hashArguments(input.arguments),
         ok: dispatched.ok,
         durationMs: dispatched.durationMs,
-        ...(dispatched.ok
-          ? {}
-          : {
-              errorCode: dispatched.error?.code ?? 'dispatch_error',
-              errorMessage: dispatched.error?.message ?? '(no message)',
-            }),
-      };
-      appendOpsChatAudit(entry);
+        errorCode: dispatched.ok ? undefined : (dispatched.error?.code ?? 'dispatch_error'),
+        errorMessage: dispatched.ok ? undefined : (dispatched.error?.message ?? '(no message)'),
+        sessionId: input.sessionId,
+      });
       return dispatched;
     }),
 
