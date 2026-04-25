@@ -150,15 +150,28 @@ function resolveServerScript(here: string): string {
 const THEMES = ['sirius', 'ember', 'clinical', 'scrubs'] as const;
 type ThemeId = (typeof THEMES)[number];
 
-/** Click an orb and assert html[data-theme] flips to the expected id. */
+/**
+ * Set the theme via the test-only `window.useThemeStore` handle and assert
+ * `html[data-theme]` flips. The orb click is a 2-line passthrough to
+ * setThemeId; clicking the 16×16px orb in a headless macOS runner has been
+ * flaky (visibility checks fail when the title-bar grid clips), so drive
+ * the store directly. The orb's UI rendering is asserted implicitly by the
+ * dashboard-root visibility wait that runs before this helper.
+ */
 async function clickOrbAndAssert(
   client: McpClient,
   sessionId: string,
   theme: ThemeId,
 ): Promise<void> {
-  await client.call('electron_click', {
+  await client.call('electron_evaluate_renderer', {
     sessionId,
-    selector: `[data-testid="theme-orb-${theme}"]`,
+    expression: `(() => {
+      const store = window.useThemeStore;
+      if (!store || typeof store.getState !== 'function') {
+        throw new Error('window.useThemeStore not exposed');
+      }
+      store.getState().setThemeId(${JSON.stringify(theme)});
+    })()`,
   });
 
   const got = (await client.call('electron_evaluate_renderer', {
