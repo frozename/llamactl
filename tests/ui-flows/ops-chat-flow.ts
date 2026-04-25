@@ -245,9 +245,21 @@ async function main(): Promise<void> {
       selector: '[data-testid="ops-chat-goal"]',
       value: 'list installed models on the control plane',
     });
-    await client.call('electron_click', {
+    // Submit via Cmd+Enter on the textarea — clicking the submit button
+    // races with React's controlled-component state update (the button is
+    // disabled until draft is non-empty in store-state, and electron_click
+    // can fire before the state propagates). The textarea's onKeyDown
+    // handler reaches onSubmit() directly.
+    await client.call('electron_evaluate_renderer', {
       sessionId,
-      selector: '[data-testid="ops-chat-submit"]',
+      expression: `(() => {
+        const ta = document.querySelector('[data-testid="ops-chat-goal"]');
+        if (!ta) throw new Error('ops-chat-goal textarea missing');
+        ta.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter', code: 'Enter', metaKey: true,
+          bubbles: true, cancelable: true,
+        }));
+      })()`,
     });
     await client.call('electron_wait_for_selector', {
       sessionId,

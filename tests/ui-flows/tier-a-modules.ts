@@ -233,32 +233,27 @@ async function paletteConfirm(client: McpClient, sessionId: string): Promise<voi
  * will need to set rail back to explorer first.
  */
 async function resetState(client: McpClient, sessionId: string): Promise<void> {
-  // Escape — harmless if palette is already closed.
+  // Escape (palette dismiss) + reset to dashboard via the test-only
+  // window.useTabStore. Avoids the cost of waiting for an explorer-tree
+  // leaf to render; the store mutation is synchronous and reliable.
   await client.call('electron_evaluate_renderer', {
     sessionId,
     expression: `(() => {
       document.dispatchEvent(new KeyboardEvent('keydown', {
         key: 'Escape', bubbles: true, cancelable: true,
       }));
+      const store = window.useTabStore;
+      if (store && typeof store.getState === 'function') {
+        store.getState().closeAll(false);
+        store.getState().open({
+          tabKey: 'module:dashboard',
+          title: 'Dashboard',
+          kind: 'module',
+          openedAt: Date.now(),
+        });
+      }
     })()`,
   });
-  // Re-open dashboard via the explorer-tree leaf to give each iteration a
-  // consistent start point. Explorer is the default rail view.
-  try {
-    await client.call('electron_click', {
-      sessionId,
-      selector: '[data-testid="explorer-leaf-dashboard"]',
-    });
-    await client.call('electron_wait_for_selector', {
-      sessionId,
-      selector: '[data-testid="dashboard-root"]',
-      state: 'visible',
-      timeout: 5_000,
-    });
-  } catch {
-    // Dashboard click may fail if the module is already unmounted or
-    // the leaf is not visible — best-effort; proceed anyway.
-  }
 }
 
 // ── Explorer-tree navigation helpers ─────────────────────────────

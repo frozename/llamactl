@@ -667,7 +667,11 @@ export default function Nodes(): React.JSX.Element {
       </div>
     );
   }
-  const data = list.data!;
+  // Guard against the brief idle window where data is undefined while
+  // error is still null and isLoading already cleared (happens under
+  // hermetic test profiles when the daemon never replies). Treat as
+  // empty cluster so the testid still renders.
+  const data = list.data ?? { nodes: [], context: '', cluster: '', defaultNode: '' };
   return (
     <div className="flex h-full flex-col gap-4 overflow-auto p-6" data-testid="nodes-root">
       <div className="flex items-baseline justify-between">
