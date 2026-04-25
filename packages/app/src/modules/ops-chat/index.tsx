@@ -158,7 +158,7 @@ function ProposalBubble({
       >
         {reasoning.length > 0 && (
           <p
-            className="text-xs text-[color:var(--color-text-secondary)] italic"
+            className="text-xs text-[color:var(--color-text-secondary)]"
             data-testid={`ops-chat-step-${iteration}-reasoning`}
           >
             {reasoning}
@@ -254,7 +254,7 @@ function ProposalBubble({
         )}
         {state === 'rejected' && (
           <div
-            className="text-xs italic text-[color:var(--color-text-secondary)]"
+            className="text-xs text-[color:var(--color-text-secondary)]"
             data-testid={`ops-chat-step-${iteration}-rejected`}
           >
             Operator rejected \u2014 session closed.
