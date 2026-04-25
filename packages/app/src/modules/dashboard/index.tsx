@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { stringify as yamlStringify } from 'yaml';
 import type { bench, schemas } from '@llamactl/core';
 import { trpc } from '@/lib/trpc';
-import { EditorialHero } from '@/ui';
+import { EditorialHero, StatCard, Button } from '@/ui';
 import { ThemedNodeMap } from './ThemedNodeMap';
 
 type BenchCompareRow = bench.BenchCompareRow;
@@ -138,7 +138,7 @@ function ExposePanel(): React.JSX.Element {
             ))}
           </datalist>
         </div>
-        <button
+        <Button
           type="submit"
           disabled={apply.isPending || !canSubmit}
           data-testid="dashboard-expose-submit"
@@ -146,7 +146,7 @@ function ExposePanel(): React.JSX.Element {
           className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 font-medium text-[color:var(--color-brand-contrast)] shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
         >
           {apply.isPending ? 'Exposing…' : 'Expose'}
-        </button>
+        </Button>
       </div>
       {status.kind === 'error' && (
         <div className="mt-2 text-xs text-[color:var(--color-err)]">{status.message}</div>
@@ -215,16 +215,6 @@ function ExposedWorkloads(): React.JSX.Element {
   );
 }
 
-function StatusCard({ title, body }: { title: string; body: string }): React.JSX.Element {
-  return (
-    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
-      <div className="text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
-        {title}
-      </div>
-      <div className="mt-1 mono text-sm break-all text-[color:var(--color-text)]">{body}</div>
-    </div>
-  );
-}
 
 function fmtTps(raw: string | undefined | null): string {
   if (raw == null) return '—';
@@ -288,12 +278,12 @@ function DashboardBody(): React.JSX.Element {
       </section>
 
       <div className="grid grid-cols-3 gap-3">
-        <StatusCard title="Profile" body={env?.LLAMA_CPP_MACHINE_PROFILE ?? '—'} />
-        <StatusCard title="Provider" body={env?.LOCAL_AI_PROVIDER ?? '—'} />
-        <StatusCard title="Default Model" body={env?.LLAMA_CPP_DEFAULT_MODEL ?? '—'} />
-        <StatusCard title="Active Model" body={activeModel} />
-        <StatusCard title="Context Length" body={env?.LOCAL_AI_CONTEXT_LENGTH ?? '—'} />
-        <StatusCard title="Provider URL" body={env?.LOCAL_AI_PROVIDER_URL ?? '—'} />
+        <StatCard label="Profile" value={env?.LLAMA_CPP_MACHINE_PROFILE ?? '—'} />
+        <StatCard label="Provider" value={env?.LOCAL_AI_PROVIDER ?? '—'} />
+        <StatCard label="Default Model" value={env?.LLAMA_CPP_DEFAULT_MODEL ?? '—'} />
+        <StatCard label="Active Model" value={activeModel} />
+        <StatCard label="Context Length" value={env?.LOCAL_AI_CONTEXT_LENGTH ?? '—'} />
+        <StatCard label="Provider URL" value={env?.LOCAL_AI_PROVIDER_URL ?? '—'} />
       </div>
 
       <section className="mt-8">
