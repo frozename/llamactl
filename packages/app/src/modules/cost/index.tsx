@@ -87,11 +87,7 @@ function BudgetBar({
   const hasSpend = spent !== undefined && Number.isFinite(spent);
   let readout: React.ReactNode;
   if (!hasBudget) {
-    readout = (
-      <span className="italic">
-        Not configured
-      </span>
-    );
+    readout = <>Not configured</>;
   } else if (!hasSpend) {
     readout = (
       <>
