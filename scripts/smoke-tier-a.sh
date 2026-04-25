@@ -10,6 +10,10 @@
 # Env:
 #   ELECTRON_MCP_DIR       Path to electron-mcp checkout (default:
 #                          ~/DevStorage/repos/personal/electron-mcp).
+#   ELECTRON_BIN           Path to the Electron binary (default:
+#                          packages/app/node_modules/electron/dist/Electron.app/...).
+#   APP_DIR                App dir passed as the Electron argv
+#                          (default: packages/app).
 #   LLAMACTL_TEST_PROFILE  Hermetic profile dir (default: a tmp dir).
 #
 # Exit codes:
@@ -25,6 +29,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 ELECTRON_MCP_DIR="${ELECTRON_MCP_DIR:-$HOME/DevStorage/repos/personal/electron-mcp}"
+ELECTRON_BIN="${ELECTRON_BIN:-$REPO_ROOT/packages/app/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron}"
+APP_DIR="${APP_DIR:-$REPO_ROOT/packages/app}"
 LLAMACTL_TEST_PROFILE="${LLAMACTL_TEST_PROFILE:-$(mktemp -d -t llamactl-tier-a)}"
 export LLAMACTL_TEST_PROFILE
 export ELECTRON_MCP_DIR
@@ -39,11 +45,16 @@ if [[ ! -d "$ELECTRON_MCP_DIR" ]]; then
   echo "Set ELECTRON_MCP_DIR to your electron-mcp checkout." >&2
   exit 1
 fi
+if [[ ! -x "$ELECTRON_BIN" ]]; then
+  echo "ERROR: Electron binary missing at $ELECTRON_BIN" >&2
+  echo "  cd $APP_DIR && bun install   (installs the electron dev dep)" >&2
+  exit 1
+fi
 
 run() {
   echo
   echo "──── $1 ────"
-  bun "$1"
+  bun run "$1" --executable="$ELECTRON_BIN" --args="$APP_DIR"
 }
 
 run tests/ui-flows/tier-a-modules.ts
