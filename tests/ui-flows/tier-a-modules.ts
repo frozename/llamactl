@@ -163,9 +163,15 @@ function resolveServerScript(here: string): string {
  * catches the synthetic event exactly as it would a real keypress.
  */
 async function openPalette(client: McpClient, sessionId: string): Promise<void> {
+  // Cmd+Shift+P toggles. If a previous iteration left the palette open
+  // (or partway between transitions), the toggle can close instead of
+  // open. Force-close first, then open.
   await client.call('electron_evaluate_renderer', {
     sessionId,
     expression: `(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape', bubbles: true, cancelable: true,
+      }));
       const e = new KeyboardEvent('keydown', {
         key: 'p',
         code: 'KeyP',
@@ -192,10 +198,23 @@ async function openPalette(client: McpClient, sessionId: string): Promise<void> 
  * input event so React's synthetic onChange fires.
  */
 async function paletteType(client: McpClient, sessionId: string, text: string): Promise<void> {
-  await client.call('electron_fill', {
+  // electron_fill alone doesn't reliably trigger React's controlled-input
+  // onChange when the renderer's component state lags the DOM value. Drive
+  // the input via the native HTMLInputElement value setter + an explicit
+  // input event — same trick React's testing-library uses internally.
+  await client.call('electron_evaluate_renderer', {
     sessionId,
-    selector: '[data-testid="command-palette-input"]',
-    value: text,
+    expression: `(() => {
+      const el = document.querySelector('[data-testid="command-palette-input"]');
+      if (!el) throw new Error('command-palette-input missing');
+      el.focus();
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      ).set;
+      setter.call(el, ${JSON.stringify(text)});
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`,
   });
 }
 
