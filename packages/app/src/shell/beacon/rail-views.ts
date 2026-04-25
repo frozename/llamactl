@@ -3,7 +3,6 @@ import {
   Compass,
   Folder,
   Layers3,
-  Palette,
   Search,
   Settings as SettingsIcon,
   type LucideIcon,
@@ -14,7 +13,6 @@ export type RailViewId =
   | 'search'
   | 'sessions'
   | 'fleet'
-  | 'tokens'
   | 'cost'
   | 'settings';
 
@@ -32,7 +30,6 @@ export const RAIL_VIEWS: readonly RailView[] = [
   { id: 'search',   label: 'Search',   icon: Search,  position: 'top', stub: true },
   { id: 'sessions', label: 'Sessions', icon: Layers3, position: 'top', stub: true },
   { id: 'fleet',    label: 'Fleet',    icon: Compass, position: 'top', stub: true },
-  { id: 'tokens',   label: 'Tokens',   icon: Palette, position: 'top' },
   { id: 'cost',     label: 'Cost',     icon: Coins,   position: 'bottom' },
   { id: 'settings', label: 'Settings', icon: SettingsIcon, position: 'bottom' },
 ];

@@ -8,7 +8,6 @@ import { ActivityRail } from './activity-rail';
 import { ExplorerPanel } from './explorer-panel';
 import { TabBar } from './tab-bar';
 import { StatusBar } from './status-bar';
-import { TokensPanel } from './tokens-panel';
 import { FirstRunTip } from './first-run-tip';
 import { DynamicTabRouter } from './dynamic-tab-router';
 import type { RailViewId } from './rail-views';
@@ -41,11 +40,6 @@ export function BeaconLayout(): React.JSX.Element {
       open({ tabKey: 'module:dashboard', title: 'Dashboard', kind: 'module', openedAt: Date.now() });
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Handle the Tokens rail view by opening the slide-in panel (it's
-  // not a panel-content view, it's an overlay — ExplorerPanel shows
-  // a hint, the slide-in does the work).
-  const tokensOpen = railView === 'tokens';
 
   // Tab keyboard shortcuts: ⌘1–⌘9, ⌘W, ⌘⇧T.
   useEffect(() => {
@@ -135,7 +129,6 @@ export function BeaconLayout(): React.JSX.Element {
       </div>
 
       <StatusBar />
-      <TokensPanel open={tokensOpen} onClose={() => setRailView('explorer')} />
       <CommandPaletteMount />
       <FirstRunTip />
     </div>

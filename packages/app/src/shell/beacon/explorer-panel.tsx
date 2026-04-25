@@ -13,9 +13,8 @@ interface ExplorerPanelProps {
 
 /**
  * The 280 px left panel. Its content depends on the active rail view:
- * Explorer = module tree; Search / Sessions / Fleet / Cost = stubs in
- * P2 that become real in P3; Tokens is handled by the separate
- * TokensPanel slide-in (this panel renders the prompt).
+ * Explorer = module tree; Search / Sessions / Fleet are real in P3;
+ * Cost / Settings render a hint pointing at the rail-button click path.
  */
 export function ExplorerPanel({ activeView }: ExplorerPanelProps): React.JSX.Element {
   return (
@@ -34,7 +33,6 @@ export function ExplorerPanel({ activeView }: ExplorerPanelProps): React.JSX.Ele
       {activeView === 'search' && <SearchView />}
       {activeView === 'sessions' && <SessionsView />}
       {activeView === 'fleet' && <FleetView />}
-      {activeView === 'tokens' && <StubBody message="Tokens inspector slides from the right edge — look over there." />}
       {activeView === 'cost' && <StubBody message="Cost details render here in P3. For now, open Cost via the command palette." />}
       {activeView === 'settings' && <StubBody message="Click the Settings rail button to open the Settings tab." />}
     </aside>
