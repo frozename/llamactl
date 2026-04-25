@@ -270,10 +270,13 @@ async function main(): Promise<void> {
     })) as { result: number };
     check('pane B absent before compare', before.result === 0, `count=${before.result}`);
 
-    // Enter compare mode.
+    // Enter compare mode. force:true skips Playwright's actionability
+    // wait — the headless macOS runner intermittently fails the small-
+    // button visibility check.
     await client.call('electron_click', {
       sessionId,
       selector: '[data-testid="chat-compare"]',
+      force: true,
     });
     await client.call('electron_wait_for_selector', {
       sessionId,
@@ -303,6 +306,7 @@ async function main(): Promise<void> {
     await client.call('electron_click', {
       sessionId,
       selector: '[data-testid="chat-compare-exit"]',
+      force: true,
     });
     await client.call('electron_wait_for_selector', {
       sessionId,
