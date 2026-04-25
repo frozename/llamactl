@@ -245,7 +245,7 @@ async function resetState(client: McpClient, sessionId: string): Promise<void> {
   try {
     await client.call('electron_click', {
       sessionId,
-      selector: 'button[aria-label="Dashboard"]',
+      selector: '[data-testid="activity-bar-dashboard"]',
     });
     await client.call('electron_wait_for_selector', {
       sessionId,
@@ -257,6 +257,28 @@ async function resetState(client: McpClient, sessionId: string): Promise<void> {
     // Dashboard click may fail if the module is already unmounted or
     // the button label differs — best-effort; proceed anyway.
   }
+}
+
+// ── Activity-bar navigation helpers ───────────────────────────────
+
+/**
+ * Clicks the activity-bar button for the given module id and checks
+ * that the tab store activates `module:{id}`. This exercises the
+ * activity-bar onClick dispatch path, which is separate from the
+ * command-palette path covered by runPalettePass.
+ */
+async function runActivityBarOne(client: McpClient, sessionId: string, id: string): Promise<boolean> {
+  // Click the activity-bar item.
+  await client.call('electron_click', {
+    sessionId,
+    selector: `[data-testid="activity-bar-${id}"]`,
+  });
+  // Read the active tab from the store.
+  const result = await client.call('electron_evaluate_renderer', {
+    sessionId,
+    expression: 'window.useTabStore?.getState().activeKey',
+  }) as { result: string | null | undefined };
+  return result.result === `module:${id}`;
 }
 
 // ── Palette navigation pass ────────────────────────────────────────
@@ -408,6 +430,23 @@ async function main(): Promise<void> {
 
     // ── Palette navigation pass ──────────────────────────────────
     await runPalettePass(client, sessionId);
+
+    // ── Pass 2 — activity-bar navigation ─────────────────────────
+    // Tests the activity-bar onClick dispatch path, which is separate
+    // from shell/commands.ts's palette navigation.
+    console.log('Tier A pass 2: activity-bar nav');
+    for (const m of APP_MODULES.filter((m) => m.activityBar)) {
+      const ok = await runActivityBarOne(client, sessionId, m.id);
+      if (!ok) {
+        await client.call('electron_screenshot', {
+          sessionId,
+          path: `/tmp/tier-a-actbar-${m.id.replace(/\./g, '-')}-fail.png`,
+        });
+        console.error(`Activity-bar nav FAILED for module ${m.id}`);
+        process.exit(1);
+      }
+    }
+    console.log(`Activity-bar nav passed: ${APP_MODULES.filter((m) => m.activityBar).length}/${APP_MODULES.filter((m) => m.activityBar).length} modules`);
 
     await client.call('electron_close', { sessionId });
   } catch (err) {
