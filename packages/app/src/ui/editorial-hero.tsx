@@ -63,10 +63,10 @@ export function EditorialHero({
         style={{
           fontFamily: 'var(--font-display)',
           fontWeight: 300,
-          fontSize: 'clamp(48px, 7vw, 96px)',
-          letterSpacing: '-0.03em',
-          lineHeight: 0.98,
-          margin: '0 0 20px',
+          fontSize: 'clamp(28px, 3.4vw, 48px)',
+          letterSpacing: '-0.025em',
+          lineHeight: 1.05,
+          margin: '0 0 16px',
           color: 'var(--color-text)',
         }}
       >
@@ -81,11 +81,11 @@ export function EditorialHero({
       {lede && (
         <p
           style={{
-            fontSize: 19,
+            fontSize: 15,
             lineHeight: 1.55,
             color: 'var(--color-text-secondary)',
             maxWidth: '62ch',
-            margin: '0 0 24px',
+            margin: '0 0 20px',
             fontWeight: 300,
           }}
         >
