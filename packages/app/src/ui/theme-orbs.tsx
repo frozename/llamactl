@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { cx } from './classes';
-import { THEMES, type ThemeId } from '@/themes';
+import { THEMES, type ThemeId } from '../themes';
 
 export interface ThemeOrbsProps extends React.HTMLAttributes<HTMLDivElement> {
   activeId: ThemeId;

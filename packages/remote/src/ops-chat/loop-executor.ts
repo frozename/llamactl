@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { appendJournalEvent } from './sessions/journal.js';
+import { sessionEventBus } from './sessions/event-bus.js';
+import { redactResult } from './sessions/redaction.js';
+import type { JournalEvent } from './sessions/journal-schema.js';
 import {
   runPlanner,
   type PlannerExecutor,
@@ -137,6 +141,20 @@ export async function* runLoopExecutor(
   opts: LoopExecutorOptions,
 ): AsyncGenerator<OpsChatStreamEvent> {
   const sessionId = randomUUID();
+  sessionEventBus.create(sessionId);
+  const startEvent: JournalEvent = {
+    type: 'session_started',
+    ts: new Date().toISOString(),
+    sessionId,
+    goal: opts.goal,
+    nodeId: (opts as any).nodeId,
+    model: (opts as any).model,
+    historyLen: opts.history?.length ?? 0,
+    toolCount: opts.tools?.length ?? 0,
+  };
+  await appendJournalEvent(sessionId, startEvent);
+  sessionEventBus.publish(sessionId, startEvent);
+
   const maxIterations = opts.maxIterations ?? 10;
   const record: SessionRecord = {
     currentStepId: null,
@@ -182,6 +200,13 @@ export async function* runLoopExecutor(
       });
 
       if (!result.ok) {
+        const ev: JournalEvent = {
+          type: 'refusal',
+          ts: new Date().toISOString(),
+          reason: `${result.reason}: ${result.message}`,
+        };
+        await appendJournalEvent(sessionId, ev);
+        sessionEventBus.publish(sessionId, ev);
         yield {
           type: 'refusal',
           reason: `${result.reason}: ${result.message}`,
@@ -204,6 +229,18 @@ export async function* runLoopExecutor(
       const pending = createDeferred<OpsChatStepOutcome>();
       record.currentStepId = stepId;
       record.pendingOutcome = pending;
+
+      const planEvt: JournalEvent = {
+        type: 'plan_proposed',
+        ts: new Date().toISOString(),
+        stepId,
+        iteration,
+        tier: resolveTier(step.tool),
+        reasoning: iteration === 0 ? result.plan.reasoning : '',
+        step,
+      };
+      await appendJournalEvent(sessionId, planEvt);
+      sessionEventBus.publish(sessionId, planEvt);
 
       yield {
         type: 'plan_proposed',
@@ -233,11 +270,16 @@ export async function* runLoopExecutor(
       iteration += 1;
     }
 
+    const doneEvt: JournalEvent = { type: 'done', ts: new Date().toISOString(), iterations: outcomes.length };
+    await appendJournalEvent(sessionId, doneEvt);
+    sessionEventBus.publish(sessionId, doneEvt);
+
     yield { type: 'done', iterations: outcomes.length };
   } finally {
     opts.signal?.removeEventListener('abort', abortHandler);
     record.closed = true;
     record.pendingOutcome = null;
     sessionRegistry.delete(sessionId);
+    sessionEventBus.close(sessionId);
   }
 }
