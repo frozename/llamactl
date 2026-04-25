@@ -7,7 +7,7 @@ import * as React from 'react';
  */
 export default function WorkloadsPlaceholder(): React.JSX.Element {
   return (
-    <div style={{ padding: 48, color: 'var(--color-text-secondary)', maxWidth: 720 }}>
+    <div data-testid="workloads-root" style={{ padding: 48, color: 'var(--color-text-secondary)', maxWidth: 720 }}>
       <h2 style={{ fontSize: 20, margin: '0 0 8px', color: 'var(--color-text)' }}>
         Workloads
       </h2>

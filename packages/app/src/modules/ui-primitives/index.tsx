@@ -33,7 +33,7 @@ export default function UIPrimitivesSandbox(): React.JSX.Element {
   const [tab, setTab] = React.useState('primitives');
 
   return (
-    <div style={{ padding: 48, maxWidth: 1200, margin: '0 auto' }}>
+    <div data-testid="ui-primitives-root" style={{ padding: 48, maxWidth: 1200, margin: '0 auto' }}>
       <EditorialHero
         eyebrow="Beacon · Primitives"
         title="The vocabulary"

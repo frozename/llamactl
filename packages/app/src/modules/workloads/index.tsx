@@ -485,13 +485,17 @@ export default function Workloads(): React.JSX.Element {
 
   if (list.isLoading) {
     return (
-      <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
+      <div className="h-full" data-testid="workloads-model-runs-root">
+        <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
+      </div>
     );
   }
   if (list.error) {
     return (
-      <div className="p-6 text-sm text-[color:var(--color-err)]">
-        Failed to load workloads: {list.error.message}
+      <div className="h-full" data-testid="workloads-model-runs-root">
+        <div className="p-6 text-sm text-[color:var(--color-err)]">
+          Failed to load workloads: {list.error.message}
+        </div>
       </div>
     );
   }
@@ -499,7 +503,7 @@ export default function Workloads(): React.JSX.Element {
   const rows = (list.data ?? []) as WorkloadRow[];
 
   return (
-    <div className="flex flex-col gap-4 p-6" data-testid="workloads-root">
+    <div className="flex flex-col gap-4 p-6" data-testid="workloads-model-runs-root">
       <div className="flex items-baseline justify-between">
         <div>
           <h1 className="text-lg font-semibold text-[color:var(--color-text)]">Workloads</h1>

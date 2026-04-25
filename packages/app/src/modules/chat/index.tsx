@@ -1059,7 +1059,9 @@ export default function Chat(): React.JSX.Element {
 
   if (nodeList.isLoading) {
     return (
-      <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
+      <div className="h-full" data-testid="chat-root">
+        <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
+      </div>
     );
   }
 

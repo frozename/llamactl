@@ -653,13 +653,17 @@ export default function Nodes(): React.JSX.Element {
 
   if (list.isLoading) {
     return (
-      <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
+      <div className="h-full" data-testid="nodes-root">
+        <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
+      </div>
     );
   }
   if (list.error) {
     return (
-      <div className="p-6 text-sm text-[color:var(--color-err)]">
-        Failed to load nodes: {list.error.message}
+      <div className="h-full" data-testid="nodes-root">
+        <div className="p-6 text-sm text-[color:var(--color-err)]">
+          Failed to load nodes: {list.error.message}
+        </div>
       </div>
     );
   }

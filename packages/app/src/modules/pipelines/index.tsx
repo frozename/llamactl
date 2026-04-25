@@ -489,11 +489,15 @@ export default function Pipelines(): React.JSX.Element {
   );
 
   if (nodeList.isLoading) {
-    return <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>;
+    return (
+      <div className="h-full" data-testid="knowledge-pipelines-root">
+        <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
+      </div>
+    );
   }
 
   return (
-    <div className="flex h-full" data-testid="pipelines-root">
+    <div className="flex h-full" data-testid="knowledge-pipelines-root">
       <h1 className="sr-only">Pipelines</h1>
       <Sidebar
         activeId={store.activeId}

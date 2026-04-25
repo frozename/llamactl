@@ -1075,7 +1075,7 @@ export default function Knowledge(): React.JSX.Element {
   const selected = ragNodes.find((n) => n.name === selectedNode) ?? null;
 
   return (
-    <div className="h-full overflow-auto p-6" data-testid="knowledge-root">
+    <div className="h-full overflow-auto p-6" data-testid="knowledge-retrieval-root">
       <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         Knowledge
       </div>

@@ -261,7 +261,7 @@ function DashboardBody(): React.JSX.Element {
     .slice(0, 5);
 
   return (
-    <div className="h-full overflow-auto p-6" data-testid="dashboard-root">
+    <div className="h-full overflow-auto p-6">
       <EditorialHero
         eyebrow="Dashboard"
         title="Your fleet"
@@ -378,10 +378,12 @@ function DashboardBody(): React.JSX.Element {
 
 export default function Dashboard(): React.JSX.Element {
   return (
-    <Suspense
-      fallback={<div className="p-6 text-[color:var(--color-text-secondary)]">Loading…</div>}
-    >
-      <DashboardBody />
-    </Suspense>
+    <div className="h-full" data-testid="dashboard-root">
+      <Suspense
+        fallback={<div className="p-6 text-[color:var(--color-text-secondary)]">Loading…</div>}
+      >
+        <DashboardBody />
+      </Suspense>
+    </div>
   );
 }

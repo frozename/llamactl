@@ -151,7 +151,7 @@ export default function Server(): React.JSX.Element {
   const ka = keepAliveStatus.data;
 
   return (
-    <div className="h-full overflow-auto p-6" data-testid="server-root">
+    <div className="h-full overflow-auto p-6" data-testid="models-server-root">
       <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         Server
       </div>

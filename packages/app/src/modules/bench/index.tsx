@@ -393,7 +393,7 @@ export default function Bench(): React.JSX.Element {
   };
 
   return (
-    <div className="h-full overflow-auto p-6" data-testid="bench-root">
+    <div className="h-full overflow-auto p-6" data-testid="models-bench-root">
       <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         Bench
       </div>

@@ -1228,7 +1228,7 @@ export default function Composites(): React.JSX.Element {
   return (
     <div
       className="h-full overflow-auto p-6"
-      data-testid="composites-root"
+      data-testid="workloads-composites-root"
     >
       <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
         Composites
