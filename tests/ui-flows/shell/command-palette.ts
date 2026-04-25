@@ -179,10 +179,22 @@ async function openPalette(client: McpClient, sessionId: string): Promise<void> 
  * Types text into the palette's controlled input via electron_fill.
  */
 async function paletteType(client: McpClient, sessionId: string, text: string): Promise<void> {
-  await client.call('electron_fill', {
+  // electron_fill sets the DOM value but doesn't reliably trigger React's
+  // controlled-input onChange. Drive the input via the native value setter
+  // + an explicit input event — same trick React Testing Library uses.
+  await client.call('electron_evaluate_renderer', {
     sessionId,
-    selector: '[data-testid="command-palette-input"]',
-    value: text,
+    expression: `(() => {
+      const el = document.querySelector('[data-testid="command-palette-input"]');
+      if (!el) throw new Error('command-palette-input missing');
+      el.focus();
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      ).set;
+      setter.call(el, ${JSON.stringify(text)});
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`,
   });
 }
 
