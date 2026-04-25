@@ -336,35 +336,46 @@ function Sidebar(props: {
   onDelete: (id: string) => void;
 }): React.JSX.Element {
   return (
-    <aside className="flex h-full w-60 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-1)]">
-      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2">
-        <span className="text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+    <aside style={{ display: 'flex', height: '100%', width: 240, flexShrink: 0, flexDirection: 'column', borderRight: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--color-border)', borderColor: 'var(--color-border)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8 }}>
+        <span style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
           Chats
         </span>
         <Button type="button" variant="secondary" size="sm" onClick={props.onNew}>
           New
         </Button>
       </div>
-      <ul className="flex-1 overflow-auto">
+      <ul style={{ flex: 1, overflow: 'auto' }}>
         {props.conversations.length === 0 && (
-          <li className="p-3 text-xs text-[color:var(--color-text-secondary)]">
+          <li style={{ padding: 12, fontSize: 12, color: 'var(--color-text-secondary)' }}>
             No chats yet.
           </li>
         )}
         {props.conversations.map((c) => (
           <li
             key={c.id}
-            className={`flex items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-2 text-xs ${
-              c.id === props.activeId ? 'bg-[var(--color-surface-2)]' : ''
-            }`}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8,
+              borderBottom: '1px solid var(--color-border)',
+              borderColor: 'var(--color-border)',
+              paddingLeft: 12,
+              paddingRight: 12,
+              paddingTop: 8,
+              paddingBottom: 8,
+              fontSize: 12,
+              ...(c.id === props.activeId ? { background: 'var(--color-surface-2)' } : {})
+            }}
           >
             <button
               type="button"
               onClick={() => props.onSelect(c.id)}
-              className="flex-1 truncate text-left text-[color:var(--color-text)]"
+              style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left', color: 'var(--color-text)' }}
             >
-              <div className="truncate">{c.title}</div>
-              <div className="truncate text-[10px] text-[color:var(--color-text-secondary)]">
+              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</div>
+              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 10, color: 'var(--color-text-secondary)' }}>
                 {c.node} · {c.model}
               </div>
             </button>
@@ -390,32 +401,45 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
   const [showContext, setShowContext] = useState(false);
   const align =
     role === 'user'
-      ? 'items-end'
+      ? 'flex-end'
       : role === 'error'
-        ? 'items-center'
-        : 'items-start';
-  const bg =
+        ? 'center'
+        : 'flex-start';
+  const bgStyle =
     role === 'user'
-      ? 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]'
+      ? { background: 'var(--color-brand)', color: 'var(--color-brand-contrast)' }
       : role === 'error'
-        ? 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]'
-        : 'bg-[var(--color-surface-1)] text-[color:var(--color-text)]';
+        ? { background: 'var(--color-err)', color: 'var(--color-text-inverse)' }
+        : { background: 'var(--color-surface-1)', color: 'var(--color-text)' };
   return (
-    <div className={`flex flex-col ${align} gap-1`} data-role={role}>
-      <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: align, gap: 4 }} data-role={role}>
+      <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
         {role}
       </span>
       <div
-        className={`max-w-[80%] whitespace-pre-wrap break-words rounded-md border border-[var(--color-border)] px-3 py-2 text-sm ${bg}`}
+        style={{
+          maxWidth: '80%',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          borderRadius: 'var(--r-md)',
+          border: '1px solid var(--color-border)',
+          borderColor: 'var(--color-border)',
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+          fontSize: 14,
+          ...bgStyle
+        }}
       >
         {content || (role === 'assistant' ? '…' : '')}
       </div>
       {retrievedContext && (
-        <div className="max-w-[80%] rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[10px] text-[color:var(--color-text-secondary)]">
+        <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontSize: 10, color: 'var(--color-text-secondary)' }}>
           <button
             type="button"
             onClick={() => setShowContext((v) => !v)}
-            className="flex items-center gap-2 font-mono"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-mono)' }}
             data-testid="chat-rag-disclosure"
           >
             <span>{showContext ? '▾' : '▸'}</span>
@@ -423,7 +447,7 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
               retrieved {retrievedContext.docs.length} doc
               {retrievedContext.docs.length === 1 ? '' : 's'} from
               {' '}
-              <span className="text-[color:var(--color-text)]">
+              <span style={{ color: 'var(--color-text)' }}>
                 {retrievedContext.sourceNode}
               </span>
               {' '}
@@ -432,14 +456,14 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
             </span>
           </button>
           {showContext && (
-            <ul className="mt-2 space-y-1">
+            <ul style={{ marginTop: 4 }}>
               {retrievedContext.docs.map((d) => (
-                <li key={d.id} className="flex flex-col gap-0.5 font-mono">
+                <li key={d.id} style={{ display: 'flex', flexDirection: 'column', gap: 2, fontFamily: 'var(--font-mono)' }}>
                   <span>
-                    <span className="text-[color:var(--color-text)]">{d.id}</span>
-                    <span className="ml-2">score={d.score.toFixed(3)}</span>
+                    <span style={{ color: 'var(--color-text)' }}>{d.id}</span>
+                    <span style={{ marginLeft: 8 }}>score={d.score.toFixed(3)}</span>
                   </span>
-                  <span className="whitespace-pre-wrap">{d.contentPreview}</span>
+                  <span style={{ whiteSpace: 'pre-wrap' }}>{d.contentPreview}</span>
                 </li>
               ))}
             </ul>
@@ -488,16 +512,16 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
   }, [rels, choice]);
   const isStarting = picked !== '';
   return (
-    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
-      <div className="mb-2 text-xs text-[color:var(--color-text)]">
+    <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 12 }}>
+      <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--color-text)' }}>
         Start local llama-server
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
         <select
           value={choice}
           onChange={(e) => setChoice(e.target.value)}
           disabled={isStarting}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-xs text-[color:var(--color-text)] disabled:opacity-40"
+          style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text)', opacity: 0.5 }}
         >
           {rels.length === 0 ? (
             <option value="">(no catalog entries)</option>
@@ -518,7 +542,7 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
         >
           {isStarting ? 'Starting…' : 'Start'}
         </Button>
-        <span className="text-[10px] text-[color:var(--color-text-secondary)]">
+        <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
           or open <button
             type="button"
             onClick={() =>
@@ -529,7 +553,7 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
                 openedAt: Date.now(),
               })
             }
-            className="underline hover:text-[color:var(--color-text)]"
+            
           >Models → Local Server</button> for the full flow.
         </span>
       </div>
@@ -559,17 +583,17 @@ function TranscriptColumn(props: {
 
   return (
     <div
-      className="flex min-w-0 flex-1 flex-col border-r border-[var(--color-border)] last:border-r-0"
+      style={{ display: 'flex', flex: 1, flexDirection: 'column', borderRight: '1px solid var(--color-border)', borderColor: 'var(--color-border)' }}
       data-testid={`chat-pane-${props.label.toLowerCase()}`}
       data-pane={props.label}
     >
-      <header className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-2 text-xs">
+      <header style={{ display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', paddingLeft: 16, paddingRight: 16, paddingTop: 8, paddingBottom: 8, fontSize: 12 }}>
         <Badge variant="default">{props.label}</Badge>
-        <span className="text-[color:var(--color-text-secondary)]">node</span>
+        <span style={{ color: 'var(--color-text-secondary)' }}>node</span>
         <select
           value={props.node}
           onChange={(e) => props.onNodeChange(e.target.value)}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-text)]"
+          style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 2, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text)' }}
         >
           {props.nodes.map((n) => (
             <option key={n.name} value={n.name}>
@@ -577,14 +601,14 @@ function TranscriptColumn(props: {
             </option>
           ))}
         </select>
-        <span className="ml-3 text-[color:var(--color-text-secondary)]">model</span>
+        <span style={{ color: 'var(--color-text-secondary)' }}>model</span>
         {props.modelsLoading ? (
-          <span className="text-[10px] text-[color:var(--color-text-secondary)]">loading…</span>
+          <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>loading…</span>
         ) : (
           <select
             value={props.model}
             onChange={(e) => props.onModelChange(e.target.value)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-text)]"
+            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 2, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text)' }}
           >
             {props.models.length === 0 ? (
               <option value="">(no models)</option>
@@ -597,15 +621,15 @@ function TranscriptColumn(props: {
             )}
           </select>
         )}
-        {props.headerExtras && <div className="ml-auto flex items-center gap-2">{props.headerExtras}</div>}
+        {props.headerExtras && <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>{props.headerExtras}</div>}
       </header>
       <div
         ref={ref}
-        className="flex flex-1 flex-col gap-4 overflow-auto bg-[var(--color-surface-0)] p-6"
+        style={{ display: 'flex', flex: 1, flexDirection: 'column', gap: 16, overflow: 'auto', background: 'var(--color-surface-0)', padding: 24 }}
       >
         {props.messages.length === 0 && (
-          <div className="flex flex-col gap-3">
-            <div className="text-sm text-[color:var(--color-text-secondary)]">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 14, color: 'var(--color-text-secondary)' }}>
               {!props.modelsLoading && props.models.length === 0 && props.node === 'local'
                 ? 'Local llama-server isn\u2019t running yet \u2014 no models to chat with.'
                 : !props.modelsLoading && props.models.length === 0
@@ -621,8 +645,8 @@ function TranscriptColumn(props: {
           <MessageBubble key={m.id} message={m} />
         ))}
       </div>
-      <div className="flex flex-wrap items-center gap-1 border-t border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-[10px]">
-        <span className="text-[color:var(--color-text-secondary)]">capabilities:</span>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, borderTop: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 10 }}>
+        <span style={{ color: 'var(--color-text-secondary)' }}>capabilities:</span>
         {CAPABILITY_TAGS.map((tag) => {
           const active = props.capabilities.includes(tag);
           return (
@@ -630,13 +654,20 @@ function TranscriptColumn(props: {
               key={tag}
               type="button"
               onClick={() => props.onToggleCapability(tag)}
-              className={`rounded-full border px-2 py-0.5 font-mono transition-colors ${
-                active
-                  ? 'border-[var(--color-brand)] bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]'
-                  : 'border-[var(--color-border)] bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]'
-              }`}
-              title={
-                active
+              style={{
+                borderRadius: 9999,
+                border: '1px solid',
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 2,
+                paddingBottom: 2,
+                fontFamily: 'var(--font-mono)',
+                transition: 'color 0.15s, background-color 0.15s, border-color 0.15s',
+                ...(active
+                  ? { borderColor: 'var(--color-brand)', background: 'var(--color-brand)', color: 'var(--color-brand-contrast)' }
+                  : { borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text-secondary)' })
+              }}
+              title={                active
                   ? `remove ${tag}`
                   : `attach ${tag} — orchestrators route by capability tags`
               }
@@ -659,8 +690,8 @@ function RagPicker(props: {
   const ragNodes = props.nodes.filter((n) => n.effectiveKind === 'rag');
   if (ragNodes.length === 0) return null;
   return (
-    <div className="flex items-center gap-1" data-testid="chat-rag-picker">
-      <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }} data-testid="chat-rag-picker">
+      <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
         rag
       </span>
       <select
@@ -668,7 +699,7 @@ function RagPicker(props: {
         onChange={(e) =>
           props.onChange(e.target.value || null, props.ragTopK)
         }
-        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 font-mono text-[11px] text-[color:var(--color-text)]"
+        style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 2, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text)' }}
         title="Auto-retrieve context from this knowledge base on every turn"
       >
         <option value="">(off)</option>
@@ -680,7 +711,7 @@ function RagPicker(props: {
       </select>
       {props.ragNode && (
         <>
-          <span className="text-[10px] text-[color:var(--color-text-secondary)]">top</span>
+          <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>top</span>
           <input
             type="number"
             min={1}
@@ -689,7 +720,7 @@ function RagPicker(props: {
             onChange={(e) =>
               props.onChange(props.ragNode, Number.parseInt(e.target.value, 10) || DEFAULT_RAG_TOP_K)
             }
-            className="w-10 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-0.5 font-mono text-[11px] text-[color:var(--color-text)]"
+            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingTop: 2, paddingBottom: 2, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text)' }}
             title="How many top docs to inject"
           />
         </>
@@ -715,7 +746,7 @@ function ComposerBar(props: {
         e.preventDefault();
         submit();
       }}
-      className="flex gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
+      style={{ display: 'flex', gap: 8, borderTop: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 12 }}
     >
       <textarea
         value={input}
@@ -727,7 +758,7 @@ function ComposerBar(props: {
           }
         }}
         placeholder="Message (Shift+Enter for newline)…"
-        className="h-16 flex-1 resize-none rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[color:var(--color-text)]"
+        style={{ height: 64, flex: 1, resize: 'none', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 14, color: 'var(--color-text)' }}
       />
       <Button
         type="submit"
@@ -1059,15 +1090,15 @@ export default function Chat(): React.JSX.Element {
 
   if (nodeList.isLoading) {
     return (
-      <div className="h-full" data-testid="chat-root">
-        <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
+      <div style={{ height: '100%' }} data-testid="chat-root">
+        <div style={{ padding: 24, fontSize: 14, color: 'var(--color-text-secondary)' }}>Loading…</div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full" data-testid="chat-root">
-      <h1 className="sr-only">Chat</h1>
+    <div style={{ display: 'flex', height: '100%' }} data-testid="chat-root">
+      <h1 style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0, 0, 0, 0)', whiteSpace: 'nowrap', borderWidth: 0 }}>Chat</h1>
       <Sidebar
         activeId={store.activeId}
         conversations={conversationList}
@@ -1076,8 +1107,8 @@ export default function Chat(): React.JSX.Element {
         onDelete={store.remove}
       />
       {active ? (
-        <div className="flex h-full flex-1 flex-col">
-          <div className="flex min-h-0 flex-1">
+        <div style={{ display: 'flex', height: '100%', flex: 1, flexDirection: 'column' }}>
+          <div style={{ display: 'flex', flex: 1 }}>
             <TranscriptColumn
               label="A"
               node={active.node}
@@ -1156,14 +1187,14 @@ export default function Chat(): React.JSX.Element {
         </div>
       ) : (
         <div
-          className="flex h-full flex-1 items-center justify-center p-8"
+          style={{ display: 'flex', height: '100%', flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}
           data-testid="chat-empty"
         >
-          <div className="max-w-md space-y-3 text-center">
-            <h2 className="text-lg font-semibold text-[color:var(--color-text)]">
+          <div style={{ maxWidth: 448, marginTop: 12, textAlign: 'center' }}>
+            <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-text)' }}>
               Start a conversation
             </h2>
-            <p className="text-sm text-[color:var(--color-text-secondary)]">
+            <p style={{ fontSize: 14, color: 'var(--color-text-secondary)' }}>
               Chat scopes a conversation to a node + model. Attach capability
               tags (reasoning, vision, tools…) and orchestrators like
               embersynth will route by them. History stays on this laptop.

@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { schemas } from '@llamactl/core';
 import { trpc } from '@/lib/trpc';
+import { Button, Input } from '@/ui';
 
 type PresetOverride = schemas.PresetOverride;
 type Profile = 'mac-mini-16g' | 'balanced' | 'macbook-pro-48g';
@@ -118,31 +119,31 @@ function PromotionsEditor(): React.JSX.Element {
 
   return (
     <section>
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+      <h2 style={{ marginBottom: 8, fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.025em', color: 'var(--color-text-secondary)' }}>
         Preset promotions ({rows.length})
       </h2>
 
       {error && (
-        <div className="mb-3 rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
+        <div style={{ marginBottom: 12, borderRadius: 6, border: '1px solid var(--color-err)', background: 'var(--color-surface-1)', padding: '8px 12px', fontSize: 14, color: 'var(--color-err)' }}>
           {error}
         </div>
       )}
 
       {rows.length === 0 ? (
-        <div className="mb-4 rounded-md border border-dashed border-[var(--color-border)] p-4 text-[color:var(--color-text-secondary)]">
+        <div style={{ marginBottom: 16, borderRadius: 6, border: '1px dashed var(--color-border)', padding: 16, color: 'var(--color-text-secondary)' }}>
           No active promotions. Use the form below or{' '}
-          <span className="mono">llamactl catalog promote</span> to add one.
+          <span style={{ fontFamily: 'var(--font-mono)' }}>llamactl catalog promote</span> to add one.
         </div>
       ) : (
-        <div className="mb-4 overflow-hidden rounded-md border border-[var(--color-border)]">
-          <table className="w-full mono text-sm">
-            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
+        <div style={{ marginBottom: 16, overflow: 'hidden', borderRadius: 6, border: '1px solid var(--color-border)' }}>
+          <table style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 14, borderCollapse: 'collapse' }}>
+            <thead style={{ background: 'var(--color-surface-1)', textAlign: 'left', color: 'var(--color-text-secondary)' }}>
               <tr>
-                <th className="px-3 py-2 font-medium">Profile</th>
-                <th className="px-3 py-2 font-medium">Preset</th>
-                <th className="px-3 py-2 font-medium">Rel</th>
-                <th className="px-3 py-2 font-medium">Updated</th>
-                <th className="w-28 px-3 py-2 font-medium text-right"></th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Profile</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Preset</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Rel</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Updated</th>
+                <th style={{ width: 112, padding: '8px 12px', fontWeight: 500, textAlign: 'right' }}></th>
               </tr>
             </thead>
             <tbody>
@@ -152,21 +153,22 @@ function PromotionsEditor(): React.JSX.Element {
                 return (
                   <tr
                     key={key}
-                    className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
+                    style={{ borderTop: '1px solid var(--color-border)', background: 'var(--color-surface-1)' }}
                   >
-                    <td className="px-3 py-2 text-[color:var(--color-brand)]">{p.profile}</td>
-                    <td className="px-3 py-2">{p.preset}</td>
-                    <td className="px-3 py-2 text-[color:var(--color-ok)] break-all">
+                    <td style={{ padding: '8px 12px', color: 'var(--color-brand)' }}>{p.profile}</td>
+                    <td style={{ padding: '8px 12px' }}>{p.preset}</td>
+                    <td style={{ padding: '8px 12px', color: 'var(--color-ok)', wordBreak: 'break-all' }}>
                       {p.rel}
                     </td>
-                    <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">
+                    <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)' }}>
                       {p.updated_at ?? ''}
                     </td>
-                    <td className="px-3 py-2 text-right">
+                    <td style={{ padding: '8px 12px', textAlign: 'right' }}>
                       {isPending ? (
-                        <span className="inline-flex gap-1">
-                          <button
-                            type="button"
+                        <span style={{ display: 'inline-flex', gap: 4 }}>
+                          <Button
+                            variant="destructive"
+                            size="sm"
                             disabled={busy}
                             onClick={() =>
                               deleteMutation.mutate({
@@ -174,29 +176,28 @@ function PromotionsEditor(): React.JSX.Element {
                                 preset: p.preset as Preset,
                               })
                             }
-                            className="rounded border border-[var(--color-err)] px-2 py-0.5 text-xs text-[color:var(--color-err)] hover:bg-[var(--color-surface-2)]"
                           >
                             Confirm
-                          </button>
-                          <button
-                            type="button"
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             disabled={busy}
                             onClick={() => setPendingDelete(null)}
-                            className="rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-text-secondary)] hover:bg-[var(--color-surface-2)]"
                           >
                             Cancel
-                          </button>
+                          </Button>
                         </span>
                       ) : (
-                        <button
-                          type="button"
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           disabled={busy}
                           onClick={() => setPendingDelete(key)}
-                          className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-text-secondary)] hover:border-[var(--color-border)] hover:text-[color:var(--color-text)]"
                           aria-label={`Remove promotion ${key}`}
                         >
                           Remove
-                        </button>
+                        </Button>
                       )}
                     </td>
                   </tr>
@@ -212,19 +213,19 @@ function PromotionsEditor(): React.JSX.Element {
           e.preventDefault();
           handleSubmit();
         }}
-        className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
+        style={{ borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-1)', padding: 16 }}
       >
-        <div className="mb-3 text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+        <div style={{ marginBottom: 12, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.025em', color: 'var(--color-text-secondary)' }}>
           Add / update promotion
         </div>
-        <div className="grid grid-cols-12 gap-3">
-          <label className="col-span-3 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">Profile</span>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 12 }}>
+          <label style={{ gridColumn: 'span 3 / span 3', fontSize: 14 }}>
+            <span style={{ marginBottom: 4, display: 'block', fontSize: 12, color: 'var(--color-text-secondary)' }}>Profile</span>
             <select
               value={profile}
               onChange={(e) => setProfile(e.target.value as Profile)}
               disabled={busy}
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+              style={{ width: '100%', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', padding: '4px 8px', fontFamily: 'var(--font-mono)' }}
             >
               {PROFILES.map((p) => (
                 <option key={p} value={p}>
@@ -233,13 +234,13 @@ function PromotionsEditor(): React.JSX.Element {
               ))}
             </select>
           </label>
-          <label className="col-span-2 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">Preset</span>
+          <label style={{ gridColumn: 'span 2 / span 2', fontSize: 14 }}>
+            <span style={{ marginBottom: 4, display: 'block', fontSize: 12, color: 'var(--color-text-secondary)' }}>Preset</span>
             <select
               value={preset}
               onChange={(e) => setPreset(e.target.value as Preset)}
               disabled={busy}
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+              style={{ width: '100%', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', padding: '4px 8px', fontFamily: 'var(--font-mono)' }}
             >
               {PRESETS.map((p) => (
                 <option key={p} value={p}>
@@ -248,15 +249,15 @@ function PromotionsEditor(): React.JSX.Element {
               ))}
             </select>
           </label>
-          <label className="col-span-5 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">Rel</span>
-            <input
+          <label style={{ gridColumn: 'span 5 / span 5', fontSize: 14 }}>
+            <span style={{ marginBottom: 4, display: 'block', fontSize: 12, color: 'var(--color-text-secondary)' }}>Rel</span>
+            <Input
               list="rel-suggestions"
               value={rel}
               onChange={(e) => setRel(e.target.value)}
               disabled={busy}
               placeholder="e.g. gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+              style={{ fontFamily: 'var(--font-mono)' }}
             />
             <datalist id="rel-suggestions">
               {rels.map((r) => (
@@ -264,17 +265,18 @@ function PromotionsEditor(): React.JSX.Element {
               ))}
             </datalist>
           </label>
-          <div className="col-span-2 flex items-end">
-            <button
+          <div style={{ gridColumn: 'span 2 / span 2', display: 'flex', alignItems: 'flex-end' }}>
+            <Button
               type="submit"
+              variant="primary"
               disabled={busy}
-              className="w-full rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:opacity-50"
+              style={{ width: '100%' }}
             >
               {promoteMutation.isPending ? 'Saving…' : 'Save'}
-            </button>
+            </Button>
           </div>
         </div>
-        <div className="mt-3 text-xs text-[color:var(--color-text-secondary)]">
+        <div style={{ marginTop: 12, fontSize: 12, color: 'var(--color-text-secondary)' }}>
           Existing (profile, preset) pairs are replaced in place. Rels autocomplete from the
           catalog.
         </div>
@@ -287,33 +289,33 @@ export default function Settings(): React.JSX.Element {
   const env = trpc.env.useQuery();
 
   if (env.isLoading) {
-    return <div className="p-6 text-[color:var(--color-text-secondary)]">Loading…</div>;
+    return <div style={{ padding: 24, color: 'var(--color-text-secondary)' }}>Loading…</div>;
   }
   const values = (env.data ?? {}) as Record<string, string>;
 
   return (
-    <div className="h-full overflow-auto p-6" data-testid="settings-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+    <div style={{ height: '100%', overflow: 'auto', padding: 24 }} data-testid="settings-root">
+      <div style={{ marginBottom: 4, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
         Settings
       </div>
-      <h1 className="mb-2 text-2xl font-semibold text-[color:var(--color-text)]">Environment</h1>
-      <p className="mb-6 text-xs text-[color:var(--color-text-secondary)]">
+      <h1 style={{ marginBottom: 8, fontSize: 24, fontWeight: 600, color: 'var(--color-text)' }}>Environment</h1>
+      <p style={{ marginBottom: 24, fontSize: 12, color: 'var(--color-text-secondary)' }}>
         Read-only snapshot of the shell environment llamactl is running under. Values
-        come from your shell (e.g. <span className="mono">LLAMA_CPP_MODELS</span>) and
-        <span className="mono"> ~/.llamactl/env</span>; rows marked
-        <span className="text-[color:var(--color-text-secondary)]"> unset</span> fall back to defaults.
+        come from your shell (e.g. <span style={{ fontFamily: 'var(--font-mono)' }}>LLAMA_CPP_MODELS</span>) and
+        <span style={{ fontFamily: 'var(--font-mono)' }}> ~/.llamactl/env</span>; rows marked
+        <span style={{ color: 'var(--color-text-secondary)' }}> unset</span> fall back to defaults.
       </p>
 
-      <div className="space-y-6">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
         {GROUPS.map((group) => (
           <section key={group.title}>
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+            <h2 style={{ marginBottom: 8, fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.025em', color: 'var(--color-text-secondary)' }}>
               {group.title}
             </h2>
-            <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
-              <table className="w-full mono text-sm">
+            <div style={{ overflow: 'hidden', borderRadius: 6, border: '1px solid var(--color-border)' }}>
+              <table style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 14, borderCollapse: 'collapse' }}>
                 <tbody>
-                  {group.keys.map((key) => {
+                  {group.keys.map((key, idx) => {
                     const raw = values[key];
                     const isSet = raw !== undefined && raw !== '';
                     return (
@@ -321,16 +323,19 @@ export default function Settings(): React.JSX.Element {
                         key={key}
                         data-testid={`env-${key}`}
                         data-set={isSet ? 'true' : 'false'}
-                        className="border-b border-[var(--color-border)] last:border-b-0 bg-[var(--color-surface-1)]"
+                        style={{
+                          borderBottom: idx === group.keys.length - 1 ? 'none' : '1px solid var(--color-border)',
+                          background: 'var(--color-surface-1)'
+                        }}
                       >
-                        <td className="w-72 px-3 py-1.5 text-[color:var(--color-text-secondary)]">
+                        <td style={{ width: 288, padding: '6px 12px', color: 'var(--color-text-secondary)' }}>
                           {key}
                         </td>
                         <td
-                          className={
+                          style={
                             isSet
-                              ? 'px-3 py-1.5 text-[color:var(--color-text)] break-all'
-                              : 'px-3 py-1.5 text-[color:var(--color-text-secondary)]'
+                              ? { padding: '6px 12px', color: 'var(--color-text)', wordBreak: 'break-all' }
+                              : { padding: '6px 12px', color: 'var(--color-text-secondary)' }
                           }
                         >
                           {isSet ? raw : 'unset'}

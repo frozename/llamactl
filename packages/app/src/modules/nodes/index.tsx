@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
+import { Button, Input, StatusDot, Badge, EditorialHero } from '@/ui';
 
 /**
  * Nodes module. Shows every node in the current kubeconfig context,
@@ -99,26 +100,41 @@ function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
         e.preventDefault();
         submit();
       }}
-      className="mt-4 space-y-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
+      style={{
+        marginTop: 16,
+        padding: 16,
+        borderRadius: 4,
+        border: '1px solid var(--color-border)',
+        backgroundColor: 'var(--color-surface-1)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+      }}
     >
-      <div className="text-sm font-medium text-[color:var(--color-text)]">
+      <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--color-text)' }}>
         Register a cloud provider
-        <span className="ml-2 text-[10px] text-[color:var(--color-text-secondary)]">
+        <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--color-text-secondary)' }}>
           (OpenAI / Anthropic / Together / groq / Mistral / any OpenAI-compat)
         </span>
       </div>
-      <div className="flex flex-wrap gap-2 text-xs">
-        <input
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 12 }}>
+        <Input
           type="text"
           placeholder="node name (e.g. openai-prod)"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
+          style={{ width: 192 }}
         />
         <select
           value={provider}
           onChange={(e) => setProvider(e.target.value as CloudProvider)}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
+          style={{
+            borderRadius: 4,
+            border: '1px solid var(--color-border)',
+            backgroundColor: 'var(--color-surface-2)',
+            padding: '4px 8px',
+            color: 'var(--color-text)',
+          }}
         >
           <option value="openai">openai</option>
           <option value="anthropic">anthropic</option>
@@ -129,40 +145,41 @@ function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
           <option value="sirius">sirius (gateway)</option>
           <option value="embersynth">embersynth (orchestrator)</option>
         </select>
-        <input
+        <Input
           type="text"
           placeholder="baseUrl (blank to use provider default)"
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
-          className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-text)]"
+          style={{ flex: 1, fontFamily: 'monospace' }}
         />
       </div>
-      <div className="flex flex-wrap gap-2 text-xs">
-        <input
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 12 }}>
+        <Input
           type="text"
           placeholder="apiKeyRef ($ENV_VAR or file path)"
           value={apiKeyRef}
           onChange={(e) => setApiKeyRef(e.target.value)}
-          className="w-72 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-text)]"
+          style={{ width: 288, fontFamily: 'monospace' }}
         />
-        <input
+        <Input
           type="text"
           placeholder="display name (optional)"
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
-          className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
+          style={{ flex: 1 }}
         />
       </div>
-      <div className="flex items-center gap-3 text-sm">
-        <button
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 14 }}>
+        <Button
           type="submit"
+          variant="primary"
+          size="sm"
           disabled={add.isPending}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 text-[color:var(--color-brand-contrast)] disabled:opacity-50"
         >
           {add.isPending ? 'Probing…' : 'Register cloud node'}
-        </button>
-        {error && <span className="text-xs text-[color:var(--color-err)]">{error}</span>}
-        {success && <span className="text-xs text-[color:var(--color-ok)]">{success}</span>}
+        </Button>
+        {error && <span style={{ fontSize: 12, color: 'var(--color-err)' }}>{error}</span>}
+        {success && <span style={{ fontSize: 12, color: 'var(--color-ok)' }}>{success}</span>}
       </div>
     </form>
   );
@@ -216,20 +233,29 @@ function RegisterPanel(props: { onDone: () => void }): React.JSX.Element {
         e.preventDefault();
         submit();
       }}
-      className="mt-4 space-y-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
+      style={{
+        marginTop: 16,
+        padding: 16,
+        borderRadius: 4,
+        border: '1px solid var(--color-border)',
+        backgroundColor: 'var(--color-surface-1)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+      }}
     >
-      <div className="text-sm font-medium text-[color:var(--color-text)]">
+      <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--color-text)' }}>
         Register a remote node
       </div>
-      <div className="flex gap-2">
-        <input
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Input
           type="text"
           placeholder="node name (e.g., mac-mini)"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-48 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-sm text-[color:var(--color-text)]"
+          style={{ width: 192 }}
         />
-        <label className="flex items-center gap-1 text-xs text-[color:var(--color-text-secondary)]">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--color-text-secondary)' }}>
           <input
             type="checkbox"
             checked={force}
@@ -242,18 +268,29 @@ function RegisterPanel(props: { onDone: () => void }): React.JSX.Element {
         placeholder="Paste the `llamactl node add <name> --bootstrap …` line or just the blob"
         value={blob}
         onChange={(e) => setBlob(e.target.value)}
-        className="h-28 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-xs text-[color:var(--color-text)]"
+        style={{
+          height: 112,
+          width: '100%',
+          borderRadius: 4,
+          border: '1px solid var(--color-border)',
+          backgroundColor: 'var(--color-surface-2)',
+          padding: '4px 8px',
+          fontFamily: 'monospace',
+          fontSize: 12,
+          color: 'var(--color-text)',
+        }}
       />
-      <div className="flex items-center gap-3 text-sm">
-        <button
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 14 }}>
+        <Button
           type="submit"
+          variant="primary"
+          size="sm"
           disabled={add.isPending}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 text-[color:var(--color-brand-contrast)] disabled:opacity-50"
         >
           {add.isPending ? 'Registering…' : 'Register'}
-        </button>
-        {error && <span className="text-xs text-[color:var(--color-err)]">{error}</span>}
-        {success && <span className="text-xs text-[color:var(--color-ok)]">{success}</span>}
+        </Button>
+        {error && <span style={{ fontSize: 12, color: 'var(--color-err)' }}>{error}</span>}
+        {success && <span style={{ fontSize: 12, color: 'var(--color-ok)' }}>{success}</span>}
       </div>
     </form>
   );
@@ -289,81 +326,85 @@ function OpenAIConfigPanel(props: { node: string }): React.JSX.Element {
     : '';
 
   return (
-    <div className="mt-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 text-xs">
-      <div className="flex items-center justify-between">
-        <span className="font-medium text-[color:var(--color-text)]">OpenAI config</span>
-        <button
-          type="button"
+    <div style={{ marginTop: 8, borderRadius: 4, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-2)', padding: 8, fontSize: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>OpenAI config</span>
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={() => { void load(); }}
           disabled={cfg.isFetching}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-0.5 text-[10px] text-[color:var(--color-text)] disabled:opacity-50"
+          style={{ fontSize: 10, padding: '2px 8px' }}
         >
           {cfg.isFetching ? 'Loading…' : revealed ? 'Hide' : 'Reveal'}
-        </button>
+        </Button>
       </div>
       {cfg.error && (
-        <div className="mt-1 text-[color:var(--color-err)]">{cfg.error.message}</div>
+        <div style={{ marginTop: 4, color: 'var(--color-err)' }}>{cfg.error.message}</div>
       )}
       {revealed && cfg.data && (
-        <div className="mt-2 space-y-2 font-mono text-[11px] text-[color:var(--color-text)]">
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--color-text)' }}>
           <div>
-            <div className="text-[10px] text-[color:var(--color-text-secondary)]">base_url</div>
-            <div className="flex items-center gap-2">
-              <span className="break-all">{cfg.data.baseUrl}</span>
-              <button
-                type="button"
+            <div style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>base_url</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ wordBreak: 'break-all' }}>{cfg.data.baseUrl}</span>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => { void copy(cfg.data!.baseUrl); }}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1.5 py-0.5 text-[9px] text-[color:var(--color-text-secondary)]"
+                style={{ fontSize: 9, padding: '2px 6px' }}
               >
                 copy
-              </button>
+              </Button>
             </div>
           </div>
           <div>
-            <div className="text-[10px] text-[color:var(--color-text-secondary)]">api_key (bearer)</div>
-            <div className="flex items-center gap-2">
-              <span className="break-all">{cfg.data.apiKey}</span>
-              <button
-                type="button"
+            <div style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>api_key (bearer)</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ wordBreak: 'break-all' }}>{cfg.data.apiKey}</span>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => { void copy(cfg.data!.apiKey); }}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1.5 py-0.5 text-[9px] text-[color:var(--color-text-secondary)]"
+                style={{ fontSize: 9, padding: '2px 6px' }}
               >
                 copy
-              </button>
+              </Button>
             </div>
           </div>
           {cfg.data.caCertPem && (
             <div>
-              <div className="flex items-center justify-between text-[10px] text-[color:var(--color-text-secondary)]">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, color: 'var(--color-text-secondary)' }}>
                 <span>ca_cert.pem (fingerprint {cfg.data.caFingerprint ?? '—'})</span>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => { void copy(cfg.data!.caCertPem ?? ''); }}
-                  className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1.5 py-0.5 text-[9px] text-[color:var(--color-text-secondary)]"
+                  style={{ fontSize: 9, padding: '2px 6px' }}
                 >
                   copy PEM
-                </button>
+                </Button>
               </div>
               <textarea
                 readOnly
                 value={cfg.data.caCertPem}
-                className="mt-1 h-20 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-0)] px-2 py-1 text-[10px] text-[color:var(--color-text)]"
+                style={{ marginTop: 4, height: 80, width: '100%', borderRadius: 4, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-0)', padding: '4px 8px', fontSize: 10, color: 'var(--color-text)' }}
               />
             </div>
           )}
           <details>
-            <summary className="cursor-pointer text-[10px] text-[color:var(--color-text-secondary)]">
+            <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--color-text-secondary)' }}>
               Python example
             </summary>
-            <pre className="mt-1 overflow-x-auto whitespace-pre rounded border border-[var(--color-border)] bg-[var(--color-surface-0)] px-2 py-1 text-[10px]">
+            <pre style={{ marginTop: 4, overflowX: 'auto', whiteSpace: 'pre', borderRadius: 4, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-0)', padding: '4px 8px', fontSize: 10 }}>
               {pyExample}
             </pre>
           </details>
           <details>
-            <summary className="cursor-pointer text-[10px] text-[color:var(--color-text-secondary)]">
+            <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--color-text-secondary)' }}>
               curl example
             </summary>
-            <pre className="mt-1 overflow-x-auto whitespace-pre rounded border border-[var(--color-border)] bg-[var(--color-surface-0)] px-2 py-1 text-[10px]">
+            <pre style={{ marginTop: 4, overflowX: 'auto', whiteSpace: 'pre', borderRadius: 4, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-0)', padding: '4px 8px', fontSize: 10 }}>
               {curlExample}
             </pre>
           </details>
@@ -394,10 +435,6 @@ function NodeRow(props: {
     { enabled: false, retry: false },
   );
 
-  // Passive reachability probe — fires on mount + every 30s for
-  // non-local nodes so each row has an up-to-date green/red dot
-  // without requiring the operator to click Test. Local never
-  // probes (inproc is by definition reachable if the app is alive).
   const isLocalNode = props.name === 'local' || props.endpoint.startsWith('inproc://');
   const probe = trpc.nodeTest.useQuery(
     { name: props.name },
@@ -450,91 +487,77 @@ function NodeRow(props: {
   const isProvider = props.kind === 'provider';
 
   return (
-    <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
-      <div className="flex items-baseline justify-between gap-4">
-        <div className="flex items-baseline gap-2">
-          <span
+    <div style={{ borderRadius: 4, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)', padding: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <StatusDot
+            tone={reachability === 'ok' ? 'ok' : reachability === 'fail' ? 'err' : 'idle'}
             data-testid={`node-health-${props.name}`}
-            data-reachability={reachability}
             title={reachabilityTitle}
-            className={`inline-block h-2 w-2 translate-y-[-1px] rounded-full ${
-              reachability === 'ok'
-                ? 'bg-[var(--color-ok,var(--color-ok))]'
-                : reachability === 'fail'
-                  ? 'bg-[var(--color-err)]'
-                  : 'bg-[var(--color-text-secondary)]'
-            }`}
+            style={{ transform: 'translateY(-1px)' }}
           />
-          <span className="font-mono text-sm text-[color:var(--color-text)]">{props.name}</span>
+          <span style={{ fontFamily: 'monospace', fontSize: 14, color: 'var(--color-text)' }}>{props.name}</span>
           {isDefault && (
-            <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]">
-              default
-            </span>
+            <Badge variant="default">default</Badge>
           )}
           {isLocal && (
-            <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]">
-              local
-            </span>
+            <Badge variant="default">local</Badge>
           )}
           {isGateway && (
-            <span className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-inverse)]">
-              gateway · {props.cloud?.provider ?? '?'}
-            </span>
+            <Badge variant="brand">gateway · {props.cloud?.provider ?? '?'}</Badge>
           )}
           {isProvider && (
-            <span className="ml-4 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]">
-              provider
-            </span>
+            <Badge variant="default" style={{ marginLeft: 16 }}>provider</Badge>
           )}
         </div>
-        <div className="flex gap-1 text-xs">
-          <button
-            type="button"
+        <div style={{ display: 'flex', gap: 4, fontSize: 12 }}>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={runTest}
             disabled={test.isFetching}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)] disabled:opacity-50"
           >
             {test.isFetching ? 'Testing…' : 'Test'}
-          </button>
+          </Button>
           {!isLocal && !isProvider && (
             <>
               {confirmRm ? (
                 <>
-                  <button
-                    type="button"
+                  <Button
+                    variant="destructive"
+                    size="sm"
                     onClick={() => remove.mutate({ name: props.name })}
-                    className="rounded border border-[var(--color-border)] bg-[var(--color-err)] px-2 py-1 text-[color:var(--color-text-inverse)]"
                   >
                     Confirm remove
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={() => setConfirmRm(false)}
-                    className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
                   >
                     Cancel
-                  </button>
+                  </Button>
                 </>
               ) : (
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setConfirmRm(true)}
-                  className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text-secondary)]"
                 >
                   Remove
-                </button>
+                </Button>
               )}
             </>
           )}
         </div>
       </div>
-      <div className="mt-1 text-xs text-[color:var(--color-text-secondary)]">
+      <div style={{ marginTop: 4, fontSize: 12, color: 'var(--color-text-secondary)' }}>
         {isProvider
           ? 'via gateway'
           : isGateway
             ? 'baseUrl'
             : 'endpoint'}:{' '}
-        <span className="font-mono">
+        <span style={{ fontFamily: 'monospace' }}>
           {isProvider
             ? props.name.split('.')[0]
             : isGateway
@@ -543,11 +566,11 @@ function NodeRow(props: {
         </span>
       </div>
       {testResult && (
-        <div className="mt-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 text-xs">
+        <div style={{ marginTop: 8, borderRadius: 4, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-2)', padding: 8, fontSize: 12 }}>
           {typeof testResult === 'string' ? (
-            <span className="text-[color:var(--color-err)]">{testResult}</span>
+            <span style={{ color: 'var(--color-err)' }}>{testResult}</span>
           ) : (
-            <div className="space-y-0.5 font-mono text-[color:var(--color-text)]">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontFamily: 'monospace', color: 'var(--color-text)' }}>
               <div>profile: {testResult.profile}</div>
               <div>platform: {testResult.platform}</div>
               <div>memory: {humanBytes(testResult.memBytes)}</div>
@@ -586,56 +609,56 @@ function DiscoverPanel(): React.JSX.Element {
 
   const rows = discover.data ?? [];
   return (
-    <div className="mt-4 space-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-medium text-[color:var(--color-text)]">
+    <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8, borderRadius: 4, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)', padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--color-text)' }}>
           Discover LAN agents
-          <span className="ml-2 text-[10px] text-[color:var(--color-text-secondary)]">(mDNS / Bonjour)</span>
+          <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--color-text-secondary)' }}>(mDNS / Bonjour)</span>
         </div>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={scan}
           disabled={discover.isFetching}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-text)] disabled:opacity-50"
         >
           {discover.isFetching ? 'Scanning…' : 'Scan (3s)'}
-        </button>
+        </Button>
       </div>
       {discover.error && (
-        <div className="text-xs text-[color:var(--color-err)]">
+        <div style={{ fontSize: 12, color: 'var(--color-err)' }}>
           {discover.error.message}
         </div>
       )}
       {discover.data && rows.length === 0 && (
-        <div className="text-xs text-[color:var(--color-text-secondary)]">
-          No agents found. Make sure the remote machine has <span className="font-mono">llamactl agent serve</span> running on the same network.
+        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+          No agents found. Make sure the remote machine has <span style={{ fontFamily: 'monospace' }}>llamactl agent serve</span> running on the same network.
         </div>
       )}
       {rows.length > 0 && (
-        <ul className="space-y-1">
+        <ul style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {rows.map((r) => (
             <li
               key={`${r.host}:${r.port}`}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs"
+              style={{ borderRadius: 4, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-2)', padding: '8px 12px', fontSize: 12 }}
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[color:var(--color-text)]">{r.nodeName}</span>
-                <span className="text-[10px] text-[color:var(--color-text-secondary)]">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <span style={{ fontFamily: 'monospace', color: 'var(--color-text)' }}>{r.nodeName}</span>
+                <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
                   {r.alreadyRegistered ? 'registered' : 'new'}
                   {r.version ? ` · v${r.version}` : ''}
                 </span>
               </div>
-              <div className="mt-1 font-mono text-[10px] text-[color:var(--color-text-secondary)]">
+              <div style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 10, color: 'var(--color-text-secondary)' }}>
                 {r.url}
                 {r.fingerprint && (
                   <>
-                    <span className="mx-1">·</span>
+                    <span style={{ margin: '0 4px' }}>·</span>
                     <span title={r.fingerprint}>{r.fingerprint.slice(0, 20)}…</span>
                   </>
                 )}
               </div>
-              <div className="mt-1 text-[10px] text-[color:var(--color-text-secondary)]">
-                To register: run <span className="font-mono">llamactl agent init</span> on {r.nodeName}, then paste the bootstrap above.
+              <div style={{ marginTop: 4, fontSize: 10, color: 'var(--color-text-secondary)' }}>
+                To register: run <span style={{ fontFamily: 'monospace' }}>llamactl agent init</span> on {r.nodeName}, then paste the bootstrap above.
               </div>
             </li>
           ))}
@@ -653,68 +676,62 @@ export default function Nodes(): React.JSX.Element {
 
   if (list.isLoading) {
     return (
-      <div className="h-full" data-testid="nodes-root">
-        <div className="p-6 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
+      <div style={{ height: '100%' }} data-testid="nodes-root">
+        <div style={{ padding: 24, fontSize: 14, color: 'var(--color-text-secondary)' }}>Loading…</div>
       </div>
     );
   }
   if (list.error) {
     return (
-      <div className="h-full" data-testid="nodes-root">
-        <div className="p-6 text-sm text-[color:var(--color-err)]">
+      <div style={{ height: '100%' }} data-testid="nodes-root">
+        <div style={{ padding: 24, fontSize: 14, color: 'var(--color-err)' }}>
           Failed to load nodes: {list.error.message}
         </div>
       </div>
     );
   }
-  // Guard against the brief idle window where data is undefined while
-  // error is still null and isLoading already cleared (happens under
-  // hermetic test profiles when the daemon never replies). Treat as
-  // empty cluster so the testid still renders.
   const data = list.data ?? { nodes: [], context: '', cluster: '', defaultNode: '' };
   return (
-    <div className="flex h-full flex-col gap-4 overflow-auto p-6" data-testid="nodes-root">
-      <div className="flex items-baseline justify-between">
+    <div style={{ display: 'flex', height: '100%', flexDirection: 'column', gap: 16, overflow: 'auto', padding: 24 }} data-testid="nodes-root">
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
         <div>
-          <h1 className="text-lg font-semibold text-[color:var(--color-text)]">Nodes</h1>
-          <div className="text-xs text-[color:var(--color-text-secondary)]">
-            context <span className="font-mono">{data.context}</span> · cluster{' '}
-            <span className="font-mono">{data.cluster}</span> · default{' '}
-            <span className="font-mono">{data.defaultNode}</span>
+          <h1 style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-text)' }}>Nodes</h1>
+          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+            context <span style={{ fontFamily: 'monospace' }}>{data.context}</span> · cluster{' '}
+            <span style={{ fontFamily: 'monospace' }}>{data.cluster}</span> · default{' '}
+            <span style={{ fontFamily: 'monospace' }}>{data.defaultNode}</span>
           </div>
         </div>
-        <div className="flex gap-2">
-          <button
-            type="button"
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => setShowDiscover((v) => !v)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-text)]"
           >
             {showDiscover ? 'Hide discover' : 'Discover'}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => setShowCloud((v) => !v)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-text)]"
           >
             {showCloud ? 'Cancel cloud' : 'Register cloud'}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => setShowRegister((v) => !v)}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-sm text-[color:var(--color-text)]"
           >
             {showRegister ? 'Cancel' : 'Register agent'}
-          </button>
+          </Button>
         </div>
       </div>
       {showDiscover && <DiscoverPanel />}
       {showCloud && <RegisterCloudPanel onDone={() => setShowCloud(false)} />}
       {showRegister && <RegisterPanel onDone={() => setShowRegister(false)} />}
-      <div className="space-y-2">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {data.nodes.length === 0 && (
-          <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 text-xs text-[color:var(--color-text-secondary)]">
-            (no nodes registered)
-          </div>
+          <EditorialHero title="No nodes registered" lede="Register a remote agent or a cloud provider to begin." />
         )}
         {data.nodes.map((n) => {
           const explicit = (n as { effectiveKind?: 'agent' | 'gateway' | 'provider' })

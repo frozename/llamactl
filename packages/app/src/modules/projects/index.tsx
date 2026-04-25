@@ -94,13 +94,13 @@ function RoutingHeatmap(props: { routing: Record<string, string> | undefined }):
   const entries = Object.entries(props.routing ?? {});
   if (entries.length === 0) {
     return (
-      <span className="text-[10px] text-[color:var(--color-text-secondary)]">
+      <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
         no policy
       </span>
     );
   }
   return (
-    <div className="flex flex-wrap gap-1">
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
       {entries.map(([k, v]) => (
         <Badge key={k} variant="default" title={`${k} → ${v}`}>
           {k} → {v}
@@ -121,11 +121,11 @@ function RoutingPreviewCard(props: {
   );
   const data = q.data as RoutePreviewResponse | undefined;
   if (q.isLoading) {
-    return <span className="text-[10px] text-[color:var(--color-text-secondary)]">…</span>;
+    return <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>…</span>;
   }
   if (q.error || !data?.decision) {
     return (
-      <span className="text-[10px] text-[color:var(--color-text-secondary)]">—</span>
+      <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>—</span>
     );
   }
   const d = data.decision;
@@ -150,7 +150,7 @@ function RoutingJournalFeed(props: { project: string }): React.JSX.Element {
   const entries = data?.entries ?? [];
   if (q.isLoading) {
     return (
-      <div className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-text-secondary)]">
+      <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderStyle: 'dashed', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
         Loading decisions…
       </div>
     );
@@ -158,11 +158,11 @@ function RoutingJournalFeed(props: { project: string }): React.JSX.Element {
   if (entries.length === 0) {
     return (
       <div
-        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[color:var(--color-text-secondary)]"
+        style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderStyle: 'dashed', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}
         data-testid="projects-journal-empty"
       >
         No routing decisions journaled yet — trigger a chat against{' '}
-        <span className="mono">project:{project}/&lt;taskKind&gt;</span> to
+        <span style={{ fontFamily: 'var(--font-mono)' }}>project:{project}/&lt;taskKind&gt;</span> to
         populate this feed.
       </div>
     );
@@ -171,34 +171,34 @@ function RoutingJournalFeed(props: { project: string }): React.JSX.Element {
   const reversed = [...entries].reverse();
   return (
     <div
-      className="max-h-64 overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)]"
+      style={{ overflow: 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)' }}
       data-testid="projects-journal"
     >
-      <table className="w-full text-xs">
-        <thead className="bg-[var(--color-surface-2)] text-left text-[color:var(--color-text-secondary)]">
+      <table style={{ width: '100%', fontSize: 12 }}>
+        <thead style={{ background: 'var(--color-surface-2)', textAlign: 'left', color: 'var(--color-text-secondary)' }}>
           <tr>
-            <th className="w-24 px-2 py-1 font-medium">Elapsed</th>
-            <th className="w-32 px-2 py-1 font-medium">Task kind</th>
-            <th className="px-2 py-1 font-medium">Target</th>
-            <th className="w-32 px-2 py-1 font-medium">Reason</th>
+            <th style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Elapsed</th>
+            <th style={{ width: 128, paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Task kind</th>
+            <th style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Target</th>
+            <th style={{ width: 128, paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Reason</th>
           </tr>
         </thead>
         <tbody>
           {reversed.map((d, i) => (
             <tr
               key={`${d.ts}-${i}`}
-              className="border-t border-[var(--color-border)]"
+              style={{ borderTop: '1px solid var(--color-border)', borderColor: 'var(--color-border)' }}
             >
-              <td className="px-2 py-1 mono text-[10px] text-[color:var(--color-text-secondary)]">
+              <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text-secondary)' }}>
                 {formatElapsed(d.ts)}
               </td>
-              <td className="px-2 py-1 mono text-[10px] text-[color:var(--color-text)]">
+              <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text)' }}>
                 {d.taskKind}
               </td>
-              <td className="px-2 py-1 mono text-[10px] text-[color:var(--color-text)] break-all">
+              <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text)', wordBreak: 'break-all' }}>
                 {d.target}
               </td>
-              <td className="px-2 py-1">
+              <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4 }}>
                 <Badge variant={reasonBadgeVariant(d.reason)}>{d.reason}</Badge>
               </td>
             </tr>
@@ -232,22 +232,22 @@ function ProjectDetail(props: {
   };
   return (
     <div
-      className="space-y-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)] p-4"
+      style={{ marginTop: 16, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-0)', padding: 16 }}
       data-testid={`projects-detail-${project.metadata.name}`}
     >
-      <div className="flex items-baseline justify-between gap-3">
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
         <div>
-          <div className="text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+          <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
             Project
           </div>
-          <div className="mono text-lg text-[color:var(--color-text)]">
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 18, color: 'var(--color-text)' }}>
             {project.metadata.name}
           </div>
-          <div className="mono text-xs text-[color:var(--color-text-secondary)]">
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-secondary)' }}>
             {project.spec.path}
           </div>
         </div>
-        <div className="flex gap-2">
+        <div style={{ display: 'flex', gap: 8 }}>
           <Button
             type="button"
             variant="destructive"
@@ -272,34 +272,34 @@ function ProjectDetail(props: {
 
       {taskKinds.length > 0 && (
         <div>
-          <div className="mb-2 text-xs uppercase tracking-wider text-[color:var(--color-text-secondary)]">
+          <div style={{ marginBottom: 8, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
             Routing policy preview
           </div>
           <div
-            className="overflow-hidden rounded-md border border-[var(--color-border)]"
+            style={{ overflow: 'hidden', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)' }}
             data-testid="projects-policy-table"
           >
-            <table className="w-full text-xs">
-              <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
+            <table style={{ width: '100%', fontSize: 12 }}>
+              <thead style={{ background: 'var(--color-surface-1)', textAlign: 'left', color: 'var(--color-text-secondary)' }}>
                 <tr>
-                  <th className="w-40 px-2 py-1 font-medium">Task kind</th>
-                  <th className="px-2 py-1 font-medium">Declared target</th>
-                  <th className="px-2 py-1 font-medium">Resolved (live)</th>
+                  <th style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Task kind</th>
+                  <th style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Declared target</th>
+                  <th style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Resolved (live)</th>
                 </tr>
               </thead>
               <tbody>
                 {taskKinds.map((k) => (
                   <tr
                     key={k}
-                    className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
+                    style={{ borderTop: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)' }}
                   >
-                    <td className="px-2 py-1 mono text-[color:var(--color-text)]">
+                    <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}>
                       {k}
                     </td>
-                    <td className="px-2 py-1 mono text-[10px] text-[color:var(--color-text-secondary)]">
+                    <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text-secondary)' }}>
                       {project.spec.routing?.[k]}
                     </td>
-                    <td className="px-2 py-1">
+                    <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4 }}>
                       <RoutingPreviewCard
                         project={project.metadata.name}
                         taskKind={k}
@@ -314,18 +314,18 @@ function ProjectDetail(props: {
       )}
 
       <div>
-        <div className="mb-2 text-xs uppercase tracking-wider text-[color:var(--color-text-secondary)]">
+        <div style={{ marginBottom: 8, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
           Routing decisions (live)
         </div>
         <RoutingJournalFeed project={project.metadata.name} />
       </div>
 
       <div>
-        <div className="mb-2 text-xs uppercase tracking-wider text-[color:var(--color-text-secondary)]">
+        <div style={{ marginBottom: 8, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
           Manifest
         </div>
         <pre
-          className="max-h-64 overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 mono text-[10px] text-[color:var(--color-text)]"
+          style={{ overflow: 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', padding: 12, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text)' }}
           data-testid={`projects-manifest-${project.metadata.name}`}
         >
           {stringifyYaml(project)}
@@ -352,38 +352,38 @@ function ProjectRow(props: {
   const hasRag = !!project.spec.rag;
   return (
     <tr
-      className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
+      style={{ borderTop: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)' }}
       data-testid={`projects-row-${project.metadata.name}`}
     >
-      <td className="px-3 py-2 text-[color:var(--color-ok)] break-all">
+      <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, color: 'var(--color-ok)', wordBreak: 'break-all' }}>
         <button
           type="button"
           onClick={onOpenDetail}
           data-testid={`projects-open-${project.metadata.name}`}
-          className="text-left underline decoration-dotted hover:opacity-90"
+          style={{ textAlign: 'left' }}
         >
           {project.metadata.name}
         </button>
       </td>
-      <td className="px-3 py-2 text-[color:var(--color-text-secondary)] mono text-[10px] break-all">
+      <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 10, wordBreak: 'break-all' }}>
         {project.spec.path}
       </td>
-      <td className="px-3 py-2 text-[10px]">
+      <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 10 }}>
         {hasRag ? (
-          <span className="mono text-[color:var(--color-text)]">
+          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}>
             {project.spec.rag!.node}/{project.spec.rag!.collection}
           </span>
         ) : (
-          <span className="text-[color:var(--color-text-secondary)]">
+          <span style={{ color: 'var(--color-text-secondary)' }}>
             no rag block
           </span>
         )}
       </td>
-      <td className="px-3 py-2">
+      <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8 }}>
         <RoutingHeatmap routing={project.spec.routing} />
       </td>
-      <td className="px-3 py-2 text-right">
-        <div className="flex items-center justify-end gap-1">
+      <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, textAlign: 'right' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
           <Button
             type="button"
             variant="primary"
@@ -407,7 +407,7 @@ function ProjectRow(props: {
           </Button>
         </div>
         {indexError && (
-          <div className="mt-1 text-[10px] text-[color:var(--color-err)]">
+          <div style={{ marginTop: 4, fontSize: 10, color: 'var(--color-err)' }}>
             {indexError}
           </div>
         )}
@@ -490,7 +490,7 @@ function GitRepoSuggestions({ onPick }: { onPick: (r: DetectedRepo) => void }): 
 
   if (state.kind === 'loading') {
     return (
-      <div className="mb-3 text-[10px] text-[color:var(--color-text-secondary)]">
+      <div style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
         Scanning for git repos\u2026
       </div>
     );
@@ -501,12 +501,12 @@ function GitRepoSuggestions({ onPick }: { onPick: (r: DetectedRepo) => void }): 
   if (state.repos.length === 0) return null;
   const visible = expanded ? state.repos : state.repos.slice(0, 8);
   return (
-    <div className="mb-3">
-      <div className="mb-1.5 flex items-baseline gap-2 text-[10px] uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+    <div >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
         <span>Detected git repos</span>
-        <span className="opacity-60">({state.repos.length} across {state.rootsShown.length} root{state.rootsShown.length === 1 ? '' : 's'})</span>
+        <span style={{ opacity: 0.6 }}>({state.repos.length} across {state.rootsShown.length} root{state.rootsShown.length === 1 ? '' : 's'})</span>
       </div>
-      <div className="flex flex-wrap gap-1" data-testid="projects-git-suggestions">
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }} data-testid="projects-git-suggestions">
         {visible.map((repo) => (
           <Button
             key={repo.path}
@@ -595,7 +595,7 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
     <form
       onSubmit={onSubmit}
       data-testid="projects-create-form"
-      className={compact ? 'rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3' : ''}
+      style={{ ...( compact ? { borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 12 } : {  } ) }}
     >
       {!compact && (
         <GitRepoSuggestions
@@ -605,7 +605,7 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
           }}
         />
       )}
-      <div className={compact ? 'flex flex-wrap items-end gap-2' : 'grid grid-cols-2 gap-3'}>
+      <div style={{ ...( compact ? { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 8 } : { display: 'grid', gap: 12 } ) }}>
         <Field label="Name" required>
           <input
             type="text"
@@ -614,11 +614,11 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
             placeholder="novaflow"
             data-testid="projects-create-name"
             required
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
+            style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text)' }}
           />
         </Field>
         <Field label="Path" required>
-          <div className="flex gap-1">
+          <div style={{ display: 'flex', gap: 4 }}>
             <input
               type="text"
               value={path}
@@ -626,7 +626,7 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
               placeholder="/Users/you/repos/novaflow"
               data-testid="projects-create-path"
               required
-              className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
+              style={{ flex: 1, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text)' }}
             />
             <Button
               type="button"
@@ -660,14 +660,14 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
                 value={purpose}
                 onChange={(e) => setPurpose(e.target.value)}
                 placeholder="e.g. at-home diagnostic services platform"
-                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text)]"
+                style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontSize: 12, color: 'var(--color-text)' }}
               />
             </Field>
             <Field label="RAG node (optional)">
               <select
                 value={ragNode}
                 onChange={(e) => setRagNode(e.target.value)}
-                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text)]"
+                style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontSize: 12, color: 'var(--color-text)' }}
               >
                 <option value="">— skip RAG binding —</option>
                 {ragNodes.map((n) => (
@@ -682,13 +682,13 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
                   value={ragCollection}
                   onChange={(e) => setRagCollection(e.target.value)}
                   placeholder="novaflow_docs"
-                  className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
+                  style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text)' }}
                 />
               </Field>
             )}
           </>
         )}
-        <div className={compact ? '' : 'col-span-2 flex items-center gap-2 pt-1'}>
+        <div style={{ ...( compact ? {  } : { gridColumn: 'span 2 / span 2', display: 'flex', alignItems: 'center', gap: 8 } ) }}>
           <Button
             type="submit"
             variant="primary"
@@ -700,10 +700,10 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
             {apply.isPending ? 'Creating…' : compact ? 'Add' : 'Create project'}
           </Button>
           {status.kind === 'error' && (
-            <span className="text-[11px] text-[color:var(--color-err)]">{status.message}</span>
+            <span style={{ fontSize: 11, color: 'var(--color-err)' }}>{status.message}</span>
           )}
           {status.kind === 'ok' && (
-            <span className="text-[11px] text-[color:var(--color-ok)]">✓ {status.message}</span>
+            <span style={{ fontSize: 11, color: 'var(--color-ok)' }}>✓ {status.message}</span>
           )}
         </div>
       </div>
@@ -713,10 +713,10 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
 
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }): React.JSX.Element {
   return (
-    <label className="flex flex-col gap-1">
-      <span className="text-[10px] uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
         {label}
-        {required && <span className="ml-0.5 text-[color:var(--color-err)]">*</span>}
+        {required && <span style={{ color: 'var(--color-err)' }}>*</span>}
       </span>
       {children}
     </label>
@@ -737,34 +737,34 @@ export default function Projects(): React.JSX.Element {
     selected !== null ? sorted.find((p) => p.metadata.name === selected) ?? null : null;
 
   return (
-    <div className="h-full overflow-auto p-6" data-testid="projects-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+    <div style={{ height: '100%', overflow: 'auto', padding: 24 }} data-testid="projects-root">
+      <div style={{ marginBottom: 4, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
         Projects
       </div>
-      <h1 className="mb-2 text-2xl font-semibold text-[color:var(--color-text)]">
+      <h1 style={{ marginBottom: 8, fontSize: 24, fontWeight: 600, color: 'var(--color-text)' }}>
         Local projects
       </h1>
-      <p className="mb-6 text-xs text-[color:var(--color-text-secondary)]">
+      <p style={{ marginBottom: 24, fontSize: 12, color: 'var(--color-text-secondary)' }}>
         Registered project directories with per-task routing policies.
         Register via{' '}
-        <span className="mono">llamactl project add &lt;name&gt; --path &lt;abs&gt;</span>;
+        <span style={{ fontFamily: 'var(--font-mono)' }}>llamactl project add &lt;name&gt; --path &lt;abs&gt;</span>;
         indexed docs land in the declared rag collection; routing
-        decisions for <span className="mono">project:&lt;name&gt;/&lt;taskKind&gt;</span>{' '}
+        decisions for <span style={{ fontFamily: 'var(--font-mono)' }}>project:&lt;name&gt;/&lt;taskKind&gt;</span>{' '}
         chat calls stream into the detail view.
       </p>
 
       {list.isLoading && (
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
+        <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 16, fontSize: 14, color: 'var(--color-text-secondary)' }}>
           Loading projects…
         </div>
       )}
       {list.error && (
-        <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
+        <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-err)', background: 'var(--color-surface-1)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 14, color: 'var(--color-err)' }}>
           {list.error.message}
         </div>
       )}
       {!list.isLoading && !list.error && sorted.length === 0 && (
-        <div data-testid="projects-empty" className="space-y-4">
+        <div data-testid="projects-empty" style={{ marginTop: 16 }}>
           <EditorialHero
             title="New project"
             titleAccent="starts here"
@@ -789,23 +789,23 @@ export default function Projects(): React.JSX.Element {
         </div>
       )}
       {sorted.length > 0 && (
-        <div className="mb-4">
+        <div style={{ marginBottom: 16 }}>
           <CreateProjectForm compact />
         </div>
       )}
       {sorted.length > 0 && (
         <div
-          className="overflow-hidden rounded-md border border-[var(--color-border)]"
+          style={{ overflow: 'hidden', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)' }}
           data-testid="projects-table"
         >
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
+          <table style={{ width: '100%', fontSize: 14 }}>
+            <thead style={{ background: 'var(--color-surface-1)', textAlign: 'left', color: 'var(--color-text-secondary)' }}>
               <tr>
-                <th className="w-48 px-3 py-2 font-medium">Name</th>
-                <th className="px-3 py-2 font-medium">Path</th>
-                <th className="w-56 px-3 py-2 font-medium">RAG</th>
-                <th className="px-3 py-2 font-medium">Routing policy</th>
-                <th className="w-40 px-3 py-2 font-medium text-right">Actions</th>
+                <th style={{ width: 192, paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500 }}>Name</th>
+                <th style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500 }}>Path</th>
+                <th style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500 }}>RAG</th>
+                <th style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500 }}>Routing policy</th>
+                <th style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500, textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -822,7 +822,7 @@ export default function Projects(): React.JSX.Element {
       )}
 
       {selectedProject && (
-        <div className="mt-6">
+        <div >
           <ProjectDetail
             project={selectedProject}
             onClose={() => setSelected(null)}

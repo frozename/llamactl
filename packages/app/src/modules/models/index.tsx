@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { trpc } from '@/lib/trpc';
+import { Button, EditorialHero } from '@/ui';
 
 type ScopeFilter = 'all' | 'builtin' | 'custom';
 
@@ -34,7 +35,7 @@ function ScopeTabs(): React.JSX.Element {
     { id: 'custom', label: 'Custom' },
   ];
   return (
-    <div className="mb-4 flex gap-1 text-sm" role="tablist">
+    <div style={{ marginBottom: 16, display: 'flex', gap: 4, fontSize: 14 }} role="tablist">
       {tabs.map((tab) => {
         const isActive = tab.id === scope;
         return (
@@ -46,11 +47,15 @@ function ScopeTabs(): React.JSX.Element {
             data-testid={`models-scope-${tab.id}`}
             data-active={isActive ? 'true' : 'false'}
             onClick={() => setScope(tab.id)}
-            className={
-              isActive
-                ? 'rounded border border-[var(--color-brand)] bg-[var(--color-surface-2)] px-3 py-1 font-medium text-[color:var(--color-text)]'
-                : 'rounded border border-transparent px-3 py-1 text-[color:var(--color-text-secondary)] hover:bg-[var(--color-surface-1)] hover:text-[color:var(--color-text)]'
-            }
+            style={{
+              borderRadius: 4,
+              border: isActive ? '1px solid var(--color-brand)' : '1px solid transparent',
+              backgroundColor: isActive ? 'var(--color-surface-2)' : 'transparent',
+              padding: '4px 12px',
+              fontWeight: isActive ? 500 : 400,
+              color: isActive ? 'var(--color-text)' : 'var(--color-text-secondary)',
+              cursor: 'pointer',
+            }}
           >
             {tab.label}
           </button>
@@ -103,27 +108,27 @@ export default function Models(): React.JSX.Element {
   });
 
   return (
-    <div className="h-full overflow-auto p-6" data-testid="models-catalog-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+    <div style={{ height: '100%', overflow: 'auto', padding: 24 }} data-testid="models-catalog-root">
+      <div style={{ marginBottom: 4, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
         Models
       </div>
-      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-text)]">
+      <h1 style={{ marginBottom: 16, fontSize: 24, fontWeight: 600, color: 'var(--color-text)' }}>
         Catalog ({catalog.data?.length ?? 0})
       </h1>
       <ScopeTabs />
 
       {error && (
-        <div className="mb-3 rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
+        <div style={{ marginBottom: 12, borderRadius: 6, border: '1px solid var(--color-err)', backgroundColor: 'var(--color-surface-1)', padding: '8px 12px', fontSize: 14, color: 'var(--color-err)' }}>
           {error}
         </div>
       )}
 
       {report && (
-        <div className="mb-3 rounded-md border border-[var(--color-ok)] bg-[var(--color-surface-1)] px-3 py-2 text-sm">
-          <div className="mb-1 text-[color:var(--color-ok)]">
+        <div style={{ marginBottom: 12, borderRadius: 6, border: '1px solid var(--color-ok)', backgroundColor: 'var(--color-surface-1)', padding: '8px 12px', fontSize: 14 }}>
+          <div style={{ marginBottom: 4, color: 'var(--color-ok)' }}>
             Uninstalled {report.rel}
           </div>
-          <ul className="mono text-xs text-[color:var(--color-text-secondary)]">
+          <ul style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--color-text-secondary)' }}>
             {report.actions.map((a, i) => (
               <li key={i}>{a}</li>
             ))}
@@ -131,97 +136,94 @@ export default function Models(): React.JSX.Element {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
-        <table className="w-full mono text-sm">
-          <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
-            <tr>
-              <th className="px-3 py-2 font-medium">Label</th>
-              <th className="px-3 py-2 font-medium">Family</th>
-              <th className="px-3 py-2 font-medium">Class</th>
-              <th className="px-3 py-2 font-medium">Scope</th>
-              <th className="px-3 py-2 font-medium">Rel</th>
-              <th className="w-40 px-3 py-2 font-medium text-right"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {(catalog.data ?? []).map((row) => {
-              const isPending = pendingRel === row.rel;
-              const needsForce = row.scope !== 'candidate';
-              return (
-                <tr
-                  key={row.id}
-                  className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
-                >
-                  <td className="px-3 py-2">{row.label}</td>
-                  <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">{row.family}</td>
-                  <td className="px-3 py-2">{row.class}</td>
-                  <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">{row.scope}</td>
-                  <td className="px-3 py-2 text-[color:var(--color-brand)] break-all">
-                    {row.rel}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    {row.installed &&
-                      (isPending ? (
-                        <span className="inline-flex items-center gap-1">
-                          {needsForce && (
-                            <label className="flex items-center gap-1 text-xs text-[color:var(--color-text-secondary)]">
-                              <input
-                                type="checkbox"
-                                checked={force}
-                                onChange={(e) => setForce(e.target.checked)}
-                              />
-                              force
-                            </label>
-                          )}
-                          <button
-                            type="button"
-                            disabled={uninstallMutation.isPending}
-                            onClick={() =>
-                              uninstallMutation.mutate({ rel: row.rel, force })
-                            }
-                            className="rounded border border-[var(--color-err)] px-2 py-0.5 text-xs text-[color:var(--color-err)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                          >
-                            {uninstallMutation.isPending ? 'Removing…' : 'Confirm'}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={uninstallMutation.isPending}
-                            onClick={() => {
-                              setPendingRel(null);
-                              setForce(false);
-                            }}
-                            className="rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[color:var(--color-text-secondary)] hover:bg-[var(--color-surface-2)]"
-                          >
-                            Cancel
-                          </button>
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPendingRel(row.rel);
-                            setReport(null);
-                            setError(null);
-                          }}
-                          className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-text-secondary)] hover:border-[var(--color-border)] hover:text-[color:var(--color-text)]"
-                        >
-                          Uninstall
-                        </button>
-                      ))}
-                  </td>
-                </tr>
-              );
-            })}
-            {catalog.isSuccess && (catalog.data?.length ?? 0) === 0 && (
+      {catalog.isSuccess && (catalog.data?.length ?? 0) === 0 ? (
+        <EditorialHero title={`No entries for scope "${scope}"`} lede="Pull a new model to see it here." />
+      ) : (
+        <div style={{ overflow: 'hidden', borderRadius: 6, border: '1px solid var(--color-border)' }}>
+          <table style={{ width: '100%', fontFamily: 'monospace', fontSize: 14 }}>
+            <thead style={{ backgroundColor: 'var(--color-surface-1)', textAlign: 'left', color: 'var(--color-text-secondary)' }}>
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-[color:var(--color-text-secondary)]">
-                  No entries for scope "{scope}".
-                </td>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Label</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Family</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Class</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Scope</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Rel</th>
+                <th style={{ width: 160, padding: '8px 12px', fontWeight: 500, textAlign: 'right' }}></th>
               </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {(catalog.data ?? []).map((row) => {
+                const isPending = pendingRel === row.rel;
+                const needsForce = row.scope !== 'candidate';
+                return (
+                  <tr
+                    key={row.id}
+                    style={{ borderTop: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)' }}
+                  >
+                    <td style={{ padding: '8px 12px' }}>{row.label}</td>
+                    <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)' }}>{row.family}</td>
+                    <td style={{ padding: '8px 12px' }}>{row.class}</td>
+                    <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)' }}>{row.scope}</td>
+                    <td style={{ padding: '8px 12px', color: 'var(--color-brand)', wordBreak: 'break-all' }}>
+                      {row.rel}
+                    </td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                      {row.installed &&
+                        (isPending ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            {needsForce && (
+                              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={force}
+                                  onChange={(e) => setForce(e.target.checked)}
+                                />
+                                force
+                              </label>
+                            )}
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              disabled={uninstallMutation.isPending}
+                              onClick={() =>
+                                uninstallMutation.mutate({ rel: row.rel, force })
+                              }
+                            >
+                              {uninstallMutation.isPending ? 'Removing…' : 'Confirm'}
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              disabled={uninstallMutation.isPending}
+                              onClick={() => {
+                                setPendingRel(null);
+                                setForce(false);
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          </span>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setPendingRel(row.rel);
+                              setReport(null);
+                              setError(null);
+                            }}
+                          >
+                            Uninstall
+                          </Button>
+                        ))}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

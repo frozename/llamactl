@@ -99,24 +99,24 @@ export default function Logs(): React.JSX.Element {
           : 'idle';
 
   return (
-    <div className="flex h-full flex-col p-6" data-testid="logs-root">
-      <div className="mb-3 flex items-baseline justify-between">
+    <div style={{ display: 'flex', height: '100%', flexDirection: 'column', padding: 24 }} data-testid="logs-root">
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
         <div>
-          <h1 className="text-lg font-semibold text-[color:var(--color-text)]">Logs</h1>
-          <div className="text-xs text-[color:var(--color-text-secondary)]">
+          <h1 style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-text)' }}>Logs</h1>
+          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
             {serverDown ? (
               <span>Server offline</span>
             ) : (
               <>
-                Tailing <span className="font-mono">server.log</span>
+                Tailing <span style={{ fontFamily: 'var(--font-mono)' }}>server.log</span>
               </>
             )}
             {error && (
-              <span className="ml-2 text-[color:var(--color-err)]">· error: {error}</span>
+              <span style={{ marginLeft: 8, color: 'var(--color-err)' }}>· error: {error}</span>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-3 text-xs">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
           <StatusDot
             data-testid="logs-conn"
             data-state={conn}
@@ -125,7 +125,7 @@ export default function Logs(): React.JSX.Element {
             label={connLabel}
             title={error ?? `subscription ${connLabel}`}
           />
-          <label className="flex items-center gap-1 text-[color:var(--color-text-secondary)]">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--color-text-secondary)' }}>
             <input
               type="checkbox"
               checked={follow}
@@ -137,7 +137,7 @@ export default function Logs(): React.JSX.Element {
             />
             follow
           </label>
-          <label className="flex items-center gap-1 text-[color:var(--color-text-secondary)]">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--color-text-secondary)' }}>
             history
             <input
               type="number"
@@ -146,10 +146,10 @@ export default function Logs(): React.JSX.Element {
               step={50}
               value={historyLines}
               onChange={(e) => setHistoryLines(Number(e.target.value) || 0)}
-              className="w-16 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-0.5 text-right text-[color:var(--color-text)]"
+              style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingTop: 2, paddingBottom: 2, textAlign: 'right', color: 'var(--color-text)' }}
             />
           </label>
-          <label className="flex items-center gap-1 text-[color:var(--color-text-secondary)]">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--color-text-secondary)' }}>
             <input
               type="checkbox"
               checked={autoscroll}
@@ -167,17 +167,17 @@ export default function Logs(): React.JSX.Element {
       </div>
       <div
         ref={scrollRef}
-        className="flex-1 overflow-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-0)] p-2 font-mono text-[11px] leading-snug text-[color:var(--color-text)]"
+        style={{ flex: 1, overflow: 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-0)', padding: 8, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text)' }}
       >
         {serverDown ? (
-          <div data-testid="logs-offline" className="text-[color:var(--color-text-secondary)]">
+          <div data-testid="logs-offline" style={{ color: 'var(--color-text-secondary)' }}>
             No llama-server running. Start one from the Server module first.
           </div>
         ) : lines.length === 0 ? (
-          <div className="text-[color:var(--color-text-secondary)]">(no log lines yet)</div>
+          <div style={{ color: 'var(--color-text-secondary)' }}>(no log lines yet)</div>
         ) : (
           lines.map((line, i) => (
-            <div key={i} className="whitespace-pre-wrap break-words">
+            <div key={i} style={{ whiteSpace: 'pre-wrap' }}>
               {line}
             </div>
           ))
