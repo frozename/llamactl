@@ -81,9 +81,9 @@ export function WorkersPanel(props: WorkersPanelProps): React.JSX.Element | null
                   </td>
                   <td className="py-1 font-mono text-[color:var(--color-text)]">
                     {extra.length === 0 ? (
-                      <em className="not-italic text-[color:var(--color-text-secondary)]">
+                      <span className="text-[color:var(--color-text-secondary)]">
                         default
-                      </em>
+                      </span>
                     ) : (
                       extra.join(' ')
                     )}
