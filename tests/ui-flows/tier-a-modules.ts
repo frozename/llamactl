@@ -19,10 +19,11 @@
  */
 
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import { mkdir as fsMkdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { APP_MODULES } from '../../packages/app/src/modules/registry.ts';
 
 // ── MCP JSON-RPC client ────────────────────────────────────────────
@@ -283,6 +284,7 @@ async function runExplorerOne(client: McpClient, sessionId: string, id: string):
 async function runPalettePass(client: McpClient, sessionId: string): Promise<void> {
   const total = APP_MODULES.length;
   let passed = 0;
+  const here = dirname(fileURLToPath(import.meta.url));
 
   for (const m of APP_MODULES) {
     // Mark the console baseline for this iteration.
@@ -338,14 +340,32 @@ async function runPalettePass(client: McpClient, sessionId: string): Promise<voi
       console.log(`[PASS] ${m.id} — ${m.smokeAffordance} visible`);
       passed += 1;
     } catch (err) {
-      // Capture screenshot before tearing down.
-      const screenshotPath = `/tmp/tier-a-smoke-fail-${m.id.replace(/\./g, '-')}.png`;
+      // Capture screenshot under the repo so upload-artifact picks it up.
+      const screenshotsDir = join(here, 'screenshots');
+      await fsMkdir(screenshotsDir, { recursive: true });
+      const screenshotPath = join(screenshotsDir, `tier-a-fail-${m.id.replace(/\./g, '-')}.png`);
       try {
         await client.call('electron_screenshot', {
           sessionId,
           path: screenshotPath,
         });
         console.error(`screenshot: ${screenshotPath}`);
+      } catch {
+        /* best-effort */
+      }
+      // Dump captured console errors + error-boundary status + DOM snapshot.
+      try {
+        const diag = await client.call('electron_evaluate_renderer', {
+          sessionId,
+          expression: `(() => ({
+            errors: window.__smokeConsoleErrors ?? [],
+            boundary: !!document.querySelector('[data-testid="beacon-error-boundary"]'),
+            url: location.href,
+            activeKey: window.useTabStore?.getState?.()?.activeKey,
+            bodyHead: document.body?.innerText?.slice(0, 800) ?? '',
+          }))()`,
+        }) as { result: { errors: unknown[]; boundary: boolean; url: string; activeKey: string | null | undefined; bodyHead: string } };
+        console.error(`diagnostics: ${JSON.stringify(diag.result, null, 2)}`);
       } catch {
         /* best-effort */
       }
