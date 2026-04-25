@@ -22,7 +22,7 @@ export function WorkloadDetail({ workloadId }: Props): React.JSX.Element {
 
   if (!row) {
     return (
-      <div style={{ padding: 48, color: 'var(--color-text-secondary)' }}>
+      <div data-testid="workload-detail-root" className="h-full" style={{ padding: 48, color: 'var(--color-text-secondary)' }}>
         <h2 style={{ fontSize: 20, margin: '0 0 8px', color: 'var(--color-text)' }}>
           Workload {workloadId}
         </h2>
@@ -36,7 +36,7 @@ export function WorkloadDetail({ workloadId }: Props): React.JSX.Element {
   const tone = row.phase === 'Running' ? 'ok' : row.phase === 'Failed' ? 'err' : 'warn';
 
   return (
-    <div style={{ padding: 48, maxWidth: 1100, margin: '0 auto' }}>
+    <div data-testid="workload-detail-root" style={{ padding: 48, maxWidth: 1100, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 24 }}>
         <h2 style={{ fontSize: 28, margin: 0, fontWeight: 600, color: 'var(--color-text)' }}>
           {row.name}

@@ -21,7 +21,7 @@ export function NodeDetail({ nodeName }: Props): React.JSX.Element {
 
   if (!node) {
     return (
-      <div style={{ padding: 48, color: 'var(--color-text-secondary)' }}>
+      <div data-testid="node-detail-root" className="h-full" style={{ padding: 48, color: 'var(--color-text-secondary)' }}>
         <h2 style={{ fontSize: 20, margin: '0 0 8px', color: 'var(--color-text)' }}>
           Node {nodeName}
         </h2>
@@ -33,7 +33,7 @@ export function NodeDetail({ nodeName }: Props): React.JSX.Element {
   const tone = node.phase === 'Ready' || !node.phase ? 'ok' : 'warn';
 
   return (
-    <div style={{ padding: 48, maxWidth: 1100, margin: '0 auto' }}>
+    <div data-testid="node-detail-root" style={{ padding: 48, maxWidth: 1100, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 24 }}>
         <h2 style={{ fontSize: 28, margin: 0, fontWeight: 600, color: 'var(--color-text)' }}>
           {node.name}

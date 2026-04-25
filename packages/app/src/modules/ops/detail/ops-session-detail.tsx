@@ -11,7 +11,7 @@ interface Props {
  */
 export function OpsSessionDetail({ sessionId }: Props): React.JSX.Element {
   return (
-    <div style={{ padding: 48, maxWidth: 1100, margin: '0 auto' }}>
+    <div data-testid="ops-session-detail-root" style={{ padding: 48, maxWidth: 1100, margin: '0 auto' }}>
       <h2 style={{ fontSize: 28, margin: '0 0 8px', fontWeight: 600, color: 'var(--color-text)' }}>
         Ops session {sessionId}
       </h2>
