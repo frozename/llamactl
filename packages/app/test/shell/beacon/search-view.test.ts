@@ -37,6 +37,16 @@ describe('searchModules', () => {
     expect(hit?.score).toBe(1);
   });
 
+  test('beaconGroup-only match still surfaces the module', () => {
+    // Planner's labelKey/aliases/id contain no "ops" — only its
+    // beaconGroup does. An operator typing "ops" still expects the
+    // ops-grouped Planner to surface alongside Ops Chat.
+    const r = searchModules(APP_MODULES, 'ops');
+    const ids = r.map((x) => x.m.id);
+    expect(ids).toContain('ops-chat');
+    expect(ids).toContain('plan');
+  });
+
   test('compound query spans the labelKey/alias join boundary', () => {
     // "models cat" only matches because the haystack joins
     // labelKey + aliases + id with spaces, so "models catalog" yields

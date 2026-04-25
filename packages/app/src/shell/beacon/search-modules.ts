@@ -14,7 +14,9 @@ export function searchModules(modules: readonly AppModule[], query: string): Sea
   return modules
     .filter((m) => m.beaconGroup && m.beaconGroup !== 'hidden')
     .map((m) => {
-      const hay = [m.labelKey, ...(m.aliases ?? []), m.id].join(' ').toLowerCase();
+      const hay = [m.labelKey, ...(m.aliases ?? []), m.id, m.beaconGroup ?? '']
+        .join(' ')
+        .toLowerCase();
       const score = hay.includes(needle)
         ? m.labelKey.toLowerCase().startsWith(needle)
           ? 2
