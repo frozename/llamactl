@@ -236,12 +236,12 @@ async function main(): Promise<void> {
 
     // ── Assert no error boundary is mounted anywhere ───────────────
 
-    const errorBoundaryPresent = (await client.call('electron_evaluate_renderer', {
+    const errorBoundaryEnvelope = (await client.call('electron_evaluate_renderer', {
       sessionId,
       expression: `document.querySelector('[data-testid="beacon-error-boundary"]') !== null`,
-    })) as boolean;
+    })) as { result: boolean };
 
-    if (errorBoundaryPresent) {
+    if (errorBoundaryEnvelope.result) {
       throw new Error(
         'beacon-error-boundary detected — at least one module crashed during the sweep',
       );
