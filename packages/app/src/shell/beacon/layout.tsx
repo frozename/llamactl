@@ -10,6 +10,7 @@ import { TabBar } from './tab-bar';
 import { StatusBar } from './status-bar';
 import { FirstRunTip } from './first-run-tip';
 import { DynamicTabRouter } from './dynamic-tab-router';
+import { ModuleErrorBoundary } from './error-boundary';
 import type { RailViewId } from './rail-views';
 
 const RAIL_KEY = 'beacon.rail.view';
@@ -92,6 +93,7 @@ export function BeaconLayout(): React.JSX.Element {
         <main style={{ display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--color-surface-0)' }}>
           <TabBar />
           <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+            <ModuleErrorBoundary>
             <Suspense fallback={<div style={{ padding: 24, color: 'var(--color-text-tertiary)' }}>Loading…</div>}>
               {tabs.map((tab) => {
                 if (!visitedRef.current.has(tab.tabKey)) return null;
@@ -124,6 +126,7 @@ export function BeaconLayout(): React.JSX.Element {
                 );
               })}
             </Suspense>
+            </ModuleErrorBoundary>
           </div>
         </main>
       </div>
