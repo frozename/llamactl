@@ -267,11 +267,10 @@ async function runPalettePass(client: McpClient, sessionId: string): Promise<voi
 
   for (const m of APP_MODULES) {
     // Mark the console baseline for this iteration.
-    const markTime = (await client.call('electron_evaluate_renderer', {
+    await client.call('electron_evaluate_renderer', {
       sessionId,
-      expression: '(() => { window.__smokeMarkTime = Date.now(); return window.__smokeMarkTime; })()',
-    })) as { result: number };
-    const iterStart = markTime.result;
+      expression: '(() => { window.__smokeMarkTime = Date.now(); })()',
+    });
 
     try {
       // 1. Open palette.
