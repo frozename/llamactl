@@ -47,6 +47,11 @@ import {
   readOpsChatAudit,
   type OpsChatAuditEntry,
 } from './ops-chat/audit.js';
+import { listSessions, getSessionSummary } from './ops-chat/sessions/list.js';
+import { deleteSession } from './ops-chat/sessions/delete.js';
+import { readJournal } from './ops-chat/sessions/journal.js';
+import { sessionEventBus } from './ops-chat/sessions/event-bus.js';
+import { isTerminal } from './ops-chat/sessions/journal-schema.js';
 
 /**
  * Router↔client circular-type escape hatch — the `AppRouter → NodeClient
@@ -2256,6 +2261,73 @@ export const router = t.router({
         sessionId: input.sessionId,
       });
       return dispatched;
+    }),
+
+  opsSessionList: t.procedure
+    .input(
+      z.object({
+        limit: z.number().int().positive().max(200).default(50),
+        cursor: z.string().optional(),
+        status: z.enum(['live', 'done', 'refused', 'aborted']).optional(),
+      }),
+    )
+    .query(({ input }) => listSessions(input)),
+
+  opsSessionGet: t.procedure
+    .input(z.object({ sessionId: z.string().min(1), tail: z.number().int().positive().max(500).default(50) }))
+    .query(async ({ input }) => {
+      const summary = await getSessionSummary(input.sessionId);
+      const events = await readJournal(input.sessionId);
+      return { summary, recentEvents: events.slice(-input.tail) };
+    }),
+
+  opsSessionWatch: t.procedure
+    .input(z.object({ sessionId: z.string().min(1) }))
+    .subscription(async function* ({ input, signal }) {
+      const persisted = await readJournal(input.sessionId);
+      for (const e of persisted) {
+        if (signal?.aborted) return;
+        yield e;
+      }
+      if (persisted.some(isTerminal)) return;
+      if (!sessionEventBus.hasChannel(input.sessionId)) {
+        yield {
+          type: 'aborted' as const,
+          ts: new Date().toISOString(),
+          reason: 'signal' as const,
+        };
+        return;
+      }
+      const queue: import('./ops-chat/sessions/journal-schema.js').JournalEvent[] = [];
+      let resolve: (() => void) | null = null;
+      const off = sessionEventBus.subscribe(input.sessionId, (event) => {
+        queue.push(event);
+        resolve?.();
+      });
+      try {
+        while (!signal?.aborted) {
+          if (queue.length === 0) {
+            await new Promise<void>((r) => {
+              resolve = r;
+            });
+            resolve = null;
+          }
+          while (queue.length > 0) {
+            const ev = queue.shift()!;
+            yield ev;
+            if (isTerminal(ev)) return;
+          }
+        }
+      } finally {
+        off();
+      }
+    }),
+
+  opsSessionDelete: t.procedure
+    .input(z.object({ sessionId: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      await deleteSession(input.sessionId);
+      return { ok: true as const };
     }),
 
   opsChatAuditTail: t.procedure
