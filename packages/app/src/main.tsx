@@ -13,8 +13,10 @@ ReactDOM.createRoot(rootNode).render(
   </React.StrictMode>,
 );
 
-if (import.meta.env.DEV || import.meta.env.MODE === 'test' || (typeof process !== 'undefined' && process.env?.LLAMACTL_TEST_PROFILE)) {
-  // Test-only: expose the tab store so smoke tests can introspect / drive it.
-  // @ts-expect-error — test-only window attachment
-  window.useTabStore = useTabStore;
-}
+// Expose the tab store for the Tier-A smoke harness + a small set of
+// in-renderer debugging affordances. This is intentionally unconditional —
+// production builds running in headless CI couldn't satisfy any DEV/test
+// env gate, and a zustand store on `window` is harmless in shipped builds
+// (no PII, no security surface).
+// @ts-expect-error — debug + test-only window attachment
+window.useTabStore = useTabStore;
