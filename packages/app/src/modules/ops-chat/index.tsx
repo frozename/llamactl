@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc';
+import { useTabStore } from '@/stores/tab-store';
 import { useOpsExecutorStore } from '@/stores/ops-executor-store';
 import { OpsExecutorPicker } from '@/modules/ops/ops-executor-picker';
 
@@ -306,6 +307,8 @@ export default function OpsChat(): React.JSX.Element {
     typeof trpc.operatorChatStream.useSubscription
   >[0] | null>(null);
   const [streamKey, setStreamKey] = useState(0);
+  const pinnedSessionRef = useRef<string | null>(null);
+
   const [streaming, setStreaming] = useState(false);
   const nextId = useRef(1);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -336,6 +339,16 @@ export default function OpsChat(): React.JSX.Element {
           | { type: 'refusal'; reason: string }
           | { type: 'done'; iterations: number };
         if (e.type === 'plan_proposed') {
+          if (pinnedSessionRef.current !== e.sessionId) {
+            pinnedSessionRef.current = e.sessionId;
+            useTabStore.getState().open({
+              tabKey: `ops-session:${e.sessionId}`,
+              title: `Session ${e.sessionId.slice(0, 8)}`,
+              kind: 'ops-session',
+              instanceId: e.sessionId,
+              openedAt: Date.now(),
+            });
+          }
           setMessages((prev) => [
             ...prev,
             {
@@ -397,6 +410,7 @@ export default function OpsChat(): React.JSX.Element {
       setError('pick a node + model in the header first');
       return;
     }
+    pinnedSessionRef.current = null;
     setError(null);
     setMessages((prev) => [
       ...prev,
