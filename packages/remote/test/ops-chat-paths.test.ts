@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { defaultOpsChatAuditPath } from '../src/ops-chat/paths.js';
+import { defaultOpsChatAuditPath, defaultSessionsDir, defaultSessionDir } from '../src/ops-chat/paths.js';
 
 /**
  * State-isolation fix — ops-chat audit path must honour `$DEV_STORAGE`
@@ -64,6 +64,25 @@ describe('defaultOpsChatAuditPath', () => {
     process.env.DEV_STORAGE = devStorage;
     expect(defaultOpsChatAuditPath()).toBe(
       join(devStorage, 'ops-chat', 'audit.jsonl'),
+    );
+  });
+});
+
+describe('ops-chat paths — sessions', () => {
+  test('defaultSessionsDir uses DEV_STORAGE when set', () => {
+    expect(defaultSessionsDir({ DEV_STORAGE: '/tmp/abc' } as any)).toBe(
+      '/tmp/abc/ops-chat/sessions',
+    );
+  });
+
+  test('defaultSessionsDir falls back to homedir/.llamactl when DEV_STORAGE missing', () => {
+    const out = defaultSessionsDir({} as any);
+    expect(out.endsWith('/.llamactl/ops-chat/sessions')).toBe(true);
+  });
+
+  test('defaultSessionDir joins sessionId', () => {
+    expect(defaultSessionDir({ DEV_STORAGE: '/tmp/abc' } as any, 'sess-1')).toBe(
+      '/tmp/abc/ops-chat/sessions/sess-1',
     );
   });
 });
