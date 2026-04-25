@@ -3,6 +3,7 @@ import { Input, TreeItem, Kbd } from '@/ui';
 import { Search as SearchIcon } from 'lucide-react';
 import { APP_MODULES } from '@/modules/registry';
 import { useTabStore } from '@/stores/tab-store';
+import { searchModules } from './search-modules';
 
 /**
  * Global search across static modules. Rank by substring match in
@@ -14,23 +15,7 @@ export function SearchView(): React.JSX.Element {
   const [q, setQ] = React.useState('');
   const open = useTabStore((s) => s.open);
 
-  const results = React.useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    if (!needle) return [];
-    return APP_MODULES.filter((m) => m.beaconGroup && m.beaconGroup !== 'hidden')
-      .map((m) => {
-        const hay = [m.labelKey, ...(m.aliases ?? []), m.id].join(' ').toLowerCase();
-        const score = hay.includes(needle)
-          ? m.labelKey.toLowerCase().startsWith(needle)
-            ? 2
-            : 1
-          : 0;
-        return { m, score };
-      })
-      .filter((r) => r.score > 0)
-      .sort((a, b) => b.score - a.score || a.m.labelKey.localeCompare(b.m.labelKey))
-      .slice(0, 30);
-  }, [q]);
+  const results = React.useMemo(() => searchModules(APP_MODULES, q), [q]);
 
   return (
     <div
