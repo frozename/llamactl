@@ -33,7 +33,13 @@ export async function startSearchIngest(): Promise<void> {
   const sessionsSink = await makeSink('sessions');
   const logsSink = await makeSink('logs');
   stopFns.push(startSessionsIngest({ sink: sessionsSink }));
-  stopFns.push(startLogsIngest({ sink: logsSink }));
+  stopFns.push(startLogsIngest({
+    sink: logsSink,
+    files: [
+      { label: 'agent', path: '/tmp/llamactl-agent.log' },
+      { label: 'electron', path: '/tmp/llamactl-electron.log' }
+    ]
+  }));
 }
 
 export function stopSearchIngest(): void {

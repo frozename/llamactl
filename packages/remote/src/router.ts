@@ -1,3 +1,9 @@
+
+import { searchSessions } from './search/sessions.js';
+import { searchKnowledge } from './search/knowledge.js';
+import { searchLogs } from './search/logs.js';
+import { resolveDefaultRagNode } from './search/rag-node.js';
+import { createRagAdapter } from './rag/index.js';
 import { resolveRagNode } from './rag/resolve.js';
 import { initTRPC, TRPCError } from '@trpc/server';
 import { createTRPCClient } from '@trpc/client';

@@ -11,14 +11,19 @@ export interface RagBridgeOpts {
   query: string;
   topK?: number;
   signal?: AbortSignal;
+  /** Test-only seam. */
+  adapter?: any;
 }
 
 export async function ragBridgeSearch(
   opts: RagBridgeOpts,
 ): Promise<Array<SessionHit | KnowledgeHit | LogHit>> {
   if (opts.signal?.aborted) throw new Error('aborted');
-  const { node, cfg } = resolveRagNode(opts.node);
-  const adapter = await createRagAdapter(node, { config: cfg });
+  let adapter = opts.adapter;
+  if (!adapter) {
+    const { node, cfg } = resolveRagNode(opts.node);
+    adapter = await createRagAdapter(node, { config: cfg });
+  }
   try {
     const res = await adapter.search({
       query: opts.query,
@@ -27,7 +32,9 @@ export async function ragBridgeSearch(
     });
     return normalizeHits(opts.collection, res);
   } finally {
-    await adapter.close();
+    if (!opts.adapter) {
+      await adapter.close();
+    }
   }
 }
 
