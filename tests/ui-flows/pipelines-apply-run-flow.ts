@@ -231,14 +231,52 @@ async function main(): Promise<void> {
       timeout: 10_000,
     });
 
-    // Knowledge → Pipelines.
-    await client.call('electron_click', {
+    // Navigate to Knowledge → Retrieval via the command palette (Beacon shell).
+    // Inline the openPalette / paletteType / paletteConfirm pattern from
+    // tier-a-modules.ts — no import needed.
+    await client.call('electron_evaluate_renderer', {
       sessionId,
-      selector: 'button[aria-label="Knowledge"]',
+      expression: `(() => {
+        const e = new KeyboardEvent('keydown', {
+          key: 'p',
+          code: 'KeyP',
+          shiftKey: true,
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        });
+        document.dispatchEvent(e);
+      })()`,
     });
     await client.call('electron_wait_for_selector', {
       sessionId,
-      selector: '[data-testid="knowledge-root"]',
+      selector: '[data-testid="command-palette"]',
+      state: 'visible',
+      timeout: 3_000,
+    });
+    await client.call('electron_fill', {
+      sessionId,
+      selector: '[data-testid="command-palette-input"]',
+      value: 'Retrieval',
+    });
+    await client.call('electron_evaluate_renderer', {
+      sessionId,
+      expression: `(() => {
+        const e = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+        });
+        const input = document.querySelector('[data-testid="command-palette-input"]');
+        const target = input ?? window;
+        target.dispatchEvent(e);
+      })()`,
+    });
+    await client.call('electron_wait_for_selector', {
+      sessionId,
+      selector: '[data-testid="knowledge-retrieval-root"]',
       state: 'visible',
       timeout: 8_000,
     });
