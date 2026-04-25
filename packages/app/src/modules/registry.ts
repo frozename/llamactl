@@ -81,6 +81,7 @@ const LazyUIPrimitives = lazy(() => import('./ui-primitives/index'));
 // modules into tabs. Activity bar shows only the group; the
 // palette jumps to the group + the chosen tab is sticky per-user.
 const LazyOpsChat = lazy(() => import('./ops-chat/index'));
+const LazyOpsSessions = lazy(() => import('./ops-sessions/index'));
 const LazyPlan = lazy(() => import('./plan/index'));
 
 // Flattened workloads.* leaves. The Workloads group itself renders
@@ -158,6 +159,19 @@ export const APP_MODULES: AppModule[] = [
     beaconKind: 'static',
     beaconOrder: 10,
     smokeAffordance: 'ops-chat-root',
+  },
+  {
+    id: 'ops-sessions',
+    labelKey: 'Ops Sessions',
+    icon: ScrollText,
+    Component: LazyOpsSessions,
+    activityBar: true,
+    group: 'ops',
+    aliases: ['session list', 'session archive', 'sessions'],
+    beaconGroup: 'ops',
+    beaconKind: 'static',
+    beaconOrder: 20,
+    smokeAffordance: 'ops-sessions-root',
   },
   {
     id: 'plan',
