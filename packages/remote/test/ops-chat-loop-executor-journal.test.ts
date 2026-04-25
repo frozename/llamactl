@@ -35,7 +35,7 @@ describe('loop-executor → journal + bus', () => {
         },
       } as any,
       tools: [],
-      allowlist: () => true,
+      allowlist: (() => true) as any,
     });
     for await (const e of stream) {
       if (e.type === 'plan_proposed') capturedSessionId = e.sessionId;
