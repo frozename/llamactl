@@ -301,7 +301,7 @@ export default function Settings(): React.JSX.Element {
         Read-only snapshot of the shell environment llamactl is running under. Values
         come from your shell (e.g. <span className="mono">LLAMA_CPP_MODELS</span>) and
         <span className="mono"> ~/.llamactl/env</span>; rows marked
-        <span className="italic text-[color:var(--color-text-secondary)]"> unset</span> fall back to defaults.
+        <span className="text-[color:var(--color-text-secondary)]"> unset</span> fall back to defaults.
       </p>
 
       <div className="space-y-6">
@@ -330,7 +330,7 @@ export default function Settings(): React.JSX.Element {
                           className={
                             isSet
                               ? 'px-3 py-1.5 text-[color:var(--color-text)] break-all'
-                              : 'px-3 py-1.5 italic text-[color:var(--color-text-secondary)]'
+                              : 'px-3 py-1.5 text-[color:var(--color-text-secondary)]'
                           }
                         >
                           {isSet ? raw : 'unset'}
