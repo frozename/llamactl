@@ -23,6 +23,7 @@ export interface OpsChatAuditEntry {
   /** When ok=false, the error code (from dispatch or Zod). */
   errorCode?: string;
   errorMessage?: string;
+  sessionId?: string;
 }
 
 export function hashArguments(args: unknown): string {
