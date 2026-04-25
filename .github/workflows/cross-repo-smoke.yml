@@ -10,10 +10,9 @@ name: cross-repo-smoke
 # visible behavior.
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  schedule:
+    - cron: '0 9 * * *'   # 09:00 UTC daily
+  workflow_dispatch:
 
 concurrency:
   group: cross-repo-smoke-${{ github.ref }}
