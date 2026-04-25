@@ -39,10 +39,23 @@ jobs:
           path: electron-mcp-server
           ref: fceaaa3ed06d1ce85fe7ece8934c2a40ea2b351d
 
+      # llamactl carries file:../nova/packages/* deps; sibling
+      # checkout is required for bun install to resolve them.
+      - name: Checkout nova
+        uses: actions/checkout@v4
+        with:
+          repository: frozename/nova
+          ref: main
+          path: nova
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      - name: Install nova
+        working-directory: nova
+        run: bun install --frozen-lockfile || bun install
 
       - name: Install llamactl workspace
         working-directory: llamactl
