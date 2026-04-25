@@ -173,7 +173,7 @@ async function openPalette(client: McpClient, sessionId: string): Promise<void> 
         bubbles: true,
         cancelable: true,
       });
-      window.dispatchEvent(e);
+      document.dispatchEvent(e);
     })()`,
   });
   // Wait for the palette dialog to appear.
@@ -236,7 +236,7 @@ async function resetState(client: McpClient, sessionId: string): Promise<void> {
   await client.call('electron_evaluate_renderer', {
     sessionId,
     expression: `(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', {
+      document.dispatchEvent(new KeyboardEvent('keydown', {
         key: 'Escape', bubbles: true, cancelable: true,
       }));
     })()`,
@@ -361,6 +361,9 @@ async function installConsoleCapture(client: McpClient, sessionId: string): Prom
         window.__smokeConsoleErrors.push({ t: Date.now(), msg: args.map(String).join(' ') });
         orig(...args);
       };
+      window.addEventListener('unhandledrejection', (e) => {
+        window.__smokeConsoleErrors.push({ t: Date.now(), msg: String(e.reason) });
+      });
       window.__smokeConsolePatched = true;
     })()`,
   });
