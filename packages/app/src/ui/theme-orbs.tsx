@@ -32,6 +32,7 @@ export function ThemeOrbs({ activeId, onPick, className, style, ...rest }: Theme
           type="button"
           role="tab"
           aria-selected={t.id === activeId}
+          data-testid={`theme-orb-${t.id}`}
           onClick={() => onPick(t.id)}
           title={`${t.label} — ${t.tagline}`}
           style={{
