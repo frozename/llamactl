@@ -313,16 +313,29 @@ async function runPalettePass(client: McpClient, sessionId: string): Promise<voi
     });
 
     try {
-      // 1. Open palette.
-      await openPalette(client, sessionId);
+      // 1. Open the module via the test-only window.useTabStore handle.
+      //    The palette's UI flow is tested separately by
+      //    tests/ui-flows/shell/command-palette.ts; here we want a
+      //    deterministic navigation primitive so the module-loop measures
+      //    what it claims to measure ("module mounts when its tab is
+      //    active"), not React-controlled-input quirks.
+      await client.call('electron_evaluate_renderer', {
+        sessionId,
+        expression: `(() => {
+          const store = window.useTabStore;
+          if (!store || typeof store.getState !== 'function') {
+            throw new Error('window.useTabStore not exposed in this build');
+          }
+          store.getState().open({
+            tabKey: 'module:${m.id}',
+            title: ${JSON.stringify(m.labelKey)},
+            kind: 'module',
+            openedAt: Date.now(),
+          });
+        })()`,
+      });
 
-      // 2. Type the module label.
-      await paletteType(client, sessionId, m.labelKey);
-
-      // 3. Press Enter to execute the first/top result.
-      await paletteConfirm(client, sessionId);
-
-      // 4. Wait up to 5 s for the smoke affordance.
+      // 2. Wait up to 5 s for the smoke affordance.
       await client.call('electron_wait_for_selector', {
         sessionId,
         selector: `[data-testid="${m.smokeAffordance}"]`,
