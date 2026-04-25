@@ -26,10 +26,8 @@ export function StatusBar(): React.JSX.Element {
   const moduleId = activeKey?.startsWith('module:') ? activeKey.slice('module:'.length) : null;
   const moduleItems = moduleId ? (contributions[moduleId] ?? []) : [];
 
-  const nodeList = trpc.nodeList.useQuery(undefined, { refetchInterval: 30_000 });
   const workloads = trpc.workloadList.useQuery(undefined, { refetchInterval: 10_000 });
 
-  const total = nodeList.data?.nodes.length ?? 0;
   const running = (workloads.data ?? []).filter((w: { phase?: string }) => w.phase === 'Running').length;
 
   const theme = getTheme(themeId);
@@ -52,7 +50,6 @@ export function StatusBar(): React.JSX.Element {
         overflow: 'hidden',
       }}
     >
-      <SBItem glyph="◉" text={`${total} nodes`} tone="ok" />
       <SBItem glyph="⊡" text={`${running} running`} tone={running > 0 ? 'ok' : 'muted'} />
 
       {moduleItems.length > 0 && (

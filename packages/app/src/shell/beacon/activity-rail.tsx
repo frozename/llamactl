@@ -1,5 +1,7 @@
 import * as React from 'react';
+import { Coins, Settings as SettingsIcon, type LucideIcon } from 'lucide-react';
 import { RAIL_VIEWS, type RailViewId } from './rail-views';
+import { useTabStore } from '@/stores/tab-store';
 import { cx } from '@/ui';
 
 interface ActivityRailProps {
@@ -7,15 +9,27 @@ interface ActivityRailProps {
   onChange: (next: RailViewId) => void;
 }
 
+interface TabOpener {
+  id: 'cost' | 'settings';
+  label: string;
+  icon: LucideIcon;
+}
+
+const BOTTOM_TAB_OPENERS: readonly TabOpener[] = [
+  { id: 'cost',     label: 'Cost',     icon: Coins },
+  { id: 'settings', label: 'Settings', icon: SettingsIcon },
+];
+
 /**
- * 56 px left rail — the Beacon view switcher. Top group = Explorer /
- * Search / Sessions / Fleet / Tokens. Bottom group = Cost / Settings.
- * Active button has brand-ghost background + 2 px brand indicator on
- * the left edge.
+ * 56 px left rail. Top group = rail-views (Explorer / Search / Sessions /
+ * Fleet) which swap the panel content. Bottom group = tab-openers (Cost /
+ * Settings) which open the corresponding module tab directly — they don't
+ * touch the rail-view state. Active rail-view gets a brand-ghost background
+ * + 2 px brand indicator on the left edge.
  */
 export function ActivityRail({ activeView, onChange }: ActivityRailProps): React.JSX.Element {
-  const top = RAIL_VIEWS.filter((v) => v.position === 'top');
-  const bottom = RAIL_VIEWS.filter((v) => v.position === 'bottom');
+  const open = useTabStore((s) => s.open);
+  const activeKey = useTabStore((s) => s.activeKey);
 
   return (
     <div
@@ -33,10 +47,69 @@ export function ActivityRail({ activeView, onChange }: ActivityRailProps): React
         gap: 4,
       }}
     >
-      {top.map((v) => <RailButton key={v.id} view={v} active={v.id === activeView} onChange={onChange} />)}
+      {RAIL_VIEWS.map((v) => (
+        <RailButton key={v.id} view={v} active={v.id === activeView} onChange={onChange} />
+      ))}
       <div style={{ flex: 1 }} />
-      {bottom.map((v) => <RailButton key={v.id} view={v} active={v.id === activeView} onChange={onChange} />)}
+      {BOTTOM_TAB_OPENERS.map((m) => (
+        <TabOpenerButton
+          key={m.id}
+          opener={m}
+          active={activeKey === `module:${m.id}`}
+          onOpen={() =>
+            open({ tabKey: `module:${m.id}`, title: m.label, kind: 'module', openedAt: Date.now() })
+          }
+        />
+      ))}
     </div>
+  );
+}
+
+function TabOpenerButton({
+  opener,
+  active,
+  onOpen,
+}: {
+  opener: TabOpener;
+  active: boolean;
+  onOpen: () => void;
+}): React.JSX.Element {
+  const Icon = opener.icon;
+  return (
+    <button
+      type="button"
+      aria-label={opener.label}
+      title={opener.label}
+      onClick={onOpen}
+      data-testid={`rail-icon-${opener.id}`}
+      style={{
+        width: 40,
+        height: 40,
+        display: 'grid',
+        placeItems: 'center',
+        borderRadius: 'var(--r-lg)',
+        border: 'none',
+        cursor: 'pointer',
+        color: active ? 'var(--color-brand)' : 'var(--color-text-tertiary)',
+        background: active ? 'var(--color-brand-ghost)' : 'transparent',
+        position: 'relative',
+        transition: 'background 160ms, color 160ms',
+      }}
+      onMouseEnter={(e) => {
+        if (!active) {
+          e.currentTarget.style.background = 'var(--color-surface-2)';
+          e.currentTarget.style.color = 'var(--color-text)';
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!active) {
+          e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.color = 'var(--color-text-tertiary)';
+        }
+      }}
+    >
+      <Icon size={18} strokeWidth={1.75} />
+    </button>
   );
 }
 

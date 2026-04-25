@@ -13,8 +13,9 @@ interface ExplorerPanelProps {
 
 /**
  * The 280 px left panel. Its content depends on the active rail view:
- * Explorer = module tree; Search / Sessions / Fleet are real in P3;
- * Cost / Settings render a hint pointing at the rail-button click path.
+ * Explorer = module tree; Search / Sessions / Fleet are real in P3.
+ * Cost / Settings are not rail views — they're tab-openers in the rail's
+ * bottom group, handled directly by `ActivityRail`.
  */
 export function ExplorerPanel({ activeView }: ExplorerPanelProps): React.JSX.Element {
   return (
@@ -34,8 +35,6 @@ export function ExplorerPanel({ activeView }: ExplorerPanelProps): React.JSX.Ele
       {activeView === 'search' && <SearchView />}
       {activeView === 'sessions' && <SessionsView />}
       {activeView === 'fleet' && <FleetView />}
-      {activeView === 'cost' && <StubBody message="Cost details render here in P3. For now, open Cost via the command palette." />}
-      {activeView === 'settings' && <StubBody message="Click the Settings rail button to open the Settings tab." />}
     </aside>
   );
 }
@@ -72,10 +71,3 @@ function ExplorerBody(): React.JSX.Element {
   );
 }
 
-function StubBody({ message }: { message: string }): React.JSX.Element {
-  return (
-    <div style={{ padding: '14px 18px', color: 'var(--color-text-secondary)', fontSize: 13, lineHeight: 1.6 }}>
-      <p>{message}</p>
-    </div>
-  );
-}

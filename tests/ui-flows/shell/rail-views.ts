@@ -144,23 +144,21 @@ function resolveServerScript(here: string): string {
   return resolve(here, '..', '..', '..', '..', 'electron-mcp-server', 'dist', 'server', 'index.js');
 }
 
-// ── Rail-view helpers ──────────────────────────────────────────────
+// ── Rail helpers ───────────────────────────────────────────────────
 
-const RAIL_VIEW_IDS = [
-  'explorer',
-  'search',
-  'sessions',
-  'fleet',
-  'cost',
-  'settings',
-] as const;
+const RAIL_VIEW_IDS = ['explorer', 'search', 'sessions', 'fleet'] as const;
 type RailViewId = (typeof RAIL_VIEW_IDS)[number];
 
+const TAB_OPENERS = [
+  { id: 'cost' as const,     affordance: 'cost-tier' },
+  { id: 'settings' as const, affordance: 'settings-root' },
+];
+
 /**
- * Clicks the rail icon for a given view and asserts the matching panel
+ * Clicks the rail icon for a rail-view and asserts the matching panel
  * becomes visible via data-testid="rail-panel-{id}".
  */
-async function clickRailAndAssert(
+async function clickRailViewAndAssert(
   client: McpClient,
   sessionId: string,
   view: RailViewId,
@@ -173,6 +171,29 @@ async function clickRailAndAssert(
   await client.call('electron_wait_for_selector', {
     sessionId,
     selector: `[data-testid="rail-panel-${view}"]`,
+    state: 'visible',
+    timeout: 5_000,
+  });
+}
+
+/**
+ * Clicks a bottom-rail tab-opener (cost, settings) and asserts the matching
+ * module's smokeAffordance becomes visible — the rail item opens the module
+ * tab directly rather than swapping the rail panel.
+ */
+async function clickTabOpenerAndAssert(
+  client: McpClient,
+  sessionId: string,
+  opener: { id: 'cost' | 'settings'; affordance: string },
+): Promise<void> {
+  await client.call('electron_click', {
+    sessionId,
+    selector: `[data-testid="rail-icon-${opener.id}"]`,
+  });
+
+  await client.call('electron_wait_for_selector', {
+    sessionId,
+    selector: `[data-testid="${opener.affordance}"]`,
     state: 'visible',
     timeout: 5_000,
   });
@@ -216,10 +237,16 @@ async function main(): Promise<void> {
       timeout: 15_000,
     });
 
-    // ── Cycle through all six rail views ──────────────────────────
+    // ── Cycle through the four rail-views ─────────────────────────
     for (const view of RAIL_VIEW_IDS) {
-      await clickRailAndAssert(client, sessionId, view);
+      await clickRailViewAndAssert(client, sessionId, view);
       console.log(`[PASS] rail-icon-${view} → rail-panel-${view} visible`);
+    }
+
+    // ── Bottom rail tab-openers (cost, settings) ──────────────────
+    for (const opener of TAB_OPENERS) {
+      await clickTabOpenerAndAssert(client, sessionId, opener);
+      console.log(`[PASS] rail-icon-${opener.id} → ${opener.affordance} visible`);
     }
 
     await client.call('electron_close', { sessionId });
