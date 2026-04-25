@@ -1,3 +1,4 @@
+import { resolveRagNode } from './rag/resolve.js';
 import { initTRPC, TRPCError } from '@trpc/server';
 import { createTRPCClient } from '@trpc/client';
 import { z } from 'zod';
@@ -201,19 +202,7 @@ async function resolvePlannerProvider(nodeId: string): Promise<AiProvider> {
  * RAG node — every ragX procedure uses this up-front so callers get
  * a predictable error shape instead of an adapter-layer exception.
  */
-function resolveRagNode(
-  nodeName: string,
-): { node: ClusterNode; cfg: Config } {
-  const cfg = kubecfg.loadConfig();
-  const resolved = kubecfg.resolveNode(cfg, nodeName);
-  if (!resolved.node.rag) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: `node '${nodeName}' is not a RAG node`,
-    });
-  }
-  return { node: resolved.node, cfg };
-}
+
 
 /**
  * Lazy-initialized runtime backends shared by every composite
