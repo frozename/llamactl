@@ -162,10 +162,14 @@ async function storeRead<T>(
   sessionId: string,
   js: string,
 ): Promise<T> {
-  return (await client.call('electron_evaluate_renderer', {
+  // electron_evaluate_renderer wraps the value in `{ result: <value> }`.
+  // The renderer-side JSON.stringify gives us a stable serialization
+  // across the JSON-RPC envelope (no quoting surprises).
+  const envelope = (await client.call('electron_evaluate_renderer', {
     sessionId,
     expression: `JSON.stringify(${js})`,
-  })) as T;
+  })) as { result: string };
+  return JSON.parse(envelope.result) as T;
 }
 
 function assert(condition: boolean, message: string): void {
