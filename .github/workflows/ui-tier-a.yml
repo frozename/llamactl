@@ -56,6 +56,10 @@ jobs:
         working-directory: electron-mcp
         run: bun install --frozen-lockfile
 
+      - name: Build electron-mcp
+        working-directory: electron-mcp
+        run: bun run build
+
       - name: Run Tier A
         working-directory: llamactl
         env:
