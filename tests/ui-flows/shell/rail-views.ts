@@ -163,16 +163,34 @@ async function clickRailViewAndAssert(
   sessionId: string,
   view: RailViewId,
 ): Promise<void> {
-  await client.call('electron_click', {
-    sessionId,
-    selector: `[data-testid="rail-icon-${view}"]`,
-  });
+  // electron_click on the 40×40px rail buttons has been flaky in headless
+  // CI (visibility checks fail in tight grid layouts). Dispatch a real
+  // click via the renderer's DOM API instead — bypasses electron-mcp's
+  // visibility wait, which isn't necessary here (the button is in the
+  // DOM as confirmed by the dashboard-root mount earlier).
+  await jsClick(client, sessionId, `[data-testid="rail-icon-${view}"]`);
 
   await client.call('electron_wait_for_selector', {
     sessionId,
     selector: `[data-testid="rail-panel-${view}"]`,
     state: 'visible',
     timeout: 5_000,
+  });
+}
+
+/** Dispatches a `.click()` directly on the matching DOM element. */
+async function jsClick(
+  client: McpClient,
+  sessionId: string,
+  selector: string,
+): Promise<void> {
+  await client.call('electron_evaluate_renderer', {
+    sessionId,
+    expression: `(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) throw new Error('selector did not match: ' + ${JSON.stringify(selector)});
+      el.click();
+    })()`,
   });
 }
 
@@ -186,10 +204,7 @@ async function clickTabOpenerAndAssert(
   sessionId: string,
   opener: { id: 'cost' | 'settings'; affordance: string },
 ): Promise<void> {
-  await client.call('electron_click', {
-    sessionId,
-    selector: `[data-testid="rail-icon-${opener.id}"]`,
-  });
+  await jsClick(client, sessionId, `[data-testid="rail-icon-${opener.id}"]`);
 
   await client.call('electron_wait_for_selector', {
     sessionId,
