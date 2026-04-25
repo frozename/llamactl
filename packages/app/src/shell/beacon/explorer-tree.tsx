@@ -73,6 +73,7 @@ export function ExplorerTree(): React.JSX.Element {
           <div key={group.id}>
             <button
               type="button"
+              data-testid={`explorer-group-${group.id}`}
               onClick={() => toggleCollapse(group.id)}
               style={{
                 all: 'unset',
@@ -104,6 +105,7 @@ export function ExplorerTree(): React.JSX.Element {
                       toggleCollapse(`${group.id}/${leaf.id}`);
                     }
                   }}
+                  {...(leaf.kind === 'static' ? { 'data-testid': `explorer-leaf-${leaf.id}` } : {})}
                 />
                 {leaf.kind === 'dynamic-group' && !(collapsed[`${group.id}/${leaf.id}`] ?? false) &&
                   (leaf.instances ?? []).map((inst) => (

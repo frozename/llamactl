@@ -228,8 +228,9 @@ async function paletteConfirm(client: McpClient, sessionId: string): Promise<voi
  * palette is still open from a prior step), then navigates to dashboard
  * by clicking the activity-bar entry.
  *
- * Not all modules expose an activity-bar button; navigating to dashboard
- * (which always has one) is sufficient as a baseline reset.
+ * Navigating to the dashboard explorer-tree leaf is sufficient as a
+ * baseline reset. If a future test sets a different rail-view, this reset
+ * will need to set rail back to explorer first.
  */
 async function resetState(client: McpClient, sessionId: string): Promise<void> {
   // Escape — harmless if palette is already closed.
@@ -241,11 +242,12 @@ async function resetState(client: McpClient, sessionId: string): Promise<void> {
       }));
     })()`,
   });
-  // Re-open dashboard to give each iteration a consistent start point.
+  // Re-open dashboard via the explorer-tree leaf to give each iteration a
+  // consistent start point. Explorer is the default rail view.
   try {
     await client.call('electron_click', {
       sessionId,
-      selector: '[data-testid="activity-bar-dashboard"]',
+      selector: '[data-testid="explorer-leaf-dashboard"]',
     });
     await client.call('electron_wait_for_selector', {
       sessionId,
@@ -255,23 +257,23 @@ async function resetState(client: McpClient, sessionId: string): Promise<void> {
     });
   } catch {
     // Dashboard click may fail if the module is already unmounted or
-    // the button label differs — best-effort; proceed anyway.
+    // the leaf is not visible — best-effort; proceed anyway.
   }
 }
 
-// ── Activity-bar navigation helpers ───────────────────────────────
+// ── Explorer-tree navigation helpers ─────────────────────────────
 
 /**
- * Clicks the activity-bar button for the given module id and checks
+ * Clicks the explorer-tree leaf for the given module id and checks
  * that the tab store activates `module:{id}`. This exercises the
- * activity-bar onClick dispatch path, which is separate from the
+ * explorer-tree onClick dispatch path, which is separate from the
  * command-palette path covered by runPalettePass.
  */
-async function runActivityBarOne(client: McpClient, sessionId: string, id: string): Promise<boolean> {
-  // Click the activity-bar item.
+async function runExplorerOne(client: McpClient, sessionId: string, id: string): Promise<boolean> {
+  // Click the explorer-tree leaf for this module.
   await client.call('electron_click', {
     sessionId,
-    selector: `[data-testid="activity-bar-${id}"]`,
+    selector: `[data-testid="explorer-leaf-${id}"]`,
   });
   // Read the active tab from the store.
   const result = await client.call('electron_evaluate_renderer', {
@@ -431,22 +433,25 @@ async function main(): Promise<void> {
     // ── Palette navigation pass ──────────────────────────────────
     await runPalettePass(client, sessionId);
 
-    // ── Pass 2 — activity-bar navigation ─────────────────────────
-    // Tests the activity-bar onClick dispatch path, which is separate
-    // from shell/commands.ts's palette navigation.
-    console.log('Tier A pass 2: activity-bar nav');
-    for (const m of APP_MODULES.filter((m) => m.activityBar)) {
-      const ok = await runActivityBarOne(client, sessionId, m.id);
+    // ── Pass 2 — explorer-tree navigation ────────────────────────
+    // Tests the explorer-tree onClick dispatch path, which is separate
+    // from shell/commands.ts (palette).
+    console.log('Tier A pass 2: explorer-tree nav');
+    const treeEligible = APP_MODULES.filter(
+      (m) => m.beaconGroup && m.beaconGroup !== 'hidden' && m.beaconKind === 'static',
+    );
+    for (const m of treeEligible) {
+      const ok = await runExplorerOne(client, sessionId, m.id);
       if (!ok) {
         await client.call('electron_screenshot', {
           sessionId,
-          path: `/tmp/tier-a-actbar-${m.id.replace(/\./g, '-')}-fail.png`,
+          path: `/tmp/tier-a-tree-${m.id.replace(/\./g, '-')}-fail.png`,
         });
-        console.error(`Activity-bar nav FAILED for module ${m.id}`);
+        console.error(`Explorer-tree nav FAILED for module ${m.id}`);
         process.exit(1);
       }
     }
-    console.log(`Activity-bar nav passed: ${APP_MODULES.filter((m) => m.activityBar).length}/${APP_MODULES.filter((m) => m.activityBar).length} modules`);
+    console.log(`Explorer-tree nav passed: ${treeEligible.length}/${treeEligible.length} modules`);
 
     await client.call('electron_close', { sessionId });
   } catch (err) {
