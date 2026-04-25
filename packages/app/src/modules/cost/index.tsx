@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useMemo, useState } from 'react';
 import { trpc } from '@/lib/trpc';
+import { Badge, EditorialHero } from '@/ui';
 
 /**
  * N.3.7 — cost dashboard. Surfaces the same data the cost-guardian
@@ -24,16 +25,12 @@ interface CostGroup {
   recordsMissingPricing: number;
 }
 
-function tierColor(tier: Tier): string {
+function tierToTone(tier: Tier): "default" | "ok" | "info" {
   switch (tier) {
-    case 'deregister':
-      return 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
-    case 'force_private':
-      return 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]';
-    case 'warn':
-      return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
-    default:
-      return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
+    case "deregister": return "default";
+    case "force_private": return "default";
+    case "warn": return "default";
+    default: return "info";
   }
 }
 
@@ -42,11 +39,11 @@ function barColor(fraction: number | undefined, thresholds: {
   force_private: number;
   deregister: number;
 }): string {
-  if (fraction === undefined) return 'bg-[var(--color-surface-3,var(--color-surface-2))]';
-  if (fraction >= thresholds.deregister) return 'bg-[var(--color-err)]';
-  if (fraction >= thresholds.force_private) return 'bg-[var(--color-warn,var(--color-ok))]';
-  if (fraction >= thresholds.warn) return 'bg-[var(--color-ok)]';
-  return 'bg-[var(--color-ok,var(--color-ok))]';
+  if (fraction === undefined) return 'var(--color-surface-3, var(--color-surface-2))';
+  if (fraction >= thresholds.deregister) return 'var(--color-err)';
+  if (fraction >= thresholds.force_private) return 'var(--color-warn, var(--color-ok))';
+  if (fraction >= thresholds.warn) return 'var(--color-ok)';
+  return 'var(--color-ok, var(--color-ok))';
 }
 
 function fmtUsd(n: number | undefined): string {
@@ -76,13 +73,6 @@ function BudgetBar({
   testId: string;
 }): React.JSX.Element {
   const width = Math.min(100, Math.max(0, (fraction ?? 0) * 100));
-  // Three explicit states for the right-hand readout:
-  //   1. Budget undefined or 0 — cost-guardian config has no limit →
-  //      say so directly so the operator doesn't mistake "— — —" for
-  //      missing data.
-  //   2. Budget present, spent undefined/NaN — no usage records yet in
-  //      the window → "$0 / $BUDGET · 0.0%" rather than em-dashes.
-  //   3. Regular case → spent / budget · percent.
   const hasBudget = budget !== undefined && Number.isFinite(budget) && budget > 0;
   const hasSpend = spent !== undefined && Number.isFinite(spent);
   let readout: React.ReactNode;
@@ -102,15 +92,14 @@ function BudgetBar({
     );
   }
   return (
-    <div data-testid={testId} className="flex flex-col gap-1">
-      <div className="flex items-baseline justify-between">
-        <span className="text-sm text-[color:var(--color-text)]">{label}</span>
-        <span className="text-xs text-[color:var(--color-text-secondary)]">{readout}</span>
+    <div data-testid={testId} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 14, color: 'var(--color-text)' }}>{label}</span>
+        <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{readout}</span>
       </div>
-      <div className="h-2 w-full overflow-hidden rounded bg-[var(--color-surface-2)]">
+      <div style={{ height: 8, width: '100%', overflow: 'hidden', borderRadius: 'var(--r-md)', background: 'var(--color-surface-2)' }}>
         <div
-          className={`h-full ${barColor(fraction, thresholds)} transition-[width]`}
-          style={{ width: `${width}%` }}
+          style={{ height: '100%', transition: 'width 0.2s', width: `${width}%`, background: barColor(fraction, thresholds) }}
           data-testid={`${testId}-fill`}
         />
       </div>
@@ -134,24 +123,24 @@ function TopSpenders({
     return (
       <div
         data-testid={`${testId}-empty`}
-        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-4 text-sm text-[color:var(--color-text-secondary)]"
+        style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-1)', padding: '16px 12px', fontSize: 14, color: 'var(--color-text-secondary)' }}
       >
         {title}: no usage recorded yet.
       </div>
     );
   }
   return (
-    <div className="flex flex-col gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <h3 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
         {title}
       </h3>
-      <ul data-testid={testId} className="divide-y divide-[var(--color-border)] rounded border border-[var(--color-border)] bg-[var(--color-surface-1)]">
-        {rows.map((g) => (
-          <li key={g.key} className="flex items-center justify-between px-3 py-2">
-            <span className="truncate text-sm text-[color:var(--color-text)]" title={g.key}>
+      <ul data-testid={testId} style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-1)', margin: 0, padding: 0, listStyle: 'none' }}>
+        {rows.map((g, i) => (
+          <li key={g.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderTop: i > 0 ? '1px solid var(--color-border)' : 'none' }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, color: 'var(--color-text)' }} title={g.key}>
               {g.key}
             </span>
-            <span className="text-xs text-[color:var(--color-text-secondary)]">
+            <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
               {fmtUsd(g.estimatedCostUsd)} · {g.requestCount} req · {g.totalTokens.toLocaleString()} tok
             </span>
           </li>
@@ -167,14 +156,14 @@ function JournalPane(): React.JSX.Element {
 
   if (journal.isLoading) {
     return (
-      <div data-testid="cost-journal-loading" className="text-sm text-[color:var(--color-text-secondary)]">
+      <div data-testid="cost-journal-loading" style={{ fontSize: 14, color: 'var(--color-text-secondary)' }}>
         Loading journal…
       </div>
     );
   }
   if (journal.error) {
     return (
-      <div data-testid="cost-journal-error" className="text-sm text-[color:var(--color-err)]">
+      <div data-testid="cost-journal-error" style={{ fontSize: 14, color: 'var(--color-err)' }}>
         journal error: {journal.error.message}
       </div>
     );
@@ -182,23 +171,23 @@ function JournalPane(): React.JSX.Element {
   const data = journal.data ?? { entries: [], path: '' };
   if (data.entries.length === 0) {
     return (
-      <div data-testid="cost-journal-empty" className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-4 text-sm text-[color:var(--color-text-secondary)]">
-        No guardian ticks recorded yet. Run <code>llamactl cost-guardian tick</code> or enable the loop
-        to start populating <code>{data.path || '~/.llamactl/healer/cost-journal.jsonl'}</code>.
+      <div data-testid="cost-journal-empty" style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-1)', padding: '16px 12px', fontSize: 14, color: 'var(--color-text-secondary)' }}>
+        No guardian ticks recorded yet. Run <code style={{ fontFamily: 'var(--font-mono)' }}>llamactl cost-guardian tick</code> or enable the loop
+        to start populating <code style={{ fontFamily: 'var(--font-mono)' }}>{data.path || '~/.llamactl/healer/cost-journal.jsonl'}</code>.
       </div>
     );
   }
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <h3 style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
           Guardian journal
         </h3>
-        <label className="flex items-center gap-2 text-xs text-[color:var(--color-text-secondary)]">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
           last
           <select
             data-testid="cost-journal-limit"
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-1 py-0.5 text-xs"
+            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-1)', padding: '2px 4px', fontSize: 12 }}
             value={limit}
             onChange={(e) => setLimit(Number(e.target.value))}
           >
@@ -211,10 +200,10 @@ function JournalPane(): React.JSX.Element {
       </div>
       <ul
         data-testid="cost-journal"
-        className="max-h-80 overflow-y-auto divide-y divide-[var(--color-border)] rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] font-mono text-xs"
+        style={{ maxHeight: 320, overflowY: 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-1)', fontFamily: 'var(--font-mono)', fontSize: 12, margin: 0, padding: 0, listStyle: 'none' }}
       >
         {data.entries.map((e, i) => (
-          <li key={i} className="px-3 py-2">
+          <li key={i} style={{ padding: '8px 12px', borderTop: i > 0 ? '1px solid var(--color-border)' : 'none' }}>
             <JournalRow entry={e} />
           </li>
         ))}
@@ -236,38 +225,32 @@ function JournalRow({ entry }: { entry: unknown }): React.JSX.Element {
   if (e.kind === 'tick') {
     const tier = (e.decision?.tier ?? 'noop') as Tier;
     return (
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <span className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tierColor(tier)}`}>
-            {tier}
-          </span>{' '}
-          <span className="text-[color:var(--color-text)]">{e.decision?.reason ?? ''}</span>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ minWidth: 0 }}>
+          <Badge variant={tier === "warn" ? "warn" : tier === "deregister" ? "err" : tier === "force_private" ? "warn" : "default"}>{tier}</Badge>{' '}
+          <span style={{ color: 'var(--color-text)' }}>{e.decision?.reason ?? ''}</span>
         </div>
-        <time className="shrink-0 text-[color:var(--color-text-secondary)]">{e.decision?.ts?.slice(11, 19) ?? ''}</time>
+        <time style={{ flexShrink: 0, color: 'var(--color-text-secondary)' }}>{e.decision?.ts?.slice(11, 19) ?? ''}</time>
       </div>
     );
   }
   if (e.kind === 'action') {
     return (
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <span className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-            e.ok ? 'bg-[var(--color-ok,var(--color-ok))] text-[color:var(--color-text-inverse)]' : 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]'
-          }`}>
-            {e.action}
-          </span>{' '}
-          <span className="text-[color:var(--color-text)]">{e.ok ? 'ok' : (e.error ?? 'failed')}</span>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ minWidth: 0 }}>
+          <Badge variant={e.ok ? "ok" : "err"}>{e.action || "action"}</Badge>{' '}
+          <span style={{ color: 'var(--color-text)' }}>{e.ok ? 'ok' : (e.error ?? 'failed')}</span>
         </div>
-        <time className="shrink-0 text-[color:var(--color-text-secondary)]">{e.ts?.slice(11, 19) ?? ''}</time>
+        <time style={{ flexShrink: 0, color: 'var(--color-text-secondary)' }}>{e.ts?.slice(11, 19) ?? ''}</time>
       </div>
     );
   }
   return (
-    <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0 text-[color:var(--color-err)]">
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+      <div style={{ minWidth: 0, color: 'var(--color-err)' }}>
         error: {e.message ?? 'unknown'}
       </div>
-      <time className="shrink-0 text-[color:var(--color-text-secondary)]">{e.ts?.slice(11, 19) ?? ''}</time>
+      <time style={{ flexShrink: 0, color: 'var(--color-text-secondary)' }}>{e.ts?.slice(11, 19) ?? ''}</time>
     </div>
   );
 }
@@ -285,14 +268,14 @@ export default function CostDashboard(): React.JSX.Element {
 
   if (status.isLoading) {
     return (
-      <div data-testid="cost-loading" className="p-6 text-sm text-[color:var(--color-text-secondary)]">
+      <div data-testid="cost-loading" style={{ padding: 24, fontSize: 14, color: 'var(--color-text-secondary)' }}>
         Loading cost snapshot…
       </div>
     );
   }
   if (status.error) {
     return (
-      <div data-testid="cost-error" className="p-6 text-sm text-[color:var(--color-err)]">
+      <div data-testid="cost-error" style={{ padding: 24, fontSize: 14, color: 'var(--color-err)' }}>
         Failed to load cost snapshot: {status.error.message}
       </div>
     );
@@ -304,27 +287,17 @@ export default function CostDashboard(): React.JSX.Element {
   return (
     <div
       data-testid="cost-root"
-      className="flex h-full flex-col gap-4 overflow-y-auto p-6"
+      style={{ display: 'flex', height: '100%', flexDirection: 'column', gap: 16, overflowY: 'auto', padding: 24 }}
     >
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold text-[color:var(--color-text)]">Cost dashboard</h1>
-          <p className="text-sm text-[color:var(--color-text-secondary)]">
-            Pricing-aware spend snapshot for the local usage corpus. Polls every 30s.
-          </p>
-        </div>
-        <span
-          data-testid="cost-tier"
-          className={`rounded px-2 py-1 text-xs font-semibold uppercase tracking-wide ${tierColor(tier)}`}
-          title={d.decision.reason}
-        >
-          {tier}
-        </span>
-      </header>
+      <EditorialHero
+        title="Cost dashboard"
+        lede="Pricing-aware spend snapshot for the local usage corpus. Polls every 30s."
+        pills={[{ label: tier, tone: tierToTone(tier) }]}
+      />
 
       <section
         data-testid="cost-budget"
-        className="grid gap-4 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 sm:grid-cols-2"
+        style={{ display: 'grid', gap: 16, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-1)', padding: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}
       >
         <BudgetBar
           label="Daily budget"
@@ -342,7 +315,7 @@ export default function CostDashboard(): React.JSX.Element {
           thresholds={d.config.thresholds}
           testId="cost-budget-weekly"
         />
-        <div className="sm:col-span-2 text-xs text-[color:var(--color-text-secondary)]">
+        <div style={{ gridColumn: '1 / -1', fontSize: 12, color: 'var(--color-text-secondary)' }}>
           Thresholds (% of budget): warn ≥ {fmtPercent(d.config.thresholds.warn)} ·
           force_private ≥ {fmtPercent(d.config.thresholds.force_private)} ·
           deregister ≥ {fmtPercent(d.config.thresholds.deregister)}
@@ -350,12 +323,12 @@ export default function CostDashboard(): React.JSX.Element {
           {d.config.autoForcePrivate ? ' · auto force_private on' : ''}
           {d.config.autoDeregister ? ' · auto deregister on' : ''}
         </div>
-        <p className="sm:col-span-2 text-sm text-[color:var(--color-text)]" data-testid="cost-reason">
+        <p style={{ gridColumn: '1 / -1', fontSize: 14, color: 'var(--color-text)' }} data-testid="cost-reason">
           {d.decision.reason}
         </p>
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-2">
+      <section style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
         <TopSpenders
           title="Top providers (7d)"
           groups={providerRows}
@@ -375,7 +348,7 @@ export default function CostDashboard(): React.JSX.Element {
       </section>
 
       <footer
-        className="text-xs text-[color:var(--color-text-secondary)]"
+        style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}
         data-testid="cost-window"
       >
         Daily window: {d.daily.windowSince.slice(0, 19)}Z → {d.daily.windowUntil.slice(0, 19)}Z ·

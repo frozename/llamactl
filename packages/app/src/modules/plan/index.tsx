@@ -132,13 +132,13 @@ function PlanCard({
   if (!result.ok) {
     return (
       <div
-        className="rounded border border-[color:var(--color-warn,var(--color-ok))] p-3 text-sm space-y-1 bg-[color:var(--color-surface-1)]"
+        style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-warn,var(--color-ok))', padding: 12, fontSize: 14, marginTop: 4, background: 'color:var(--color-surface-1)' }}
         data-testid="plan-failure"
       >
-        <div className="font-medium">Planner failed: {result.reason}</div>
-        <div className="text-xs text-[color:var(--color-text-secondary)]">{result.message}</div>
+        <div style={{ fontWeight: 500 }}>Planner failed: {result.reason}</div>
+        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{result.message}</div>
         {result.disallowedTools && result.disallowedTools.length > 0 && (
-          <div className="text-xs">
+          <div style={{ fontSize: 12 }}>
             Disallowed tools: {result.disallowedTools.join(', ')}
           </div>
         )}
@@ -147,36 +147,36 @@ function PlanCard({
   }
   return (
     <div
-      className="rounded border border-[color:var(--color-border)] p-3 text-sm space-y-2 bg-[color:var(--color-surface-1)]"
+      style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', padding: 12, fontSize: 14, marginTop: 8, background: 'color:var(--color-surface-1)' }}
       data-testid="plan-result"
     >
-      <div className="flex items-center justify-between">
-        <div className="font-medium">Plan</div>
-        <div className="text-xs text-[color:var(--color-text-secondary)]">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontWeight: 500 }}>Plan</div>
+        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
           executor={result.executor} · {result.plan.steps.length} step
           {result.plan.steps.length === 1 ? '' : 's'}
         </div>
       </div>
-      <div className="text-xs text-[color:var(--color-text-secondary)]">{result.plan.reasoning}</div>
-      <ol className="space-y-2 mt-2 list-none pl-0" data-testid="plan-steps">
+      <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{result.plan.reasoning}</div>
+      <ol style={{ marginTop: 8 }} data-testid="plan-steps">
         {result.plan.steps.map((step, i) => (
           <li
             key={i}
-            className="rounded border border-[color:var(--color-border)] p-2 space-y-1"
+            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', padding: 8, marginTop: 4 }}
             data-testid={`plan-step-${i}`}
           >
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-mono">{i + 1}.</span>
-              <span className="font-mono text-sm">{step.tool}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}>{i + 1}.</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14 }}>{step.tool}</span>
               {step.dryRun && (
-                <span className="rounded bg-[var(--color-surface-2)] px-1 text-[10px] uppercase">
+                <span style={{ borderRadius: 'var(--r-md)', background: 'var(--color-surface-2)', fontSize: 10, textTransform: 'uppercase' }}>
                   dry-run
                 </span>
               )}
             </div>
-            <div className="text-xs text-[color:var(--color-text-secondary)]">{step.annotation}</div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{step.annotation}</div>
             {step.args && Object.keys(step.args).length > 0 && (
-              <pre className="text-[11px] bg-[var(--color-surface-2)] rounded p-1 overflow-auto">
+              <pre style={{ fontSize: 11, background: 'var(--color-surface-2)', borderRadius: 'var(--r-md)', padding: 4, overflow: 'auto' }}>
                 {JSON.stringify(step.args, null, 2)}
               </pre>
             )}
@@ -184,12 +184,12 @@ function PlanCard({
         ))}
       </ol>
       {isLatest && (
-        <div className="flex items-center gap-2 pt-1">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button
             type="button"
             onClick={onApprove}
             disabled={decision !== null}
-            className="rounded border border-[color:var(--color-border)] bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)] px-3 py-1 text-xs font-medium disabled:opacity-50"
+            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', background: 'var(--color-brand)', color: 'var(--color-brand-contrast)', paddingLeft: 12, paddingRight: 12, paddingTop: 4, paddingBottom: 4, fontSize: 12, fontWeight: 500, opacity: 0.5 }}
             data-testid="plan-approve"
           >
             Approve
@@ -198,18 +198,14 @@ function PlanCard({
             type="button"
             onClick={onReject}
             disabled={decision !== null}
-            className="rounded border border-[color:var(--color-border)] bg-[var(--color-err)] text-[color:var(--color-text-inverse)] px-3 py-1 text-xs font-medium disabled:opacity-50"
+            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', background: 'var(--color-err)', color: 'var(--color-text-inverse)', paddingLeft: 12, paddingRight: 12, paddingTop: 4, paddingBottom: 4, fontSize: 12, fontWeight: 500, opacity: 0.5 }}
             data-testid="plan-reject"
           >
             Reject
           </button>
           {decision && (
             <span
-              className={`text-xs ${
-                decision === 'approved'
-                  ? 'text-[color:var(--color-ok)]'
-                  : 'text-[color:var(--color-err)]'
-              }`}
+              style={{ fontSize: 12, ...(decision === 'approved' ? { color: 'var(--color-ok)' } : { color: 'var(--color-err)' }) }}
               data-testid="plan-decision"
             >
               {decision === 'approved'
@@ -311,24 +307,24 @@ export default function Plan(): React.JSX.Element {
   const submitDisabled = plan.isPending || draft.trim().length === 0;
 
   return (
-    <div className="flex h-full flex-col" data-testid="plan-root">
-      <div className="border-b border-[color:var(--color-border)] p-4 space-y-3">
-        <div className="flex items-baseline justify-between gap-3">
+    <div style={{ display: 'flex', height: '100%', flexDirection: 'column' }} data-testid="plan-root">
+      <div style={{ borderBottom: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', padding: 16, marginTop: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
           <div>
-            <h2 className="text-lg font-medium">Operator plan</h2>
-            <p className="text-xs text-[color:var(--color-text-secondary)] max-w-prose">
+            <h2 style={{ fontSize: 18, fontWeight: 500 }}>Operator plan</h2>
+            <p style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
               Describe an operational goal. Each reply is a validated plan you
               can approve or refine in a follow-up turn.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <OpsExecutorPicker />
             {turns.length > 0 && (
               <button
                 type="button"
                 onClick={onReset}
                 data-testid="plan-reset"
-                className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-xs text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
+                style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', background: 'color:var(--color-surface-2)', paddingLeft: 12, paddingRight: 12, paddingTop: 4, paddingBottom: 4, fontSize: 12, color: 'var(--color-text-secondary)' }}
               >
                 New conversation
               </button>
@@ -339,20 +335,20 @@ export default function Plan(): React.JSX.Element {
 
       <div
         ref={scrollRef}
-        className="flex-1 overflow-auto p-4 space-y-3"
+        style={{ flex: 1, overflow: 'auto', padding: 16, marginTop: 12 }}
         data-testid="plan-transcript"
       >
         {turns.length === 0 && (
           <div
-            className="rounded-md border border-dashed border-[color:var(--color-border)] p-6 text-sm text-[color:var(--color-text-secondary)]"
+            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderStyle: 'dashed', borderColor: 'color:var(--color-border)', padding: 24, fontSize: 14, color: 'var(--color-text-secondary)' }}
             data-testid="plan-empty"
           >
-            <h3 className="text-sm font-semibold text-[color:var(--color-text)]">
+            <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)' }}>
               Start with a goal
             </h3>
-            <p className="mt-1 text-xs">
+            <p style={{ marginTop: 4, fontSize: 12 }}>
               Example:{' '}
-              <span className="font-mono">
+              <span style={{ fontFamily: 'var(--font-mono)' }}>
                 promote the fastest vision model on macbook-pro-48g
               </span>
               . The planner returns a step-by-step plan — you can then ask for
@@ -365,10 +361,10 @@ export default function Plan(): React.JSX.Element {
             return (
               <div
                 key={turn.id}
-                className="flex justify-end"
+                style={{ display: 'flex', justifyContent: 'flex-end' }}
                 data-testid={`plan-turn-user-${turn.id}`}
               >
-                <div className="max-w-[70%] rounded-2xl bg-[color:var(--color-ok)] px-3 py-2 text-sm text-[color:var(--color-text-inverse)] whitespace-pre-wrap">
+                <div style={{ background: 'color:var(--color-ok)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 14, color: 'var(--color-text-inverse)', whiteSpace: 'pre-wrap' }}>
                   {turn.text}
                 </div>
               </div>
@@ -377,10 +373,10 @@ export default function Plan(): React.JSX.Element {
           return (
             <div
               key={turn.id}
-              className="flex justify-start"
+              style={{ display: 'flex', justifyContent: 'flex-start' }}
               data-testid={`plan-turn-assistant-${turn.id}`}
             >
-              <div className="w-full max-w-[90%]">
+              <div style={{ width: '100%' }}>
                 <PlanCard
                   result={turn.result}
                   onApprove={() => setDecision('approved')}
@@ -394,17 +390,17 @@ export default function Plan(): React.JSX.Element {
         })}
         {plan.isPending && (
           <div
-            className="flex justify-start"
+            style={{ display: 'flex', justifyContent: 'flex-start' }}
             data-testid="plan-pending"
           >
-            <div className="rounded-2xl bg-[color:var(--color-surface-2)] px-3 py-2 text-xs text-[color:var(--color-text-secondary)]">
+            <div style={{ background: 'color:var(--color-surface-2)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
               Planning…
             </div>
           </div>
         )}
         {error && (
           <div
-            className="rounded border border-[color:var(--color-err)] bg-[color:var(--color-surface-1)] p-2 text-xs text-[color:var(--color-err)]"
+            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-err)', background: 'color:var(--color-surface-1)', padding: 8, fontSize: 12, color: 'var(--color-err)' }}
             data-testid="plan-error"
           >
             {error}
@@ -412,7 +408,7 @@ export default function Plan(): React.JSX.Element {
         )}
       </div>
 
-      <div className="border-t border-[color:var(--color-border)] p-3 space-y-2">
+      <div style={{ borderTop: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', padding: 12, marginTop: 8 }}>
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -431,42 +427,42 @@ export default function Plan(): React.JSX.Element {
               ? 'e.g. promote the fastest vision model on macbook-pro-48g'
               : 'Refine: "change step 3 to target gpu1", "add a rollback", "why did you skip nova.ops.overview?"'
           }
-          className="w-full rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] p-2 text-sm font-mono"
+          style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', background: 'var(--color-surface-2)', padding: 8, fontSize: 14, fontFamily: 'var(--font-mono)' }}
           data-testid="plan-goal"
         />
-        <div className="flex items-center justify-between gap-2">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <button
             type="button"
             onClick={onSubmit}
             disabled={submitDisabled}
             data-testid="plan-submit"
             title={submitDisabled ? 'Type a goal, then send' : 'Send (⌘/Ctrl+Enter)'}
-            className="rounded border border-[color:var(--color-border)] bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)] px-3 py-1 text-sm font-medium shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', background: 'var(--color-brand)', color: 'var(--color-brand-contrast)', paddingLeft: 12, paddingRight: 12, paddingTop: 4, paddingBottom: 4, fontSize: 14, fontWeight: 500, cursor: 'not-allowed', opacity: 0.5 }}
           >
             {plan.isPending ? 'Planning…' : turns.length === 0 ? 'Generate plan' : 'Send'}
           </button>
-          <span className="text-[10px] text-[color:var(--color-text-secondary)]">
+          <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
             ⌘/Ctrl+Enter to send · {turns.length} turn{turns.length === 1 ? '' : 's'}
           </span>
         </div>
       </div>
 
-      <details className="border-t border-[color:var(--color-border)] px-4 py-2 text-xs">
-        <summary className="cursor-pointer">Tool catalog ({catalog.length})</summary>
-        <ul className="mt-2 space-y-1">
+      <details style={{ borderTop: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', paddingLeft: 16, paddingRight: 16, paddingTop: 8, paddingBottom: 8, fontSize: 12 }}>
+        <summary style={{ cursor: 'pointer' }}>Tool catalog ({catalog.length})</summary>
+        <ul style={{ marginTop: 4 }}>
           {catalog.map((t) => (
-            <li key={t.name} className="flex items-center gap-2">
+            <li key={t.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className={`px-1 rounded text-[10px] ${tierClass(t.tier)}`}>{t.tier}</span>
-              <span className="font-mono">{t.name}</span>
-              <span className="text-[color:var(--color-text-secondary)]">—</span>
-              <span className="text-[color:var(--color-text-secondary)]">{t.description}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{t.name}</span>
+              <span style={{ color: 'var(--color-text-secondary)' }}>—</span>
+              <span style={{ color: 'var(--color-text-secondary)' }}>{t.description}</span>
             </li>
           ))}
         </ul>
         <button
           type="button"
           onClick={() => setCatalog(DEFAULT_CATALOG)}
-          className="mt-2 rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[11px]"
+          style={{ marginTop: 8, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontSize: 11 }}
           data-testid="plan-reset-catalog"
         >
           Reset to defaults

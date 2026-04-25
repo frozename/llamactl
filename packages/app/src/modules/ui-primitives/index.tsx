@@ -105,8 +105,8 @@ export default function UIPrimitivesSandbox(): React.JSX.Element {
       <Section title="Tree items">
         <Panel>
           <TreeItem label="README.md" icon={<DotIcon />} active />
-          <TreeItem label="color.css" icon={<DotIcon />} trailing={<span className="mono" style={{ fontSize: 9, color: 'var(--color-text-tertiary)' }}>108</span>} />
-          <TreeItem label="typography.css" icon={<DotIcon />} trailing={<span className="mono" style={{ fontSize: 9, color: 'var(--color-text-tertiary)' }}>12</span>} />
+          <TreeItem label="color.css" icon={<DotIcon />} trailing={<span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--color-text-tertiary)' }}>108</span>} />
+          <TreeItem label="typography.css" icon={<DotIcon />} trailing={<span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--color-text-tertiary)' }}>12</span>} />
           <TreeItem label="Workloads" collapsed={false} icon={<DotIcon />} />
           <TreeItem indent={1} label="wl-abc · qwen-coder" icon={<DotIcon />} trailing={<StatusDot tone="ok" />} />
           <TreeItem indent={1} label="wl-ghi · llama-70b" icon={<DotIcon />} trailing={<StatusDot tone="warn" pulse />} />

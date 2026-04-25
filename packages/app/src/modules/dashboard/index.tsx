@@ -65,11 +65,6 @@ function ExposePanel(): React.JSX.Element {
     apply.mutate({ yaml: yamlStringify(manifest) });
   }
 
-  // Only agent-kind nodes can host a ModelRun workload. Gateways
-  // (sirius, embersynth), cloud providers, and RAG nodes have no
-  // llama-server to apply the manifest to — surfacing them in the
-  // picker silently creates a workload phase=Failed when the
-  // reconciler finds no agent behind the target.
   const nodeOptions = (nodes.data?.nodes ?? [])
     .filter((n) => (n.effectiveKind ?? 'agent') === 'agent')
     .map((n) => n.name);
@@ -93,27 +88,27 @@ function ExposePanel(): React.JSX.Element {
         onSubmit();
       }}
       data-testid="dashboard-expose"
-      className="mt-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
+      style={{ marginTop: 8, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-1)', padding: 16 }}
     >
-      <div className="mb-2 text-sm font-medium text-[color:var(--color-text)]">Expose a model</div>
-      <div className="flex flex-wrap items-end gap-2 text-xs">
-        <div className="flex flex-col">
-          <label className="text-[color:var(--color-text-secondary)]">name</label>
+      <div style={{ marginBottom: 8, fontSize: 14, fontWeight: 500, color: 'var(--color-text)' }}>Expose a model</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 8, fontSize: 12 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <label style={{ color: 'var(--color-text-secondary)' }}>name</label>
           <input
             type="text"
             placeholder="gemma-qa"
             value={name}
             onChange={(e) => setName(e.target.value)}
             data-testid="dashboard-expose-name"
-            className="w-40 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
+            style={{ width: 160, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', padding: '4px 8px', color: 'var(--color-text)' }}
           />
         </div>
-        <div className="flex flex-col">
-          <label className="text-[color:var(--color-text-secondary)]">node</label>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <label style={{ color: 'var(--color-text-secondary)' }}>node</label>
           <select
             value={node}
             onChange={(e) => setNode(e.target.value)}
-            className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
+            style={{ width: 128, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', padding: '4px 8px', color: 'var(--color-text)' }}
           >
             {nodeOptions.map((n) => (
               <option key={n} value={n}>
@@ -122,15 +117,15 @@ function ExposePanel(): React.JSX.Element {
             ))}
           </select>
         </div>
-        <div className="flex flex-1 flex-col">
-          <label className="text-[color:var(--color-text-secondary)]">rel</label>
+        <div style={{ display: 'flex', flex: 1, flexDirection: 'column' }}>
+          <label style={{ color: 'var(--color-text-secondary)' }}>rel</label>
           <input
             type="text"
             placeholder="gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
             list="dashboard-rel-suggestions"
             value={rel}
             onChange={(e) => setRel(e.target.value)}
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-text)]"
+            style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', padding: '4px 8px', fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}
           />
           <datalist id="dashboard-rel-suggestions">
             {catalogRels.map((r) => (
@@ -143,21 +138,21 @@ function ExposePanel(): React.JSX.Element {
           disabled={apply.isPending || !canSubmit}
           data-testid="dashboard-expose-submit"
           title={submitTitle}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 font-medium text-[color:var(--color-brand-contrast)] shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+          style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-brand)', padding: '4px 12px', fontWeight: 500, color: 'var(--color-brand-contrast)', boxShadow: '0 1px 2px rgba(0,0,0,0.05)', cursor: (apply.isPending || !canSubmit) ? 'not-allowed' : 'pointer', opacity: (apply.isPending || !canSubmit) ? 0.4 : 1 }}
         >
           {apply.isPending ? 'Exposing…' : 'Expose'}
         </Button>
       </div>
       {status.kind === 'error' && (
-        <div className="mt-2 text-xs text-[color:var(--color-err)]">{status.message}</div>
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-err)' }}>{status.message}</div>
       )}
       {status.kind === 'ok' && (
-        <div className="mt-2 text-xs text-[color:var(--color-ok)]">
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-ok)' }}>
           {status.action} {status.name}
           {status.endpoint && (
             <>
               {' · '}
-              <a href={status.endpoint} target="_blank" rel="noreferrer" className="font-mono underline">
+              <a href={status.endpoint} target="_blank" rel="noreferrer" style={{ fontFamily: 'var(--font-mono)', textDecoration: 'underline' }}>
                 {status.endpoint}
               </a>
             </>
@@ -180,23 +175,23 @@ function ExposedWorkloads(): React.JSX.Element {
   const running = rows.filter((r) => r.phase === 'Running' && r.endpoint);
   if (running.length === 0) {
     return (
-      <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-[color:var(--color-text-secondary)]">
+      <div style={{ borderRadius: 'var(--r-md)', border: '1px dashed var(--color-border)', padding: 16, color: 'var(--color-text-secondary)' }}>
         No workloads currently serving. Use "Expose a model" above to start one.
       </div>
     );
   }
   return (
-    <ul className="space-y-1 mono text-sm">
+    <ul style={{ display: 'flex', flexDirection: 'column', gap: 4, fontFamily: 'var(--font-mono)', fontSize: 14, margin: 0, padding: 0, listStyle: 'none' }}>
       {running.map((w) => (
         <li
           key={w.name}
-          className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-1)', padding: '8px 12px' }}
         >
           <div>
-            <span className="text-[color:var(--color-brand)]">{w.name}</span>
-            <span className="mx-1 text-[color:var(--color-text-secondary)]">·</span>
-            <span className="text-[color:var(--color-text-secondary)]">{w.node}</span>
-            <span className="mx-1 text-[color:var(--color-text-secondary)]">·</span>
+            <span style={{ color: 'var(--color-brand)' }}>{w.name}</span>
+            <span style={{ margin: '0 4px', color: 'var(--color-text-secondary)' }}>·</span>
+            <span style={{ color: 'var(--color-text-secondary)' }}>{w.node}</span>
+            <span style={{ margin: '0 4px', color: 'var(--color-text-secondary)' }}>·</span>
             <span>{w.rel}</span>
           </div>
           {w.endpoint && (
@@ -204,7 +199,7 @@ function ExposedWorkloads(): React.JSX.Element {
               href={w.endpoint}
               target="_blank"
               rel="noreferrer"
-              className="text-[color:var(--color-ok)] underline"
+              style={{ color: 'var(--color-ok)', textDecoration: 'underline' }}
             >
               {w.endpoint}
             </a>
@@ -214,7 +209,6 @@ function ExposedWorkloads(): React.JSX.Element {
     </ul>
   );
 }
-
 
 function fmtTps(raw: string | undefined | null): string {
   if (raw == null) return '—';
@@ -227,13 +221,10 @@ function DashboardBody(): React.JSX.Element {
   const envQuery = trpc.env.useQuery();
   const compareQuery = trpc.benchCompare.useQuery();
   const promotionsQuery = trpc.promotions.useQuery();
-  // Poll alongside the Server module so "Active Model" reflects the
-  // llama-server's actually-loaded rel rather than the LOCAL_AI_MODEL
-  // env var (which defaults to a node alias when unset).
   const serverStatusQuery = trpc.serverStatus.useQuery(undefined, { refetchInterval: 5000 });
 
   if (envQuery.isLoading || compareQuery.isLoading || promotionsQuery.isLoading) {
-    return <div className="p-6 text-[color:var(--color-text-secondary)]">Loading…</div>;
+    return <div style={{ padding: 24, color: 'var(--color-text-secondary)' }}>Loading…</div>;
   }
 
   const env = envQuery.data;
@@ -251,7 +242,7 @@ function DashboardBody(): React.JSX.Element {
     .slice(0, 5);
 
   return (
-    <div className="h-full overflow-auto p-6">
+    <div style={{ height: '100%', overflow: 'auto', padding: 24 }}>
       <EditorialHero
         eyebrow="Dashboard"
         title="Your fleet"
@@ -264,20 +255,14 @@ function DashboardBody(): React.JSX.Element {
         style={{ marginBottom: 32 }}
       />
 
-
-      {/* Cluster map is the dashboard's centerpiece — switching active
-          nodes happens by clicking a bubble + "Set as active node" in
-          the popover, which makes the topology + the routing target
-          visible in one view (the title-bar dropdown is the legacy
-          quick-jump fallback). */}
-      <section className="mb-8" data-testid="dashboard-node-map-section">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+      <section style={{ marginBottom: 32 }} data-testid="dashboard-node-map-section">
+        <h2 style={{ marginBottom: 12, fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
           Cluster map
         </h2>
         <ThemedNodeMap />
       </section>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
         <StatCard label="Profile" value={env?.LLAMA_CPP_MACHINE_PROFILE ?? '—'} />
         <StatCard label="Provider" value={env?.LOCAL_AI_PROVIDER ?? '—'} />
         <StatCard label="Default Model" value={env?.LLAMA_CPP_DEFAULT_MODEL ?? '—'} />
@@ -286,47 +271,47 @@ function DashboardBody(): React.JSX.Element {
         <StatCard label="Provider URL" value={env?.LOCAL_AI_PROVIDER_URL ?? '—'} />
       </div>
 
-      <section className="mt-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+      <section style={{ marginTop: 32 }}>
+        <h2 style={{ marginBottom: 12, fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
           Exposed workloads
         </h2>
         <ExposedWorkloads />
         <ExposePanel />
       </section>
 
-      <section className="mt-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+      <section style={{ marginTop: 32 }}>
+        <h2 style={{ marginBottom: 12, fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
           Top benches (gen tps)
         </h2>
         {topBench.length === 0 ? (
-          <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-[color:var(--color-text-secondary)]">
+          <div style={{ borderRadius: 'var(--r-md)', border: '1px dashed var(--color-border)', padding: 16, color: 'var(--color-text-secondary)' }}>
             No tuned records yet.
           </div>
         ) : (
-          <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
-            <table className="w-full mono text-sm">
-              <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
+          <div style={{ overflow: 'hidden', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)' }}>
+            <table style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 14, borderCollapse: 'collapse' }}>
+              <thead style={{ background: 'var(--color-surface-1)', textAlign: 'left', color: 'var(--color-text-secondary)' }}>
                 <tr>
-                  <th className="px-3 py-2 font-medium">Model</th>
-                  <th className="px-3 py-2 font-medium">Class</th>
-                  <th className="px-3 py-2 text-right font-medium">Gen tps</th>
-                  <th className="px-3 py-2 text-right font-medium">Prompt tps</th>
-                  <th className="px-3 py-2 font-medium">Mode/Ctx</th>
+                  <th style={{ padding: '8px 12px', fontWeight: 500 }}>Model</th>
+                  <th style={{ padding: '8px 12px', fontWeight: 500 }}>Class</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 500 }}>Gen tps</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 500 }}>Prompt tps</th>
+                  <th style={{ padding: '8px 12px', fontWeight: 500 }}>Mode/Ctx</th>
                 </tr>
               </thead>
               <tbody>
                 {topBench.map((row: BenchCompareRow) => (
                   <tr
                     key={row.rel}
-                    className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
+                    style={{ borderTop: '1px solid var(--color-border)', background: 'var(--color-surface-1)' }}
                   >
-                    <td className="px-3 py-2">{row.label}</td>
-                    <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">{row.class}</td>
-                    <td className="px-3 py-2 text-right text-[color:var(--color-ok)]">
+                    <td style={{ padding: '8px 12px' }}>{row.label}</td>
+                    <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)' }}>{row.class}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', color: 'var(--color-ok)' }}>
                       {fmtTps(row.tuned?.gen_tps)}
                     </td>
-                    <td className="px-3 py-2 text-right">{fmtTps(row.tuned?.prompt_tps)}</td>
-                    <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">
+                    <td style={{ padding: '8px 12px', textAlign: 'right' }}>{fmtTps(row.tuned?.prompt_tps)}</td>
+                    <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)' }}>
                       {row.mode} / {row.ctx}
                     </td>
                   </tr>
@@ -337,26 +322,26 @@ function DashboardBody(): React.JSX.Element {
         )}
       </section>
 
-      <section className="mt-8">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+      <section style={{ marginTop: 32 }}>
+        <h2 style={{ marginBottom: 12, fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
           Preset promotions ({promotions.length})
         </h2>
         {promotions.length === 0 ? (
-          <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-[color:var(--color-text-secondary)]">
+          <div style={{ borderRadius: 'var(--r-md)', border: '1px dashed var(--color-border)', padding: 16, color: 'var(--color-text-secondary)' }}>
             No preset overrides active.
           </div>
         ) : (
-          <ul className="space-y-1 mono text-sm">
+          <ul style={{ display: 'flex', flexDirection: 'column', gap: 4, fontFamily: 'var(--font-mono)', fontSize: 14, margin: 0, padding: 0, listStyle: 'none' }}>
             {promotions.map((p: PresetOverride) => (
               <li
                 key={`${p.profile}:${p.preset}`}
-                className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2"
+                style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-1)', padding: '8px 12px' }}
               >
-                <span className="text-[color:var(--color-brand)]">{p.profile}</span>
-                <span className="mx-1 text-[color:var(--color-text-secondary)]">·</span>
+                <span style={{ color: 'var(--color-brand)' }}>{p.profile}</span>
+                <span style={{ margin: '0 4px', color: 'var(--color-text-secondary)' }}>·</span>
                 <span>{p.preset}</span>
-                <span className="mx-2 text-[color:var(--color-text-secondary)]">→</span>
-                <span className="text-[color:var(--color-ok)]">{p.rel}</span>
+                <span style={{ margin: '0 8px', color: 'var(--color-text-secondary)' }}>→</span>
+                <span style={{ color: 'var(--color-ok)' }}>{p.rel}</span>
               </li>
             ))}
           </ul>
@@ -368,9 +353,9 @@ function DashboardBody(): React.JSX.Element {
 
 export default function Dashboard(): React.JSX.Element {
   return (
-    <div className="h-full" data-testid="dashboard-root">
+    <div style={{ height: '100%' }} data-testid="dashboard-root">
       <Suspense
-        fallback={<div className="p-6 text-[color:var(--color-text-secondary)]">Loading…</div>}
+        fallback={<div style={{ padding: 24, color: 'var(--color-text-secondary)' }}>Loading…</div>}
       >
         <DashboardBody />
       </Suspense>
