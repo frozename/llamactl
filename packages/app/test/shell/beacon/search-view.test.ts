@@ -68,6 +68,7 @@ describe('searchModules', () => {
       activityBar: false,
       beaconGroup: 'workspace',
       beaconKind: 'static',
+      smokeAffordance: 'fake-root',
     }));
     const r = searchModules(fake, 'mod');
     expect(r).toHaveLength(30);

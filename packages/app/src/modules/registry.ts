@@ -130,6 +130,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'workspace',
     beaconKind: 'static',
     beaconOrder: 10,
+    smokeAffordance: 'dashboard-root',
   },
   {
     id: 'chat',
@@ -142,6 +143,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'workspace',
     beaconKind: 'static',
     beaconOrder: 20,
+    smokeAffordance: 'chat-root',
   },
   {
     id: 'ops-chat',
@@ -155,6 +157,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'ops',
     beaconKind: 'static',
     beaconOrder: 10,
+    smokeAffordance: 'ops-chat-root',
   },
   {
     id: 'plan',
@@ -167,6 +170,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'ops',
     beaconKind: 'static',
     beaconOrder: 15,
+    smokeAffordance: 'plan-root',
   },
   {
     id: 'projects',
@@ -179,6 +183,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'workspace',
     beaconKind: 'static',
     beaconOrder: 30,
+    smokeAffordance: 'projects-root',
   },
   {
     id: 'knowledge.retrieval',
@@ -192,6 +197,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'knowledge',
     beaconKind: 'static',
     beaconOrder: 10,
+    smokeAffordance: 'knowledge-retrieval-root',
   },
   {
     id: 'knowledge.pipelines',
@@ -204,6 +210,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'knowledge',
     beaconKind: 'static',
     beaconOrder: 20,
+    smokeAffordance: 'knowledge-pipelines-root',
   },
   {
     id: 'workloads',
@@ -217,6 +224,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'ops',
     beaconKind: 'dynamic-group',
     beaconOrder: 20,
+    smokeAffordance: 'workloads-root',
   },
   {
     id: 'workloads.model-runs',
@@ -229,6 +237,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'ops',
     beaconKind: 'static',
     beaconOrder: 22,
+    smokeAffordance: 'workloads-model-runs-root',
   },
   {
     id: 'workloads.composites',
@@ -241,6 +250,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'ops',
     beaconKind: 'static',
     beaconOrder: 24,
+    smokeAffordance: 'workloads-composites-root',
   },
   {
     id: 'models.catalog',
@@ -254,6 +264,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'models',
     beaconKind: 'static',
     beaconOrder: 10,
+    smokeAffordance: 'models-catalog-root',
   },
   {
     id: 'models.presets',
@@ -266,6 +277,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'models',
     beaconKind: 'static',
     beaconOrder: 20,
+    smokeAffordance: 'models-presets-root',
   },
   {
     id: 'models.pulls',
@@ -278,6 +290,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'models',
     beaconKind: 'static',
     beaconOrder: 30,
+    smokeAffordance: 'models-pulls-root',
   },
   {
     id: 'models.bench',
@@ -290,6 +303,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'models',
     beaconKind: 'static',
     beaconOrder: 40,
+    smokeAffordance: 'models-bench-root',
   },
   {
     id: 'models.lmstudio',
@@ -302,6 +316,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'models',
     beaconKind: 'static',
     beaconOrder: 50,
+    smokeAffordance: 'models-lmstudio-root',
   },
   {
     id: 'models.server',
@@ -314,6 +329,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'models',
     beaconKind: 'static',
     beaconOrder: 60,
+    smokeAffordance: 'models-server-root',
   },
   {
     id: 'nodes',
@@ -327,6 +343,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'ops',
     beaconKind: 'dynamic-group',
     beaconOrder: 30,
+    smokeAffordance: 'nodes-root',
   },
   {
     id: 'logs',
@@ -339,6 +356,7 @@ export const APP_MODULES: AppModule[] = [
     beaconGroup: 'observability',
     beaconKind: 'static',
     beaconOrder: 10,
+    smokeAffordance: 'logs-root',
   },
   // ── Activity bar: bottom ──────────────────────────────────
   {
@@ -351,6 +369,7 @@ export const APP_MODULES: AppModule[] = [
     group: 'observability',
     beaconGroup: 'hidden',
     beaconKind: 'static',
+    smokeAffordance: 'cost-tier',
   },
   {
     id: 'settings',
@@ -362,6 +381,7 @@ export const APP_MODULES: AppModule[] = [
     group: 'core',
     beaconGroup: 'hidden',
     beaconKind: 'static',
+    smokeAffordance: 'settings-root',
   },
   {
     id: 'ui-primitives',
@@ -373,5 +393,6 @@ export const APP_MODULES: AppModule[] = [
     aliases: ['sandbox', 'components', 'primitives', 'beacon'],
     beaconGroup: 'hidden',
     beaconKind: 'static',
+    smokeAffordance: 'ui-primitives-root',
   },
 ];
