@@ -1,3 +1,4 @@
+import { startSearchIngest, stopSearchIngest } from '../search/ingest/lifecycle.js';
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
 import { openaiProxy } from '@llamactl/core';
 import { router as appRouter } from '../router.js';
@@ -144,6 +145,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   process.on('uncaughtException', captureFatal('uncaughtException'));
   process.on('unhandledRejection', captureFatal('unhandledRejection'));
 
+  startSearchIngest().catch(() => {});
   agentInfo.set(
     {
       node_name: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? 'agent',
@@ -412,6 +414,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     port: listenPort,
     fingerprint,
     stop: async () => {
+      stopSearchIngest();
       // Best-effort — never let a tunnel-client teardown error
       // prevent the HTTP server from also stopping.
       if (tunnelClient) {
