@@ -30,8 +30,23 @@ jobs:
           ref: fceaaa3ed06d1ce85fe7ece8934c2a40ea2b351d
           path: electron-mcp
 
+      # llamactl's package.json carries file:../nova/packages/* deps.
+      # Without the sibling checkout, `bun install --frozen-lockfile`
+      # fails to link them. Mirrors the layout cross-repo-smoke.yml
+      # already uses.
+      - name: Checkout nova
+        uses: actions/checkout@v4
+        with:
+          repository: frozename/nova
+          ref: main
+          path: nova
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+
+      - name: Install nova
+        working-directory: nova
+        run: bun install --frozen-lockfile || bun install
 
       - name: Install llamactl
         working-directory: llamactl
