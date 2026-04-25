@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
+import { Button, Input, EditorialHero } from '@/ui';
 
 type Mode = 'file' | 'candidate' | 'test';
 type Profile = 'mac-mini-16g' | 'balanced' | 'macbook-pro-48g';
@@ -28,18 +29,18 @@ function truncate(lines: LogLine[]): LogLine[] {
   return lines.length > MAX_LOG_LINES ? lines.slice(lines.length - MAX_LOG_LINES) : lines;
 }
 
-function lineClass(kind: LogLine['kind']): string {
+function getLogColor(kind: LogLine['kind']): string {
   switch (kind) {
     case 'stderr':
     case 'error':
-      return 'text-[color:var(--color-warn)] whitespace-pre-wrap';
+      return 'var(--color-warn)';
     case 'done':
-      return 'text-[color:var(--color-ok)] whitespace-pre-wrap';
+      return 'var(--color-ok)';
     case 'start':
     case 'profile':
-      return 'text-[color:var(--color-brand)] whitespace-pre-wrap';
+      return 'var(--color-brand)';
     default:
-      return 'text-[color:var(--color-text)] whitespace-pre-wrap';
+      return 'var(--color-text)';
   }
 }
 
@@ -183,63 +184,74 @@ function PullCard({
 
   const stateColor =
     state === 'done'
-      ? 'text-[color:var(--color-ok)]'
+      ? 'var(--color-ok)'
       : state === 'error'
-        ? 'text-[color:var(--color-err)]'
-        : 'text-[color:var(--color-brand)]';
+        ? 'var(--color-err)'
+        : 'var(--color-brand)';
 
   return (
-    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)]">
-      <div className="flex items-center justify-between px-3 py-2 text-xs">
-        <div className="flex items-center gap-3">
-          <span className={`mono ${stateColor}`}>{state}</span>
-          <span className="mono text-[color:var(--color-text-secondary)] break-all">{label}</span>
+    <div style={{ borderRadius: 6, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', fontSize: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontFamily: 'monospace', color: stateColor }}>{state}</span>
+          <span style={{ fontFamily: 'monospace', color: 'var(--color-text-secondary)', wordBreak: 'break-all' }}>{label}</span>
         </div>
-        <div className="flex items-center gap-1">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           {state === 'running' && (
-            <button
-              type="button"
+            <Button
+              variant="destructive"
+              size="sm"
               onClick={() => {
-                // Flipping state to `error` (and the useSubscription
-                // `enabled` flag with it) unmounts the subscription,
-                // triggering the server-side abort controller.
                 setState('error');
                 setError('Cancelled by user');
               }}
-              className="rounded border border-[var(--color-err)] px-2 py-0.5 text-xs text-[color:var(--color-err)] hover:bg-[var(--color-surface-2)]"
+              style={{ fontSize: 12, padding: '2px 8px' }}
             >
               Cancel
-            </button>
+            </Button>
           )}
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => onDismiss(spec.id)}
             disabled={state === 'running'}
-            className="rounded border border-transparent px-2 py-0.5 text-xs text-[color:var(--color-text-secondary)] hover:border-[var(--color-border)] hover:text-[color:var(--color-text)] disabled:opacity-40"
+            style={{ fontSize: 12, padding: '2px 8px' }}
             aria-label="Dismiss"
           >
             ×
-          </button>
+          </Button>
         </div>
       </div>
       {(summary || error) && (
         <div
-          className={`mono border-t border-[var(--color-border)] px-3 py-1 text-xs ${
-            error ? 'text-[color:var(--color-err)]' : 'text-[color:var(--color-ok)]'
-          }`}
+          style={{
+            fontFamily: 'monospace',
+            borderTop: '1px solid var(--color-border)',
+            padding: '4px 12px',
+            fontSize: 12,
+            color: error ? 'var(--color-err)' : 'var(--color-ok)',
+          }}
         >
           {error ?? summary}
         </div>
       )}
       <div
         ref={logRef}
-        className="max-h-[28vh] overflow-auto border-t border-[var(--color-border)] bg-[var(--color-surface-0)] px-3 py-1.5 mono text-xs"
+        style={{
+          maxHeight: '28vh',
+          overflow: 'auto',
+          borderTop: '1px solid var(--color-border)',
+          backgroundColor: 'var(--color-surface-0)',
+          padding: '6px 12px',
+          fontFamily: 'monospace',
+          fontSize: 12,
+        }}
       >
         {log.length === 0 ? (
-          <div className="text-[color:var(--color-text-secondary)]">Waiting for output…</div>
+          <div style={{ color: 'var(--color-text-secondary)' }}>Waiting for output…</div>
         ) : (
           log.map((line, i) => (
-            <div key={i} className={lineClass(line.kind)}>
+            <div key={i} style={{ color: getLogColor(line.kind), whiteSpace: 'pre-wrap' }}>
               {line.text}
             </div>
           ))
@@ -304,11 +316,11 @@ export default function Pulls(): React.JSX.Element {
   );
 
   return (
-    <div className="h-full overflow-auto p-6" data-testid="models-pulls-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+    <div style={{ height: '100%', overflow: 'auto', padding: 24 }} data-testid="models-pulls-root">
+      <div style={{ marginBottom: 4, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
         Pulls
       </div>
-      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-text)]">
+      <h1 style={{ marginBottom: 16, fontSize: 24, fontWeight: 600, color: 'var(--color-text)' }}>
         Download a model
       </h1>
 
@@ -317,9 +329,9 @@ export default function Pulls(): React.JSX.Element {
           e.preventDefault();
           enqueue();
         }}
-        className="mb-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
+        style={{ marginBottom: 16, borderRadius: 6, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)', padding: 16 }}
       >
-        <div className="mb-3 flex gap-1 text-xs" role="tablist">
+        <div style={{ marginBottom: 12, display: 'flex', gap: 4, fontSize: 12 }} role="tablist">
           {(['file', 'candidate', 'test'] as Mode[]).map((m) => {
             const isActive = mode === m;
             return (
@@ -331,49 +343,61 @@ export default function Pulls(): React.JSX.Element {
                 data-testid={`pulls-mode-${m}`}
                 data-active={isActive ? 'true' : 'false'}
                 onClick={() => setMode(m)}
-                className={
-                  isActive
-                    ? 'rounded border border-[var(--color-brand)] bg-[var(--color-surface-2)] px-3 py-1 font-medium text-[color:var(--color-text)]'
-                    : 'rounded border border-transparent px-3 py-1 text-[color:var(--color-text-secondary)] hover:bg-[var(--color-surface-2)] hover:text-[color:var(--color-text)]'
-                }
+                style={{
+                  borderRadius: 4,
+                  border: isActive ? '1px solid var(--color-brand)' : '1px solid transparent',
+                  backgroundColor: isActive ? 'var(--color-surface-2)' : 'transparent',
+                  padding: '4px 12px',
+                  fontWeight: isActive ? 500 : 400,
+                  color: isActive ? 'var(--color-text)' : 'var(--color-text-secondary)',
+                  cursor: 'pointer',
+                }}
               >
                 {m === 'file' ? 'Pull file' : m === 'candidate' ? 'Pull candidate' : 'Candidate test'}
               </button>
             );
           })}
         </div>
-        <div className="grid grid-cols-12 gap-3">
-          <label className="col-span-5 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">Repo</span>
-            <input
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 12 }}>
+          <label style={{ gridColumn: 'span 5 / span 5', fontSize: 14 }}>
+            <span style={{ marginBottom: 4, display: 'block', fontSize: 12, color: 'var(--color-text-secondary)' }}>Repo</span>
+            <Input
               value={repo}
               onChange={(e) => setRepo(e.target.value)}
               placeholder="unsloth/gemma-4-E4B-it-GGUF"
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+              style={{ width: '100%', fontFamily: 'monospace' }}
             />
           </label>
-          <label className="col-span-5 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+          <label style={{ gridColumn: 'span 5 / span 5', fontSize: 14 }}>
+            <span style={{ marginBottom: 4, display: 'block', fontSize: 12, color: 'var(--color-text-secondary)' }}>
               {mode === 'file' ? 'File' : 'File (optional override)'}
             </span>
-            <input
+            <Input
               value={file}
               onChange={(e) => setFile(e.target.value)}
               placeholder={
                 mode === 'file' ? 'gemma-4-E4B-it-Q8_0.gguf' : '(auto-pick via profile)'
               }
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+              style={{ width: '100%', fontFamily: 'monospace' }}
             />
           </label>
           {(mode === 'candidate' || mode === 'test') && (
-            <label className="col-span-2 text-sm">
-              <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+            <label style={{ gridColumn: 'span 2 / span 2', fontSize: 14 }}>
+              <span style={{ marginBottom: 4, display: 'block', fontSize: 12, color: 'var(--color-text-secondary)' }}>
                 Profile
               </span>
               <select
                 value={profile}
                 onChange={(e) => setProfile(e.target.value as Profile | '')}
-                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+                style={{
+                  width: '100%',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                  backgroundColor: 'var(--color-surface-2)',
+                  padding: '4px 8px',
+                  fontFamily: 'monospace',
+                  color: 'var(--color-text)',
+                }}
               >
                 <option value="">(current)</option>
                 {PROFILES.map((p) => (
@@ -385,40 +409,44 @@ export default function Pulls(): React.JSX.Element {
             </label>
           )}
           <div
-            className={
-              mode === 'file' ? 'col-span-2 flex items-end' : 'col-span-12 flex justify-end'
-            }
+            style={{
+              gridColumn: mode === 'file' ? 'span 2 / span 2' : 'span 12 / span 12',
+              display: 'flex',
+              alignItems: 'flex-end',
+              justifyContent: mode === 'file' ? 'flex-start' : 'flex-end',
+            }}
           >
-            <button
+            <Button
               type="submit"
-              className="rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90"
+              variant="primary"
             >
               {mode === 'test' ? 'Enqueue test' : 'Enqueue pull'}
-            </button>
+            </Button>
           </div>
         </div>
-        <div className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
           Each Enqueue adds a new card below — runs are independent and can be cancelled
           individually.
         </div>
       </form>
 
       {error && (
-        <div className="mb-3 rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
+        <div style={{ marginBottom: 12, borderRadius: 6, border: '1px solid var(--color-err)', backgroundColor: 'var(--color-surface-1)', padding: '8px 12px', fontSize: 14, color: 'var(--color-err)' }}>
           {error}
         </div>
       )}
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+        <h2 style={{ marginBottom: 8, fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
           Queue ({activeCount})
         </h2>
         {cards.length === 0 ? (
-          <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-[color:var(--color-text-secondary)]">
-            No pulls yet. Fill out the form above and hit Enqueue.
-          </div>
+          <EditorialHero
+            title="No pulls yet"
+            lede="Fill out the form above and hit Enqueue."
+          />
         ) : (
-          <div className="space-y-3">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {cards.map((spec) => (
               <PullCard
                 key={spec.id}

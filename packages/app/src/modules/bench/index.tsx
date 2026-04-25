@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
+import { Button, Input, StatusDot, EditorialHero } from '@/ui';
 
 type Mode = 'auto' | 'text' | 'vision';
 type RunKind = 'preset' | 'vision';
@@ -92,59 +93,67 @@ function SchedulerPanel(): React.JSX.Element {
   }
 
   return (
-    <section className="mb-6 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-medium text-[color:var(--color-text)]">
+    <section style={{ marginBottom: 24, borderRadius: 6, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)', padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--color-text)' }}>
           Bench scheduler
         </div>
-        <div className="flex items-center gap-2 text-[11px]">
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${running ? 'bg-[var(--color-ok)]' : 'bg-[var(--color-text-secondary)]'}`}
-          />
-          <span className="text-[color:var(--color-text-secondary)]">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+          <StatusDot tone={running ? 'ok' : 'idle'} />
+          <span style={{ color: 'var(--color-text-secondary)' }}>
             {running ? `running · last ${lastTick}` : 'stopped'}
           </span>
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => kick.mutate()}
             disabled={kick.isPending}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text)]"
+            style={{ fontSize: 10, padding: '2px 8px' }}
           >
             {kick.isPending ? '…' : 'Kick'}
-          </button>
+          </Button>
           {running ? (
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => stop.mutate()}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]"
+              style={{ fontSize: 10, padding: '2px 8px' }}
             >
               Stop
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="sm"
               onClick={() => start.mutate({ tickIntervalSeconds: 60 })}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-2 py-0.5 text-[10px] text-[color:var(--color-brand-contrast)]"
+              style={{ fontSize: 10, padding: '2px 8px' }}
             >
               Start
-            </button>
+            </Button>
           )}
         </div>
       </div>
-      <div className="mt-3 flex flex-wrap items-end gap-2 text-xs">
-        <input
+      <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 8, fontSize: 12 }}>
+        <Input
           type="text"
           placeholder="id (e.g. gemma-daily)"
           value={id}
           onChange={(e) => setId(e.target.value)}
           data-testid="bench-schedule-id"
-          className="w-40 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
+          style={{ width: 160 }}
         />
         <select
           value={node}
           onChange={(e) => setNode(e.target.value)}
           data-testid="bench-schedule-node"
-          className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
+          style={{
+            width: 128,
+            borderRadius: 4,
+            border: '1px solid var(--color-border)',
+            backgroundColor: 'var(--color-surface-2)',
+            padding: '4px 8px',
+            color: 'var(--color-text)',
+          }}
         >
           {(nodes.data?.nodes ?? [{ name: 'local' }]).map((n) => (
             <option key={n.name} value={n.name}>
@@ -152,28 +161,29 @@ function SchedulerPanel(): React.JSX.Element {
             </option>
           ))}
         </select>
-        <input
+        <Input
           type="text"
           placeholder="rel path"
           value={rel}
           onChange={(e) => setRel(e.target.value)}
           data-testid="bench-schedule-rel"
-          className="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[color:var(--color-text)]"
+          style={{ flex: 1, fontFamily: 'monospace' }}
         />
-        <label className="flex items-center gap-1 text-[color:var(--color-text-secondary)]">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--color-text-secondary)' }}>
           every
-          <input
+          <Input
             type="number"
             min={1}
             max={168}
             value={hours}
             onChange={(e) => setHours(Math.max(1, Number(e.target.value) || 1))}
-            className="w-14 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1 py-1 text-right text-[color:var(--color-text)]"
+            style={{ width: 56, textAlign: 'right' }}
           />
           hours
         </label>
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="sm"
           onClick={onAdd}
           disabled={add.isPending || !canAddSchedule}
           data-testid="bench-schedule-add"
@@ -182,53 +192,54 @@ function SchedulerPanel(): React.JSX.Element {
               ? 'Fill id and rel before adding a schedule.'
               : `Run bench for ${rel.trim()} on ${node.trim() || 'local'} every ${hours}h.`
           }
-          className="rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-3 py-1 font-medium text-[color:var(--color-brand-contrast)] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {add.isPending ? 'Adding…' : 'Add schedule'}
-        </button>
+        </Button>
       </div>
       {error && (
-        <div className="mt-2 text-xs text-[color:var(--color-err)]">{error}</div>
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-err)' }}>{error}</div>
       )}
-      <div className="mt-3 space-y-1">
+      <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
         {schedules.length === 0 && (
-          <div className="text-xs text-[color:var(--color-text-secondary)]">
+          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
             No schedules yet. Add one above to run benches on a cadence.
           </div>
         )}
         {schedules.map((s) => (
           <div
             key={s.id}
-            className="flex items-center justify-between rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: 4, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-2)', padding: '8px 12px', fontSize: 12 }}
           >
             <div>
-              <span className="font-mono text-[color:var(--color-text)]">{s.id}</span>
-              <span className="mx-1 text-[color:var(--color-text-secondary)]">·</span>
-              <span className="text-[color:var(--color-text-secondary)]">{s.node}</span>
-              <span className="mx-1 text-[color:var(--color-text-secondary)]">·</span>
-              <span className="font-mono text-[11px]">{s.rel}</span>
-              <div className="text-[10px] text-[color:var(--color-text-secondary)]">
+              <span style={{ fontFamily: 'monospace', color: 'var(--color-text)' }}>{s.id}</span>
+              <span style={{ margin: '0 4px', color: 'var(--color-text-secondary)' }}>·</span>
+              <span style={{ color: 'var(--color-text-secondary)' }}>{s.node}</span>
+              <span style={{ margin: '0 4px', color: 'var(--color-text-secondary)' }}>·</span>
+              <span style={{ fontFamily: 'monospace', fontSize: 11 }}>{s.rel}</span>
+              <div style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
                 every {Math.round(s.intervalSeconds / 3600)} hours · last {s.lastRunAt ?? '—'}
                 {s.lastError && (
-                  <span className="ml-2 text-[color:var(--color-err)]">err: {s.lastError}</span>
+                  <span style={{ marginLeft: 8, color: 'var(--color-err)' }}>err: {s.lastError}</span>
                 )}
               </div>
             </div>
-            <div className="flex gap-1">
-              <button
-                type="button"
+            <div style={{ display: 'flex', gap: 4 }}>
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => toggle.mutate({ id: s.id, enabled: !s.enabled })}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-0.5 text-[10px] text-[color:var(--color-text)]"
+                style={{ fontSize: 10, padding: '2px 8px' }}
               >
                 {s.enabled ? 'pause' : 'resume'}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => remove.mutate({ id: s.id })}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]"
+                style={{ fontSize: 10, padding: '2px 8px' }}
               >
                 remove
-              </button>
+              </Button>
             </div>
           </div>
         ))}
@@ -393,11 +404,11 @@ export default function Bench(): React.JSX.Element {
   };
 
   return (
-    <div className="h-full overflow-auto p-6" data-testid="models-bench-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+    <div style={{ height: '100%', overflow: 'auto', padding: 24 }} data-testid="models-bench-root">
+      <div style={{ marginBottom: 4, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
         Bench
       </div>
-      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-text)]">
+      <h1 style={{ marginBottom: 16, fontSize: 24, fontWeight: 600, color: 'var(--color-text)' }}>
         Tune + measure
       </h1>
 
@@ -405,20 +416,20 @@ export default function Bench(): React.JSX.Element {
 
       <form
         onSubmit={(e) => e.preventDefault()}
-        className="mb-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
+        style={{ marginBottom: 16, borderRadius: 6, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)', padding: 16 }}
       >
-        <div className="grid grid-cols-12 gap-3">
-          <label className="col-span-7 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 12 }}>
+          <label style={{ gridColumn: 'span 7 / span 7', fontSize: 14 }}>
+            <span style={{ marginBottom: 4, display: 'block', fontSize: 12, color: 'var(--color-text-secondary)' }}>
               Target (rel or preset alias)
             </span>
-            <input
+            <Input
               list="bench-rel-suggestions"
               value={target}
               onChange={(e) => setTarget(e.target.value)}
               disabled={busy}
               data-testid="bench-target"
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+              style={{ width: '100%', fontFamily: 'monospace' }}
               placeholder="current | best | <rel>"
             />
             <datalist id="bench-rel-suggestions">
@@ -430,51 +441,59 @@ export default function Bench(): React.JSX.Element {
               ))}
             </datalist>
           </label>
-          <label className="col-span-2 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">Mode</span>
+          <label style={{ gridColumn: 'span 2 / span 2', fontSize: 14 }}>
+            <span style={{ marginBottom: 4, display: 'block', fontSize: 12, color: 'var(--color-text-secondary)' }}>Mode</span>
             <select
               value={mode}
               onChange={(e) => setMode(e.target.value as Mode)}
               disabled={busy}
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+              style={{
+                width: '100%',
+                borderRadius: 4,
+                border: '1px solid var(--color-border)',
+                backgroundColor: 'var(--color-surface-2)',
+                padding: '4px 8px',
+                fontFamily: 'monospace',
+                color: 'var(--color-text)',
+              }}
             >
               <option value="auto">auto</option>
               <option value="text">text</option>
               <option value="vision">vision</option>
             </select>
           </label>
-          <div className="col-span-3 flex items-end gap-2">
+          <div style={{ gridColumn: 'span 3 / span 3', display: 'flex', alignItems: 'flex-end', gap: 8 }}>
             {busy ? (
-              <button
-                type="button"
+              <Button
+                variant="destructive"
                 onClick={cancel}
                 data-testid="bench-cancel"
-                className="flex-1 rounded border border-[var(--color-err)] px-3 py-1 text-sm text-[color:var(--color-err)] hover:bg-[var(--color-surface-2)]"
+                style={{ flex: 1 }}
               >
                 Cancel
-              </button>
+              </Button>
             ) : (
               <>
-                <button
-                  type="button"
+                <Button
+                  variant="primary"
                   onClick={() => start('preset')}
                   disabled={!canRun}
                   data-testid="bench-run-preset"
                   title={canRun ? 'Run text preset bench.' : 'Enter a target first.'}
-                  className="flex-1 rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  style={{ flex: 1 }}
                 >
                   Run preset
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="secondary"
                   onClick={() => start('vision')}
                   disabled={!canRun}
                   data-testid="bench-run-vision"
                   title={canRun ? 'Run vision bench.' : 'Enter a target first.'}
-                  className="flex-1 rounded border border-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-brand)] hover:bg-[var(--color-surface-2)] disabled:cursor-not-allowed disabled:opacity-40"
+                  style={{ flex: 1 }}
                 >
                   Run vision
-                </button>
+                </Button>
               </>
             )}
           </div>
@@ -482,19 +501,19 @@ export default function Bench(): React.JSX.Element {
       </form>
 
       {error && (
-        <div className="mb-3 rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
+        <div style={{ marginBottom: 12, borderRadius: 6, border: '1px solid var(--color-err)', backgroundColor: 'var(--color-surface-1)', padding: '8px 12px', fontSize: 14, color: 'var(--color-err)' }}>
           {error}
         </div>
       )}
       {summary && (
-        <div className="mb-3 rounded-md border border-[var(--color-ok)] bg-[var(--color-surface-1)] px-3 py-2 text-sm">
-          <div className="text-[color:var(--color-ok)]">Bench complete</div>
-          <div className="mono text-xs text-[color:var(--color-text-secondary)]">{summary}</div>
+        <div style={{ marginBottom: 12, borderRadius: 6, border: '1px solid var(--color-ok)', backgroundColor: 'var(--color-surface-1)', padding: '8px 12px', fontSize: 14 }}>
+          <div style={{ color: 'var(--color-ok)' }}>Bench complete</div>
+          <div style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--color-text-secondary)' }}>{summary}</div>
         </div>
       )}
 
-      <div className="mb-6 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)]">
-        <div className="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+      <div style={{ marginBottom: 24, borderRadius: 6, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-0)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
           <span>Log</span>
           <span>
             {log.length} line{log.length === 1 ? '' : 's'}
@@ -502,90 +521,90 @@ export default function Bench(): React.JSX.Element {
         </div>
         <div
           ref={logRef}
-          className="max-h-[40vh] overflow-auto border-t border-[var(--color-border)] px-3 py-2 mono text-xs"
+          style={{
+            maxHeight: '40vh',
+            overflow: 'auto',
+            borderTop: '1px solid var(--color-border)',
+            padding: '8px 12px',
+            fontFamily: 'monospace',
+            fontSize: 12,
+          }}
         >
           {log.length === 0 ? (
-            <div className="text-[color:var(--color-text-secondary)]">
+            <div style={{ color: 'var(--color-text-secondary)' }}>
               {busy ? 'Waiting for output…' : 'Run preset or vision to see streaming output here.'}
             </div>
           ) : (
-            log.map((line, i) => (
-              <div
-                key={i}
-                className={
-                  line.kind === 'stderr' || line.kind === 'error'
-                    ? 'text-[color:var(--color-warn)] whitespace-pre-wrap'
-                    : line.kind === 'done'
-                      ? 'text-[color:var(--color-ok)] whitespace-pre-wrap'
-                      : line.kind === 'start' || line.kind === 'profile'
-                        ? 'text-[color:var(--color-brand)] whitespace-pre-wrap'
-                        : 'text-[color:var(--color-text)] whitespace-pre-wrap'
-                }
-              >
-                {line.text}
-              </div>
-            ))
+            log.map((line, i) => {
+              let color = 'var(--color-text)';
+              if (line.kind === 'stderr' || line.kind === 'error') color = 'var(--color-warn)';
+              else if (line.kind === 'done') color = 'var(--color-ok)';
+              else if (line.kind === 'start' || line.kind === 'profile') color = 'var(--color-brand)';
+
+              return (
+                <div key={i} style={{ color, whiteSpace: 'pre-wrap' }}>
+                  {line.text}
+                </div>
+              );
+            })
           )}
         </div>
       </div>
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+        <h2 style={{ marginBottom: 8, fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
           Recent history ({recentHistory.length})
         </h2>
-        <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
-          <table className="w-full mono text-xs">
-            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
-              <tr>
-                <th className="px-3 py-2 font-medium">Updated</th>
-                <th className="px-3 py-2 font-medium">Rel</th>
-                <th className="px-3 py-2 font-medium">Mode</th>
-                <th className="px-3 py-2 font-medium">Profile</th>
-                <th className="px-3 py-2 text-right font-medium">Gen tps</th>
-                <th className="px-3 py-2 text-right font-medium">Prompt tps</th>
-                <th className="px-3 py-2 font-medium">Build</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentHistory
-                .slice()
-                .reverse()
-                .slice(0, 30)
-                .map((row, i) => (
-                  <tr
-                    key={`${row.updated_at}-${i}`}
-                    className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
-                  >
-                    <td className="px-3 py-1.5 text-[color:var(--color-text-secondary)]">
-                      {row.updated_at}
-                    </td>
-                    <td className="px-3 py-1.5 text-[color:var(--color-brand)] break-all">
-                      {row.rel}
-                    </td>
-                    <td className="px-3 py-1.5">{row.mode}</td>
-                    <td className="px-3 py-1.5">{row.profile}</td>
-                    <td className="px-3 py-1.5 text-right text-[color:var(--color-ok)]">
-                      {fmtTps(row.gen_ts)}
-                    </td>
-                    <td className="px-3 py-1.5 text-right">{fmtTps(row.prompt_ts)}</td>
-                    <td className="px-3 py-1.5 text-[color:var(--color-text-secondary)]">
-                      {row.build}
-                    </td>
-                  </tr>
-                ))}
-              {recentHistory.length === 0 && (
+        {recentHistory.length === 0 ? (
+          <EditorialHero
+            title="No benchmark history recorded yet"
+            lede="Run a benchmark to see the history here."
+          />
+        ) : (
+          <div style={{ overflow: 'hidden', borderRadius: 6, border: '1px solid var(--color-border)' }}>
+            <table style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }}>
+              <thead style={{ backgroundColor: 'var(--color-surface-1)', textAlign: 'left', color: 'var(--color-text-secondary)' }}>
                 <tr>
-                  <td
-                    colSpan={7}
-                    className="px-3 py-6 text-center text-[color:var(--color-text-secondary)]"
-                  >
-                    No benchmark history recorded yet.
-                  </td>
+                  <th style={{ padding: '8px 12px', fontWeight: 500 }}>Updated</th>
+                  <th style={{ padding: '8px 12px', fontWeight: 500 }}>Rel</th>
+                  <th style={{ padding: '8px 12px', fontWeight: 500 }}>Mode</th>
+                  <th style={{ padding: '8px 12px', fontWeight: 500 }}>Profile</th>
+                  <th style={{ padding: '8px 12px', fontWeight: 500, textAlign: 'right' }}>Gen tps</th>
+                  <th style={{ padding: '8px 12px', fontWeight: 500, textAlign: 'right' }}>Prompt tps</th>
+                  <th style={{ padding: '8px 12px', fontWeight: 500 }}>Build</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {recentHistory
+                  .slice()
+                  .reverse()
+                  .slice(0, 30)
+                  .map((row, i) => (
+                    <tr
+                      key={`${row.updated_at}-${i}`}
+                      style={{ borderTop: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)' }}
+                    >
+                      <td style={{ padding: '6px 12px', color: 'var(--color-text-secondary)' }}>
+                        {row.updated_at}
+                      </td>
+                      <td style={{ padding: '6px 12px', color: 'var(--color-brand)', wordBreak: 'break-all' }}>
+                        {row.rel}
+                      </td>
+                      <td style={{ padding: '6px 12px' }}>{row.mode}</td>
+                      <td style={{ padding: '6px 12px' }}>{row.profile}</td>
+                      <td style={{ padding: '6px 12px', textAlign: 'right', color: 'var(--color-ok)' }}>
+                        {fmtTps(row.gen_ts)}
+                      </td>
+                      <td style={{ padding: '6px 12px', textAlign: 'right' }}>{fmtTps(row.prompt_ts)}</td>
+                      <td style={{ padding: '6px 12px', color: 'var(--color-text-secondary)' }}>
+                        {row.build}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </div>
   );

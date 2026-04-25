@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
+import { Button, Input, StatusDot } from '@/ui';
 
 interface LogLine {
   kind: 'launch' | 'waiting' | 'retry' | 'ready' | 'timeout' | 'exited' | 'done' | 'error';
@@ -151,43 +152,50 @@ export default function Server(): React.JSX.Element {
   const ka = keepAliveStatus.data;
 
   return (
-    <div className="h-full overflow-auto p-6" data-testid="models-server-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-[color:var(--color-text-secondary)]">
+    <div style={{ height: '100%', overflow: 'auto', padding: 24 }} data-testid="models-server-root">
+      <div style={{ marginBottom: 4, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
         Server
       </div>
-      <h1 className="mb-4 text-2xl font-semibold text-[color:var(--color-text)]">
+      <h1 style={{ marginBottom: 16, fontSize: 24, fontWeight: 600, color: 'var(--color-text)' }}>
         llama.cpp lifecycle
       </h1>
 
-      <div className="mb-4 grid grid-cols-4 gap-3">
+      <div style={{ marginBottom: 16, display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
         <div
-          className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
+          style={{ borderRadius: 6, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)', padding: 12 }}
           data-testid="server-state-card"
         >
-          <div className="text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+          <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
             State
           </div>
           <div
             data-testid="server-state"
             data-state={s?.state ?? 'unknown'}
-            className={`mt-1 text-lg font-semibold ${
-              isUp
-                ? 'text-[color:var(--color-ok)]'
+            style={{
+              marginTop: 4,
+              fontSize: 18,
+              fontWeight: 600,
+              color: isUp
+                ? 'var(--color-ok)'
                 : s?.state === 'down'
-                  ? 'text-[color:var(--color-err)]'
-                  : 'text-[color:var(--color-text-secondary)]'
-            }`}
+                  ? 'var(--color-err)'
+                  : 'var(--color-text-secondary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
           >
+            <StatusDot tone={isUp ? 'ok' : s?.state === 'down' ? 'err' : 'idle'} />
             {s?.state ?? '—'}
           </div>
         </div>
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
-          <div className="text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+        <div style={{ borderRadius: 6, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)', padding: 12 }}>
+          <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
             Endpoint
           </div>
-          <div className="mt-1 mono text-sm break-all text-[color:var(--color-text)]">
+          <div style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 14, wordBreak: 'break-all', color: 'var(--color-text)' }}>
             {s?.endpoint ? (
-              <a href={s.endpoint} target="_blank" rel="noreferrer" className="underline">
+              <a href={s.endpoint} target="_blank" rel="noreferrer" style={{ textDecoration: 'underline' }}>
                 {s.endpoint}
               </a>
             ) : (
@@ -195,42 +203,45 @@ export default function Server(): React.JSX.Element {
             )}
           </div>
           {s?.advertisedEndpoint && s.advertisedEndpoint !== s.endpoint && (
-            <div className="mt-1 text-[10px] text-[color:var(--color-text-secondary)]">
+            <div style={{ marginTop: 4, fontSize: 10, color: 'var(--color-text-secondary)' }}>
               LAN:{' '}
               <a
                 href={s.advertisedEndpoint}
                 target="_blank"
                 rel="noreferrer"
-                className="mono underline"
+                style={{ fontFamily: 'monospace', textDecoration: 'underline' }}
               >
                 {s.advertisedEndpoint}
               </a>
             </div>
           )}
         </div>
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
-          <div className="text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+        <div style={{ borderRadius: 6, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)', padding: 12 }}>
+          <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
             PID
           </div>
-          <div className="mt-1 mono text-sm text-[color:var(--color-text)]">
+          <div style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 14, color: 'var(--color-text)' }}>
             {s?.pid ?? 'none'}
           </div>
         </div>
         <div
-          className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
+          style={{ borderRadius: 6, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)', padding: 12 }}
           data-testid="server-http-card"
         >
-          <div className="text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+          <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
             HTTP
           </div>
           <div
-            className={`mt-1 mono text-sm ${
-              httpOk
-                ? 'text-[color:var(--color-ok)]'
+            style={{
+              marginTop: 4,
+              fontFamily: 'monospace',
+              fontSize: 14,
+              color: httpOk
+                ? 'var(--color-ok)'
                 : s?.health.httpCode == null
-                  ? 'text-[color:var(--color-text-secondary)]'
-                  : 'text-[color:var(--color-err)]'
-            }`}
+                  ? 'var(--color-text-secondary)'
+                  : 'var(--color-err)',
+            }}
           >
             {httpLabel}
           </div>
@@ -242,19 +253,19 @@ export default function Server(): React.JSX.Element {
           e.preventDefault();
           onStart();
         }}
-        className="mb-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4"
+        style={{ marginBottom: 16, borderRadius: 6, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)', padding: 16 }}
       >
-        <div className="grid grid-cols-12 gap-3">
-          <label className="col-span-6 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 12 }}>
+          <label style={{ gridColumn: 'span 6 / span 6', fontSize: 14 }}>
+            <span style={{ marginBottom: 4, display: 'block', fontSize: 12, color: 'var(--color-text-secondary)' }}>
               Target
             </span>
-            <input
+            <Input
               list="server-rel-suggestions"
               value={target}
               onChange={(e) => setTarget(e.target.value)}
               disabled={busy}
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+              style={{ width: '100%', fontFamily: 'monospace' }}
               placeholder="current | best | <rel>"
             />
             <datalist id="server-rel-suggestions">
@@ -266,23 +277,23 @@ export default function Server(): React.JSX.Element {
               ))}
             </datalist>
           </label>
-          <label className="col-span-2 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+          <label style={{ gridColumn: 'span 2 / span 2', fontSize: 14 }}>
+            <span style={{ marginBottom: 4, display: 'block', fontSize: 12, color: 'var(--color-text-secondary)' }}>
               Timeout (s)
             </span>
-            <input
+            <Input
               type="number"
               min={5}
               max={600}
               value={timeoutSeconds}
               onChange={(e) => setTimeoutSeconds(Math.max(5, Number(e.target.value) || 60))}
               disabled={busy}
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+              style={{ width: '100%', fontFamily: 'monospace' }}
             />
           </label>
-          <label className="col-span-2 flex flex-col justify-end text-xs text-[color:var(--color-text-secondary)]">
-            <span className="mb-1">Tuned args</span>
-            <label className="flex items-center gap-1">
+          <label style={{ gridColumn: 'span 2 / span 2', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', fontSize: 12, color: 'var(--color-text-secondary)' }}>
+            <span style={{ marginBottom: 4 }}>Tuned args</span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <input
                 type="checkbox"
                 checked={!skipTuned}
@@ -292,105 +303,109 @@ export default function Server(): React.JSX.Element {
               <span>use tuned</span>
             </label>
           </label>
-          <div className="col-span-2 flex items-end gap-2">
-            <button
+          <div style={{ gridColumn: 'span 2 / span 2', display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+            <Button
               type="submit"
+              variant="primary"
               disabled={busy}
               data-testid="server-start"
-              className="flex-1 rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              style={{ flex: 1 }}
             >
               {starting ? 'Starting…' : 'Start'}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="destructive"
               onClick={() => stopMutation.mutate({ graceSeconds: 5 })}
               disabled={busy || stopMutation.isPending || !isUp}
               data-testid="server-stop"
               title={!isUp ? 'Server is not running.' : 'Send SIGTERM, then SIGKILL after a 5s grace.'}
-              className="flex-1 rounded border border-[var(--color-err)] px-3 py-1 text-sm text-[color:var(--color-err)] hover:bg-[var(--color-surface-2)] disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ flex: 1 }}
             >
               {stopMutation.isPending ? 'Stopping…' : 'Stop'}
-            </button>
+            </Button>
           </div>
         </div>
-        <div className="mt-2 text-xs text-[color:var(--color-text-secondary)]">
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
           LLAMA_CPP_HOST={envData?.LLAMA_CPP_HOST ?? '?'}:
           {envData?.LLAMA_CPP_PORT ?? '?'}
         </div>
       </form>
 
       {error && (
-        <div className="mb-3 rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
+        <div style={{ marginBottom: 12, borderRadius: 6, border: '1px solid var(--color-err)', backgroundColor: 'var(--color-surface-1)', padding: '8px 12px', fontSize: 14, color: 'var(--color-err)' }}>
           {error}
         </div>
       )}
 
-      <section className="mb-6 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+      <section style={{ marginBottom: 24, borderRadius: 6, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)', padding: 16 }}>
+        <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h2 style={{ fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
             Keep-alive supervisor
           </h2>
           <span
-            className={
-              ka?.running
-                ? 'mono text-xs text-[color:var(--color-ok)]'
-                : 'mono text-xs text-[color:var(--color-text-secondary)]'
-            }
+            style={{
+              fontFamily: 'monospace',
+              fontSize: 12,
+              color: ka?.running ? 'var(--color-ok)' : 'var(--color-text-secondary)',
+            }}
           >
             {ka?.running ? `running (pid=${ka.pid})` : 'stopped'}
           </span>
         </div>
-        <div className="grid grid-cols-12 gap-3">
-          <label className="col-span-7 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 12 }}>
+          <label style={{ gridColumn: 'span 7 / span 7', fontSize: 14 }}>
+            <span style={{ marginBottom: 4, display: 'block', fontSize: 12, color: 'var(--color-text-secondary)' }}>
               Target
             </span>
-            <input
+            <Input
               value={target}
               onChange={(e) => setTarget(e.target.value)}
               disabled={ka?.running || keepAliveStartMutation.isPending}
-              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono"
+              style={{ width: '100%', fontFamily: 'monospace' }}
             />
           </label>
-          <div className="col-span-5 flex items-end gap-2">
-            <button
+          <div style={{ gridColumn: 'span 5 / span 5', display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+            <Button
               type="button"
+              variant="primary"
               onClick={() => keepAliveStartMutation.mutate({ target: target.trim() || 'current' })}
               disabled={ka?.running || keepAliveStartMutation.isPending}
-              className="flex-1 rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-brand-contrast)] hover:opacity-90 disabled:opacity-50"
+              style={{ flex: 1 }}
             >
               {keepAliveStartMutation.isPending ? 'Starting…' : 'Start supervisor'}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="destructive"
               onClick={() => keepAliveStopMutation.mutate({ graceSeconds: 10 })}
               disabled={!ka?.running || keepAliveStopMutation.isPending}
-              className="flex-1 rounded border border-[var(--color-err)] px-3 py-1 text-sm text-[color:var(--color-err)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+              style={{ flex: 1 }}
             >
               {keepAliveStopMutation.isPending ? 'Stopping…' : 'Stop supervisor'}
-            </button>
+            </Button>
           </div>
         </div>
         {ka?.state && (
-          <div className="mt-3 grid grid-cols-4 gap-2 text-xs text-[color:var(--color-text-secondary)]">
+          <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
             <div>
-              state=<span className="text-[color:var(--color-text)]">{ka.state.state ?? '—'}</span>
+              state=<span style={{ color: 'var(--color-text)' }}>{ka.state.state ?? '—'}</span>
             </div>
             <div>
-              model=<span className="text-[color:var(--color-text)]">{ka.state.model ?? '—'}</span>
+              model=<span style={{ color: 'var(--color-text)' }}>{ka.state.model ?? '—'}</span>
             </div>
             <div>
-              restarts=<span className="text-[color:var(--color-text)]">{ka.state.restarts ?? 0}</span>
+              restarts=<span style={{ color: 'var(--color-text)' }}>{ka.state.restarts ?? 0}</span>
             </div>
             <div>
-              backoff=<span className="text-[color:var(--color-text)]">{ka.state.backoff_seconds ?? 0}s</span>
+              backoff=<span style={{ color: 'var(--color-text)' }}>{ka.state.backoff_seconds ?? 0}s</span>
             </div>
           </div>
         )}
       </section>
 
-      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-0)]">
-        <div className="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+      <div style={{ borderRadius: 6, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-0)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
           <span>Log</span>
           <span>
             {log.length} line{log.length === 1 ? '' : 's'}
@@ -398,29 +413,36 @@ export default function Server(): React.JSX.Element {
         </div>
         <div
           ref={logRef}
-          className="max-h-[50vh] overflow-auto border-t border-[var(--color-border)] px-3 py-2 mono text-xs"
+          style={{
+            maxHeight: '50vh',
+            overflow: 'auto',
+            borderTop: '1px solid var(--color-border)',
+            padding: '8px 12px',
+            fontFamily: 'monospace',
+            fontSize: 12,
+          }}
         >
           {log.length === 0 ? (
-            <div className="text-[color:var(--color-text-secondary)]">
+            <div style={{ color: 'var(--color-text-secondary)' }}>
               {busy ? 'Waiting for events…' : 'Lifecycle events appear here during a start.'}
             </div>
           ) : (
-            log.map((line, i) => (
-              <div
-                key={i}
-                className={
-                  line.kind === 'error' || line.kind === 'timeout' || line.kind === 'exited'
-                    ? 'text-[color:var(--color-err)] whitespace-pre-wrap'
-                    : line.kind === 'ready' || line.kind === 'done'
-                      ? 'text-[color:var(--color-ok)] whitespace-pre-wrap'
-                      : line.kind === 'launch' || line.kind === 'retry'
-                        ? 'text-[color:var(--color-brand)] whitespace-pre-wrap'
-                        : 'text-[color:var(--color-text-secondary)] whitespace-pre-wrap'
-                }
-              >
-                {line.text}
-              </div>
-            ))
+            log.map((line, i) => {
+              let color = 'var(--color-text-secondary)';
+              if (line.kind === 'error' || line.kind === 'timeout' || line.kind === 'exited') {
+                color = 'var(--color-err)';
+              } else if (line.kind === 'ready' || line.kind === 'done') {
+                color = 'var(--color-ok)';
+              } else if (line.kind === 'launch' || line.kind === 'retry') {
+                color = 'var(--color-brand)';
+              }
+
+              return (
+                <div key={i} style={{ color, whiteSpace: 'pre-wrap' }}>
+                  {line.text}
+                </div>
+              );
+            })
           )}
         </div>
       </div>
