@@ -273,11 +273,11 @@ async function main(): Promise<void> {
 
     await client.call('electron_wait_for_selector', {
       sessionId,
-      selector: '[data-testid="command-palette-row-logs"]',
+      selector: '[data-testid="command-palette-row-go:logs"]',
       state: 'visible',
       timeout: 3_000,
     });
-    console.log('[PASS] filter "log" → command-palette-row-logs visible');
+    console.log('[PASS] filter "log" → command-palette-row-go:logs visible');
 
     // ── Step 3: Enter opens the Logs module ───────────────────────
     await paletteConfirm(client, sessionId);
