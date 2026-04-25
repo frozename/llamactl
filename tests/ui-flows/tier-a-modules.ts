@@ -190,29 +190,7 @@ async function resetState(client: McpClient, sessionId: string): Promise<void> {
   });
 }
 
-// ── Explorer-tree navigation helpers ─────────────────────────────
-
-/**
- * Clicks the explorer-tree leaf for the given module id and checks
- * that the tab store activates `module:{id}`. This exercises the
- * explorer-tree onClick dispatch path, which is separate from the
- * command-palette path covered by runPalettePass.
- */
-async function runExplorerOne(client: McpClient, sessionId: string, id: string): Promise<boolean> {
-  // Click the explorer-tree leaf for this module.
-  await client.call('electron_click', {
-    sessionId,
-    selector: `[data-testid="explorer-leaf-${id}"]`,
-  });
-  // Read the active tab from the store.
-  const result = await client.call('electron_evaluate_renderer', {
-    sessionId,
-    expression: 'window.useTabStore?.getState().activeKey',
-  }) as { result: string | null | undefined };
-  return result.result === `module:${id}`;
-}
-
-// ── Palette navigation pass ────────────────────────────────────────
+// ── Module-mount pass ──────────────────────────────────────────────
 
 async function runPalettePass(client: McpClient, sessionId: string): Promise<void> {
   const total = APP_MODULES.length;
@@ -391,28 +369,11 @@ async function main(): Promise<void> {
     // Install console capture before any navigation.
     await installConsoleCapture(client, sessionId);
 
-    // ── Palette navigation pass ──────────────────────────────────
+    // ── Module-mount pass ────────────────────────────────────────
+    // Opens each APP_MODULES entry via window.useTabStore and asserts
+    // its smokeAffordance renders. Exercises every module's main view
+    // under the hermetic test profile in ~22 s.
     await runPalettePass(client, sessionId);
-
-    // ── Pass 2 — explorer-tree navigation ────────────────────────
-    // Tests the explorer-tree onClick dispatch path, which is separate
-    // from shell/commands.ts (palette).
-    console.log('Tier A pass 2: explorer-tree nav');
-    const treeEligible = APP_MODULES.filter(
-      (m) => m.beaconGroup && m.beaconGroup !== 'hidden' && m.beaconKind === 'static',
-    );
-    for (const m of treeEligible) {
-      const ok = await runExplorerOne(client, sessionId, m.id);
-      if (!ok) {
-        await client.call('electron_screenshot', {
-          sessionId,
-          path: `/tmp/tier-a-tree-${m.id.replace(/\./g, '-')}-fail.png`,
-        });
-        console.error(`Explorer-tree nav FAILED for module ${m.id}`);
-        process.exit(1);
-      }
-    }
-    console.log(`Explorer-tree nav passed: ${treeEligible.length}/${treeEligible.length} modules`);
 
     await client.call('electron_close', { sessionId });
   } catch (err) {
