@@ -45,6 +45,8 @@ DEFAULT_FLOWS=(
   ops-chat-flow
   chat-compare-flow
   projects-tab-flow
+  ops-session-replay-flow
+  ops-sessions-list-flow
 )
 
 banner() {
