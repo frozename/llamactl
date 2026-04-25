@@ -182,8 +182,47 @@ async function main(): Promise<void> {
       timeout: 10_000,
     });
 
-    // Open Chat.
-    await client.call('electron_click', { sessionId, selector: 'button[aria-label="Chat"]' });
+    // Navigate to Chat via the command palette (Beacon shell).
+    await client.call('electron_evaluate_renderer', {
+      sessionId,
+      expression: `(() => {
+        const e = new KeyboardEvent('keydown', {
+          key: 'p',
+          code: 'KeyP',
+          shiftKey: true,
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        });
+        document.dispatchEvent(e);
+      })()`,
+    });
+    await client.call('electron_wait_for_selector', {
+      sessionId,
+      selector: '[data-testid="command-palette"]',
+      state: 'visible',
+      timeout: 3_000,
+    });
+    await client.call('electron_fill', {
+      sessionId,
+      selector: '[data-testid="command-palette-input"]',
+      value: 'Chat',
+    });
+    await client.call('electron_evaluate_renderer', {
+      sessionId,
+      expression: `(() => {
+        const e = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+        });
+        const input = document.querySelector('[data-testid="command-palette-input"]');
+        const target = input ?? window;
+        target.dispatchEvent(e);
+      })()`,
+    });
     await client.call('electron_wait_for_selector', {
       sessionId,
       selector: '[data-testid="chat-root"]',
