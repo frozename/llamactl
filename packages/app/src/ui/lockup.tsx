@@ -42,7 +42,7 @@ export function Lockup({ size = 'md', className, style, ...rest }: LockupProps):
           flexShrink: 0,
         }}
       />
-      <span>beacon</span>
+      <span>llamactl</span>
     </div>
   );
 }
