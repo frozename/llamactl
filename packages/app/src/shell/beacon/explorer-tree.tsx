@@ -95,18 +95,21 @@ export function ExplorerTree(): React.JSX.Element {
             </button>
             {!isCollapsed && group.leaves.map((leaf) => (
               <React.Fragment key={leaf.id}>
-                <TreeItem
-                  label={leaf.title}
-                  active={activeTabKey === `module:${leaf.id}`}
-                  onClick={() => openLeaf(leaf)}
-                  collapsed={leaf.kind === 'dynamic-group' ? (collapsed[`${group.id}/${leaf.id}`] ?? false) : undefined}
-                  onDoubleClick={() => {
-                    if (leaf.kind === 'dynamic-group') {
-                      toggleCollapse(`${group.id}/${leaf.id}`);
-                    }
-                  }}
+                <div
                   {...(leaf.kind === 'static' ? { 'data-testid': `explorer-leaf-${leaf.id}` } : {})}
-                />
+                >
+                  <TreeItem
+                    label={leaf.title}
+                    active={activeTabKey === `module:${leaf.id}`}
+                    onClick={() => openLeaf(leaf)}
+                    collapsed={leaf.kind === 'dynamic-group' ? (collapsed[`${group.id}/${leaf.id}`] ?? false) : undefined}
+                    onDoubleClick={() => {
+                      if (leaf.kind === 'dynamic-group') {
+                        toggleCollapse(`${group.id}/${leaf.id}`);
+                      }
+                    }}
+                  />
+                </div>
                 {leaf.kind === 'dynamic-group' && !(collapsed[`${group.id}/${leaf.id}`] ?? false) &&
                   (leaf.instances ?? []).map((inst) => (
                     <TreeItem
