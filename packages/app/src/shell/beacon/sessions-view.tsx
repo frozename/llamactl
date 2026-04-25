@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { TreeItem } from '@/ui';
 import { useTabStore, type TabEntry } from '@/stores/tab-store';
+import { bucketTabsByAge } from './session-buckets';
 
 /**
  * Recent tabs, grouped by age buckets (today / earlier this week /
@@ -14,28 +15,18 @@ export function SessionsView(): React.JSX.Element {
   const closed = useTabStore((s) => s.closed);
   const open = useTabStore((s) => s.open);
 
-  const all = React.useMemo(
-    () => [...tabs, ...closed].sort((a, b) => b.openedAt - a.openedAt),
+  const { today, earlier, older } = React.useMemo(
+    () => bucketTabsByAge(tabs, closed, Date.now()),
     [tabs, closed],
   );
-
-  const now = Date.now();
-  const today: TabEntry[] = [];
-  const earlier: TabEntry[] = [];
-  const older: TabEntry[] = [];
-  for (const t of all) {
-    const age = now - t.openedAt;
-    if (age < 24 * 3_600_000) today.push(t);
-    else if (age < 7 * 24 * 3_600_000) earlier.push(t);
-    else older.push(t);
-  }
+  const total = today.length + earlier.length + older.length;
 
   return (
     <div role="tree" style={{ overflowY: 'auto', flex: 1 }}>
       <Group label="Today" items={today} onOpen={open} />
       <Group label="Earlier this week" items={earlier} onOpen={open} />
       <Group label="Older" items={older} onOpen={open} />
-      {all.length === 0 && (
+      {total === 0 && (
         <div
           style={{
             padding: '14px 18px',
