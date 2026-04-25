@@ -28,7 +28,7 @@ export function TitleBar(): React.JSX.Element {
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: 'auto auto 1fr auto auto auto auto',
+        gridTemplateColumns: 'auto auto 1fr auto auto auto',
         alignItems: 'center',
         gap: 14,
         height: 44,
@@ -42,14 +42,14 @@ export function TitleBar(): React.JSX.Element {
            and the macOS lights overlay at `titleBarStyle: 'hiddenInset'`. */}
       <div style={{ width: 72 }} />
 
-      {/* Beacon lockup — leftmost product mark, not draggable so it
-           receives clicks (future: opens an "about" overlay). */}
+      {/* Product lockup — leftmost mark, not draggable so it receives
+           clicks (future: opens an "about" overlay). */}
       <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <Lockup />
       </div>
 
       <div
-        style={{ justifySelf: 'start', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        style={{ justifySelf: 'center', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
         <CommandBar crumbs={crumbs} onClick={() => setPaletteOpen(true)} />
       </div>
@@ -79,18 +79,6 @@ export function TitleBar(): React.JSX.Element {
       >
         <Bell size={14} strokeWidth={1.75} />
       </button>
-
-      <div
-        aria-hidden="true"
-        style={{
-          width: 26,
-          height: 26,
-          borderRadius: '50%',
-          background: 'linear-gradient(135deg, var(--color-brand), #f59e0b)',
-          border: '1.5px solid var(--color-surface-1)',
-          WebkitAppRegion: 'no-drag',
-        } as React.CSSProperties}
-      />
     </div>
   );
 }
