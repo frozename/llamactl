@@ -122,6 +122,34 @@ describe('composite DAG — pipeline edges', () => {
     expect(implicitFound).toBe(true);
   });
 
+  test('topo order tie-break places pipelines before gateways (D6 tier)', () => {
+    const s = spec({
+      pipelines: [
+        {
+          name: 'docs-ingest',
+          spec: {
+            destination: { ragNode: 'external-kb', collection: 'd' },
+            sources: [{ kind: 'filesystem' as const, root: '/x' }],
+          },
+        },
+      ],
+      gateways: [
+        {
+          name: 'gw-a',
+          node: 'local',
+          provider: 'sirius' as const,
+          upstreamWorkloads: [],
+        },
+      ],
+    });
+    const order = topologicalOrder(s);
+    const pIdx = order.findIndex((c) => c.kind === 'pipeline');
+    const gIdx = order.findIndex((c) => c.kind === 'gateway');
+    expect(pIdx).toBeGreaterThanOrEqual(0);
+    expect(gIdx).toBeGreaterThanOrEqual(0);
+    expect(pIdx).toBeLessThan(gIdx);
+  });
+
   test('cycle detection picks up pipeline → service → pipeline cycle', () => {
     const s = spec({
       services: [{ kind: 'chroma', name: 'preflight', node: 'local' }],
