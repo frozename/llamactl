@@ -97,4 +97,12 @@ describe('discovery.filterMatches', () => {
     expect(filterMatches('qwen', 'general', 'unsloth/qwen-2.5-7b', 'fair')).toBe(true);
     expect(filterMatches('qwen', 'general', 'unsloth/gemma-4', 'fair')).toBe(false);
   });
+  test('fallback substring is case-insensitive (lowercase filter against mixed-case repo)', () => {
+    // Real HF repos use mixed case: `unsloth/Qwen3.6-27B-GGUF`.
+    // Operators type lowercase filters: `discover qwen3`.
+    expect(filterMatches('qwen3', 'general', 'unsloth/Qwen3.6-27B-GGUF', 'good')).toBe(true);
+    expect(filterMatches('qwen3', 'general', 'unsloth/Qwen3.5-9B-GGUF', 'good')).toBe(true);
+    expect(filterMatches('GEMMA', 'general', 'unsloth/gemma-4-27B-it-GGUF', 'good')).toBe(true);
+    expect(filterMatches('qwen3', 'general', 'unsloth/gemma-4-27B-it-GGUF', 'good')).toBe(false);
+  });
 });

@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { verifyBearer } from './auth.js';
+import { unauthorizedResponse, verifyBearer } from './auth.js';
 
 /**
  * In-place agent self-update. Operator on the control plane POSTs
@@ -81,10 +81,7 @@ export async function handleAgentUpdate(
     return new Response('method not allowed', { status: 405 });
   }
   if (!verifyBearer(req, opts.tokenHash)) {
-    return new Response('unauthorized', {
-      status: 401,
-      headers: { 'www-authenticate': 'Bearer realm="llamactl-agent"' },
-    });
+    return unauthorizedResponse();
   }
   const expectedSha = req.headers.get('x-sha256')?.trim().toLowerCase();
   if (!expectedSha || !/^[0-9a-f]{64}$/.test(expectedSha)) {
@@ -192,10 +189,7 @@ export async function handleAgentRollback(
     return new Response('method not allowed', { status: 405 });
   }
   if (!verifyBearer(req, opts.tokenHash)) {
-    return new Response('unauthorized', {
-      status: 401,
-      headers: { 'www-authenticate': 'Bearer realm="llamactl-agent"' },
-    });
+    return unauthorizedResponse();
   }
 
   const selfPath = opts.selfPath ?? process.execPath;

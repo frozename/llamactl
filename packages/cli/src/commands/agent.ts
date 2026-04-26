@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -19,6 +19,16 @@ Subcommands:
       (configPath, nodeName, bindHost, port, fingerprint, blob) so the
       install-agent.sh flow can capture stdout and shell-extract the
       bootstrap blob without jq.
+  rotate-token [--dir=<path>] [--host=<host>] [--json]
+      Rotate the bearer token without touching the TLS cert/key. Reads
+      agent.yaml, generates a fresh token, updates tokenHash, and emits
+      a bootstrap blob containing the new token plus the unchanged cert
+      + fingerprint. Use this when the kubeconfig token drifts from
+      agent.yaml's tokenHash but the cert pin is still valid — much
+      cheaper than a full 'agent init'. Restart the agent after rotating
+      so it loads the new tokenHash. The default --host is 127.0.0.1;
+      override when the operator's kubeconfig records a different
+      advertised endpoint.
   serve [--dir=<path>] [--bind=<host>] [--port=<n>]
         [--dial-central=<wss-url>] [--central-bearer=<token>] [--tunnel-node-name=<name>]
         [--tunnel-central=true] [--tunnel-bearer=<token>] [--tunnel-journal=<path>]
@@ -69,6 +79,8 @@ export async function runAgent(args: string[]): Promise<number> {
   switch (sub) {
     case 'init':
       return runInit(rest);
+    case 'rotate-token':
+      return runRotateToken(rest);
     case 'serve':
       return runServe(rest);
     case 'status':
@@ -237,6 +249,115 @@ async function runInit(args: string[]): Promise<number> {
       `On the control plane, run:`,
       ``,
       `  llamactl node add ${f.nodeName} --bootstrap ${bootstrap}`,
+      ``,
+    ].join('\n'),
+  );
+  return 0;
+}
+
+interface RotateTokenFlags {
+  dir: string;
+  host: string;
+  json: boolean;
+}
+
+function parseRotateTokenFlags(args: string[]): RotateTokenFlags | { error: string } {
+  const flags: RotateTokenFlags = {
+    dir: agentConfigMod.defaultAgentDir(),
+    host: '127.0.0.1',
+    json: false,
+  };
+  for (const arg of args) {
+    if (arg === '--json') { flags.json = true; continue; }
+    const [k, v] = splitFlag(arg);
+    if (v === undefined) return { error: `agent rotate-token: flag must be --key=value: ${arg}` };
+    switch (k) {
+      case '--dir':  flags.dir = v; break;
+      case '--host': flags.host = v; break;
+      default: return { error: `agent rotate-token: unknown flag ${k}` };
+    }
+  }
+  return flags;
+}
+
+/**
+ * Rotate the bearer token without touching the TLS cert/key. Cheap
+ * recovery path when the kubeconfig token has drifted from agent.yaml's
+ * tokenHash but the cert pin is still valid.
+ */
+export async function runRotateToken(args: string[]): Promise<number> {
+  const parsed = parseRotateTokenFlags(args);
+  if ('error' in parsed) {
+    process.stderr.write(`${parsed.error}\n`);
+    return 1;
+  }
+  const f = parsed;
+  const configPath = join(f.dir, 'agent.yaml');
+  if (!existsSync(configPath)) {
+    process.stderr.write(
+      `agent rotate-token: ${configPath} not found. Run 'llamactl agent init' first.\n`,
+    );
+    return 1;
+  }
+
+  const existing = agentConfigMod.loadAgentConfig(configPath);
+  let certPem: string;
+  try {
+    certPem = readFileSync(existing.certPath, 'utf8');
+  } catch (err) {
+    process.stderr.write(
+      `agent rotate-token: failed to read cert at ${existing.certPath}: ${(err as Error).message}\n`,
+    );
+    return 1;
+  }
+
+  const token = auth.generateToken();
+  const updated: agentConfigMod.AgentConfig = {
+    ...existing,
+    tokenHash: token.hash,
+  };
+  agentConfigMod.saveAgentConfig(updated, configPath);
+
+  const url = `https://${f.host}:${existing.port}`;
+  const bootstrap = agentConfigMod.encodeBootstrap({
+    url,
+    fingerprint: existing.fingerprint,
+    token: token.token,
+    certificate: certPem,
+  });
+
+  if (f.json) {
+    process.stderr.write(
+      [
+        `rotated tokenHash in ${configPath}`,
+        `cert   ${existing.certPath} (unchanged)`,
+        `fp     ${existing.fingerprint} (unchanged)`,
+        `bind   ${existing.bindHost}:${existing.port}`,
+      ].join('\n') + '\n',
+    );
+    const record = {
+      configPath,
+      nodeName: existing.nodeName,
+      bindHost: existing.bindHost,
+      port: existing.port,
+      fingerprint: existing.fingerprint,
+      blob: bootstrap,
+    };
+    process.stdout.write(`${JSON.stringify(record)}\n`);
+    return 0;
+  }
+
+  process.stdout.write(
+    [
+      `rotated tokenHash in ${configPath}`,
+      `cert   ${existing.certPath} (unchanged)`,
+      `fp     ${existing.fingerprint} (unchanged)`,
+      `bind   ${existing.bindHost}:${existing.port}`,
+      ``,
+      `Restart the agent so it loads the new tokenHash, then update the kubeconfig:`,
+      ``,
+      `  pkill -f 'agent serve' && llamactl agent serve &`,
+      `  llamactl node add ${existing.nodeName} --bootstrap ${bootstrap} --force`,
       ``,
     ].join('\n'),
   );

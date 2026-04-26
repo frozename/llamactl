@@ -166,7 +166,15 @@ export async function candidateTest(
   // --- vision ------------------------------------------------------------
   let vision: CandidateTestStep<BenchVisionResult> = { ran: false };
   const entry = findByRel(rel);
-  const isMultimodal = entry?.class === 'multimodal';
+  const localMmproj = findLocalMmprojForRel(resolved.LLAMA_CPP_MODELS, rel);
+  // Catalog class can lag the runtime signal: a freshly-pulled rel may
+  // have its mmproj sibling on disk before the classifier knows it's
+  // multimodal (e.g. HF model_info `pipeline_tag` empty for new
+  // releases, or the qwen-→-reasoning heuristic firing on Qwen 3.6
+  // before its multimodal status is reflected in HF metadata). Treat
+  // presence of a local mmproj as authoritative — if the projector is
+  // on disk, vision benches can run.
+  const isMultimodal = entry?.class === 'multimodal' || localMmproj !== null;
   const mtmdBin = join(resolved.LLAMA_CPP_BIN, 'llama-mtmd-cli');
   const visionAutoOn = autoVisionBenchEnabled(env);
   if (!isMultimodal) {
@@ -175,7 +183,7 @@ export async function candidateTest(
     vision = { ran: false, reason: `llama-mtmd-cli binary not found: ${mtmdBin}` };
   } else if (!visionAutoOn) {
     vision = { ran: false, reason: 'LLAMA_CPP_AUTO_BENCH_VISION=off' };
-  } else if (!findLocalMmprojForRel(resolved.LLAMA_CPP_MODELS, rel)) {
+  } else if (!localMmproj) {
     vision = { ran: false, reason: `No local mmproj sibling for ${rel}` };
   } else {
     const visionRows = readBenchVision(benchVisionFile(resolved));

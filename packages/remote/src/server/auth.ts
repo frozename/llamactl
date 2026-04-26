@@ -33,3 +33,23 @@ export function verifyBearer(req: Request, expectedHashHex: string): boolean {
   if (actualHex.length !== expectedHashHex.length) return false;
   return timingSafeEqual(Buffer.from(actualHex, 'hex'), Buffer.from(expectedHashHex, 'hex'));
 }
+
+/**
+ * Standard 401 response for any authed endpoint that fails bearer
+ * verification. JSON body + content-type lets tRPC/HTTP clients parse
+ * a clean error envelope instead of throwing "Failed to parse JSON" on
+ * a bare-string body. Shape is stable so client-side recognizers can
+ * key off `error.code === 'UNAUTHORIZED'`.
+ */
+export function unauthorizedResponse(message: string = 'invalid bearer token'): Response {
+  return new Response(
+    JSON.stringify({ error: { code: 'UNAUTHORIZED', message } }),
+    {
+      status: 401,
+      headers: {
+        'content-type': 'application/json',
+        'www-authenticate': 'Bearer realm="llamactl-agent"',
+      },
+    },
+  );
+}
