@@ -217,14 +217,78 @@ export function listPipelines(
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export type RemoveConflict =
+  | { kind: 'name'; name: string; existingOwner: 'operator' };
+
+export type RemoveResult =
+  | { ok: true; deleted: boolean }
+  | { ok: false; conflict: RemoveConflict };
+
+export interface RemovePipelineOpts {
+  compositeName?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+// Composite-aware overload — ref-counted strip-and-delete. Listed first
+// so callers passing `{ compositeName: ... }` resolve to `RemoveResult`
+// instead of being coerced into `NodeJS.ProcessEnv` (which structurally
+// accepts any string-keyed object).
+export function removePipeline(name: string, opts: RemovePipelineOpts): RemoveResult;
+// Legacy operator-side overload — preserved for backwards compatibility.
+export function removePipeline(name: string, env?: NodeJS.ProcessEnv): boolean;
 export function removePipeline(
   name: string,
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  const dir = pipelineDir(name, env);
-  if (!existsSync(dir)) return false;
-  rmSync(dir, { recursive: true, force: true });
-  return true;
+  envOrOpts?: NodeJS.ProcessEnv | RemovePipelineOpts,
+): boolean | RemoveResult {
+  // Distinguish opts from a `NodeJS.ProcessEnv` by looking for the
+  // `compositeName` discriminator. `process.env` is a string-only map,
+  // so it would never have that key; opts callers always supply it.
+  const isOptsObject =
+    typeof envOrOpts === 'object' &&
+    envOrOpts !== null &&
+    'compositeName' in envOrOpts;
+
+  if (!isOptsObject) {
+    // Legacy operator-side path — unchanged behavior.
+    const env = (envOrOpts as NodeJS.ProcessEnv | undefined) ?? process.env;
+    const dir = pipelineDir(name, env);
+    if (!existsSync(dir)) return false;
+    rmSync(dir, { recursive: true, force: true });
+    return true;
+  }
+
+  const opts = envOrOpts as RemovePipelineOpts;
+  const env = opts.env ?? process.env;
+  const cur = loadPipeline(name, env);
+  if (!cur) return { ok: true, deleted: false };
+
+  if (!cur.ownership) {
+    return {
+      ok: false,
+      conflict: { kind: 'name', name, existingOwner: 'operator' },
+    };
+  }
+
+  if (!opts.compositeName) {
+    return { ok: true, deleted: false };
+  }
+
+  const remaining = cur.ownership.compositeNames.filter(
+    (n) => n !== opts.compositeName,
+  );
+  if (remaining.length === 0) {
+    const dir = pipelineDir(name, env);
+    rmSync(dir, { recursive: true, force: true });
+    return { ok: true, deleted: true };
+  }
+
+  const persisted: RagPipelineManifest = {
+    ...cur,
+    ownership: { ...cur.ownership, compositeNames: remaining },
+  };
+  const path = specPath(name, env);
+  writeFileSync(path, stringifyYaml(persisted), 'utf8');
+  return { ok: true, deleted: false };
 }
 
 export function writeLastRun(
