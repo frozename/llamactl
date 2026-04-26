@@ -29,6 +29,7 @@ export {
   LOCAL_NODE_ENDPOINT,
   resolveNodeKind,
 } from './config/schema.js';
+export { providerForNode, providerForCloudNode } from './providers/factory.js';
 export * as workloadSchema from './workload/schema.js';
 export * as workloadStore from './workload/store.js';
 export * as workloadApply from './workload/apply.js';

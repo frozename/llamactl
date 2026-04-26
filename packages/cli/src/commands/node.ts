@@ -5,6 +5,8 @@ import {
   configSchema,
   createNodeClient,
   createRemoteNodeClient,
+  providerForNode,
+  resolveNodeKind,
 } from '@llamactl/remote';
 import { getNodeClient } from '../dispatcher.js';
 
@@ -311,6 +313,51 @@ async function runTest(args: string[]): Promise<number> {
   }
   const cfgPath = kubecfg.defaultConfigPath();
   const cfg = kubecfg.loadConfig(cfgPath);
+
+  // Cloud / gateway / provider-kind nodes have no `endpoint`, so the
+  // tRPC HTTP link below builds an invalid URL and Bun's fetch fails
+  // with "URL is invalid". Probe these via the OpenAI-compat provider
+  // factory — same path used by `add-cloud`'s reachability check.
+  let resolved: { node: configSchema.ClusterNode; user: configSchema.Config['users'][number] } | null = null;
+  try {
+    const r = kubecfg.resolveNode(cfg, name);
+    resolved = { node: r.node, user: r.user };
+  } catch (err) {
+    process.stderr.write(`node test failed: ${(err as Error).message}\n`);
+    return 1;
+  }
+  const kind = resolveNodeKind(resolved.node);
+  if (kind === 'gateway' || kind === 'cloud' || kind === 'provider') {
+    try {
+      const provider = providerForNode({ node: resolved.node, user: resolved.user, cfg });
+      const health = (await provider.healthCheck?.()) ?? { state: 'unknown' };
+      let modelsCount = 0;
+      let sampleModels: string[] = [];
+      try {
+        const models = (await provider.listModels?.()) ?? [];
+        modelsCount = models.length;
+        sampleModels = models.slice(0, 3).map((m) => (m as { id: string }).id);
+      } catch {
+        // Some providers don't expose listModels (or rate-limit it).
+        // Health alone is enough to call the test successful.
+      }
+      const facts = {
+        kind,
+        provider: resolved.node.cloud?.provider ?? null,
+        baseUrl: resolved.node.cloud?.baseUrl ?? null,
+        health,
+        modelsCount,
+        sampleModels,
+      };
+      process.stdout.write(`${JSON.stringify(facts, null, 2)}\n`);
+      return 0;
+    } catch (err) {
+      process.stderr.write(`node test failed: ${(err as Error).message}\n`);
+      return 1;
+    }
+  }
+
+  // Agent-kind nodes: existing tRPC nodeFacts path.
   const client = createNodeClient(cfg, { nodeName: name });
   try {
     const facts = await client.nodeFacts.query();
