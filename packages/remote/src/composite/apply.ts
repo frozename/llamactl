@@ -51,6 +51,7 @@ import type { ServiceSpec } from '../service/schema.js';
 import type {
   Composite,
   ComponentRef,
+  CompositeStatus,
   CompositeStatusComponent,
 } from './schema.js';
 import { topologicalOrder, reverseOrder } from './dag.js';
@@ -121,18 +122,41 @@ export async function applyComposite(
   const order = topologicalOrder(manifest.spec);
 
   let failureMessage: string | null = null;
+  // Pipeline components return Pending (recoverable steady state) on
+  // shape/name conflicts. Pending is not a hard failure — it must NOT
+  // trigger rollback — but it MUST halt the topo loop so downstream
+  // components don't come up against an inconsistent state. Spec D4 +
+  // "Error handling": "Composite halts at this entry; topo dependents
+  // downstream pick up the dependent-failed condition."
+  let haltedOnPending: { ref: ComponentRef; message: string } | null = null;
+  let lastProcessedIdx = -1;
 
-  for (const ref of order) {
+  for (let i = 0; i < order.length; i++) {
+    const ref = order[i] as ComponentRef;
     emit({ type: 'component-start', ref });
     try {
       const record = await applyComponent(ref, manifest, opts, applied);
       applied.push(record);
+      lastProcessedIdx = i;
       // Pipeline components carry a richer status than Ready/Failed
-      // (Pending on shape/name conflict). Surface the message on the
-      // public `componentResults` array even though the discriminator
-      // stays 'Ready' — the final status mapping below uses the
-      // pipelineStatus override to expose the real state.
+      // (Pending on shape/name conflict). When the handler reported
+      // Pending, halt the loop here without flagging this as a failure
+      // — rollback is reserved for genuine errors.
+      const pipelinePending =
+        record.pipelineStatus !== undefined &&
+        record.pipelineStatus.state === 'Pending';
       const message = record.pipelineStatus?.message;
+      if (pipelinePending) {
+        const pendingMessage = message ?? 'pipeline reported Pending';
+        componentResults.push({
+          ref,
+          state: 'Pending',
+          message: pendingMessage,
+        });
+        emit({ type: 'component-ready', ref, message: pendingMessage });
+        haltedOnPending = { ref, message: pendingMessage };
+        break;
+      }
       componentResults.push({
         ref,
         state: 'Ready',
@@ -145,6 +169,22 @@ export async function applyComposite(
       emit({ type: 'component-failed', ref, message });
       failureMessage = message;
       break;
+    }
+  }
+
+  // Spec "Error handling": when an entry halts on Pending, downstream
+  // dependents pick up the dependent-failed condition. Mark each
+  // unprocessed component Pending with a dependent-failed message so
+  // the status surface reflects "blocked, not Ready".
+  if (haltedOnPending !== null) {
+    const haltRef = haltedOnPending.ref;
+    for (let i = lastProcessedIdx + 1; i < order.length; i++) {
+      const ref = order[i] as ComponentRef;
+      componentResults.push({
+        ref,
+        state: 'Pending',
+        message: `dependent-failed: ${haltRef.kind}/${haltRef.name} pending`,
+      });
     }
   }
 
@@ -165,14 +205,22 @@ export async function applyComposite(
     if (rec.pipelineStatus) pipelineStatusByName.set(rec.ref.name, rec.pipelineStatus);
   }
 
+  // Composite phase rules:
+  // - failureMessage !== null  → 'Failed' (rollback) or 'Degraded' (leave-partial)
+  // - haltedOnPending !== null → 'Degraded' (closest existing match for "halted, not failed")
+  // - otherwise                → 'Ready'
+  const phase: CompositeStatus['phase'] =
+    failureMessage !== null
+      ? manifest.spec.onFailure === 'rollback'
+        ? 'Failed'
+        : 'Degraded'
+      : haltedOnPending !== null
+        ? 'Degraded'
+        : 'Ready';
+
   const appliedAt = new Date().toISOString();
-  const finalStatus: Composite['status'] = {
-    phase:
-      failureMessage === null
-        ? 'Ready'
-        : manifest.spec.onFailure === 'rollback'
-          ? 'Failed'
-          : 'Degraded',
+  const finalStatus: CompositeStatus = {
+    phase,
     appliedAt,
     components: componentResults.map((r) => {
       // Pipeline-kind override: surface the handler-reported state
@@ -183,7 +231,7 @@ export async function applyComposite(
       }
       return {
         ref: r.ref,
-        state: r.state === 'Ready' ? ('Ready' as const) : ('Failed' as const),
+        state: r.state,
         ...(r.message !== undefined && { message: r.message }),
       };
     }),
@@ -206,11 +254,15 @@ export async function applyComposite(
     });
   }
 
+  // `ok` reports a fully-applied composite. Halt-on-Pending is not an
+  // error (no rollback) but is also not a success — the operator must
+  // resolve the conflict before downstream components come up.
+  const ok = failureMessage === null && haltedOnPending === null;
   emit({ type: 'phase', phase: finalStatus.phase });
-  emit({ type: 'done', ok: failureMessage === null });
+  emit({ type: 'done', ok });
 
   return {
-    ok: failureMessage === null,
+    ok,
     status: finalStatus,
     rolledBack,
     componentResults,

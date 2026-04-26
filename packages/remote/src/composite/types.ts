@@ -23,7 +23,10 @@ export type CompositeApplyEvent =
 
 export interface CompositeComponentResult {
   ref: ComponentRef;
-  state: 'Ready' | 'Failed';
+  // 'Pending' surfaces both pipeline conflict states (PipelineNameCollision,
+  // PipelineShapeMismatch) and downstream components that the topo loop
+  // never tried because an earlier component halted on Pending.
+  state: 'Ready' | 'Failed' | 'Pending';
   message?: string;
 }
 

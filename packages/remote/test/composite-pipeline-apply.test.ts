@@ -184,5 +184,80 @@ describe('composite apply with pipelines', () => {
     const comp = result.status.components.find((c) => c.ref.kind === 'pipeline');
     expect(comp?.state).toBe('Pending');
     expect(comp?.message).toContain('PipelineShapeMismatch');
+    // Composite phase reflects the halted state — a Pending component is
+    // not Ready, but is also not a hard Failed (rollback is not invoked).
+    expect(result.status.phase).toBe('Degraded');
+    expect(result.rolledBack).toBe(false);
+  });
+
+  test('pipeline Pending halts the apply loop; downstream gateway is not applied', async () => {
+    const backend = new FakeRuntimeBackend();
+    // Seed a pipeline owned by mc-a so the next composite collides on shape.
+    await applyComposite({
+      manifest: pipelineComposite('mc-a', baseSpec),
+      backend,
+      getWorkloadClient: () => stubClient,
+      configPath,
+      compositesDir,
+    });
+    // mc-b carries the same pipeline name with a different concurrency,
+    // plus a downstream gateway. With the fix in place, the Pending
+    // pipeline halts the topo loop before the gateway gets a turn.
+    const compositeWithGateway: Composite = {
+      apiVersion: 'llamactl/v1',
+      kind: 'Composite',
+      metadata: { name: 'mc-b' },
+      spec: {
+        services: [],
+        workloads: [],
+        ragNodes: [],
+        gateways: [
+          {
+            name: 'gw',
+            node: 'local',
+            provider: 'sirius',
+            upstreamWorkloads: [],
+          },
+        ],
+        pipelines: [
+          {
+            name: 'docs-ingest',
+            spec: { ...baseSpec, concurrency: 8 },
+          },
+        ],
+        dependencies: [],
+        onFailure: 'rollback',
+      },
+    };
+    const result = await applyComposite({
+      manifest: compositeWithGateway,
+      backend,
+      getWorkloadClient: () => stubClient,
+      configPath,
+      compositesDir,
+    });
+
+    // The pipeline reports Pending with a shape-mismatch message.
+    const pipeComp = result.status.components.find(
+      (c) => c.ref.kind === 'pipeline',
+    );
+    expect(pipeComp?.state).toBe('Pending');
+    expect(pipeComp?.message).toContain('PipelineShapeMismatch');
+
+    // The gateway must NOT have come up Ready: either it's absent from
+    // the status (loop broke before it) or it's marked Pending with a
+    // dependent-failed message. Either is spec-compliant.
+    const gwComp = result.status.components.find(
+      (c) => c.ref.kind === 'gateway',
+    );
+    if (gwComp) {
+      expect(gwComp.state).not.toBe('Ready');
+    }
+
+    // Composite phase is Degraded (halted on Pending — not Ready, but
+    // not a rollback-triggering Failed either).
+    expect(result.status.phase).toBe('Degraded');
+    expect(result.rolledBack).toBe(false);
+    expect(result.ok).toBe(false);
   });
 });
