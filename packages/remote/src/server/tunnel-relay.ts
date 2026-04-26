@@ -1,4 +1,4 @@
-import { verifyBearer } from './auth.js';
+import { unauthorizedResponse, verifyBearer } from './auth.js';
 import { appendTunnelJournal, type TunnelJournalEntry } from '../tunnel/journal.js';
 import type { TunnelServer } from '../tunnel/index.js';
 
@@ -59,10 +59,7 @@ export async function handleTunnelRelay(
   };
   if (!verifyBearer(req, tokenHash)) {
     // 401 — HTTP-layer rejection, not a tunnel event. See module doc.
-    return new Response('unauthorized', {
-      status: 401,
-      headers: { 'www-authenticate': 'Bearer realm="llamactl-agent"' },
-    });
+    return unauthorizedResponse();
   }
   if (req.method !== 'POST') {
     // 405 — HTTP-layer rejection, not a tunnel event. See module doc.

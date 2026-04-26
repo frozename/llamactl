@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { extractBearer, generateToken, hashToken, verifyBearer } from '../src/server/auth.js';
+import {
+  extractBearer,
+  generateToken,
+  hashToken,
+  unauthorizedResponse,
+  verifyBearer,
+} from '../src/server/auth.js';
 
 describe('auth', () => {
   test('generateToken emits a token with the expected prefix and a matching hash', () => {
@@ -38,5 +44,25 @@ describe('auth', () => {
     const req = new Request('http://x/');
     const { hash } = generateToken();
     expect(verifyBearer(req, hash)).toBe(false);
+  });
+});
+
+describe('unauthorizedResponse', () => {
+  test('status 401 with JSON body and content-type', async () => {
+    const res = unauthorizedResponse();
+    expect(res.status).toBe(401);
+    expect(res.headers.get('content-type')).toBe('application/json');
+    expect(res.headers.get('www-authenticate')).toBe('Bearer realm="llamactl-agent"');
+    const body = await res.json();
+    expect(body).toEqual({
+      error: { code: 'UNAUTHORIZED', message: 'invalid bearer token' },
+    });
+  });
+
+  test('accepts a custom message override', async () => {
+    const res = unauthorizedResponse('token expired');
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.message).toBe('token expired');
+    expect(body.error.code).toBe('UNAUTHORIZED');
   });
 });

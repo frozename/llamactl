@@ -2,7 +2,7 @@ import { startSearchIngest, stopSearchIngest } from '../search/ingest/lifecycle.
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
 import { openaiProxy } from '@llamactl/core';
 import { router as appRouter } from '../router.js';
-import { verifyBearer } from './auth.js';
+import { unauthorizedResponse, verifyBearer } from './auth.js';
 import { loadCert } from './tls.js';
 import {
   agentInfo,
@@ -167,10 +167,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
 
   async function handleOpenAI(req: Request, url: URL): Promise<Response> {
     if (!verifyBearer(req, opts.tokenHash)) {
-      return new Response('unauthorized', {
-        status: 401,
-        headers: { 'www-authenticate': 'Bearer realm="llamactl-agent"' },
-      });
+      return unauthorizedResponse();
     }
     const pathLabel = openaiPathBucket(url.pathname);
     const endTimer = openaiRequestDurationSeconds.startTimer({ path: pathLabel });
@@ -260,10 +257,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // scrapers can set the standard Authorization header.
     if (url.pathname === '/metrics') {
       if (!verifyBearer(req, opts.tokenHash)) {
-        return new Response('unauthorized', {
-          status: 401,
-          headers: { 'www-authenticate': 'Bearer realm="llamactl-agent"' },
-        });
+        return unauthorizedResponse();
       }
       return metricsRegistry.metrics().then(
         (text) =>
@@ -281,10 +275,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // paths under /v1/* fall straight through to handleOpenAI.
     if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
       if (!verifyBearer(req, opts.tokenHash)) {
-        return new Response('unauthorized', {
-          status: 401,
-          headers: { 'www-authenticate': 'Bearer realm="llamactl-agent"' },
-        });
+        return unauthorizedResponse();
       }
       return handleRagChatCompletions(req, {
         appRouter,
@@ -302,10 +293,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       return new Response('not found', { status: 404 });
     }
     if (!verifyBearer(req, opts.tokenHash)) {
-      return new Response('unauthorized', {
-        status: 401,
-        headers: { 'www-authenticate': 'Bearer realm="llamactl-agent"' },
-      });
+      return unauthorizedResponse();
     }
     return fetchRequestHandler({
       req,
