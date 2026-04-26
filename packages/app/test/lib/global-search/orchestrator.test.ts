@@ -64,3 +64,36 @@ describe('mergeServerHits', () => {
     expect(sess.topScore).toBeCloseTo(0.6);
   });
 });
+test('mergeServerHits preserves unreachableNodes from the merge call', () => {
+  const initial: any = [];
+  const hits: Hit[] = [{
+    surface: 'session',
+    parentId: 's1',
+    parentTitle: 'audit',
+    score: 0.7,
+    matchKind: 'exact',
+    action: { kind: 'open-tab', tab: { tabKey: 'ops-session:s1', title: 's1', kind: 'ops-session', instanceId: 's1', openedAt: 0 } },
+  }];
+  const merged = mergeServerHits(initial, 'session', hits, {
+    append: true,
+    unreachableNodes: ['mac-mini'],
+  });
+  const sess = merged.find((g) => g.surface === 'session')!;
+  expect(sess.unreachableNodes).toEqual(['mac-mini']);
+});
+
+test('originNode flows through mergeServerHits unchanged', () => {
+  const initial: any = [];
+  const hits: Hit[] = [{
+    surface: 'session',
+    parentId: 's1',
+    parentTitle: 'audit',
+    score: 0.7,
+    matchKind: 'exact',
+    originNode: 'mac-mini',
+    action: { kind: 'open-tab', tab: { tabKey: 'ops-session:s1', title: 's1', kind: 'ops-session', instanceId: 's1', openedAt: 0 } },
+  } as Hit];
+  const merged = mergeServerHits(initial, 'session', hits, { append: true });
+  const sess = merged.find((g) => g.surface === 'session')!;
+  expect(sess.hits[0]!.originNode).toBe('mac-mini');
+});
