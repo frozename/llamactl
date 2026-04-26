@@ -6,6 +6,12 @@ import { resolveNodeKind, type ClusterNode } from '../../config/schema.js';
 import { currentContext, loadConfig, resolveToken } from '../../config/kubeconfig.js';
 import type { ApplyResult } from '../apply.js';
 import type { GatewayApplyOptions, GatewayHandler } from './types.js';
+import {
+  deriveEmbersynthEntries,
+  applyCompositeEntries,
+  readGatewayCatalog,
+  writeGatewayCatalog,
+} from '../gateway-catalog/index.js';
 
 /**
  * Embersynth gateway handler.
@@ -35,6 +41,42 @@ export const embersynthHandler: GatewayHandler = {
   },
   async apply(opts: GatewayApplyOptions): Promise<ApplyResult> {
     const now = new Date().toISOString();
+
+    let catalogChanged = false;
+    if (opts.composite) {
+      const derived = deriveEmbersynthEntries(opts.composite);
+      const current = readGatewayCatalog('embersynth');
+      const result = applyCompositeEntries({
+        kind: 'embersynth',
+        compositeName: opts.composite.compositeName,
+        derived,
+        current,
+      });
+      if (result.conflicts.length > 0) {
+        const c = result.conflicts[0]!;
+        const reason =
+          c.kind === 'name' ? 'EmbersynthUpstreamNameCollision' : 'EmbersynthUpstreamShapeMismatch';
+        const message =
+          c.kind === 'name'
+            ? `node '${c.name}' already exists as an operator-authored embersynth node; remove it or change composite spec`
+            : `node '${c.name}': ${c.detail}`;
+        return pending(opts, reason, message, now);
+      }
+      if (result.changed) {
+        try {
+          writeGatewayCatalog('embersynth', result.next);
+          catalogChanged = true;
+        } catch (err) {
+          return failure(
+            opts,
+            'EmbersynthCatalogWriteFailed',
+            `could not write embersynth.yaml: ${(err as Error).message}`,
+            now,
+          );
+        }
+      }
+    }
+
     const target = opts.manifest.spec.target.value.trim();
     if (!target) {
       return failure(
@@ -106,35 +148,37 @@ export const embersynthHandler: GatewayHandler = {
       );
     }
 
-    try {
-      const res = await fetch(reloadUrl, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          source: 'llamactl-workload',
-          name: opts.manifest.metadata.name,
-          syntheticModel: synthetic,
-        }),
-      });
-      if (!res.ok) {
-        const body = (await res.text().catch(() => '')).slice(0, 500);
+    if (!opts.composite || catalogChanged) {
+      try {
+        const res = await fetch(reloadUrl, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            source: 'llamactl-workload',
+            name: opts.manifest.metadata.name,
+            syntheticModel: synthetic,
+          }),
+        });
+        if (!res.ok) {
+          const body = (await res.text().catch(() => '')).slice(0, 500);
+          return failure(
+            opts,
+            'EmbersynthReloadFailed',
+            `POST ${reloadUrl} returned ${res.status}${body ? `: ${body}` : ''}`,
+            now,
+          );
+        }
+      } catch (err) {
         return failure(
           opts,
-          'EmbersynthReloadFailed',
-          `POST ${reloadUrl} returned ${res.status}${body ? `: ${body}` : ''}`,
+          'EmbersynthReloadUnreachable',
+          `POST ${reloadUrl} failed: ${(err as Error).message}`,
           now,
         );
       }
-    } catch (err) {
-      return failure(
-        opts,
-        'EmbersynthReloadUnreachable',
-        `POST ${reloadUrl} failed: ${(err as Error).message}`,
-        now,
-      );
     }
 
     const endpoint = `${normalizeBaseUrl(baseUrl)}/v1/chat/completions`;
