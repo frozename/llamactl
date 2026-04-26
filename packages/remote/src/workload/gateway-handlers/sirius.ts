@@ -3,6 +3,12 @@ import { loadSiriusProviders } from '../../config/sirius-providers.js';
 import { resolveToken, loadConfig, currentContext } from '../../config/kubeconfig.js';
 import type { ApplyResult } from '../apply.js';
 import type { GatewayApplyOptions, GatewayHandler } from './types.js';
+import {
+  deriveSiriusEntries,
+  applyCompositeEntries,
+  readGatewayCatalog,
+  writeGatewayCatalog,
+} from '../gateway-catalog/index.js';
 
 /**
  * Sirius gateway handler.
@@ -33,6 +39,42 @@ export const siriusHandler: GatewayHandler = {
   },
   async apply(opts: GatewayApplyOptions): Promise<ApplyResult> {
     const now = new Date().toISOString();
+
+    let catalogChanged = false;
+    if (opts.composite) {
+      const derived = deriveSiriusEntries(opts.composite);
+      const current = readGatewayCatalog('sirius');
+      const result = applyCompositeEntries({
+        kind: 'sirius',
+        compositeName: opts.composite.compositeName,
+        derived,
+        current,
+      });
+      if (result.conflicts.length > 0) {
+        const c = result.conflicts[0]!;
+        const reason =
+          c.kind === 'name' ? 'SiriusUpstreamNameCollision' : 'SiriusUpstreamShapeMismatch';
+        const message =
+          c.kind === 'name'
+            ? `entry '${c.name}' already exists as an operator-authored provider; remove it or change composite spec`
+            : `entry '${c.name}': ${c.detail}`;
+        return pending(opts, reason, message, now);
+      }
+      if (result.changed) {
+        try {
+          writeGatewayCatalog('sirius', result.next);
+          catalogChanged = true;
+        } catch (err) {
+          return failure(
+            opts,
+            'SiriusCatalogWriteFailed',
+            `could not write sirius-providers.yaml: ${(err as Error).message}`,
+            now,
+          );
+        }
+      }
+    }
+
     const targetValue = opts.manifest.spec.target.value;
     const slash = targetValue.indexOf('/');
     if (slash <= 0) {
@@ -113,31 +155,33 @@ export const siriusHandler: GatewayHandler = {
       );
     }
 
-    try {
-      const res = await fetch(reloadUrl, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ source: 'llamactl-workload', name: opts.manifest.metadata.name }),
-      });
-      if (!res.ok) {
-        const body = (await res.text().catch(() => '')).slice(0, 500);
+    if (!opts.composite || catalogChanged) {
+      try {
+        const res = await fetch(reloadUrl, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ source: 'llamactl-workload', name: opts.manifest.metadata.name }),
+        });
+        if (!res.ok) {
+          const body = (await res.text().catch(() => '')).slice(0, 500);
+          return failure(
+            opts,
+            'SiriusReloadFailed',
+            `POST ${reloadUrl} returned ${res.status}${body ? `: ${body}` : ''}`,
+            now,
+          );
+        }
+      } catch (err) {
         return failure(
           opts,
-          'SiriusReloadFailed',
-          `POST ${reloadUrl} returned ${res.status}${body ? `: ${body}` : ''}`,
+          'SiriusReloadUnreachable',
+          `POST ${reloadUrl} failed: ${(err as Error).message}`,
           now,
         );
       }
-    } catch (err) {
-      return failure(
-        opts,
-        'SiriusReloadUnreachable',
-        `POST ${reloadUrl} failed: ${(err as Error).message}`,
-        now,
-      );
     }
 
     const endpoint = `${normalizeBaseUrl(baseUrl)}/v1/chat/completions`;
