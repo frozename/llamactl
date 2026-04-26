@@ -108,13 +108,14 @@ workload/gateway-handlers/
 
 config/
 ├── sirius-providers.ts      SiriusProviderSchema gains optional `ownership?: CompositeOwnership`
-└── embersynth.ts            EmbersynthSyntheticSchema AND EmbersynthNodeSchema both gain
-                             optional `ownership?: CompositeOwnership`. Both kinds of entries
-                             are composite-managed: a composite produces (a) one node entry per
-                             upstream workload pointing at its endpoint, and (b) one
-                             syntheticModel entry per declared capability that references those
-                             nodes by name. Operator-authored nodes/syntheticModels remain
-                             marker-free and untouched.
+└── embersynth.ts            EmbersynthNodeSchema gains optional
+                             `ownership?: CompositeOwnership`. Composite-managed nodes carry
+                             the marker; operator-authored nodes do not. Composites do NOT
+                             write `syntheticModels` mappings in v1 — that map stays a flat
+                             `Record<string, string>` and operator-managed (via the existing
+                             `llamactl embersynth sync`). Composite-authored nodes have unique
+                             ids (`<compositeName>-<upstream.name>`); operators wire them into
+                             a friendly synthetic name manually or via `embersynth sync`.
 
 composite/
 ├── schema.ts                providerConfig: opaque Record → typed ProviderConfigCommon
@@ -259,7 +260,7 @@ Two composites referencing the same upstream → one YAML entry with `compositeN
 |---|---|
 | `gateway-catalog-schema.test.ts` | `CompositeOwnership` round-trip through YAML; loading entry without marker still parses |
 | `gateway-catalog-derive-sirius.test.ts` | One upstream → one openai-compatible provider; empty upstreams → empty list; `tags` flow into entry; `extra` preserved verbatim |
-| `gateway-catalog-derive-embersynth.test.ts` | Upstreams → node entries (one per upstream, pointing at endpoint); `tags` → syntheticModel entries that reference those nodes by name; priority threading; both entry kinds carry ownership |
+| `gateway-catalog-derive-embersynth.test.ts` | Upstreams → node entries (one per upstream pointing at endpoint); `tags` flow into the node's `tags`; `priority` flows into the node's priority; ownership marker attached. SyntheticModels mapping is NOT touched. |
 | `gateway-catalog-hash.test.ts` | Deterministic for same shape; differs on tag changes; ignores `compositeNames` order |
 | `gateway-catalog-apply.test.ts` | New entry append; idempotent re-apply; union compositeNames on same shape; name conflict against operator entry; shape conflict between two composites |
 | `gateway-catalog-remove.test.ts` | Reference-counted removal; entry deleted when last composite removed; entry kept (shorter list) when other composite still references it; no-op when name not present |
@@ -302,6 +303,7 @@ Single PR, all-or-nothing in llamactl. Tag `composite-gateway-auto-populate`.
 
 ## Out of scope (deferred)
 
+- **Composite-authored `syntheticModels` mapping in embersynth.** v1 only auto-populates `nodes`. Operator continues to author `syntheticModels` entries (manually or via `llamactl embersynth sync`). A future slice can add ownership tracking for synthetic-name mappings — the cleanest shape is probably a Zod union or a sidecar ownership index; defer until usage shows the need.
 - **CLI inspection** (`llamactl sirius list-managed --composite=<name>` etc.). Source of truth is `compositeStatus` + the YAML files; `cat` and `grep` work.
 - **Endpoint-change reactivity.** v1 ties entry to endpoint at apply time; if a workload moves nodes (rare), operator runs `compositeApply` again.
 - **Drift detection.** No background reconciler. Apply is the trigger.
