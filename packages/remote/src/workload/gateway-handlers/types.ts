@@ -37,7 +37,7 @@ export interface CompositeGatewayContext {
   /** Resolved upstream workloads in composite-declaration order. */
   upstreams: readonly CompositeGatewayUpstream[];
   /** Opaque per-provider overrides from the composite entry. */
-  providerConfig: Readonly<Record<string, unknown>>;
+  providerConfig: ProviderConfigCommon;
 }
 
 /**
@@ -92,5 +92,8 @@ export type GatewayDispatch = (opts: {
   manifest: ModelRun;
   getClient: (nodeName: string) => WorkloadClient;
   onEvent?: (e: ApplyEvent) => void;
+  composite?: CompositeGatewayContext;
+}) => Promise<ApplyResult | null>;
+nt) => void;
   composite?: CompositeGatewayContext;
 }) => Promise<ApplyResult | null>;

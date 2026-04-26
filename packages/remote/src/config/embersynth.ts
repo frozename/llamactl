@@ -13,6 +13,7 @@ import {
   type Config,
 } from './schema.js';
 import { loadSiriusProviders } from './sirius-providers.js';
+import { CompositeOwnershipSchema } from '../workload/gateway-catalog/schema.js';
 
 /**
  * llamactl-owned `embersynth.yaml` generator. Embersynth orchestrates
@@ -75,6 +76,7 @@ const EmbersynthNodeSchema = z.object({
       tokensPerSecond: z.number().positive().optional(),
     })
     .optional(),
+  ownership: CompositeOwnershipSchema.optional(),
 });
 
 const EmbersynthProfileSchema = z.object({

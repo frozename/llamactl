@@ -52,7 +52,7 @@ export const GatewayCompositeEntrySchema = z.object({
   node: z.string().min(1),
   provider: z.enum(['sirius', 'embersynth', 'agent-gateway']),
   upstreamWorkloads: z.array(z.string().min(1)).default([]),
-  providerConfig: z.record(z.string(), z.unknown()).default({}),
+  providerConfig: ProviderConfigCommonSchema.optional(),
 });
 export type GatewayCompositeEntry = z.infer<typeof GatewayCompositeEntrySchema>;
 
@@ -271,6 +271,11 @@ export type Composite = z.infer<typeof CompositeSchema>;
  * workload→name convention.
  */
 export function workloadRefName(
+  w: z.infer<typeof ModelRunSpecSchema>,
+): string {
+  return workloadName(w);
+}
+adRefName(
   w: z.infer<typeof ModelRunSpecSchema>,
 ): string {
   return workloadName(w);

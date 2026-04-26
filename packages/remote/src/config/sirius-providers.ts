@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { z } from 'zod';
+import { CompositeOwnershipSchema } from '../workload/gateway-catalog/schema.js';
 
 /**
  * llamactl-owned storage for sirius provider configs. Users set up
@@ -49,6 +50,7 @@ export const SiriusProviderSchema = z.object({
    *  the named providers (openai, anthropic, …). */
   baseUrl: z.url().optional(),
   displayName: z.string().optional(),
+  ownership: CompositeOwnershipSchema.optional(),
 });
 export type SiriusProvider = z.infer<typeof SiriusProviderSchema>;
 
