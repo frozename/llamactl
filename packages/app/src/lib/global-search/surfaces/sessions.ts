@@ -19,6 +19,7 @@ export function mapSessionHits(hits: SessionServerHit[]): Hit[] {
         surface: 'session',
         parentId: h.sessionId,
         parentTitle: h.goal || h.sessionId,
+        originNode: (h as { originNode?: string }).originNode,
         score: h.score,
         matchKind: 'exact',
         match: m,

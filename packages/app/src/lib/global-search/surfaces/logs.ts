@@ -16,6 +16,7 @@ export function mapLogHits(hits: LogServerHit[]): Hit[] {
         surface: 'logs',
         parentId: `${h.fileLabel}:${m.lineNumber}`,
         parentTitle: `${h.fileLabel}:${m.lineNumber}`,
+        originNode: (h as { originNode?: string }).originNode,
         score: h.score,
         matchKind: 'exact',
         match: { where: m.where, snippet: m.snippet, spans: m.spans },
