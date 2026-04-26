@@ -2573,12 +2573,21 @@ export const router = t.router({
           message: `invalid RagPipeline manifest: ${JSON.stringify(parsed.error.issues)}`,
         });
       }
-      const { path, created } = applyPipeline(parsed.data);
+      const result = applyPipeline(parsed.data);
+      if (!result.ok) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message:
+            result.conflict.kind === 'name'
+              ? `pipeline name conflict: ${result.conflict.name} (existing owner: ${result.conflict.existingOwner})`
+              : `pipeline shape conflict: ${result.conflict.name} (${result.conflict.reason})`,
+        });
+      }
       return {
         ok: true as const,
         name: parsed.data.metadata.name,
-        path,
-        created,
+        path: result.path,
+        created: result.changed,
       };
     }),
 
