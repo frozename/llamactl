@@ -162,12 +162,12 @@ describe('listPipelines', () => {
 
 describe('removePipeline', () => {
   test('returns false when the dir does not exist', () => {
-    expect(removePipeline('ghost', env)).toBe(false);
+    expect(removePipeline('ghost', { env })).toBe(false);
   });
   test('wipes the pipeline dir and reports true', () => {
     applyPipeline(makeManifest('doomed'), { env });
     expect(existsSync(pipelineDir('doomed', env))).toBe(true);
-    expect(removePipeline('doomed', env)).toBe(true);
+    expect(removePipeline('doomed', { env })).toBe(true);
     expect(existsSync(pipelineDir('doomed', env))).toBe(false);
   });
 });

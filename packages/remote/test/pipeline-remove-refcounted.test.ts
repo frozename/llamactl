@@ -82,4 +82,18 @@ describe('removePipeline ref-counted', () => {
     expect(ok).toBe(true);
     expect(loadPipeline('docs-ingest')).toBeNull();
   });
+
+  test('legacy env-positional path: process.env-shape opts with stray compositeName key does not invoke composite removal', () => {
+    // Operator-applied pipeline (no ownership marker).
+    applyPipeline(baseManifest);
+    // Simulate a shell env carrying a stray `compositeName` variable
+    // alongside DEV_STORAGE. The legacy structural-typing discriminator
+    // would have routed this through the composite path with
+    // compositeName: 'evil', refusing to delete an operator-owned entry.
+    const env = { ...process.env, compositeName: 'evil', DEV_STORAGE: tmp };
+    const result = removePipeline('docs-ingest', { env });
+    expect(typeof result).toBe('boolean');
+    expect(result).toBe(true);
+    expect(loadPipeline('docs-ingest', env)).toBeNull();
+  });
 });

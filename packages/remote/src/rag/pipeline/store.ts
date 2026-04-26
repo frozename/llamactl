@@ -229,35 +229,43 @@ export interface RemovePipelineOpts {
   env?: NodeJS.ProcessEnv;
 }
 
-// Composite-aware overload — ref-counted strip-and-delete. Listed first
-// so callers passing `{ compositeName: ... }` resolve to `RemoveResult`
-// instead of being coerced into `NodeJS.ProcessEnv` (which structurally
-// accepts any string-keyed object).
-export function removePipeline(name: string, opts: RemovePipelineOpts): RemoveResult;
-// Legacy operator-side overload — preserved for backwards compatibility.
-export function removePipeline(name: string, env?: NodeJS.ProcessEnv): boolean;
+// Composite-aware overload — ref-counted strip-and-delete. Discriminated
+// by the presence of `compositeName: string` on the opts argument. Older
+// signatures accepted a positional `NodeJS.ProcessEnv`, which exposed a
+// structural-typing footgun: any caller passing a `process.env`-shaped
+// object that happened to carry a stray `compositeName` shell variable
+// would be silently routed through the composite path. The opts-object
+// signature closes that hole — composite intent is now explicit.
 export function removePipeline(
   name: string,
-  envOrOpts?: NodeJS.ProcessEnv | RemovePipelineOpts,
+  opts: { compositeName: string; env?: NodeJS.ProcessEnv },
+): RemoveResult;
+// Legacy operator-side overload — preserved for backwards compatibility,
+// now accepts an opts object instead of a positional env so the
+// process.env collision can no longer arise.
+export function removePipeline(
+  name: string,
+  opts?: { env?: NodeJS.ProcessEnv },
+): boolean;
+export function removePipeline(
+  name: string,
+  opts: { compositeName?: string; env?: NodeJS.ProcessEnv } = {},
 ): boolean | RemoveResult {
-  // Distinguish opts from a `NodeJS.ProcessEnv` by looking for the
-  // `compositeName` discriminator. `process.env` is a string-only map,
-  // so it would never have that key; opts callers always supply it.
-  const isOptsObject =
-    typeof envOrOpts === 'object' &&
-    envOrOpts !== null &&
-    'compositeName' in envOrOpts;
+  // Sole discriminator: an actual `compositeName: string` value on opts.
+  // No structural overlap with `process.env` is possible here because
+  // the caller never passes `process.env` directly — they wrap the env
+  // they want in `{ env }`.
+  const isCompositePath = typeof opts.compositeName === 'string';
 
-  if (!isOptsObject) {
+  if (!isCompositePath) {
     // Legacy operator-side path — unchanged behavior.
-    const env = (envOrOpts as NodeJS.ProcessEnv | undefined) ?? process.env;
+    const env = opts.env ?? process.env;
     const dir = pipelineDir(name, env);
     if (!existsSync(dir)) return false;
     rmSync(dir, { recursive: true, force: true });
     return true;
   }
 
-  const opts = envOrOpts as RemovePipelineOpts;
   const env = opts.env ?? process.env;
   const cur = loadPipeline(name, env);
   if (!cur) return { ok: true, deleted: false };
