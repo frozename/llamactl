@@ -1,21 +1,27 @@
 import * as React from 'react';
-import { Input, TreeItem, Kbd } from '@/ui';
+import { Input, Kbd } from '@/ui';
 import { Search as SearchIcon } from 'lucide-react';
-import { APP_MODULES } from '@/modules/registry';
 import { useTabStore } from '@/stores/tab-store';
-import { searchModules } from './search-modules';
+import { useGlobalSearch } from '@/lib/global-search/hooks/use-global-search';
+import { SearchResultsTree } from './search-results-tree';
+import type { Hit } from '@/lib/global-search/types';
+import { trpcUIClient } from '@/lib/trpc';
 
-/**
- * Global search across static modules. Rank by substring match in
- * labelKey + aliases + id. Selecting a row opens it as a tab. Live
- * workloads / nodes / logs are not in scope yet — the fuller
- * "search everything" query ships post-renewal.
- */
 export function SearchView(): React.JSX.Element {
   const [q, setQ] = React.useState('');
   const open = useTabStore((s) => s.open);
+  const { results, status } = useGlobalSearch(q);
+  const [connectedNode, setConnectedNode] = React.useState<string | undefined>();
+  React.useEffect(() => {
+    trpcUIClient.uiGetActiveNode.query().then((res) => setConnectedNode(res.name || undefined)).catch(() => {});
+  }, []);
 
-  const results = React.useMemo(() => searchModules(APP_MODULES, q), [q]);
+  const onActivate = React.useCallback(
+    (hit: Hit) => {
+      if (hit.action.kind === 'open-tab') open(hit.action.tab);
+    },
+    [open],
+  );
 
   return (
     <div
@@ -29,14 +35,14 @@ export function SearchView(): React.JSX.Element {
       <div style={{ padding: '10px 14px' }}>
         <Input
           leadingSlot={<SearchIcon size={12} />}
-          placeholder="Search modules…"
+          placeholder="Search everything…"
           value={q}
           onChange={(e) => setQ(e.currentTarget.value)}
           autoFocus
         />
       </div>
-      <div role="tree" style={{ padding: '0 0 12px', overflowY: 'auto', flex: 1 }}>
-        {q.trim() === '' && (
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        {q.trim() === '' ? (
           <div
             style={{
               padding: '12px 18px',
@@ -45,35 +51,25 @@ export function SearchView(): React.JSX.Element {
               lineHeight: 1.6,
             }}
           >
-            Type to search modules. For fuzzy matching with aliases, the command palette (
-            <Kbd compact>⌘⇧P</Kbd>) is still the pro move.
+            Type to search across modules, ops sessions, workloads, knowledge, logs, and more. Use{' '}
+            <code style={{ fontFamily: 'var(--font-mono)' }}>session:</code>,{' '}
+            <code style={{ fontFamily: 'var(--font-mono)' }}>module:</code>, or{' '}
+            <code style={{ fontFamily: 'var(--font-mono)' }}>kb:</code> to filter to one surface. Or use
+            the palette (<Kbd compact>⌘⇧P</Kbd>) for quick jumps.
           </div>
+        ) : results.length === 0 && status === 'idle' ? (
+          <div
+            style={{
+              padding: '12px 18px',
+              color: 'var(--color-text-tertiary)',
+              fontSize: 12,
+            }}
+          >
+            No results.
+          </div>
+        ) : (
+          <SearchResultsTree results={results} onActivate={onActivate} connectedNode={connectedNode} />
         )}
-        {results.map(({ m }) => (
-          <TreeItem
-            key={m.id}
-            label={m.labelKey}
-            trailing={
-              <span
-                style={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 10,
-                  color: 'var(--color-text-tertiary)',
-                }}
-              >
-                {m.beaconGroup}
-              </span>
-            }
-            onClick={() =>
-              open({
-                tabKey: `module:${m.id}`,
-                title: m.labelKey,
-                kind: 'module',
-                openedAt: Date.now(),
-              })
-            }
-          />
-        ))}
       </div>
     </div>
   );
