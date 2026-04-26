@@ -34,6 +34,7 @@ import {
   type PlannerToolDescriptor,
 } from '@nova/mcp';
 import { createOpenAICompatProvider, type AiProvider } from '@nova/contracts';
+import { CompositeOwnershipSchema } from './workload/gateway-catalog/schema.js';
 import {
   decideGuardianAction,
   emptyCostGuardianConfig,
@@ -2552,7 +2553,12 @@ export const router = t.router({
   // (CLI + MCP + Electron).
 
   ragPipelineApply: t.procedure
-    .input(z.object({ manifestYaml: z.string().min(1) }))
+    .input(
+      z.object({
+        manifestYaml: z.string().min(1),
+        ownership: CompositeOwnershipSchema.optional(),
+      }),
+    )
     .mutation(async ({ input }) => {
       const { parse: parseYaml } = await import('yaml');
       const { RagPipelineManifestSchema } = await import('./rag/pipeline/index.js');
@@ -2573,8 +2579,22 @@ export const router = t.router({
           message: `invalid RagPipeline manifest: ${JSON.stringify(parsed.error.issues)}`,
         });
       }
-      const result = applyPipeline(parsed.data);
+      const result = applyPipeline(
+        parsed.data,
+        input.ownership ? { ownership: input.ownership } : {},
+      );
       if (!result.ok) {
+        // Composite-aware callers (ownership provided) need to interpret
+        // the structured conflict to translate it into Pending status.
+        // Operator CLI/UI callers (no ownership) keep the prior throwing
+        // wire shape so existing tests + bash flows are unchanged.
+        if (input.ownership) {
+          return {
+            ok: false as const,
+            name: parsed.data.metadata.name,
+            conflict: result.conflict,
+          };
+        }
         throw new TRPCError({
           code: 'CONFLICT',
           message:
@@ -2674,9 +2694,26 @@ export const router = t.router({
     }),
 
   ragPipelineRemove: t.procedure
-    .input(z.object({ name: z.string().min(1) }))
+    .input(
+      z.object({
+        name: z.string().min(1),
+        compositeName: z.string().min(1).optional(),
+      }),
+    )
     .mutation(async ({ input }) => {
       const { removePipeline } = await import('./rag/pipeline/store.js');
+      // Composite-aware path: ref-counted removal. Conflicts surface in
+      // the response body so the composite handler can translate them
+      // to Pending. Operator CLI/UI path (no compositeName) keeps the
+      // prior `{ ok, removed }` shape — `removePipeline(name)` legacy
+      // overload returns boolean.
+      if (input.compositeName) {
+        const r = removePipeline(input.name, { compositeName: input.compositeName });
+        if (!r.ok) {
+          return { ok: false as const, name: input.name, conflict: r.conflict };
+        }
+        return { ok: true as const, deleted: r.deleted };
+      }
       const removed = removePipeline(input.name);
       return { ok: true as const, removed };
     }),
