@@ -10,8 +10,10 @@ import {
   config as kubecfg,
   LOCAL_NODE_ENDPOINT,
   type PinnedFetchFactory,
-} from '@llamactl/remote';
+  type ClusterNode,
+  } from '@llamactl/remote';
 import { makeNodePinnedFetch } from './node-pinned-fetch.js';
+import { fanOutSurface, listAgentNodes } from './cross-node-fan-out.js';
 
 /**
  * Electron main's dispatcher router. Exposes the same wire shape as
@@ -199,6 +201,81 @@ export function __resetActiveNodeOverrideForTests(): void {
  * and never forward; `CONTROL_PLANE_ONLY` blocks accidental routing.
  */
 const uiRouter = t.router({
+  
+  uiCrossNodeOpsSessionSearch: t.procedure
+    .input(z.object({
+      query: z.string().min(1),
+      perNodeTimeoutMs: z.number().int().positive().max(30000).optional(),
+    }))
+    .query(async ({ input, signal }) => {
+      const cfg = kubecfg.loadConfig();
+      const ctx = kubecfg.currentContext(cfg);
+      const user = cfg.users.find((u) => u.name === ctx.user);
+      if (!user) return { hits: [], unreachableNodes: [] };
+      const activeName = getActiveNodeOverride() ?? ctx.defaultNode;
+      const peers = listAgentNodes(cfg, activeName);
+      const result = await fanOutSurface<{
+        sessionId: string;
+        goal: string;
+        status: 'live' | 'done' | 'refused' | 'aborted';
+        startedAt: string;
+        matches: { where: string; snippet: string; spans: { start: number; end: number }[] }[];
+        score: number;
+        originNode?: string;
+      }>({
+        nodes: peers,
+        perNodeFetch: async (node, peerSignal) => {
+          const client = getPeerClient(node, user) as {
+            opsSessionSearch: { query: (i: { query: string }, o?: { signal?: AbortSignal }) => Promise<{ hits: any[] }> };
+          };
+          const r = await client.opsSessionSearch.query({ query: input.query }, { signal: peerSignal });
+          return r.hits.map((h: any) => ({ ...h, originNode: node.name }));
+        },
+        perNodeTimeoutMs: input.perNodeTimeoutMs ?? 2000,
+        signal,
+      });
+      return {
+        hits: result.hits,
+        unreachableNodes: result.failures.map((f) => f.nodeName),
+      };
+    }),
+
+  uiCrossNodeLogsSearch: t.procedure
+    .input(z.object({
+      query: z.string().min(1),
+      perNodeTimeoutMs: z.number().int().positive().max(30000).optional(),
+    }))
+    .query(async ({ input, signal }) => {
+      const cfg = kubecfg.loadConfig();
+      const ctx = kubecfg.currentContext(cfg);
+      const user = cfg.users.find((u) => u.name === ctx.user);
+      if (!user) return { hits: [], unreachableNodes: [] };
+      const activeName = getActiveNodeOverride() ?? ctx.defaultNode;
+      const peers = listAgentNodes(cfg, activeName);
+      const result = await fanOutSurface<{
+        fileLabel: string;
+        filePath: string;
+        matches: { lineNumber: number; where: string; snippet: string; spans: { start: number; end: number }[] }[];
+        score: number;
+        originNode?: string;
+      }>({
+        nodes: peers,
+        perNodeFetch: async (node, peerSignal) => {
+          const client = getPeerClient(node, user) as {
+            logsSearch: { query: (i: { query: string }, o?: { signal?: AbortSignal }) => Promise<{ hits: any[] }> };
+          };
+          const r = await client.logsSearch.query({ query: input.query }, { signal: peerSignal });
+          return r.hits.map((h: any) => ({ ...h, originNode: node.name }));
+        },
+        perNodeTimeoutMs: input.perNodeTimeoutMs ?? 2000,
+        signal,
+      });
+      return {
+        hits: result.hits,
+        unreachableNodes: result.failures.map((f) => f.nodeName),
+      };
+    }),
+
   uiSetActiveNode: t.procedure
     .input(z.object({ name: z.string().min(1) }))
     .mutation(({ input }) => {
@@ -438,6 +515,35 @@ function buildRemoteClient(
 export function __resetClientCacheForTests(): void {
   clientCache.clear();
 }
+
+
+type PeerClientFactory = (node: ClusterNode) => unknown;
+let peerClientFactoryOverride: PeerClientFactory | null = null;
+
+export function __setPeerClientFactoryForTests(factory: PeerClientFactory): void {
+  peerClientFactoryOverride = factory;
+}
+export function __resetPeerClientFactoryForTests(): void {
+  peerClientFactoryOverride = null;
+}
+
+function getPeerClient(node: ClusterNode, user: any): unknown {
+  if (peerClientFactoryOverride) return peerClientFactoryOverride(node);
+  return buildRemoteClient(
+    {
+      kind: 'remote',
+      node: {
+        name: node.name,
+        endpoint: node.endpoint,
+        certificate: node.certificate ?? null,
+        certificateFingerprint: node.certificateFingerprint ?? null,
+      },
+      token: kubecfg.resolveToken(user),
+    },
+    makeNodePinnedFetch,
+  );
+}
+
 
 function wrapQueryOrMutation(
   path: string,
