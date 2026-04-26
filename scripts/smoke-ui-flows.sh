@@ -40,6 +40,8 @@ APP_DIR="${APP_DIR:-$REPO_ROOT/packages/app}"
 # Full sweep. Intentionally ordered heaviest E2E first so failures
 # appear quickly.
 DEFAULT_FLOWS=(
+  "tests/ui-flows/global-search-flow.ts"
+  "tests/ui-flows/palette-search-flow.ts"
   pipelines-apply-run-flow
   pipelines-wizard-flow
   ops-chat-flow
