@@ -25,7 +25,7 @@ export interface ClientPhaseInput {
   presets: PresetItem[];
 }
 
-const SERVER_SURFACES: SurfaceKind[] = ['session', 'knowledge', 'logs'];
+const SERVER_SURFACES: SurfaceKind[] = ['session', 'logs'];
 
 function groupHits(hits: Hit[]): SurfaceGroup[] {
   const groups = new Map<SurfaceKind, SurfaceGroup>();
