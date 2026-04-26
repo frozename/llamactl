@@ -48,7 +48,11 @@ import {
 import type { GatewayHandler } from '../workload/gateway-handlers/types.js';
 import { findServiceHandler } from '../service/handlers/registry.js';
 import type { ServiceSpec } from '../service/schema.js';
-import type { Composite, ComponentRef } from './schema.js';
+import type {
+  Composite,
+  ComponentRef,
+  CompositeStatusComponent,
+} from './schema.js';
 import { topologicalOrder, reverseOrder } from './dag.js';
 import {
   saveComposite,
@@ -59,6 +63,10 @@ import type {
   CompositeApplyResult,
   CompositeComponentResult,
 } from './types.js';
+import {
+  applyPipelineComponent,
+  removePipelineComponent,
+} from './handlers/pipeline.js';
 
 export interface CompositeApplyOptions {
   manifest: Composite;
@@ -91,6 +99,11 @@ interface AppliedRecord {
   workloadNodeName?: string;
   // Rag-specific
   ragNodeCreated?: boolean;
+  // Pipeline-specific — when the handler reported a non-Ready state
+  // (Pending on shape/name conflict) the apply loop continues, but
+  // the final composite status surfaces that state instead of the
+  // generic Ready/Failed flattening used by other kinds.
+  pipelineStatus?: CompositeStatusComponent;
   // Rollback hint: only components we actually started need teardown.
   started: boolean;
 }
@@ -114,8 +127,18 @@ export async function applyComposite(
     try {
       const record = await applyComponent(ref, manifest, opts, applied);
       applied.push(record);
-      componentResults.push({ ref, state: 'Ready' });
-      emit({ type: 'component-ready', ref });
+      // Pipeline components carry a richer status than Ready/Failed
+      // (Pending on shape/name conflict). Surface the message on the
+      // public `componentResults` array even though the discriminator
+      // stays 'Ready' — the final status mapping below uses the
+      // pipelineStatus override to expose the real state.
+      const message = record.pipelineStatus?.message;
+      componentResults.push({
+        ref,
+        state: 'Ready',
+        ...(message !== undefined && { message }),
+      });
+      emit({ type: 'component-ready', ref, ...(message !== undefined && { message }) });
     } catch (err) {
       const message = toErrorMessage(err);
       componentResults.push({ ref, state: 'Failed', message });
@@ -134,6 +157,14 @@ export async function applyComposite(
     emit({ type: 'rollback-complete' });
   }
 
+  // Pipeline components have a richer state space (Ready | Pending) —
+  // build a lookup so the final-status mapping can swap in the
+  // handler-reported status for those refs.
+  const pipelineStatusByName = new Map<string, CompositeStatusComponent>();
+  for (const rec of applied) {
+    if (rec.pipelineStatus) pipelineStatusByName.set(rec.ref.name, rec.pipelineStatus);
+  }
+
   const appliedAt = new Date().toISOString();
   const finalStatus: Composite['status'] = {
     phase:
@@ -143,11 +174,19 @@ export async function applyComposite(
           ? 'Failed'
           : 'Degraded',
     appliedAt,
-    components: componentResults.map((r) => ({
-      ref: r.ref,
-      state: r.state === 'Ready' ? 'Ready' : 'Failed',
-      ...(r.message !== undefined && { message: r.message }),
-    })),
+    components: componentResults.map((r) => {
+      // Pipeline-kind override: surface the handler-reported state
+      // (Ready|Pending) verbatim instead of flattening to Ready/Failed.
+      if (r.ref.kind === 'pipeline') {
+        const ps = pipelineStatusByName.get(r.ref.name);
+        if (ps) return ps;
+      }
+      return {
+        ref: r.ref,
+        state: r.state === 'Ready' ? ('Ready' as const) : ('Failed' as const),
+        ...(r.message !== undefined && { message: r.message }),
+      };
+    }),
   };
 
   // Persist the status on the manifest. The composite YAML on disk
@@ -196,13 +235,7 @@ async function applyComponent(
     case 'gateway':
       return applyGatewayComponent(ref, manifest, opts, applied);
     case 'pipeline':
-      // Pipeline composite handler lands in a follow-up task; for now,
-      // a manifest carrying spec.pipelines fails fast at apply time.
-      // Schema-only wiring lets composites declare pipelines without
-      // dragging the in-process caller into this slice.
-      throw new Error(
-        `composite pipeline component '${ref.name}' is not yet supported by the applier`,
-      );
+      return applyPipelineComponentRef(ref, manifest);
     default: {
       const exhaustive: never = ref.kind;
       throw new Error(`unknown component kind: ${String(exhaustive)}`);
@@ -443,6 +476,30 @@ async function applyGatewayComponent(
   return { ref, started: true };
 }
 
+async function applyPipelineComponentRef(
+  ref: ComponentRef,
+  manifest: Composite,
+): Promise<AppliedRecord> {
+  const entry = manifest.spec.pipelines.find((p) => p.name === ref.name);
+  if (!entry) {
+    throw new Error(`pipeline '${ref.name}' not found in composite`);
+  }
+  const caller = await buildPipelineCaller();
+  const result = await applyPipelineComponent(entry, {
+    compositeName: manifest.metadata.name,
+    caller: caller as unknown as Parameters<typeof applyPipelineComponent>[1]['caller'],
+  });
+  // The handler always returns either Ready or Pending (it never
+  // throws on shape/name conflicts — those are Pending). Genuine
+  // procedural errors propagate up; the surrounding try/catch in
+  // `applyComposite` flips them into a Failed component.
+  return {
+    ref,
+    pipelineStatus: result.status,
+    started: result.changed,
+  };
+}
+
 // ---- rollback -------------------------------------------------------------
 
 async function rollback(
@@ -506,6 +563,18 @@ async function teardownComponent(
       // happens via handler.apply(); we don't call a second
       // "deregister" because providers may still have other workloads
       // relying on the gateway. Documented follow-up.
+      return;
+    }
+    case 'pipeline': {
+      // Rollback a partially-applied pipeline. Best-effort — pass
+      // the composite name so ref-counted ownership cleanup runs.
+      const entry = manifest.spec.pipelines.find((p) => p.name === rec.ref.name);
+      if (!entry) return;
+      const caller = await buildPipelineCaller();
+      await removePipelineComponent(entry, {
+        compositeName: manifest.metadata.name,
+        caller: caller as unknown as Parameters<typeof removePipelineComponent>[1]['caller'],
+      });
       return;
     }
   }
@@ -680,6 +749,16 @@ async function destroyComponent(
     case 'gateway':
       // Same v1 limitation as rollback — no symmetric deregister.
       return;
+    case 'pipeline': {
+      const entry = manifest.spec.pipelines.find((p) => p.name === ref.name);
+      if (!entry) return;
+      const caller = await buildPipelineCaller();
+      await removePipelineComponent(entry, {
+        compositeName: manifest.metadata.name,
+        caller: caller as unknown as Parameters<typeof removePipelineComponent>[1]['caller'],
+      });
+      return;
+    }
   }
 }
 
@@ -719,6 +798,53 @@ function buildGatewayDispatch(
 function toErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+/**
+ * Build the in-process tRPC caller used by the pipeline component
+ * dispatch. Dynamic import avoids the static cycle (`router.ts`
+ * already imports `composite/apply.ts` lazily). The caller lazily
+ * exposes only the procs the pipeline handler needs — the surface
+ * is structurally typed in `handlers/pipeline.ts`.
+ */
+async function buildPipelineCaller(): Promise<{
+  ragPipelineApply: (input: {
+    manifestYaml: string;
+    ownership?: {
+      source: 'composite';
+      compositeNames: string[];
+      specHash: string;
+    };
+  }) => Promise<unknown>;
+  ragPipelineRun: (input: {
+    name: string;
+    dryRun?: boolean;
+  }) => Promise<unknown>;
+  ragPipelineRemove: (input: {
+    name: string;
+    compositeName?: string;
+  }) => Promise<unknown>;
+}> {
+  const { router } = await import('../router.js');
+  const caller = router.createCaller({}) as unknown as {
+    ragPipelineApply: (input: {
+      manifestYaml: string;
+      ownership?: {
+        source: 'composite';
+        compositeNames: string[];
+        specHash: string;
+      };
+    }) => Promise<unknown>;
+    ragPipelineRun: (input: {
+      name: string;
+      dryRun?: boolean;
+    }) => Promise<unknown>;
+    ragPipelineRemove: (input: {
+      name: string;
+      compositeName?: string;
+    }) => Promise<unknown>;
+  };
+  return caller;
 }
 
 /**
