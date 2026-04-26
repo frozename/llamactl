@@ -18,3 +18,11 @@ describe('computeNextSchedule', () => {
     expect(out.tier3At).toBe(1200);
   });
 });
+
+  test('Tier 2 fires both local and cross-node fetches under one debounce anchor', async () => {
+    (globalThis as any).electronTRPC = { onMessage: () => {} };
+    const { computeNextSchedule } = await import('../../../src/lib/global-search/hooks/use-global-search');
+    const t0 = Date.now();
+    const sched = computeNextSchedule(t0);
+    expect(sched.tier2At).toBe(t0 + 250);
+  });

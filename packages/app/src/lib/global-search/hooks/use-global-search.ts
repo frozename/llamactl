@@ -1,6 +1,6 @@
 // packages/app/src/lib/global-search/hooks/use-global-search.ts
 import * as React from 'react';
-import { trpc } from '../../trpc.js';
+import { trpc, trpcUIClient } from '../../trpc.js';
 import { useTabStore } from '../../../stores/tab-store.js';
 import type { GroupedResults } from '../types';
 import { runClientPhase, mergeServerHits } from '../orchestrator';
