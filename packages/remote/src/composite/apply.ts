@@ -23,6 +23,10 @@
  *   - Swallows rollback errors (logs via the event stream) so a
  *     single stuck teardown can't keep the applier from finishing.
  */
+import { removeCompositeEntries, readGatewayCatalog, writeGatewayCatalog } from '../workload/gateway-catalog/index.js';
+import { reloadAllGatewayNodesOfKind } from '../workload/gateway-catalog/reload.js';
+import { removeCompositeEntries, readGatewayCatalog, writeGatewayCatalog } from '../workload/gateway-catalog/index.js';
+import { reloadAllGatewayNodesOfKind } from '../workload/gateway-catalog/reload.js';
 import type {
   RuntimeBackend,
   ServiceInstance,
@@ -569,6 +573,19 @@ export async function destroyComposite(
         errors.push({ ref, message: toErrorMessage(err) });
       }
     }
+
+  for (const kind of ['sirius', 'embersynth'] as const) {
+    const current = readGatewayCatalog(kind);
+    const result = removeCompositeEntries({
+      kind,
+      compositeName: opts.manifest.metadata.name,
+      current,
+    });
+    if (result.changed) {
+      writeGatewayCatalog(kind, result.next as any);
+      await reloadAllGatewayNodesOfKind(kind);
+    }
+  }
     return { ok: errors.length === 0, removed, errors };
   }
 
@@ -581,6 +598,32 @@ export async function destroyComposite(
     }
   }
 
+
+  for (const kind of ['sirius', 'embersynth'] as const) {
+    const current = readGatewayCatalog(kind);
+    const result = removeCompositeEntries({
+      kind,
+      compositeName: opts.manifest.metadata.name,
+      current,
+    });
+    if (result.changed) {
+      writeGatewayCatalog(kind, result.next as any);
+      await reloadAllGatewayNodesOfKind(kind);
+    }
+  }
+
+  for (const kind of ['sirius', 'embersynth'] as const) {
+    const current = readGatewayCatalog(kind);
+    const result = removeCompositeEntries({
+      kind,
+      compositeName: opts.manifest.metadata.name,
+      current,
+    });
+    if (result.changed) {
+      writeGatewayCatalog(kind, result.next as any);
+      await reloadAllGatewayNodesOfKind(kind);
+    }
+  }
   return { ok: errors.length === 0, removed, errors };
 }
 
