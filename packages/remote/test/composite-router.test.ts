@@ -79,6 +79,7 @@ function sampleManifest(overrides: Partial<Composite['spec']> = {}): Composite {
         },
       ],
       gateways: [],
+      pipelines: [],
       dependencies: [],
       onFailure: 'rollback',
       ...overrides,

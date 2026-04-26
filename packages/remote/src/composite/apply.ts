@@ -195,6 +195,14 @@ async function applyComponent(
       return applyRagComponent(ref, manifest, opts, applied);
     case 'gateway':
       return applyGatewayComponent(ref, manifest, opts, applied);
+    case 'pipeline':
+      // Pipeline composite handler lands in a follow-up task; for now,
+      // a manifest carrying spec.pipelines fails fast at apply time.
+      // Schema-only wiring lets composites declare pipelines without
+      // dragging the in-process caller into this slice.
+      throw new Error(
+        `composite pipeline component '${ref.name}' is not yet supported by the applier`,
+      );
     default: {
       const exhaustive: never = ref.kind;
       throw new Error(`unknown component kind: ${String(exhaustive)}`);

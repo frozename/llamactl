@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { ProviderConfigCommonSchema } from '../workload/gateway-catalog/schema.js';
 import { ModelRunSpecSchema } from '../workload/schema.js';
 import { RagBindingSchema } from '../config/schema.js';
+import { RagPipelineSpecSchema } from '../rag/pipeline/schema.js';
 import { ServiceSpecSchema } from '../service/schema.js';
 
 /**
@@ -24,7 +25,7 @@ import { ServiceSpecSchema } from '../service/schema.js';
  * are not supported in v1.
  */
 export const ComponentRefSchema = z.object({
-  kind: z.enum(['service', 'workload', 'rag', 'gateway']),
+  kind: z.enum(['service', 'workload', 'rag', 'gateway', 'pipeline']),
   name: z.string().min(1),
 });
 export type ComponentRef = z.infer<typeof ComponentRefSchema>;
@@ -73,6 +74,25 @@ export const RagNodeCompositeEntrySchema = z.object({
 export type RagNodeCompositeEntry = z.infer<typeof RagNodeCompositeEntrySchema>;
 
 /**
+ * Pipeline entry inside a composite — wraps the existing
+ * `RagPipelineSpec` with a composite-scoped name. The applier
+ * synthesises a full `RagPipeline` manifest at apply time and
+ * registers it through the same path operator-authored manifests
+ * use, plus an `ownership` marker so destroy can reverse it cleanly.
+ */
+export const PipelineCompositeEntrySchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .regex(
+      /^[a-z0-9][a-z0-9-]*$/,
+      'pipeline name must be lowercase-alphanumeric-hyphens',
+    ),
+  spec: RagPipelineSpecSchema,
+});
+export type PipelineCompositeEntry = z.infer<typeof PipelineCompositeEntrySchema>;
+
+/**
  * CompositeSpec — the authoring surface. Each list defaults to `[]`
  * so a minimal composite (one service, nothing else) stays terse.
  * Cross-component validation lives on the outer `CompositeSchema`
@@ -93,6 +113,7 @@ export const CompositeSpecSchema = z.object({
   workloads: z.array(ModelRunSpecSchema).default([]),
   ragNodes: z.array(RagNodeCompositeEntrySchema).default([]),
   gateways: z.array(GatewayCompositeEntrySchema).default([]),
+  pipelines: z.array(PipelineCompositeEntrySchema).default([]),
   dependencies: z.array(DependencyEdgeSchema).default([]),
   onFailure: z.enum(['rollback', 'leave-partial']).default('rollback'),
   runtime: CompositeRuntimeSchema.optional(),
@@ -137,12 +158,14 @@ function collectComponentNames(spec: CompositeSpec): {
   workload: Set<string>;
   rag: Set<string>;
   gateway: Set<string>;
+  pipeline: Set<string>;
 } {
   return {
     service: new Set(spec.services.map((s) => s.name)),
     workload: new Set(spec.workloads.map((w) => w.node /* placeholder */)),
     rag: new Set(spec.ragNodes.map((r) => r.name)),
     gateway: new Set(spec.gateways.map((g) => g.name)),
+    pipeline: new Set(spec.pipelines.map((p) => p.name)),
   };
 }
 
@@ -181,6 +204,7 @@ export const CompositeSchema = z
       workload: new Map<string, number>(),
       rag: new Map<string, number>(),
       gateway: new Map<string, number>(),
+      pipeline: new Map<string, number>(),
     } as const;
     for (const s of spec.services) {
       seen.service.set(s.name, (seen.service.get(s.name) ?? 0) + 1);
@@ -194,6 +218,9 @@ export const CompositeSchema = z
     }
     for (const g of spec.gateways) {
       seen.gateway.set(g.name, (seen.gateway.get(g.name) ?? 0) + 1);
+    }
+    for (const p of spec.pipelines) {
+      seen.pipeline.set(p.name, (seen.pipeline.get(p.name) ?? 0) + 1);
     }
     for (const [kind, bag] of Object.entries(seen) as Array<
       [keyof typeof seen, Map<string, number>]
@@ -216,6 +243,7 @@ export const CompositeSchema = z
       workload: names.workload,
       rag: names.rag,
       gateway: names.gateway,
+      pipeline: names.pipeline,
     };
     for (let i = 0; i < spec.dependencies.length; i++) {
       const edge = spec.dependencies[i];
