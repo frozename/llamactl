@@ -386,7 +386,12 @@ export function filterMatches(
       return fit === 'excellent' || fit === 'good';
     default: {
       if (klass === filter) return true;
-      return repo.includes(filter);
+      // Real HF repo names are mixed-case (`unsloth/Qwen3.6-27B-GGUF`);
+      // operators type lowercase filters (`discover qwen3`). Lowercase
+      // both sides so the substring fallthrough catches the natural
+      // case-insensitive intent. Class equality above stays exact since
+      // both sides come from the same internal vocabulary.
+      return repo.toLowerCase().includes(filter.toLowerCase());
     }
   }
 }
