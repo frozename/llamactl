@@ -27,6 +27,16 @@ export function listComponents(spec: CompositeSpec): ComponentRef[] {
   for (const w of spec.workloads)
     out.push({ kind: 'workload', name: workloadRefName(w) });
   for (const r of spec.ragNodes) out.push({ kind: 'rag', name: r.name });
+  // Pipelines slot before gateways per spec D6 (services → ragNodes →
+  // workloads → pipelines → gateways). Pipelines are a structural
+  // prerequisite for any gateway that wants to surface freshly-ingested
+  // content, and gateways stay last as the routable surface.
+  // `?? []` is defensive: schema-validated specs always carry an array
+  // (Zod fills the default), but a handful of tests construct specs
+  // by hand with `as any` and predate the `pipelines` field — keep them
+  // green without forcing every fixture to track every new field.
+  for (const p of spec.pipelines ?? [])
+    out.push({ kind: 'pipeline', name: p.name });
   for (const g of spec.gateways) out.push({ kind: 'gateway', name: g.name });
   return out;
 }
@@ -35,6 +45,10 @@ export function listComponents(spec: CompositeSpec): ComponentRef[] {
  * Infer edges the operator didn't declare explicitly:
  *   - ragNode.backingService → implicit edge rag → service.
  *   - gateway.upstreamWorkloads → implicit edge gateway → workload.
+ *   - pipeline.destination.ragNode → implicit edge pipeline → rag,
+ *     but only when the destination names an inline ragNode (operator
+ *     pipelines pointing at an externally-declared rag node stay
+ *     edge-free here; the applier still validates the reference).
  *
  * We do NOT auto-link workloads to pgvector services on the same
  * node — that's application-level wiring and the operator must
@@ -55,6 +69,16 @@ export function impliedEdges(spec: CompositeSpec): DependencyEdge[] {
       edges.push({
         from: { kind: 'gateway', name: g.name },
         to: { kind: 'workload', name: up },
+      });
+    }
+  }
+  const ragNodeNames = new Set(spec.ragNodes.map((r) => r.name));
+  for (const p of spec.pipelines ?? []) {
+    const destRagNode = p.spec.destination.ragNode;
+    if (ragNodeNames.has(destRagNode)) {
+      edges.push({
+        from: { kind: 'pipeline', name: p.name },
+        to: { kind: 'rag', name: destRagNode },
       });
     }
   }

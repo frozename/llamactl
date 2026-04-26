@@ -6,6 +6,7 @@
  * trimmed YAML shape and get back fully-populated objects.
  */
 import { z } from 'zod';
+import { CompositeOwnershipSchema } from '../../workload/gateway-catalog/schema.js';
 
 export const FilesystemSourceSpecSchema = z.object({
   kind: z.literal('filesystem'),
@@ -148,6 +149,7 @@ export const RagPipelineManifestSchema = z.object({
   kind: z.literal('RagPipeline'),
   metadata: z.object({ name: z.string().min(1) }),
   spec: RagPipelineSpecSchema,
+  ownership: CompositeOwnershipSchema.optional(),
 });
 
 export type FilesystemSourceSpec = z.infer<typeof FilesystemSourceSpecSchema>;

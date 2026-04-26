@@ -29,6 +29,8 @@ import {
   type RagPipelineManifest,
 } from './schema.js';
 import type { RunSummary } from './runtime.js';
+import { entrySpecHash } from '../../workload/gateway-catalog/hash.js';
+import type { CompositeOwnership } from '../../workload/gateway-catalog/schema.js';
 
 export function defaultPipelinesDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_RAG_PIPELINES_DIR?.trim();
@@ -59,20 +61,99 @@ function statePath(name: string, env: NodeJS.ProcessEnv): string {
   return join(pipelineDir(name, env), 'state.json');
 }
 
+export type ApplyConflict =
+  | { kind: 'name'; name: string; existingOwner: 'operator' | 'composite' }
+  | { kind: 'shape'; name: string; reason: string };
+
+export type ApplyResult =
+  | { ok: true; changed: boolean; path: string }
+  | { ok: false; conflict: ApplyConflict };
+
+export interface ApplyPipelineOpts {
+  ownership?: CompositeOwnership;
+  env?: NodeJS.ProcessEnv;
+}
+
 export function applyPipeline(
   manifest: RagPipelineManifest,
-  env: NodeJS.ProcessEnv = process.env,
-): { path: string; created: boolean } {
+  opts: ApplyPipelineOpts = {},
+): ApplyResult {
+  const env = opts.env ?? process.env;
+
   // Re-parse through the schema so we never persist an invalid
   // manifest — callers who hand us a typed-but-crafted object still
   // get defaults + validation.
   const parsed = RagPipelineManifestSchema.parse(manifest);
-  const dir = pipelineDir(parsed.metadata.name, env);
-  const path = specPath(parsed.metadata.name, env);
-  const created = !existsSync(path);
+  const newHash = entrySpecHash(parsed.spec);
+  const cur = loadPipeline(parsed.metadata.name, env);
+
+  // Brand-new write: just store + return.
+  if (!cur) {
+    const persisted: RagPipelineManifest = opts.ownership
+      ? { ...parsed, ownership: { ...opts.ownership, specHash: newHash } }
+      : parsed;
+    const path = writeManifest(persisted, env);
+    return { ok: true, changed: true, path };
+  }
+
+  // Existing entry has no ownership marker (operator-owned).
+  if (!cur.ownership) {
+    if (opts.ownership) {
+      return {
+        ok: false,
+        conflict: { kind: 'name', name: parsed.metadata.name, existingOwner: 'operator' },
+      };
+    }
+    const curHash = entrySpecHash(cur.spec);
+    const changed = curHash !== newHash;
+    const path = writeManifest(parsed, env);
+    return { ok: true, changed, path };
+  }
+
+  // Existing entry has ownership marker (composite-owned).
+  if (!opts.ownership) {
+    return {
+      ok: false,
+      conflict: { kind: 'name', name: parsed.metadata.name, existingOwner: 'composite' },
+    };
+  }
+
+  const claimingNames = opts.ownership.compositeNames;
+  if (cur.ownership.specHash !== newHash) {
+    return {
+      ok: false,
+      conflict: {
+        kind: 'shape',
+        name: parsed.metadata.name,
+        reason: `existing specHash ${cur.ownership.specHash} != new ${newHash}`,
+      },
+    };
+  }
+
+  const allClaimingAlreadyOwn = claimingNames.every((n) =>
+    cur.ownership!.compositeNames.includes(n),
+  );
+  if (allClaimingAlreadyOwn) {
+    return { ok: true, changed: false, path: specPath(parsed.metadata.name, env) };
+  }
+
+  const merged = Array.from(
+    new Set([...cur.ownership.compositeNames, ...claimingNames]),
+  ).sort();
+  const persisted: RagPipelineManifest = {
+    ...parsed,
+    ownership: { source: 'composite', compositeNames: merged, specHash: newHash },
+  };
+  const path = writeManifest(persisted, env);
+  return { ok: true, changed: true, path };
+}
+
+function writeManifest(manifest: RagPipelineManifest, env: NodeJS.ProcessEnv): string {
+  const dir = pipelineDir(manifest.metadata.name, env);
+  const path = specPath(manifest.metadata.name, env);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path, stringifyYaml(parsed), 'utf8');
-  return { path, created };
+  writeFileSync(path, stringifyYaml(manifest), 'utf8');
+  return path;
 }
 
 export function loadPipeline(
@@ -136,14 +217,86 @@ export function listPipelines(
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export type RemoveConflict =
+  | { kind: 'name'; name: string; existingOwner: 'operator' };
+
+export type RemoveResult =
+  | { ok: true; deleted: boolean }
+  | { ok: false; conflict: RemoveConflict };
+
+export interface RemovePipelineOpts {
+  compositeName?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+// Composite-aware overload — ref-counted strip-and-delete. Discriminated
+// by the presence of `compositeName: string` on the opts argument. Older
+// signatures accepted a positional `NodeJS.ProcessEnv`, which exposed a
+// structural-typing footgun: any caller passing a `process.env`-shaped
+// object that happened to carry a stray `compositeName` shell variable
+// would be silently routed through the composite path. The opts-object
+// signature closes that hole — composite intent is now explicit.
 export function removePipeline(
   name: string,
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  const dir = pipelineDir(name, env);
-  if (!existsSync(dir)) return false;
-  rmSync(dir, { recursive: true, force: true });
-  return true;
+  opts: { compositeName: string; env?: NodeJS.ProcessEnv },
+): RemoveResult;
+// Legacy operator-side overload — preserved for backwards compatibility,
+// now accepts an opts object instead of a positional env so the
+// process.env collision can no longer arise.
+export function removePipeline(
+  name: string,
+  opts?: { env?: NodeJS.ProcessEnv },
+): boolean;
+export function removePipeline(
+  name: string,
+  opts: { compositeName?: string; env?: NodeJS.ProcessEnv } = {},
+): boolean | RemoveResult {
+  // Sole discriminator: an actual `compositeName: string` value on opts.
+  // No structural overlap with `process.env` is possible here because
+  // the caller never passes `process.env` directly — they wrap the env
+  // they want in `{ env }`.
+  const isCompositePath = typeof opts.compositeName === 'string';
+
+  if (!isCompositePath) {
+    // Legacy operator-side path — unchanged behavior.
+    const env = opts.env ?? process.env;
+    const dir = pipelineDir(name, env);
+    if (!existsSync(dir)) return false;
+    rmSync(dir, { recursive: true, force: true });
+    return true;
+  }
+
+  const env = opts.env ?? process.env;
+  const cur = loadPipeline(name, env);
+  if (!cur) return { ok: true, deleted: false };
+
+  if (!cur.ownership) {
+    return {
+      ok: false,
+      conflict: { kind: 'name', name, existingOwner: 'operator' },
+    };
+  }
+
+  if (!opts.compositeName) {
+    return { ok: true, deleted: false };
+  }
+
+  const remaining = cur.ownership.compositeNames.filter(
+    (n) => n !== opts.compositeName,
+  );
+  if (remaining.length === 0) {
+    const dir = pipelineDir(name, env);
+    rmSync(dir, { recursive: true, force: true });
+    return { ok: true, deleted: true };
+  }
+
+  const persisted: RagPipelineManifest = {
+    ...cur,
+    ownership: { ...cur.ownership, compositeNames: remaining },
+  };
+  const path = specPath(name, env);
+  writeFileSync(path, stringifyYaml(persisted), 'utf8');
+  return { ok: true, deleted: false };
 }
 
 export function writeLastRun(

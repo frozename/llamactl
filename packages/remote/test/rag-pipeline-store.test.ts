@@ -64,18 +64,24 @@ describe('defaultPipelinesDir / pipelineDir / journalPathFor', () => {
 });
 
 describe('applyPipeline', () => {
-  test('creates a fresh spec.yaml and reports created=true', () => {
-    const { path, created } = applyPipeline(makeManifest('a'), env);
-    expect(created).toBe(true);
-    expect(existsSync(path)).toBe(true);
-    expect(path).toBe(join(tmp, 'a', 'spec.yaml'));
-    expect(readFileSync(path, 'utf8')).toContain('kind: RagPipeline');
+  test('creates a fresh spec.yaml and reports changed=true', () => {
+    const result = applyPipeline(makeManifest('a'), { env });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unexpected conflict');
+    expect(result.changed).toBe(true);
+    expect(existsSync(result.path)).toBe(true);
+    expect(result.path).toBe(join(tmp, 'a', 'spec.yaml'));
+    expect(readFileSync(result.path, 'utf8')).toContain('kind: RagPipeline');
   });
-  test('re-apply reports created=false and overwrites', () => {
-    const first = applyPipeline(makeManifest('a'), env);
-    expect(first.created).toBe(true);
-    const second = applyPipeline(makeManifest('a', { concurrency: 9 }), env);
-    expect(second.created).toBe(false);
+  test('re-apply reports changed=true on shape change and overwrites', () => {
+    const first = applyPipeline(makeManifest('a'), { env });
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error('unexpected conflict');
+    expect(first.changed).toBe(true);
+    const second = applyPipeline(makeManifest('a', { concurrency: 9 }), { env });
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error('unexpected conflict');
+    expect(second.changed).toBe(true);
     // concurrency should have flipped to 9 on disk.
     const reloaded = loadPipeline('a', env);
     expect(reloaded?.spec.concurrency).toBe(9);
@@ -87,7 +93,7 @@ describe('applyPipeline', () => {
       metadata: { name: 'bad' },
       spec: { sources: [], transforms: [], concurrency: 4, on_duplicate: 'skip' },
     } as unknown as RagPipelineManifest;
-    expect(() => applyPipeline(bad, env)).toThrow();
+    expect(() => applyPipeline(bad, { env })).toThrow();
     // Dir should not have been created.
     expect(existsSync(pipelineDir('bad', env))).toBe(false);
   });
@@ -98,13 +104,13 @@ describe('loadPipeline', () => {
     expect(loadPipeline('nope', env)).toBeNull();
   });
   test('round-trips an applied manifest', () => {
-    applyPipeline(makeManifest('round'), env);
+    applyPipeline(makeManifest('round'), { env });
     const loaded = loadPipeline('round', env);
     expect(loaded?.metadata.name).toBe('round');
     expect(loaded?.spec.destination.ragNode).toBe('kb-pg');
   });
   test('returns null when spec.yaml is malformed', () => {
-    applyPipeline(makeManifest('bent'), env);
+    applyPipeline(makeManifest('bent'), { env });
     writeFileSync(join(tmp, 'bent', 'spec.yaml'), 'not: [valid yaml\n', 'utf8');
     expect(loadPipeline('bent', env)).toBeNull();
   });
@@ -116,14 +122,14 @@ describe('listPipelines', () => {
     expect(listPipelines(env)).toEqual([]);
   });
   test('returns applied pipelines sorted by name', () => {
-    applyPipeline(makeManifest('charlie'), env);
-    applyPipeline(makeManifest('alpha'), env);
-    applyPipeline(makeManifest('bravo'), env);
+    applyPipeline(makeManifest('charlie'), { env });
+    applyPipeline(makeManifest('alpha'), { env });
+    applyPipeline(makeManifest('bravo'), { env });
     const names = listPipelines(env).map((r) => r.name);
     expect(names).toEqual(['alpha', 'bravo', 'charlie']);
   });
   test('skips directories that lack a valid spec.yaml', () => {
-    applyPipeline(makeManifest('good'), env);
+    applyPipeline(makeManifest('good'), { env });
     // Stray subdir with no spec.yaml.
     const strayDir = join(tmp, 'stray');
     require('node:fs').mkdirSync(strayDir, { recursive: true });
@@ -131,7 +137,7 @@ describe('listPipelines', () => {
     expect(names).toEqual(['good']);
   });
   test('surfaces lastRun when state.json exists', () => {
-    applyPipeline(makeManifest('metered'), env);
+    applyPipeline(makeManifest('metered'), { env });
     const summary: RunSummary = {
       total_docs: 2,
       total_chunks: 4,
@@ -146,7 +152,7 @@ describe('listPipelines', () => {
     expect(typeof record?.lastRun?.at).toBe('string');
   });
   test('malformed state.json is silently dropped (pipeline still listed)', () => {
-    applyPipeline(makeManifest('glitched'), env);
+    applyPipeline(makeManifest('glitched'), { env });
     writeFileSync(join(tmp, 'glitched', 'state.json'), 'not-json', 'utf8');
     const record = listPipelines(env).find((r) => r.name === 'glitched');
     expect(record).toBeDefined();
@@ -156,19 +162,19 @@ describe('listPipelines', () => {
 
 describe('removePipeline', () => {
   test('returns false when the dir does not exist', () => {
-    expect(removePipeline('ghost', env)).toBe(false);
+    expect(removePipeline('ghost', { env })).toBe(false);
   });
   test('wipes the pipeline dir and reports true', () => {
-    applyPipeline(makeManifest('doomed'), env);
+    applyPipeline(makeManifest('doomed'), { env });
     expect(existsSync(pipelineDir('doomed', env))).toBe(true);
-    expect(removePipeline('doomed', env)).toBe(true);
+    expect(removePipeline('doomed', { env })).toBe(true);
     expect(existsSync(pipelineDir('doomed', env))).toBe(false);
   });
 });
 
 describe('writeLastRun', () => {
   test('creates state.json with at + summary', () => {
-    applyPipeline(makeManifest('wr'), env);
+    applyPipeline(makeManifest('wr'), { env });
     const summary: RunSummary = {
       total_docs: 1,
       total_chunks: 3,

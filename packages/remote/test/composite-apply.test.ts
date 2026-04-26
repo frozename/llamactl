@@ -206,6 +206,7 @@ function sampleComposite(overrides: Partial<Composite['spec']> = {}): Composite 
       workloads: [],
       ragNodes: [],
       gateways: [],
+      pipelines: [],
       dependencies: [],
       onFailure: 'rollback',
       ...overrides,
@@ -440,6 +441,7 @@ describe('applyComposite — service failure triggers rollback', () => {
         workloads: [],
         ragNodes: [],
         gateways: [],
+        pipelines: [],
         dependencies: [
           {
             from: { kind: 'service', name: 'chroma-2' },
@@ -513,6 +515,7 @@ describe('applyComposite — onFailure=leave-partial', () => {
         workloads: [],
         ragNodes: [],
         gateways: [],
+        pipelines: [],
         dependencies: [
           {
             from: { kind: 'service', name: 'chroma-2' },
@@ -746,6 +749,7 @@ describe('destroyComposite — purgeVolumes plumbing', () => {
         workloads: [],
         ragNodes: [],
         gateways: [],
+        pipelines: [],
         dependencies: [
           {
             from: { kind: 'service', name: 'chroma-2' },
@@ -810,6 +814,7 @@ describe('applyComposite — external-runtime service short-circuits', () => {
         workloads: [],
         ragNodes: [],
         gateways: [],
+        pipelines: [],
         dependencies: [],
         onFailure: 'rollback',
       },
@@ -1048,6 +1053,7 @@ describe('applyComposite — gateway upstream threading', () => {
             providerConfig: { extra: { routing: 'latency-aware', maxQps: 42 } },
           },
         ],
+        pipelines: [],
         dependencies: [],
         onFailure: 'rollback',
       },
@@ -1136,6 +1142,7 @@ describe('applyComposite — gateway upstream threading', () => {
             providerConfig: {},
           },
         ],
+        pipelines: [],
         dependencies: [],
         onFailure: 'rollback',
       },
