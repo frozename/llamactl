@@ -45,8 +45,7 @@ export const siriusHandler: GatewayHandler = {
       const derived = deriveSiriusEntries(opts.composite);
       const current = readGatewayCatalog('sirius');
       const result = applyCompositeEntries({
-        kind: 'sirius',
-        compositeName: opts.composite.compositeName,
+        kind: 'sirius',        compositeName: opts.composite.compositeName,
         derived,
         current,
       });

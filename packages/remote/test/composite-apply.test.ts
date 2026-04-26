@@ -1045,7 +1045,7 @@ describe('applyComposite — gateway upstream threading', () => {
             node: 'sirius-gw',
             provider: 'sirius',
             upstreamWorkloads: ['local'],
-            providerConfig: { routing: 'latency-aware', maxQps: 42 },
+            providerConfig: { extra: { routing: 'latency-aware', maxQps: 42 } },
           },
         ],
         dependencies: [],
@@ -1072,7 +1072,7 @@ describe('applyComposite — gateway upstream threading', () => {
     // The fake workload client's started event resolves endpoint to
     // http://127.0.0.1:8080 (see makeFakeWorkloadClient above).
     expect(ctx.upstreams[0]?.endpoint).toBe('http://127.0.0.1:8080');
-    expect(ctx.providerConfig).toEqual({ routing: 'latency-aware', maxQps: 42 });
+    expect(ctx.providerConfig).toEqual({ extra: { routing: 'latency-aware', maxQps: 42 } });
   });
 
   test('upstreamWorkloads=[] still emits empty composite context', async () => {

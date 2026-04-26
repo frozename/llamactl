@@ -25,8 +25,6 @@
  */
 import { removeCompositeEntries, readGatewayCatalog, writeGatewayCatalog } from '../workload/gateway-catalog/index.js';
 import { reloadAllGatewayNodesOfKind } from '../workload/gateway-catalog/reload.js';
-import { removeCompositeEntries, readGatewayCatalog, writeGatewayCatalog } from '../workload/gateway-catalog/index.js';
-import { reloadAllGatewayNodesOfKind } from '../workload/gateway-catalog/reload.js';
 import type {
   RuntimeBackend,
   ServiceInstance,
@@ -418,7 +416,7 @@ async function applyGatewayComponent(
     composite: {
       compositeName: manifest.metadata.name,
       upstreams,
-      providerConfig: entry.providerConfig,
+      providerConfig: entry.providerConfig ?? {},
     },
   });
   if (result === null) {
@@ -573,19 +571,29 @@ export async function destroyComposite(
         errors.push({ ref, message: toErrorMessage(err) });
       }
     }
-
-  for (const kind of ['sirius', 'embersynth'] as const) {
-    const current = readGatewayCatalog(kind);
-    const result = removeCompositeEntries({
-      kind,
+    
+    const currentSirius = readGatewayCatalog('sirius');
+    const resSirius = removeCompositeEntries({
+      kind: 'sirius',
       compositeName: opts.manifest.metadata.name,
-      current,
+      current: currentSirius,
     });
-    if (result.changed) {
-      writeGatewayCatalog(kind, result.next as any);
-      await reloadAllGatewayNodesOfKind(kind);
+    if (resSirius.changed) {
+      writeGatewayCatalog('sirius', resSirius.next as any);
+      await reloadAllGatewayNodesOfKind('sirius');
     }
-  }
+
+    const currentEmber = readGatewayCatalog('embersynth');
+    const resEmber = removeCompositeEntries({
+      kind: 'embersynth',
+      compositeName: opts.manifest.metadata.name,
+      current: currentEmber,
+    });
+    if (resEmber.changed) {
+      writeGatewayCatalog('embersynth', resEmber.next as any);
+      await reloadAllGatewayNodesOfKind('embersynth');
+    }
+    
     return { ok: errors.length === 0, removed, errors };
   }
 
@@ -598,32 +606,28 @@ export async function destroyComposite(
     }
   }
 
-
-  for (const kind of ['sirius', 'embersynth'] as const) {
-    const current = readGatewayCatalog(kind);
-    const result = removeCompositeEntries({
-      kind,
-      compositeName: opts.manifest.metadata.name,
-      current,
-    });
-    if (result.changed) {
-      writeGatewayCatalog(kind, result.next as any);
-      await reloadAllGatewayNodesOfKind(kind);
-    }
+  const currentSirius = readGatewayCatalog('sirius');
+  const resSirius = removeCompositeEntries({
+    kind: 'sirius',
+    compositeName: opts.manifest.metadata.name,
+    current: currentSirius,
+  });
+  if (resSirius.changed) {
+    writeGatewayCatalog('sirius', resSirius.next as any);
+    await reloadAllGatewayNodesOfKind('sirius');
   }
 
-  for (const kind of ['sirius', 'embersynth'] as const) {
-    const current = readGatewayCatalog(kind);
-    const result = removeCompositeEntries({
-      kind,
-      compositeName: opts.manifest.metadata.name,
-      current,
-    });
-    if (result.changed) {
-      writeGatewayCatalog(kind, result.next as any);
-      await reloadAllGatewayNodesOfKind(kind);
-    }
+  const currentEmber = readGatewayCatalog('embersynth');
+  const resEmber = removeCompositeEntries({
+    kind: 'embersynth',
+    compositeName: opts.manifest.metadata.name,
+    current: currentEmber,
+  });
+  if (resEmber.changed) {
+    writeGatewayCatalog('embersynth', resEmber.next as any);
+    await reloadAllGatewayNodesOfKind('embersynth');
   }
+
   return { ok: errors.length === 0, removed, errors };
 }
 

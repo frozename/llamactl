@@ -1,6 +1,7 @@
 import type { ClusterNode } from '../../config/schema.js';
 import type { ApplyEvent, ApplyResult, WorkloadClient } from '../apply.js';
 import type { ModelRun } from '../schema.js';
+import type { ProviderConfigCommon } from '../gateway-catalog/schema.js';
 
 /**
  * Composite-authored context passed to gateway handlers when the
@@ -92,8 +93,5 @@ export type GatewayDispatch = (opts: {
   manifest: ModelRun;
   getClient: (nodeName: string) => WorkloadClient;
   onEvent?: (e: ApplyEvent) => void;
-  composite?: CompositeGatewayContext;
-}) => Promise<ApplyResult | null>;
-nt) => void;
   composite?: CompositeGatewayContext;
 }) => Promise<ApplyResult | null>;

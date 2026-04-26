@@ -2,9 +2,10 @@
 import type { CompositeGatewayContext } from '../gateway-handlers/types.js';
 
 export interface DerivedSiriusEntry {
+  [k: string]: unknown;
   name: string;
-  kind: 'openai-compatible';
-  baseUrl: string;
+  kind: 'openai' | 'anthropic' | 'together' | 'groq' | 'mistral' | 'openai-compatible';
+  baseUrl?: string;
   apiKeyRef?: string;
   displayName?: string;
 }

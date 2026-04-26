@@ -94,7 +94,7 @@ describe('CompositeSchema — valid shapes', () => {
             node: 'local',
             provider: 'sirius',
             upstreamWorkloads: ['local'],
-            providerConfig: { route: '/v1' },
+            providerConfig: { extra: { route: '/v1' } },
           },
         ],
         dependencies: [

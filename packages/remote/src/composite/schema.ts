@@ -12,6 +12,7 @@
  * the manifest it was declared in.
  */
 import { z } from 'zod';
+import { ProviderConfigCommonSchema } from '../workload/gateway-catalog/schema.js';
 import { ModelRunSpecSchema } from '../workload/schema.js';
 import { RagBindingSchema } from '../config/schema.js';
 import { ServiceSpecSchema } from '../service/schema.js';
@@ -271,11 +272,6 @@ export type Composite = z.infer<typeof CompositeSchema>;
  * workload→name convention.
  */
 export function workloadRefName(
-  w: z.infer<typeof ModelRunSpecSchema>,
-): string {
-  return workloadName(w);
-}
-adRefName(
   w: z.infer<typeof ModelRunSpecSchema>,
 ): string {
   return workloadName(w);
