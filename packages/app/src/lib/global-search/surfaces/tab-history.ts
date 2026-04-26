@@ -28,8 +28,8 @@ export function matchTabHistory(needle: string, state: TabHistoryState): Hit[] {
     if (seen.has(c.tabKey)) continue;
     if (!c.title.toLowerCase().includes(lowered)) continue;
     seen.add(c.tabKey);
-    const t = { ...c, openedAt: Date.now() };
-    delete t.closedAt;
+    const { closedAt, ...rest } = c;
+    const t = { ...rest, openedAt: Date.now() };
     out.push({
       surface: 'tab-history',
       parentId: c.tabKey,

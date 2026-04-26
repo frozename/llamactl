@@ -1,7 +1,7 @@
 // packages/remote/src/rag/resolve.ts
 import { TRPCError } from '@trpc/server';
 import * as kubecfg from '../config/kubeconfig.js';
-import type { ClusterNode, Config } from '../config/kubeconfig.js';
+import type { ClusterNode, Config } from '../config/schema.js';
 
 export function resolveRagNode(
   nodeName: string,

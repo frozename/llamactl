@@ -3251,6 +3251,60 @@ export const router = t.router({
         }
       });
     }),
+
+  globalSearchRagStatus: t.procedure.query(async () => {
+    const nodeName = await resolveDefaultRagNode();
+    if (!nodeName) {
+      return { sessions: false, knowledge: false, logs: false, defaultNode: null };
+    }
+    try {
+      const { node, cfg } = resolveRagNode(nodeName);
+      const adapter = await createRagAdapter(node, { config: cfg });
+      let cols: string[] = [];
+      try {
+        const resCol = await adapter.listCollections();
+        cols = resCol.collections.map(c => c.name);
+      } finally {
+        await adapter.close();
+      }
+      return {
+        sessions: cols.includes('sessions'),
+        knowledge: cols.includes('knowledge'),
+        logs: cols.includes('logs'),
+        defaultNode: nodeName,
+      };
+    } catch {
+      return { sessions: false, knowledge: false, logs: false, defaultNode: null };
+    }
+  }),
+
+  opsSessionSearch: t.procedure
+    .input(z.object({ query: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const hits = await searchSessions({ query: input.query, limit: 30 });
+      return { hits };
+    }),
+
+  knowledgeSearch: t.procedure
+    .input(z.object({ query: z.string().min(1) }))
+    .query(async ({ input }) => {
+      return { hits: [] as Array<unknown> };
+    }),
+
+  logsSearch: t.procedure
+    .input(z.object({ query: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const hits = await searchLogs({
+        query: input.query,
+        files: [
+          { label: 'agent', path: '/tmp/llamactl-agent.log' },
+          { label: 'electron', path: '/tmp/llamactl-electron.log' },
+        ],
+        limit: 30,
+      });
+      return { hits };
+    }),
+
 });
 
 export type AppRouter = typeof router;

@@ -41,7 +41,7 @@ export function useGlobalSearch(input: string): {
   // Cached client-side lists for client surfaces.
   const workloadsQ = trpc.workloadList.useQuery(undefined, { staleTime: 30_000 });
   const nodesQ = trpc.nodeList.useQuery(undefined, { staleTime: 30_000 });
-  const presetsQ = trpc.presetList.useQuery(undefined, { staleTime: 30_000 });
+  
 
   const queryToken = React.useRef(0);
   const ctrlRef = React.useRef<AbortController | null>(null);
@@ -67,10 +67,10 @@ export function useGlobalSearch(input: string): {
 
     const initial = runClientPhase({
       query: parsed,
-      tabState: { tabs, closed },
+      tabState: { tabs, closed: closed as any },
       workloads: ((workloadsQ.data as any)?.workloads ?? []) as any[],
       nodes: ((nodesQ.data as any)?.nodes ?? []) as any[],
-      presets: ((presetsQ.data as any)?.presets ?? []) as any[],
+      presets: [],
     });
     setResults(initial);
 
@@ -82,7 +82,7 @@ export function useGlobalSearch(input: string): {
       if (allow('session')) {
         tasks.push(
           utils.opsSessionSearch
-            .fetch({ query: parsed.needle }, { signal: ctrl.signal })
+            .fetch({ query: parsed.needle })
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
@@ -91,7 +91,7 @@ export function useGlobalSearch(input: string): {
                 }),
               );
             })
-            .catch((e) => {
+            .catch((e: unknown) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
                 mergeServerHits(cur, 'session', [], { error: String((e as Error).message) }),
@@ -102,7 +102,7 @@ export function useGlobalSearch(input: string): {
       if (allow('logs')) {
         tasks.push(
           utils.logsSearch
-            .fetch({ query: parsed.needle }, { signal: ctrl.signal })
+            .fetch({ query: parsed.needle })
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
@@ -117,7 +117,7 @@ export function useGlobalSearch(input: string): {
       if (allow('knowledge')) {
         tasks.push(
           utils.knowledgeSearch
-            .fetch({ query: parsed.needle }, { signal: ctrl.signal })
+            .fetch({ query: parsed.needle })
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
@@ -143,7 +143,6 @@ export function useGlobalSearch(input: string): {
           utils.ragSearch
             .fetch(
               { node: status.defaultNode, query: parsed.needle, collection: 'sessions', topK: 10 },
-              { signal: ctrl.signal },
             )
             .then((res) => {
               if (queryToken.current !== token) return;
@@ -161,7 +160,6 @@ export function useGlobalSearch(input: string): {
           utils.ragSearch
             .fetch(
               { node: status.defaultNode, query: parsed.needle, collection: 'knowledge', topK: 10 },
-              { signal: ctrl.signal },
             )
             .then((res) => {
               if (queryToken.current !== token) return;
@@ -179,7 +177,6 @@ export function useGlobalSearch(input: string): {
           utils.ragSearch
             .fetch(
               { node: status.defaultNode, query: parsed.needle, collection: 'logs', topK: 10 },
-              { signal: ctrl.signal },
             )
             .then((res) => {
               if (queryToken.current !== token) return;
@@ -200,7 +197,7 @@ export function useGlobalSearch(input: string): {
       if (tier3Timer.current) clearTimeout(tier3Timer.current);
       ctrl.abort();
     };
-  }, [input, tabs, closed, workloadsQ.data, nodesQ.data, presetsQ.data, ragStatus.data, utils]);
+  }, [input, tabs, closed, workloadsQ.data, nodesQ.data, ragStatus.data, utils]);
 
   return { results, status };
 }
