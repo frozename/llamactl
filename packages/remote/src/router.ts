@@ -3285,12 +3285,6 @@ export const router = t.router({
       return { hits };
     }),
 
-  knowledgeSearch: t.procedure
-    .input(z.object({ query: z.string().min(1) }))
-    .query(async ({ input }) => {
-      return { hits: [] as Array<unknown> };
-    }),
-
   logsSearch: t.procedure
     .input(z.object({ query: z.string().min(1) }))
     .query(async ({ input }) => {

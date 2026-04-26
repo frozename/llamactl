@@ -25,7 +25,7 @@ export interface ClientPhaseInput {
   presets: PresetItem[];
 }
 
-const SERVER_SURFACES: SurfaceKind[] = ['session', 'knowledge', 'logs'];
+const SERVER_SURFACES: SurfaceKind[] = ['session', 'logs'];
 
 function groupHits(hits: Hit[]): SurfaceGroup[] {
   const groups = new Map<SurfaceKind, SurfaceGroup>();
@@ -62,11 +62,17 @@ export function runClientPhase(input: ClientPhaseInput): GroupedResults {
   return groups;
 }
 
+export interface MergeServerHitsOpts {
+  append?: boolean;
+  error?: string;
+  unreachableNodes?: string[];
+}
+
 export function mergeServerHits(
   current: GroupedResults,
   surface: SurfaceKind,
   hits: Hit[],
-  opts: { append?: boolean; error?: string } = {},
+  opts: MergeServerHitsOpts = {},
 ): GroupedResults {
   const out = current.map((g) => {
     if (g.surface !== surface) return g;
@@ -82,6 +88,7 @@ export function mergeServerHits(
       topScore: top,
       pending: false,
       error: opts.error,
+      ...(opts.unreachableNodes || g.unreachableNodes ? { unreachableNodes: opts.unreachableNodes ?? g.unreachableNodes } : {}),
     };
   });
   if (!current.some((g) => g.surface === surface)) {
@@ -90,7 +97,7 @@ export function mergeServerHits(
       const f = applySurfaceBias(h);
       if (f > top) top = f;
     }
-    out.push({ surface, hits, topScore: top, pending: false, error: opts.error });
+    out.push({ surface, hits, topScore: top, pending: false, error: opts.error, ...(opts.unreachableNodes ? { unreachableNodes: opts.unreachableNodes } : {}) });
   }
   return sortGroups(out);
 }

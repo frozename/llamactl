@@ -31,6 +31,10 @@ export interface Hit {
   ragDistance?: number;
   match?: MatchExcerpt;
   action: HitAction;
+  /** Source agent for cross-node hits. Undefined when the hit came
+   *  from the currently-connected agent — the renderer elides the
+   *  tag in that case. */
+  originNode?: string;
 }
 
 export interface SurfaceGroup {
@@ -40,6 +44,11 @@ export interface SurfaceGroup {
   /** True if a server fetch for this surface is in flight. */
   pending?: boolean;
   error?: string;
+  /** Agent node names that did not return results in time (or
+   *  rejected the request) during the cross-node fan-out wave for
+   *  this surface. Renderer surfaces as a small footer; does not
+   *  block other hits. */
+  unreachableNodes?: string[];
 }
 
 export type GroupedResults = SurfaceGroup[];

@@ -1,12 +1,11 @@
 // packages/app/src/lib/global-search/hooks/use-global-search.ts
 import * as React from 'react';
-import { trpc } from '../../trpc.js';
+import { trpc, trpcUIClient } from '../../trpc.js';
 import { useTabStore } from '../../../stores/tab-store.js';
 import type { GroupedResults } from '../types';
 import { runClientPhase, mergeServerHits } from '../orchestrator';
 import { parseQuery } from '../query';
 import { mapSessionHits } from '../surfaces/sessions';
-import { mapKnowledgeHits } from '../surfaces/knowledge';
 import { mapLogHits } from '../surfaces/logs';
 import { mapSessionRagHits } from '../surfaces/sessions-rag';
 import { mapKnowledgeRagHits } from '../surfaces/knowledge-rag';
@@ -112,21 +111,6 @@ export function useGlobalSearch(input: string): {
             .catch(() => {
               if (queryToken.current !== token) return;
             }),
-        );
-      }
-      if (allow('knowledge')) {
-        tasks.push(
-          utils.knowledgeSearch
-            .fetch({ query: parsed.needle })
-            .then((res) => {
-              if (queryToken.current !== token) return;
-              setResults((cur) =>
-                mergeServerHits(cur, 'knowledge', mapKnowledgeHits((res as any).hits ?? []), {
-                  append: true,
-                }),
-              );
-            })
-            .catch(() => {}),
         );
       }
       await Promise.allSettled(tasks);

@@ -7,6 +7,7 @@ import { MatchSnippet } from '../match-snippet';
 interface Props {
   results: GroupedResults;
   onActivate: (hit: Hit) => void;
+  connectedNode?: string;
 }
 
 const SURFACE_LABEL: Record<SurfaceKind, string> = {
@@ -41,7 +42,7 @@ function collapse(group: SurfaceGroup): CollapsedParent[] {
   return [...map.values()].sort((a, b) => b.topHit.score - a.topHit.score);
 }
 
-export function SearchResultsTree({ results, onActivate }: Props): React.JSX.Element {
+export function SearchResultsTree({ results, onActivate, connectedNode }: Props): React.JSX.Element {
   return (
     <div data-testid="global-search-results" role="tree">
       {results.map((g) => {
@@ -78,9 +79,23 @@ export function SearchResultsTree({ results, onActivate }: Props): React.JSX.Ele
                   label={p.parentTitle}
                   onClick={() => onActivate(p.topHit)}
                   trailing={
-                    p.hits.some((h) => h.matchKind === 'semantic') ? (
-                      <Badge variant="brand">semantic</Badge>
-                    ) : undefined
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      {p.hits.some((h) => h.matchKind === 'semantic') ? (
+                        <Badge variant="brand">semantic</Badge>
+                      ) : null}
+                      {p.topHit.originNode && p.topHit.originNode !== connectedNode && (
+                        <span
+                          style={{
+                            fontFamily: 'var(--font-mono)',
+                            fontSize: 11,
+                            color: 'var(--color-text-tertiary)',
+                            marginLeft: 8,
+                          }}
+                        >
+                          {p.topHit.originNode}
+                        </span>
+                      )}
+                    </div>
                   }
                 />
                 {p.hits.map(
@@ -107,6 +122,18 @@ export function SearchResultsTree({ results, onActivate }: Props): React.JSX.Ele
                 )}
               </div>
             ))}
+            {g.unreachableNodes && g.unreachableNodes.length > 0 && (
+              <div
+                style={{
+                  padding: '6px 12px',
+                  fontSize: 11,
+                  color: 'var(--color-text-tertiary)',
+                  borderTop: '1px solid var(--color-border-subtle)',
+                }}
+              >
+                ⚠ {g.unreachableNodes.length} node{g.unreachableNodes.length === 1 ? '' : 's'} unreachable: {g.unreachableNodes.join(', ')}
+              </div>
+            )}
           </div>
         );
       })}
