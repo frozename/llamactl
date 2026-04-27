@@ -115,6 +115,10 @@ packages/
 ## Quick start
 
 ```bash
+# Install the CLI wrapper
+./scripts/install-cli.sh
+llamactl --help
+
 # Single-machine
 bun install
 bun packages/cli/src/bin.ts catalog list
