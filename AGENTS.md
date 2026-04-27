@@ -615,6 +615,15 @@ Four repos green = slice shippable.
   `alsoAvailableIn`/`provenance`). Boot-time snapshot only — a
   downstream restart needs a facade restart. Full config shape and
   facade patterns live in `/Volumes/WorkSSD/repos/personal/nova/AGENTS.md`.
+- **M.5 `@penumbra/mcp`** — shipped. 6 tools: `memory.observe`,
+  `memory.recall`, `session.end`, `handoff.list_pending`,
+  `handoff.approve`, `chain.start`. Local-first observability (LLM
+  activity → t0 events → t1 rollups → t2 long-term memory) + an
+  `@mention`-driven cross-agent chat orchestrator. Treats llamactl
+  as the model-orchestration source: agentchat's `local-*` agents
+  hit whatever llama-server llamactl currently serves at
+  `127.0.0.1:8080`. Source:
+  `/Volumes/WorkSSD/repos/personal/penumbra/packages/mcp/`.
 
 ## Commit discipline
 
