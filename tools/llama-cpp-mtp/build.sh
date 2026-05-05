@@ -31,7 +31,7 @@ cmake -B build \
   -DGGML_METAL_EMBED_LIBRARY=ON \
   -DLLAMA_CURL=ON \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j --target llama-server llama-bench
+cmake --build build -j --target llama-server llama-bench llama-quantize
 
 echo "MTP build OK at: $LLAMA_CPP_SRC_MTP/build/bin/llama-server"
 "$LLAMA_CPP_SRC_MTP/build/bin/llama-server" --version | head -1
