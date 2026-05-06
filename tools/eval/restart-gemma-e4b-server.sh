@@ -30,7 +30,11 @@ echo "==> killing existing :8090 server" | tee -a "$PROGRESS"
 ssh macmini.ai "pkill -f 'llama-server.*--port 8090' 2>/dev/null; sleep 2" 2>&1 | head -3
 
 echo "==> spawning new :8090 server with -ub $WIN_UB (matches penumbra alias 'local')" | tee -a "$PROGRESS"
-ssh macmini.ai "nohup $REMOTE_BIN \
+# DYLD_FALLBACK_LIBRARY_PATH is needed because ssh-spawned processes are
+# sandboxed (TCC) and llama-server's @rpath lookup defaults fail; the
+# launchd-managed agent doesn't hit this since its sandbox is whitelisted.
+ssh macmini.ai "DYLD_FALLBACK_LIBRARY_PATH=/Volumes/AI-DATA/src/llama.cpp/build/bin \
+  nohup $REMOTE_BIN \
   -m $REMOTE_MODELS/$REL \
   --alias local --host 127.0.0.1 --port 8090 \
   -ngl 999 -fa on -b 2048 -ub $WIN_UB \
