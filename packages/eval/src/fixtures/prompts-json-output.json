@@ -1,0 +1,117 @@
+[
+  {
+    "name": "entities-extract",
+    "prompt": "Extract entities from: Apple Inc., based in Cupertino, was founded by Steve Jobs. Return JSON with entities as [{name, type}].",
+    "schema": {
+      "type": "object",
+      "required": ["entities"],
+      "properties": {
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "enum": ["person", "place", "org"] }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "changelog-parse",
+    "prompt": "Parse this changelog into JSON with version, date, and entries. Output only JSON.",
+    "schema": {
+      "type": "object",
+      "required": ["version", "date", "entries"],
+      "properties": {
+        "version": { "type": "string" },
+        "date": { "type": "string" },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "text"],
+            "properties": {
+              "kind": { "enum": ["fix", "feat", "docs", "refactor"] },
+              "text": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "recipe-extract",
+    "prompt": "Extract a recipe into JSON with nested ingredients and steps.",
+    "schema": {
+      "type": "object",
+      "required": ["title", "ingredients", "steps"],
+      "properties": {
+        "title": { "type": "string" },
+        "ingredients": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "amount"],
+            "properties": {
+              "name": { "type": "string" },
+              "amount": { "type": "string" },
+              "unit": { "type": "string" }
+            }
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
+  {
+    "name": "error-report-parse",
+    "prompt": "Parse the error report into JSON with code, severity, and context.",
+    "schema": {
+      "type": "object",
+      "required": ["code", "severity", "context"],
+      "properties": {
+        "code": { "type": "string" },
+        "severity": { "enum": ["low", "medium", "high"] },
+        "context": {
+          "type": "object",
+          "required": ["file", "line"],
+          "properties": {
+            "file": { "type": "string" },
+            "line": { "type": "integer" },
+            "details": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "contact-card",
+    "prompt": "Return the contact card as JSON with name, emails, and social handles.",
+    "schema": {
+      "type": "object",
+      "required": ["name", "emails", "social"],
+      "properties": {
+        "name": { "type": "string" },
+        "emails": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "social": {
+          "type": "object",
+          "required": ["github", "mastodon"],
+          "properties": {
+            "github": { "type": "string" },
+            "mastodon": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+]
