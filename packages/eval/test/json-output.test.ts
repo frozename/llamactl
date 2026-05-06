@@ -30,10 +30,10 @@ describe('extractJsonPayload', () => {
 
 describe('validateJsonAgainstSchema', () => {
   test('accepts matching objects', () => {
-    expect(validateJsonAgainstSchema({ name: 'ok', count: 2 }, schema)).toBe(true);
+    expect(validateJsonAgainstSchema({ name: 'ok', count: 2 }, schema as any)).toBe(true);
   });
 
   test('rejects mismatched types', () => {
-    expect(validateJsonAgainstSchema({ name: 'ok', count: 'two' }, schema)).toBe(false);
+    expect(validateJsonAgainstSchema({ name: 'ok', count: 'two' }, schema as any)).toBe(false);
   });
 });

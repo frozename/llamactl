@@ -2,7 +2,7 @@ import promptsRaw from '../fixtures/prompts-json-output.json' with { type: 'json
 import { buildCompletionRequest, completeChat } from '../client.js';
 
 type JsonSchema =
-  | { type: 'object'; required?: string[]; properties?: Record<string, JsonSchema>; enum?: never }
+  | { type: 'object'; required?: readonly string[]; properties?: Record<string, JsonSchema>; enum?: never }
   | { type: 'array'; items: JsonSchema; required?: never; properties?: never; enum?: never }
   | { type: 'string'; required?: never; properties?: never; items?: never; enum?: never }
   | { type: 'number'; required?: never; properties?: never; items?: never; enum?: never }
@@ -23,7 +23,7 @@ export function extractJsonPayload(text: string): unknown | null {
 }
 
 export function validateJsonAgainstSchema(value: unknown, schema: JsonSchema): boolean {
-  if ('enum' in schema) return typeof value === 'string' && schema.enum.includes(value);
+  if ('enum' in schema) return typeof value === 'string' && !!schema.enum && schema.enum.includes(value);
   if (schema.type === 'string') return typeof value === 'string';
   if (schema.type === 'number') return typeof value === 'number' && Number.isFinite(value);
   if (schema.type === 'integer') return typeof value === 'number' && Number.isInteger(value);
@@ -52,7 +52,7 @@ export interface JsonOutputResult {
 }
 
 export async function runJsonOutput(url: string): Promise<JsonOutputResult> {
-  const prompts = promptsRaw as JsonOutputFixture[];
+  const prompts = promptsRaw as unknown as JsonOutputFixture[];
   const scored: Array<JsonOutputFixture & { valid: boolean }> = [];
   for (const prompt of prompts) {
     const req = buildCompletionRequest({

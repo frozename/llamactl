@@ -17,7 +17,7 @@ describe('buildCompletionRequest', () => {
   });
 
   test('attaches tools when provided', () => {
-    const tools = [{ type: 'function', function: { name: 'x', description: '', parameters: {} } }];
+    const tools = [{ type: 'function' as const, function: { name: 'x', description: '', parameters: {} } }];
     const req = buildCompletionRequest({
       messages: [{ role: 'user', content: 'use the tool' }],
       maxTokens: 192,
