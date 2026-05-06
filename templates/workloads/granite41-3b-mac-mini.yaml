@@ -18,8 +18,8 @@ metadata:
 spec:
   node: mac-mini
   target:
-    kind: alias
-    value: granite41-3b-q4
+    kind: rel
+    value: granite-4.1-3b-GGUF/granite-4.1-3b-Q4_K_M.gguf
   extraArgs:
     - --alias
     - local
