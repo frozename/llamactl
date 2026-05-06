@@ -14,6 +14,13 @@ import {
   waitForHealth,
   upsertRow,
 } from '../../../eval/src/index.js';
+import type {
+  ContextRetrievalDetail,
+  JsonOutputFailure,
+  SubBenchDetail,
+  ToolCallingFailure,
+  ThroughputDetail,
+} from '../../../eval/src/report/render-card.js';
 
 const USAGE = `Usage: llamactl eval <subcommand>
 
@@ -48,6 +55,38 @@ function modelPathForRel(rel: string): string {
 
 function parseUb(value: string | undefined): 256 | 512 {
   return value === '256' ? 256 : 512;
+}
+
+function toolCallingFailures(result: Awaited<ReturnType<typeof runToolCalling>>): ToolCallingFailure[] {
+  return result.prompts.flatMap((prompt) => {
+    if (prompt.score.score === 1) return [];
+    if (prompt.score.valid_json === false) return [{ name: prompt.name, reason: 'invalid JSON' as const }];
+    if (prompt.expected.should_call && prompt.score.correct_decision === false) return [{ name: prompt.name, reason: 'no tool_calls' as const }];
+    if (prompt.score.correct_tool === false) return [{ name: prompt.name, reason: 'wrong tool' as const }];
+    return [{ name: prompt.name, reason: 'args mismatch' as const }];
+  });
+}
+
+function jsonOutputFailures(result: Awaited<ReturnType<typeof runJsonOutput>>): JsonOutputFailure[] {
+  return result.prompts.flatMap((prompt) => {
+    if (prompt.valid) return [];
+    return [{ name: prompt.name, reason: prompt.parsed === null ? 'no JSON' : 'schema validation failed' as const }];
+  });
+}
+
+function contextDetails(result: Awaited<ReturnType<typeof runContextRetrieval>>): ContextRetrievalDetail[] {
+  return [
+    { depth: 4096, score: result.context_4096_score },
+    { depth: 8192, score: result.context_8192_score },
+    { depth: 16384, score: result.context_16384_score },
+  ];
+}
+
+function throughputDetails(result: Awaited<ReturnType<typeof runThroughput>>): { mean_tps: number; samples: ThroughputDetail[] } {
+  return {
+    mean_tps: result.mean_tps,
+    samples: result.samples.map((sample) => ({ name: sample.name, predicted_per_second: sample.predicted_per_second })),
+  };
 }
 
 async function runEvalRun(args: string[]): Promise<number> {
@@ -128,20 +167,50 @@ async function runEvalRun(args: string[]): Promise<number> {
         };
         upsertRow(db, row);
         await Bun.write(join(runDir, `${basename(model)}-ub${currentUb}.json`), JSON.stringify({ throughput, toolCalling, contextRetrieval, jsonOutput, row }, null, 2));
+        const subBenches: SubBenchDetail[] = [
+          {
+            name: 'Throughput',
+            scores: row,
+            throughput: throughputDetails(throughput),
+          },
+          {
+            name: 'Tool-Calling',
+            scores: row,
+            toolCalling: {
+              score: toolCalling.tool_call_score,
+              failures: toolCallingFailures(toolCalling),
+            },
+          },
+          {
+            name: 'Context Retrieval',
+            scores: row,
+            contextRetrieval: {
+              scores: contextDetails(contextRetrieval),
+            },
+          },
+          {
+            name: 'JSON Output',
+            scores: row,
+            jsonOutput: {
+              score: jsonOutput.json_score,
+              failures: jsonOutputFailures(jsonOutput),
+            },
+          },
+        ];
+        const rows = queryRows(db, { node, sort_by: 'composite' }).filter((r) => r.model === model);
+        const card = renderCard({
+          modelId: model,
+          source: { ggufPath: modelPath, fileSizeBytes: Bun.file(modelPath).size, hfRepo: null, hfSha: null },
+          hwMatrix: rows,
+          subBenches,
+        });
+        const cardPath = join('docs', 'superpowers', 'specs', `${runTs.slice(0, 10)}-model-eval-${basename(model, '.gguf')}.md`);
+        await Bun.write(cardPath, card);
+        process.stdout.write(`${cardPath}\n`);
       } finally {
         await killServer(server);
       }
     }
-    const rows = queryRows(db, { node, sort_by: 'composite' });
-    const card = renderCard({
-      modelId: model,
-      source: { ggufPath: modelPath, fileSizeBytes: Bun.file(modelPath).size, hfRepo: null, hfSha: null },
-      hwMatrix: rows.filter((r) => r.model === model),
-      subBenches: [],
-    });
-    const cardPath = join('docs', 'superpowers', 'specs', `${runTs.slice(0, 10)}-model-eval-${basename(model, '.gguf')}.md`);
-    await Bun.write(cardPath, card);
-    process.stdout.write(`${cardPath}\n`);
     return 0;
   } finally {
     db.close();
@@ -155,6 +224,7 @@ async function runEvalReport(args: string[]): Promise<number> {
   const db = new Database(join(evalRoot, 'leaderboard.sqlite'), { readonly: true });
   try {
     const rows = queryRows(db, { sort_by: 'composite' }).filter((row: { model: string }) => row.model === model);
+    const best = rows[0];
     const card = renderCard({
       modelId: model,
       source: {
@@ -164,7 +234,14 @@ async function runEvalReport(args: string[]): Promise<number> {
         hfSha: null,
       },
       hwMatrix: rows,
-      subBenches: [],
+      subBenches: best
+        ? [
+            { name: 'Throughput', scores: best, throughput: { mean_tps: best.throughput_tps } },
+            { name: 'Tool-Calling', scores: best, toolCalling: { score: best.tool_call_score } },
+            { name: 'Context Retrieval', scores: best, contextRetrieval: { scores: [{ depth: 4096, score: best.context_8k_score }, { depth: 8192, score: best.context_8k_score }, { depth: 16384, score: best.context_16k_score ?? best.context_8k_score }] } },
+            { name: 'JSON Output', scores: best, jsonOutput: { score: best.json_score } },
+          ]
+        : [],
     });
     const out = join('docs', 'superpowers', 'specs', `${new Date().toISOString().slice(0, 10)}-model-eval-${basename(model, '.gguf')}.md`);
     await Bun.write(out, card);

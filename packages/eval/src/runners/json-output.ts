@@ -47,7 +47,7 @@ export interface JsonOutputFixture {
 }
 
 export interface JsonOutputResult {
-  prompts: Array<JsonOutputFixture & { valid: boolean }>;
+  prompts: Array<JsonOutputFixture & { valid: boolean; text: string; parsed: unknown | null }>;
   json_score: number;
 }
 
@@ -63,7 +63,7 @@ export async function runJsonOutput(url: string): Promise<JsonOutputResult> {
     const text = resp.choices[0]?.message.content ?? '';
     const parsed = extractJsonPayload(text);
     const valid = parsed !== null && validateJsonAgainstSchema(parsed, prompt.schema);
-    scored.push({ ...prompt, valid });
+    scored.push({ ...prompt, valid, text, parsed });
   }
   return {
     prompts: scored,
