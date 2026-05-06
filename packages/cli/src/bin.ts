@@ -26,6 +26,7 @@ import { runRunbookCmd } from './commands/runbook.js';
 import { runHeal } from './commands/heal.js';
 import { runDeployNode } from './commands/deploy.js';
 import { runArtifacts } from './commands/artifacts.js';
+import { runEval } from './commands/eval.js';
 import { runCostGuardian } from './commands/cost-guardian.js';
 import { runPlan } from './commands/plan.js';
 import { runInfra } from './commands/infra.js';
@@ -187,6 +188,8 @@ Agentic operations:
   llamactl artifacts list                     Show built agent binaries
   llamactl artifacts show-path                Print the absolute path
       [--target=<platform>]                   where /artifacts expects
+  llamactl eval run|report|leaderboard        Evaluate a model, render a report,
+                                              or print the leaderboard table
   llamactl infra list                         List installed infra on a node
       [--node <n>]
   llamactl infra install <pkg>                Install a pkg version from a
@@ -273,6 +276,8 @@ async function main(argv: string[]): Promise<number> {
       return runDeployNode(rest);
     case 'artifacts':
       return runArtifacts(rest);
+    case 'eval':
+      return runEval(rest);
     case 'infra':
       return runInfra(rest);
     case 'project':
