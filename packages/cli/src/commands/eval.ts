@@ -14,7 +14,6 @@ import {
   waitForHealth,
   upsertRow,
 } from '../../../eval/src/index.js';
-import { getGlobals } from '../dispatcher.js';
 
 const USAGE = `Usage: llamactl eval <subcommand>
 
@@ -99,7 +98,7 @@ async function runEvalRun(args: string[]): Promise<number> {
     for (const currentUb of ubs) {
       const server = await spawnServer(
         binary,
-        { modelPath, port: 18181, ub: currentUb },
+        { modelPath, port: 18181, ub: currentUb, ctxSize: 20480 },
         join(runDir, `server-ub${currentUb}.log`),
       );
       try {
