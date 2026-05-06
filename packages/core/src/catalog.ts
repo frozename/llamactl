@@ -108,6 +108,30 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     rel: 'Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf',
     repo: 'unsloth/Qwen3.5-27B-GGUF',
   },
+  {
+    // Granite 4.1 8b at Q4_K_M — top agentic candidate per the
+    // 2026-05-06 fleet eval (composite 1.000 on M4 Pro, 0.896 on
+    // mac-mini; perfect 12/12 on penumbra-shaped tool-calling).
+    id: 'granite41-8b-q4',
+    label: 'Granite 4.1 8B Q4',
+    family: 'granite41',
+    class: 'general',
+    scope: 'compact-fit-16g',
+    rel: 'granite-4.1-8b-GGUF/granite-4.1-8b-Q4_K_M.gguf',
+    repo: 'unsloth/granite-4.1-8b-GGUF',
+  },
+  {
+    // Granite 4.1 3b at Q4_K_M — best small-model agentic candidate
+    // per the 2026-05-06 fleet eval (composite 1.000 on both M4 Pro
+    // and mac-mini; ~88 tps on M4 Pro, ~44 tps on mac-mini).
+    id: 'granite41-3b-q4',
+    label: 'Granite 4.1 3B Q4',
+    family: 'granite41',
+    class: 'general',
+    scope: 'fast',
+    rel: 'granite-4.1-3b-GGUF/granite-4.1-3b-Q4_K_M.gguf',
+    repo: 'unsloth/granite-4.1-3b-GGUF',
+  },
 ] as const;
 
 export type CatalogScope = 'all' | 'builtin' | 'custom';

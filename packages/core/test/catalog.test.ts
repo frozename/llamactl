@@ -16,10 +16,10 @@ import {
 import { FIXTURE_DIR } from './helpers.js';
 
 describe('catalog.BUILTIN_CATALOG', () => {
-  test('has 10 entries in the expected order', () => {
-    expect(BUILTIN_CATALOG.length).toBe(10);
+  test('has 12 entries in the expected order', () => {
+    expect(BUILTIN_CATALOG.length).toBe(12);
     expect(BUILTIN_CATALOG[0]?.id).toBe('gemma4-e4b-q8');
-    expect(BUILTIN_CATALOG[BUILTIN_CATALOG.length - 1]?.id).toBe('qwen27-q5');
+    expect(BUILTIN_CATALOG[BUILTIN_CATALOG.length - 1]?.id).toBe('granite41-3b-q4');
   });
   test('every row has a rel under the expected repo prefix', () => {
     for (const row of BUILTIN_CATALOG) {
