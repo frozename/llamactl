@@ -25,10 +25,12 @@ import type {
 const USAGE = `Usage: llamactl eval <subcommand>
 
 Subcommands:
-  run <model> [--node <name>] [--ub <256|512>] [--all]
+  run <model> [--node <name>] [--ub <256|512>] [--all] [--url <http://...>]
       Run all four sub-benches against a real llama-server, persist the
       results to SQLite, and write JSON + markdown artifacts under
       $DEV_STORAGE/eval/<run-ts>/.
+      With --url, hit a pre-existing remote server (model arg becomes
+      just a tag for the leaderboard row; no local spawn or kill).
   report <model>
       Regenerate the markdown report card for <model> from SQLite.
   leaderboard [--node <name>] [--sort-by <field>]
@@ -98,6 +100,7 @@ async function runEvalRun(args: string[]): Promise<number> {
   let node = 'local';
   let ub: 256 | 512 = 512;
   let all = false;
+  let remoteUrl: string | null = null;
   for (let i = 1; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--node') node = args[++i] ?? node;
@@ -105,6 +108,8 @@ async function runEvalRun(args: string[]): Promise<number> {
     else if (arg === '--ub') ub = parseUb(args[++i]);
     else if (arg.startsWith('--ub=')) ub = parseUb(arg.slice('--ub='.length));
     else if (arg === '--all') all = true;
+    else if (arg === '--url') remoteUrl = args[++i] ?? null;
+    else if (arg.startsWith('--url=')) remoteUrl = arg.slice('--url='.length);
     else if (arg === '-h' || arg === '--help') {
       process.stdout.write(USAGE);
       return 0;
@@ -119,29 +124,31 @@ async function runEvalRun(args: string[]): Promise<number> {
   mkdirSync(runDir, { recursive: true });
   const dbPath = join(evalRoot, 'leaderboard.sqlite');
   const db = new Database(dbPath);
-  const modelPath = modelPathForRel(model);
-  if (!existsSync(modelPath)) {
+  const modelPath = remoteUrl ? '' : modelPathForRel(model);
+  if (!remoteUrl && !existsSync(modelPath)) {
     process.stderr.write(`missing model: ${modelPath}\n`);
     db.close();
     return 1;
   }
   const binaryRoot = envValue('LLAMA_CPP_BIN');
-  if (!binaryRoot) {
+  if (!remoteUrl && !binaryRoot) {
     process.stderr.write('LLAMA_CPP_BIN is not set\n');
     db.close();
     return 1;
   }
-  const binary = join(binaryRoot, 'llama-server');
+  const binary = remoteUrl ? '' : join(binaryRoot, 'llama-server');
   const ubs: Array<256 | 512> = all ? [256, 512] : [ub];
   try {
     for (const currentUb of ubs) {
-      const server = await spawnServer(
-        binary,
-        { modelPath, port: 18181, ub: currentUb, ctxSize: 20480 },
-        join(runDir, `server-ub${currentUb}.log`),
-      );
+      const server = remoteUrl
+        ? { proc: null, url: remoteUrl, logPath: '' }
+        : await spawnServer(
+            binary,
+            { modelPath, port: 18181, ub: currentUb, ctxSize: 20480 },
+            join(runDir, `server-ub${currentUb}.log`),
+          );
       try {
-        await waitForHealth(server.url, server.proc);
+        if (!remoteUrl && server.proc) await waitForHealth(server.url, server.proc);
         const throughput = await runThroughput(server.url);
         const toolCalling = await runToolCalling(server.url);
         const contextRetrieval = await runContextRetrieval(server.url);
@@ -200,7 +207,12 @@ async function runEvalRun(args: string[]): Promise<number> {
         const rows = queryRows(db, { node, sort_by: 'composite' }).filter((r) => r.model === model);
         const card = renderCard({
           modelId: model,
-          source: { ggufPath: modelPath, fileSizeBytes: Bun.file(modelPath).size, hfRepo: null, hfSha: null },
+          source: {
+            ggufPath: modelPath || `(remote: ${remoteUrl})`,
+            fileSizeBytes: modelPath ? Bun.file(modelPath).size : 0,
+            hfRepo: null,
+            hfSha: null,
+          },
           hwMatrix: rows,
           subBenches,
         });
@@ -208,7 +220,7 @@ async function runEvalRun(args: string[]): Promise<number> {
         await Bun.write(cardPath, card);
         process.stdout.write(`${cardPath}\n`);
       } finally {
-        await killServer(server);
+        if (server.proc) await killServer(server as Awaited<ReturnType<typeof spawnServer>>);
       }
     }
     return 0;
