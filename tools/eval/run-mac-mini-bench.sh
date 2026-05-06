@@ -68,6 +68,7 @@ for rel in "${MODELS[@]}"; do
 
   # Run the bench via --url
   start=$(date +%s)
+  echo "    CMD: bun packages/cli/src/bin.ts eval run $rel --node mac-mini --ub 512 --url $URL" | tee -a "$PROGRESS"
   bun packages/cli/src/bin.ts eval run "$rel" --node mac-mini --ub 512 --url "$URL" > "$log" 2>&1
   status=$?
   end=$(date +%s)
