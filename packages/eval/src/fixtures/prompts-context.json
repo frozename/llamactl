@@ -1,0 +1,74 @@
+[
+  {
+    "name": "endurance-lighthouse-4k-quarter",
+    "depth": 4096,
+    "position": 0.25,
+    "needle": "In the summer of 1874, archivist Mira Ellison cataloged shelf code V-17 while restoring the north gallery clock.",
+    "question": "What was the name of the archivist who cataloged shelf code V-17 in 1874?",
+    "answer_substring": "Mira Ellison"
+  },
+  {
+    "name": "endurance-lighthouse-4k-middle",
+    "depth": 4096,
+    "position": 0.5,
+    "needle": "On 12 October 1892, bridge engineer Tomas Varela logged calibration set NQ-44 before the storm drill.",
+    "question": "Who logged calibration set NQ-44 on 12 October 1892?",
+    "answer_substring": "Tomas Varela"
+  },
+  {
+    "name": "endurance-lighthouse-4k-threequarter",
+    "depth": 4096,
+    "position": 0.75,
+    "needle": "During the 1901 ledger audit, navigator Elin Marceau annotated parcel XJ-9 beside the port registry.",
+    "question": "Who annotated parcel XJ-9 during the 1901 ledger audit?",
+    "answer_substring": "Elin Marceau"
+  },
+  {
+    "name": "endurance-lighthouse-8k-quarter",
+    "depth": 8192,
+    "position": 0.25,
+    "needle": "In March 1911, botanist Ivo Calder signed specimen trail H-204 after mapping the conservatory roof vents.",
+    "question": "Who signed specimen trail H-204 in March 1911?",
+    "answer_substring": "Ivo Calder"
+  },
+  {
+    "name": "endurance-lighthouse-8k-middle",
+    "depth": 8192,
+    "position": 0.5,
+    "needle": "The dockmaster Renata Sloane stamped route card QL-88 during the 1920 midnight inventory.",
+    "question": "Who stamped route card QL-88 during the 1920 midnight inventory?",
+    "answer_substring": "Renata Sloane"
+  },
+  {
+    "name": "endurance-lighthouse-8k-threequarter",
+    "depth": 8192,
+    "position": 0.75,
+    "needle": "In 1936, surveyor Malik Renner filed beacon record C-551 after the shoreline inspection.",
+    "question": "Who filed beacon record C-551 in 1936?",
+    "answer_substring": "Malik Renner"
+  },
+  {
+    "name": "endurance-lighthouse-16k-quarter",
+    "depth": 16384,
+    "position": 0.25,
+    "needle": "During the 1948 archive transfer, curator Sera Winfield checked manifest plate ZR-7 against the blue ledger.",
+    "question": "Who checked manifest plate ZR-7 during the 1948 archive transfer?",
+    "answer_substring": "Sera Winfield"
+  },
+  {
+    "name": "endurance-lighthouse-16k-middle",
+    "depth": 16384,
+    "position": 0.5,
+    "needle": "On 6 June 1959, survey captain Leon Bastien recorded waypoint T-319 beside the old observatory gate.",
+    "question": "Who recorded waypoint T-319 on 6 June 1959?",
+    "answer_substring": "Leon Bastien"
+  },
+  {
+    "name": "endurance-lighthouse-16k-threequarter",
+    "depth": 16384,
+    "position": 0.75,
+    "needle": "In 1968, records analyst Noor Ainsley indexed cargo slip M-72 after the winter kiln inspection.",
+    "question": "Who indexed cargo slip M-72 in 1968?",
+    "answer_substring": "Noor Ainsley"
+  }
+]
