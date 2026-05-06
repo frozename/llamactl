@@ -14,6 +14,7 @@ import {
   waitForHealth,
   upsertRow,
 } from '../../../eval/src/index.js';
+import { getGlobals } from '../dispatcher.js';
 import type {
   ContextRetrievalDetail,
   JsonOutputFailure,
@@ -97,15 +98,15 @@ async function runEvalRun(args: string[]): Promise<number> {
     process.stderr.write(`${USAGE}\n`);
     return 1;
   }
-  let node = 'local';
+  // --node is a llamactl-global flag consumed by extractGlobalFlags
+  // before this function sees args; read it from the globals store.
+  const node = getGlobals().nodeName ?? 'local';
   let ub: 256 | 512 = 512;
   let all = false;
   let remoteUrl: string | null = null;
   for (let i = 1; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '--node') node = args[++i] ?? node;
-    else if (arg.startsWith('--node=')) node = arg.slice('--node='.length);
-    else if (arg === '--ub') ub = parseUb(args[++i]);
+    if (arg === '--ub') ub = parseUb(args[++i]);
     else if (arg.startsWith('--ub=')) ub = parseUb(arg.slice('--ub='.length));
     else if (arg === '--all') all = true;
     else if (arg === '--url') remoteUrl = args[++i] ?? null;
