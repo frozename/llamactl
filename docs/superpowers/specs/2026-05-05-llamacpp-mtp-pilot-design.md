@@ -20,7 +20,7 @@ additional upstream work beyond #22673.
 ## Goal
 
 Run a single-node MTP pilot on the M4 Pro control plane (`local`) using
-Qwen 3.6 35B-A3B only, and decide whether to keep an opt-in MTP path based on
+Qwen 3.6 27B dense only, and decide whether to keep an opt-in MTP path based on
 bench evidence.
 
 ## Non-goals
@@ -32,9 +32,20 @@ bench evidence.
 
 ## Hardware fit
 
-| Node | Profile | Model in scope | Fit |
+| Node | Profile | Models in scope | Fit |
 |---|---|---|---|
-| `local` | macbook-pro-48g (M4 Pro) | `qwen36-mtp` | In scope for pilot |
+| `local` | macbook-pro-48g (M4 Pro) | `qwen36-27b-q4m` (vanilla, ~17 GB) + `qwen36-27b-mtp` (MTP, ~17 GB) | Comfortable headroom |
+
+### Why 27B dense and not 35B-A3B?
+
+The MoE 35B-A3B MTP repo (`am17an/Qwen3.6-35BA3B-MTP-GGUF`) only ships a
+37.8 GB BF16 file with no quantised variants. That's tight to bench on a 48 GB
+node once KV cache and OS overhead are accounted for, and self-quantising
+doubles turnaround (download 37.8 GB → quantise → discard). The 27B dense
+lineage has a Q4_K_M MTP build (16.5 GB) from `RDson`, validated by their
+sibling `RDson/Qwen3.6-27B-MTP-IQ4_KS-GGUF` repo (~20k downloads). The
+existing catalog entry `qwen36-q4m` (35B-A3B MoE, unsloth Q4_K_M) stays
+untouched — no MTP variant exists upstream for it as of 2026-05-05.
 
 ## Architecture
 
@@ -42,9 +53,11 @@ Side-by-side binary, side-by-side model storage:
 
 - Vanilla path remains unchanged (`LLAMA_CPP_BIN`).
 - MTP path uses parallel binary (`LLAMA_CPP_BIN_MTP`) from the pinned PR tree.
-- Model acquisition uses `tools/llama-cpp-mtp/download.sh`, which pulls a
-  pre-built MTP GGUF from `am17an/Qwen3.6-35BA3B-MTP-GGUF` into
-  `LLAMA_CPP_MODELS/Qwen3.6-35B-A3B-MTP-GGUF/`.
+- Model acquisition uses `tools/llama-cpp-mtp/download.sh`, which pulls the
+  vanilla baseline (`unsloth/Qwen3.6-27B-GGUF/Qwen3.6-27B-Q4_K_M.gguf`) and
+  the MTP variant (`RDson/Qwen3.6-27B-MTP-Q4_K_M-GGUF/Qwen3.6-27B-MTP-Q4_K_M.gguf`)
+  into `LLAMA_CPP_MODELS/Qwen3.6-27B-GGUF/` and
+  `LLAMA_CPP_MODELS/Qwen3.6-27B-MTP-GGUF/` respectively.
 
 No conversion harness is part of this pilot.
 
@@ -60,7 +73,7 @@ No conversion harness is part of this pilot.
 Deliverables:
 1. Build side-by-side MTP binary tree from pinned PR SHA.
 2. Download harness (`download.sh`) for pre-built MTP GGUFs.
-3. Acquire one model: `qwen36-mtp`.
+3. Acquire two models: `qwen36-27b-q4m` (vanilla baseline) and `qwen36-27b-mtp` (MTP variant).
 4. Bench harness runs vanilla vs MTP on one `(node, model)` pair only.
 5. Results doc with go/no-go recommendation.
 
@@ -75,8 +88,9 @@ Triggered only if Slice A passes for the single in-scope pair.
 
 Schema and routing shape:
 - Workload keeps `decoding: mtp | vanilla` (default `vanilla`).
-- Catalog stores `mtpRel` for `qwen36-q4m` (or successor id mapped to the
-  downloaded MTP artifact).
+- Catalog gains a new entry `qwen36-27b-q4m` with `rel` pointing at the vanilla
+  baseline and `mtpRel` pointing at the MTP variant. Existing `qwen36-q4m`
+  (35B-A3B MoE) remains MTP-less.
 - `mtpDrafterRel` is optional and not required for Qwen embedded-head MTP.
 - Spawn path on `decoding: mtp` appends:
   - `--spec-type mtp`

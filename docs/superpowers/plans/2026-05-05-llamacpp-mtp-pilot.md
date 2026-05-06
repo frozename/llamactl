@@ -47,21 +47,20 @@ eval "$(bun packages/cli/src/bin.ts env --eval)"
 
 **File:** `tools/llama-cpp-mtp/download.sh`
 
-- [ ] Implement idempotent download by catalog id.
-- [ ] Initial supported id: `qwen36-mtp`.
-- [ ] Resolve available `.gguf` entries from
-      `am17an/Qwen3.6-35BA3B-MTP-GGUF`.
-- [ ] Quant selection order: `Q4_K_M`, `Q4_K_S`, `Q5_K_M`, `Q4_0`, `Q8_0`.
-- [ ] If no preferred quant tag matches, fall back to the smallest available
-      `.gguf` by size.
-- [ ] Download via `hf download` into
-      `$LLAMA_CPP_MODELS/Qwen3.6-35B-A3B-MTP-GGUF/`.
+- [ ] Implement idempotent download by catalog id (direct `hf download` of a
+      known `(repo, file)` pair per id — no quant-probing logic).
+- [ ] Supported ids:
+      - `qwen36-27b-q4m` → `unsloth/Qwen3.6-27B-GGUF/Qwen3.6-27B-Q4_K_M.gguf`
+      - `qwen36-27b-mtp` → `RDson/Qwen3.6-27B-MTP-Q4_K_M-GGUF/Qwen3.6-27B-MTP-Q4_K_M.gguf`
+- [ ] Output to `$LLAMA_CPP_MODELS/Qwen3.6-27B-GGUF/` and
+      `$LLAMA_CPP_MODELS/Qwen3.6-27B-MTP-GGUF/` respectively.
 
 Run:
 
 ```bash
 eval "$(bun packages/cli/src/bin.ts env --eval)"
-bash tools/llama-cpp-mtp/download.sh qwen36-mtp
+bash tools/llama-cpp-mtp/download.sh qwen36-27b-q4m
+bash tools/llama-cpp-mtp/download.sh qwen36-27b-mtp
 ```
 
 ### Task A3: Removed
@@ -81,7 +80,7 @@ bash tools/llama-cpp-mtp/download.sh qwen36-mtp
 
 - [ ] Publish one-row matrix in the Slice A results doc:
   - Node: `local`
-  - Model: downloaded `qwen36-mtp`
+  - Model: `qwen36-27b-q4m` (vanilla baseline) vs `qwen36-27b-mtp` (MTP)
   - Vanilla vs MTP metrics
   - Go/no-go recommendation
 
@@ -97,8 +96,9 @@ Gate to Slice B:
 ### Task B1: Catalog schema + data
 
 - [ ] Add optional `mtpRel` and `mtpDrafterRel` fields to catalog schema.
-- [ ] Add one data mapping only: `qwen36-q4m` (or its active catalog id)
-      gets `mtpRel` pointing at the downloaded MTP artifact.
+- [ ] Add a NEW catalog entry `qwen36-27b-q4m`: `rel` points at the vanilla
+      27B baseline, `mtpRel` points at the MTP 27B variant. Existing
+      `qwen36-q4m` (35B-A3B) entry stays untouched.
 - [ ] Do not require `mtpDrafterRel` for this Qwen entry.
 - [ ] Update schema tests for optional fields and Qwen-only `mtpRel` case.
 
