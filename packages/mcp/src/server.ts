@@ -29,6 +29,7 @@ import {
 import { createOpenAICompatProvider } from '@nova/contracts';
 import { appendAudit, toTextContent } from '@nova/mcp-shared';
 import { registerPipelineTools } from './pipelines.js';
+import { registerModelsLeaderboardTool } from './tools/models-leaderboard.js';
 
 /**
  * `@llamactl/mcp` — Model Context Protocol server exposing llamactl's
@@ -53,6 +54,8 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
     name: opts?.name ?? 'llamactl',
     version: opts?.version ?? '0.0.0',
   });
+
+  registerModelsLeaderboardTool(server);
 
   // ---- Reads -----------------------------------------------------
 
