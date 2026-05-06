@@ -16,8 +16,8 @@ metadata:
 spec:
   node: mac-mini
   target:
-    kind: alias
-    value: granite41-8b-q4
+    kind: rel
+    value: granite-4.1-8b-GGUF/granite-4.1-8b-Q4_K_M.gguf
   extraArgs:
     - --ctx-size
     - "8192"
