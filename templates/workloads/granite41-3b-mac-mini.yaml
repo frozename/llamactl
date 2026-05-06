@@ -1,0 +1,37 @@
+# Granite 4.1 3B on `mac-mini`.
+#
+# Mac-mini-friendly companion to granite41-3b-local. Same composite
+# 1.000 score, ~44 tps (mac-mini's memory bandwidth halves throughput
+# vs M4 Pro for 8B-class dense, but 3B stays comfortable).
+#
+# Mac-mini's :8090 is reserved for the Gemma 4 E4B "local" alias used
+# by penumbra memory-refinement offloading; this Granite workload
+# binds a different port (:8094) to coexist.
+#
+# Apply:
+#   llamactl --node mac-mini apply -f templates/workloads/granite41-3b-mac-mini.yaml
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: granite41-3b-mac-mini
+  labels:
+    family: granite41
+    role: agentic
+spec:
+  node: mac-mini
+  target:
+    kind: alias
+    value: granite41-3b-q4
+  extraArgs:
+    - --ctx-size
+    - "8192"
+    - -ngl
+    - "999"
+    - --flash-attn
+    - "on"
+    - -ub
+    - "512"
+  restartPolicy: Always
+  endpoint:
+    host: 127.0.0.1
+    port: 8094

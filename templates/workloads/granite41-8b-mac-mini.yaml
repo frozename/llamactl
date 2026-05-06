@@ -1,0 +1,33 @@
+# Granite 4.1 8B on `mac-mini`.
+#
+# Slower than 3B on mac-mini (~20 tps vs 44 tps) but still composite
+# 0.896 with perfect tool-calling — viable when you specifically want
+# the larger context-handling of the 8B variant.
+#
+# Apply:
+#   llamactl --node mac-mini apply -f templates/workloads/granite41-8b-mac-mini.yaml
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: granite41-8b-mac-mini
+  labels:
+    family: granite41
+    role: agentic
+spec:
+  node: mac-mini
+  target:
+    kind: alias
+    value: granite41-8b-q4
+  extraArgs:
+    - --ctx-size
+    - "8192"
+    - -ngl
+    - "999"
+    - --flash-attn
+    - "on"
+    - -ub
+    - "512"
+  restartPolicy: Always
+  endpoint:
+    host: 127.0.0.1
+    port: 8095

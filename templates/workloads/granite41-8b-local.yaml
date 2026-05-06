@@ -1,0 +1,33 @@
+# Granite 4.1 8B on M4 Pro (`local`).
+#
+# Best mid-size agentic candidate per the 2026-05-06 fleet eval
+# (composite 1.000: 42 tps, 12/12 tool-calling, perfect context + JSON).
+# Slightly slower than 3B but the same perfect tool-calling.
+#
+# Apply:
+#   llamactl apply -f templates/workloads/granite41-8b-local.yaml
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: granite41-8b-local
+  labels:
+    family: granite41
+    role: agentic
+spec:
+  node: local
+  target:
+    kind: alias
+    value: granite41-8b-q4
+  extraArgs:
+    - --ctx-size
+    - "8192"
+    - -ngl
+    - "999"
+    - --flash-attn
+    - "on"
+    - -ub
+    - "512"
+  restartPolicy: Always
+  endpoint:
+    host: 127.0.0.1
+    port: 8093
