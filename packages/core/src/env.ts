@@ -130,6 +130,22 @@ function resolveDefaultModel(
  * The CLI's `env --eval` serialises this; Electron main calls it during
  * startup and writes the result straight into process.env.
  */
+/**
+ * Pick a sensible default for $DEV_STORAGE when neither env nor the
+ * test profile provide one. Probes common external-volume locations
+ * (`$HOME/DevStorage`) before falling back to the legacy in-home
+ * `~/.llamactl`. This matches the user-side dotfile convention that
+ * exports `DEV_STORAGE=$HOME/DevStorage` so that processes spawned
+ * outside an interactive shell (launchd agents, ssh non-interactive,
+ * subagent workers) still resolve `LLAMA_CPP_BIN` etc. to the right
+ * paths instead of nonexistent `~/.llamactl/src/...` ones.
+ */
+function detectDevStorageDefault(): string {
+  const externalCandidate = join(homedir(), 'DevStorage');
+  if (existsSync(externalCandidate)) return externalCandidate;
+  return join(homedir(), '.llamactl');
+}
+
 export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
   const testProfile = testProfileDefaults(env);
   const t = (key: string): string | undefined => testProfile?.[key];
@@ -137,7 +153,7 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
   const devStorage = pickWithTestProfile(
     env.DEV_STORAGE,
     t('DEV_STORAGE'),
-    join(homedir(), '.llamactl'),
+    detectDevStorageDefault(),
   );
   const hfHome = pickWithTestProfile(
     env.HF_HOME,
