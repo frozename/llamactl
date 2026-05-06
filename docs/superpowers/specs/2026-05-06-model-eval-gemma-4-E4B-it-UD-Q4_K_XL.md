@@ -1,74 +1,79 @@
-# Model Eval: Qwen3.5-4B-GGUF/Qwen3.5-4B-UD-Q4_K_XL.gguf
+# Model Eval: gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf
 
 ## Identity
-- GGUF: /Users/acordeiro/DevStorage/ai-models/llama.cpp/models/Qwen3.5-4B-GGUF/Qwen3.5-4B-UD-Q4_K_XL.gguf
-- File size: 2.71 GiB
+- GGUF: (remote: http://192.168.68.76:18182)
+- File size: 0.00 GiB
 
 ## Hardware Matrix
 | node | ub | throughput_tps | ttft_ms | composite | asof |
 | --- | --- | --- | --- | --- | --- |
-| local | 512 | 49.56 | 4038 | 0.875 | 2026-05-06T04:01:32.789Z |
+| mac-mini | 256 | 28.64 | 7055 | 0.766 | 2026-05-06T06:23:35.771Z |
+| mac-mini | 512 | 27.74 | 7288 | 0.757 | 2026-05-06T05:23:50.268Z |
 
 ## Sub-Bench Details
 ### Throughput
 #### Throughput
-- mean: 49.56 tps
-- spread: slowest explain_concept 49.10 tps, fastest long_code_review 49.78 tps
+- mean: 28.64 tps
+- spread: slowest long_code_review 28.47 tps, fastest qa_factual 28.69 tps
 #### Tool-Calling
-- score: 58.3%
+- score: 33.3%
 (no per-prompt details available — re-run to regenerate)
 #### Context Retrieval
 (no per-prompt details available — re-run to regenerate)
 #### JSON Output
-- score: 100.0%
+- score: 80.0%
 (no per-prompt details available — re-run to regenerate)
 
 ### Tool-Calling
 #### Throughput
 (no per-prompt details available — re-run to regenerate)
 #### Tool-Calling
-- score: 58.3%
+- score: 33.3%
 - find_llama_bin_mtp: invalid JSON
+- mtp_gate_criteria: invalid JSON
 - approve_handoff: invalid JSON
+- task_status: invalid JSON
 - start_chain: invalid JSON
+- search_docs: invalid JSON
 - search_memory_project: invalid JSON
 - approve_another_handoff: invalid JSON
 #### Context Retrieval
 (no per-prompt details available — re-run to regenerate)
 #### JSON Output
-- score: 100.0%
+- score: 80.0%
 (no per-prompt details available — re-run to regenerate)
 
 ### Context Retrieval
 #### Throughput
 (no per-prompt details available — re-run to regenerate)
 #### Tool-Calling
-- score: 58.3%
+- score: 33.3%
 (no per-prompt details available — re-run to regenerate)
 #### Context Retrieval
 - 4k: 3/3 found
 - 8k: 3/3 found
 - 16k: 3/3 found
 #### JSON Output
-- score: 100.0%
+- score: 80.0%
 (no per-prompt details available — re-run to regenerate)
 
 ### JSON Output
 #### Throughput
 (no per-prompt details available — re-run to regenerate)
 #### Tool-Calling
-- score: 58.3%
+- score: 33.3%
 (no per-prompt details available — re-run to regenerate)
 #### Context Retrieval
 (no per-prompt details available — re-run to regenerate)
 #### JSON Output
-- score: 100.0%
-(no per-prompt details available — re-run to regenerate)
+- score: 80.0%
+- recipe-extract: no JSON
 
 ## Tuning Sweep
 | ub | composite | throughput_tps |
 | --- | --- | --- |
-| 512 | 0.875 | 49.56 |
+| 256 | 0.766 | 28.64 |
+| 512 | 0.757 | 27.74 |
 
 ## Verdict
-Best result is local ub 512 with composite 0.875. Solid agentic candidate — strong across throughput, context retrieval, JSON output.
+Best result is mac-mini ub 256 with composite 0.766. Solid agentic candidate — strong across throughput, context retrieval, JSON output.
