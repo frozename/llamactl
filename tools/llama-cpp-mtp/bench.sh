@@ -49,7 +49,8 @@ PORT=18181
 URL="http://127.0.0.1:${PORT}"
 
 SERVER_ARGS=(--host 127.0.0.1 --port "$PORT" --model "$MODEL"
-             --ctx-size 8192 --no-warmup -np 1)
+             --ctx-size 8192 --no-warmup -np 1
+             -ngl 999 --flash-attn on -ub 512)
 if [[ "$MODE" == "mtp" ]]; then
   SERVER_ARGS+=(--spec-type mtp --spec-draft-n-max 3)
 fi

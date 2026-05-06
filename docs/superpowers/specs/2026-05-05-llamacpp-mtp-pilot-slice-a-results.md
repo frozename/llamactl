@@ -119,3 +119,23 @@ Re-run this pilot when any of the following lands upstream:
   coverage on mac-mini class nodes).
 
 Until then, MTP stays out of the fleet.
+
+## Update — 2026-05-06: re-bench under optimal Apple Silicon flags
+
+The original Slice A bench did not pin `-ngl 999 --flash-attn on -ub 512`,
+which the broader agentic-eval framework now treats as the canonical Apple
+Silicon defaults. Re-ran vanilla and MTP under those flags on the same
+(model, node) pair to check whether the verdict held.
+
+| Metric | Vanilla (re-bench) | MTP (re-bench) | Ratio |
+|---|---:|---:|---:|
+| Mean decode tok/s | 11.7 | ~10.0 | **0.85x** |
+| Aggregate wall (s) | 142.65 | 150.30 | 1.054x |
+| Aggregate draft accept rate | n/a | 0.699 | — |
+
+Numbers are within <1% of the original run. The verdict holds: MTP under
+PR #22673 on M4 Pro Metal at Q4_K_M is ~15% slower than vanilla, with no
+sensitivity to the tuning flags. Either Apple Silicon defaults already
+cover those settings or the MTP per-step overhead dominates regardless.
+
+Slice B stays abandoned. Re-evaluation triggers above remain the path forward.
