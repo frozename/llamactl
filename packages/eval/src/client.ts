@@ -1,0 +1,89 @@
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_call_id?: string;
+  name?: string;
+}
+
+export interface ToolDef {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+export interface CompletionRequest {
+  body: {
+    model: string;
+    messages: ChatMessage[];
+    temperature: number;
+    max_tokens: number;
+    seed?: number;
+    stream: false;
+    tools?: ToolDef[];
+    tool_choice?: 'auto' | 'none';
+  };
+}
+
+export interface CompletionResponse {
+  choices: Array<{
+    message: {
+      content: string | null;
+      tool_calls?: Array<{
+        id: string;
+        type: 'function';
+        function: { name: string; arguments: string };
+      }>;
+    };
+    finish_reason: string;
+  }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+  timings?: {
+    prompt_per_second?: number;
+    predicted_per_second?: number;
+    predicted_n?: number;
+    prompt_n?: number;
+  };
+}
+
+export function buildCompletionRequest(opts: {
+  messages: ChatMessage[];
+  maxTokens: number;
+  seed?: number;
+  tools?: ToolDef[];
+}): CompletionRequest {
+  return {
+    body: {
+      model: 'local',
+      messages: opts.messages,
+      temperature: 0,
+      max_tokens: opts.maxTokens,
+      seed: opts.seed,
+      stream: false,
+      ...(opts.tools ? { tools: opts.tools, tool_choice: 'auto' } : {}),
+    },
+  };
+}
+
+export async function completeChat(
+  url: string,
+  req: CompletionRequest,
+): Promise<{ resp: CompletionResponse; wallMs: number }> {
+  const t0 = performance.now();
+  const r = await fetch(`${url}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req.body),
+  });
+  if (!r.ok) {
+    throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+  }
+  const resp = (await r.json()) as CompletionResponse;
+  return { resp, wallMs: performance.now() - t0 };
+}
