@@ -1,12 +1,10 @@
-# Granite 4.1 3B on `mac-mini`.
+# Granite 4.1 3B on `mac-mini`, claiming the `local` alias on :8090.
 #
-# Mac-mini-friendly companion to granite41-3b-local. Same composite
-# 1.000 score, ~44 tps (mac-mini's memory bandwidth halves throughput
-# vs M4 Pro for 8B-class dense, but 3B stays comfortable).
-#
-# Mac-mini's :8090 is reserved for the Gemma 4 E4B "local" alias used
-# by penumbra memory-refinement offloading; this Granite workload
-# binds a different port (:8094) to coexist.
+# Replaces the Gemma 4 E4B server that previously held this slot for
+# penumbra agent / memory-refinement offloading. Granite 4.1 3B
+# benched at composite 1.000 (perfect 12/12 tool-calling) on mac-mini
+# vs Gemma 4 E4B's 0.766 in the same harness — strict upgrade for
+# agentic workloads.
 #
 # Apply:
 #   llamactl --node mac-mini apply -f templates/workloads/granite41-3b-mac-mini.yaml
@@ -23,6 +21,8 @@ spec:
     kind: alias
     value: granite41-3b-q4
   extraArgs:
+    - --alias
+    - local
     - --ctx-size
     - "8192"
     - -ngl
@@ -34,4 +34,4 @@ spec:
   restartPolicy: Always
   endpoint:
     host: 127.0.0.1
-    port: 8094
+    port: 8090
