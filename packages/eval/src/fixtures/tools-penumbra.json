@@ -1,0 +1,90 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "chain_start",
+      "description": "Kick off an agent chain.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "initial_agent": { "type": "string" },
+          "message": { "type": "string" },
+          "task_type": {
+            "type": "string",
+            "enum": [
+              "plan_refine",
+              "implement_small",
+              "implement_substantial",
+              "review_adversarial",
+              "smoke_test",
+              "debug_diagnose",
+              "docs_mechanical",
+              "health_check",
+              "unknown"
+            ]
+          }
+        },
+        "required": ["initial_agent", "message"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "handoff_approve",
+      "description": "Approve a pending handoff.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "handoff_id": { "type": "string" }
+        },
+        "required": ["handoff_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "task_get",
+      "description": "Fetch task status details.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task_id": { "type": "string" }
+        },
+        "required": ["task_id"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "memory_search",
+      "description": "Search agent memory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string" },
+          "project_id": { "type": "string" },
+          "limit": { "type": "integer" }
+        },
+        "required": ["query"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "fs_grep",
+      "description": "Search for text in files.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": { "type": "string" },
+          "path": { "type": "string" }
+        },
+        "required": ["pattern"]
+      }
+    }
+  }
+]
