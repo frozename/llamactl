@@ -1,7 +1,7 @@
 [
   {
     "name": "entities-extract",
-    "prompt": "Extract entities from: Apple Inc., based in Cupertino, was founded by Steve Jobs. Return JSON with entities as [{name, type}].",
+    "prompt": "Extract entities from this sentence: \"Apple Inc., based in Cupertino, was founded by Steve Jobs.\"\n\nRespond with ONLY a JSON object in exactly this shape (no prose, no code fence labels other than ```json):\n\n{\n  \"entities\": [\n    {\"name\": \"<string>\", \"type\": \"person\" | \"place\" | \"org\"}\n  ]\n}\n\nUse \"person\" for people, \"place\" for cities/locations, \"org\" for companies/organizations. All type values MUST be lowercase.",
     "schema": {
       "type": "object",
       "required": ["entities"],
@@ -22,7 +22,7 @@
   },
   {
     "name": "changelog-parse",
-    "prompt": "Parse this changelog into JSON with version, date, and entries. Output only JSON.",
+    "prompt": "Parse this changelog entry into JSON:\n\n```\n## v2.4.0 — 2026-04-12\n- fix: prevent crash when uploading files larger than 100MB\n- feat: add dark mode toggle in settings\n- docs: clarify rate-limit behavior in README\n- refactor: split monolithic auth module into smaller files\n```\n\nRespond with ONLY a JSON object in exactly this shape (no prose):\n\n{\n  \"version\": \"<string>\",\n  \"date\": \"<YYYY-MM-DD>\",\n  \"entries\": [\n    {\"kind\": \"fix\" | \"feat\" | \"docs\" | \"refactor\", \"text\": \"<string>\"}\n  ]\n}\n\nThe text field is the description without the kind prefix.",
     "schema": {
       "type": "object",
       "required": ["version", "date", "entries"],
@@ -45,7 +45,7 @@
   },
   {
     "name": "recipe-extract",
-    "prompt": "Extract a recipe into JSON with nested ingredients and steps.",
+    "prompt": "Extract this recipe into JSON:\n\nClassic Pancakes\nIngredients: 2 cups all-purpose flour, 2 tablespoons sugar, 2 teaspoons baking powder, 1/2 teaspoon salt, 2 large eggs, 1 3/4 cups milk, 3 tablespoons melted butter.\nSteps: 1. Whisk dry ingredients together. 2. Beat eggs with milk and butter. 3. Combine wet and dry, mix until just smooth. 4. Cook on hot griddle, flipping when bubbles form.\n\nRespond with ONLY a JSON object in exactly this shape (no prose):\n\n{\n  \"title\": \"<string>\",\n  \"ingredients\": [\n    {\"name\": \"<string>\", \"amount\": \"<string>\", \"unit\": \"<string>\"}\n  ],\n  \"steps\": [\"<string>\", ...]\n}\n\nFor each ingredient, split the quantity into amount (number) and unit (cups, tsp, etc.). The unit field is optional but include it when applicable.",
     "schema": {
       "type": "object",
       "required": ["title", "ingredients", "steps"],
@@ -72,7 +72,7 @@
   },
   {
     "name": "error-report-parse",
-    "prompt": "Parse the error report into JSON with code, severity, and context.",
+    "prompt": "Parse this error report into JSON:\n\n```\n[ERROR] code=DB_TIMEOUT severity=high\n  in src/api/users.ts:142\n  Connection to primary read replica timed out after 5000ms.\n  Three retries attempted; all failed with the same error.\n```\n\nRespond with ONLY a JSON object in exactly this shape (no prose):\n\n{\n  \"code\": \"<string>\",\n  \"severity\": \"low\" | \"medium\" | \"high\",\n  \"context\": {\n    \"file\": \"<string>\",\n    \"line\": <integer>,\n    \"details\": \"<string>\"\n  }\n}\n\nThe details field is the human-readable description of the error.",
     "schema": {
       "type": "object",
       "required": ["code", "severity", "context"],
@@ -93,7 +93,7 @@
   },
   {
     "name": "contact-card",
-    "prompt": "Return the contact card as JSON with name, emails, and social handles.",
+    "prompt": "Convert this contact card into JSON:\n\n```\nName: Alex Cordeiro\nEmails: alex@example.com, alex.work@example.org\nGitHub: alexcorde\nMastodon: @alex@hachyderm.io\n```\n\nRespond with ONLY a JSON object in exactly this shape (no prose):\n\n{\n  \"name\": \"<string>\",\n  \"emails\": [\"<string>\", ...],\n  \"social\": {\n    \"github\": \"<string>\",\n    \"mastodon\": \"<string>\"\n  }\n}",
     "schema": {
       "type": "object",
       "required": ["name", "emails", "social"],

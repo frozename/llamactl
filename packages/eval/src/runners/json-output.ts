@@ -53,14 +53,18 @@ export interface JsonOutputResult {
 
 export async function runJsonOutput(url: string): Promise<JsonOutputResult> {
   const prompts = promptsRaw as unknown as JsonOutputFixture[];
-  const scored: Array<JsonOutputFixture & { valid: boolean }> = [];
+  const scored: Array<JsonOutputFixture & { valid: boolean; text: string; parsed: unknown | null }> = [];
   for (const prompt of prompts) {
     const req = buildCompletionRequest({
       messages: [{ role: 'user', content: prompt.prompt }],
       maxTokens: 256,
+      enableThinking: false,
     });
     const { resp } = await completeChat(url, req);
-    const text = resp.choices[0]?.message.content ?? '';
+    const msg = resp.choices[0]?.message;
+    const text = (msg?.content && msg.content.length > 0)
+      ? msg.content
+      : (msg?.reasoning_content ?? '');
     const parsed = extractJsonPayload(text);
     const valid = parsed !== null && validateJsonAgainstSchema(parsed, prompt.schema);
     scored.push({ ...prompt, valid, text, parsed });

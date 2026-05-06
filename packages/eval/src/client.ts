@@ -24,6 +24,7 @@ export interface CompletionRequest {
     stream: false;
     tools?: ToolDef[];
     tool_choice?: 'auto' | 'none';
+    chat_template_kwargs?: Record<string, unknown>;
   };
 }
 
@@ -31,6 +32,7 @@ export interface CompletionResponse {
   choices: Array<{
     message: {
       content: string | null;
+      reasoning_content?: string | null;
       tool_calls?: Array<{
         id: string;
         type: 'function';
@@ -57,6 +59,7 @@ export function buildCompletionRequest(opts: {
   maxTokens: number;
   seed?: number;
   tools?: ToolDef[];
+  enableThinking?: boolean;
 }): CompletionRequest {
   return {
     body: {
@@ -67,6 +70,9 @@ export function buildCompletionRequest(opts: {
       seed: opts.seed,
       stream: false,
       ...(opts.tools ? { tools: opts.tools, tool_choice: 'auto' } : {}),
+      ...(opts.enableThinking === false
+        ? { chat_template_kwargs: { enable_thinking: false } }
+        : {}),
     },
   };
 }

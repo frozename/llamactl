@@ -62,10 +62,14 @@ export async function runContextRetrieval(url: string): Promise<ContextRetrieval
     const haystack = assembleHaystack(haystackBase, prompt.needle, prompt.depth, prompt.position);
     const req = buildCompletionRequest({
       messages: [{ role: 'user', content: `${haystack}\n\n${prompt.question}` }],
-      maxTokens: 64,
+      maxTokens: 256,
+      enableThinking: false,
     });
     const { resp } = await completeChat(url, req);
-    const answer = resp.choices[0]?.message.content ?? '';
+    const msg = resp.choices[0]?.message;
+    const answer = (msg?.content && msg.content.length > 0)
+      ? msg.content
+      : (msg?.reasoning_content ?? '');
     rows.push({
       ...prompt,
       found: answer.toLowerCase().includes(prompt.answer_substring.toLowerCase()),
