@@ -1,4 +1,5 @@
-import { access, constants as fsConstants, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { constants as fsConstants, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { access } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import {
