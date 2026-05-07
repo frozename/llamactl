@@ -3,17 +3,19 @@
 # with perfect 12/12 tool-calling, ~20 tps on mac-mini's memory bandwidth.
 #
 # Tuning notes:
-#   - --ctx-size 16384: 8B Q4_K_M is ~5 GB; KV at q8_0 for 16k ctx is
-#     ~650 MB (vs ~1.3 GB at fp16) so we double context for free.
+#   - --ctx-size 32768: 8B Q4_K_M is ~5 GB; with -np 2 each slot gets
+#     16k of headroom, which is the per-conversation budget we want
+#     for penumbra planner+executor dispatches. KV at q8_0 keeps
+#     total KV ~1.3 GB so this fits comfortably alongside the model.
 #   - --cache-type-k/v q8_0: q8_0 KV is essentially lossless on Granite
-#     for agentic prompts; halves KV footprint.
+#     for agentic prompts; halves KV footprint vs fp16.
 #   - -b 2048 -ub 512: Apple Silicon community recommendation, matches
 #     the prior gemma-mini-q4 config that ran stably on this box.
 #   - -ngl 999 --flash-attn on: full Metal offload, FA reduces KV pressure.
 #   - --no-warmup: shaves ~10s off startup; warmup only matters for
 #     first-token latency anyway and we have keep-alive working.
 #   - -np 2: 2 parallel slots so penumbra dispatches don't head-of-line
-#     block each other; per-slot ctx is 8k after split.
+#     block each other; per-slot ctx is 16k after split.
 #   - timeoutSeconds 180: cold mmap of a 5 GB GGUF on mac-mini's
 #     external-volume APFS can exceed the default 60s; 3 min absorbs
 #     that without a false-negative apply timeout.
@@ -36,7 +38,7 @@ spec:
     - --alias
     - local
     - --ctx-size
-    - "16384"
+    - "32768"
     - -b
     - "2048"
     - -ub
