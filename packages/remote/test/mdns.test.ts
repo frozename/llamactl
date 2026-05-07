@@ -1,11 +1,34 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test, vi } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateToken } from '../src/server/auth.js';
-import { discoverAgents } from '../src/server/mdns.js';
-import { startAgentServer, type RunningAgent } from '../src/server/serve.js';
 import { generateSelfSignedCert } from '../src/server/tls.js';
+
+vi.mock('bonjour-service', () => {
+  let lastPublished: Record<string, unknown> | null = null;
+
+  class MockBonjour {
+    publish(opts: Record<string, unknown>) {
+      lastPublished = opts;
+      return {
+        ...opts,
+        stop: (cb?: () => void) => cb?.(),
+      };
+    }
+
+    find() {
+      return { stop() {} };
+    }
+
+    destroy() {}
+  }
+
+  return {
+    Bonjour: MockBonjour,
+    __lastPublished: () => lastPublished,
+  };
+});
 
 /**
  * Spin up two agents advertising over mDNS and confirm `discoverAgents`
@@ -21,11 +44,12 @@ import { generateSelfSignedCert } from '../src/server/tls.js';
 const SKIP = process.env.LLAMACTL_SKIP_MDNS_TESTS === '1';
 
 let tmp = '';
-const agents: RunningAgent[] = [];
+let agents: Array<{ stop: () => Promise<void> }> = [];
 
 beforeAll(async () => {
   if (SKIP) return;
   tmp = mkdtempSync(join(tmpdir(), 'llamactl-mdns-'));
+  const { startAgentServer } = await import('../src/server/serve.js');
 
   for (const name of ['mdns-node-1', 'mdns-node-2']) {
     const dir = join(tmp, name);
@@ -59,6 +83,7 @@ describe.skipIf(SKIP)('mDNS agent discovery', () => {
     // Give the OS a moment to publish before we start browsing — some
     // Bonjour implementations defer the first multicast.
     await new Promise((r) => setTimeout(r, 500));
+    const { discoverAgents } = await import('../src/server/mdns.js');
     const found = await discoverAgents(4000);
     const byNode = new Map(found.map((f) => [f.nodeName, f]));
     expect(byNode.has('mdns-node-1')).toBe(true);
@@ -71,4 +96,23 @@ describe.skipIf(SKIP)('mDNS agent discovery', () => {
       expect(svc.fingerprint!.startsWith('sha256:')).toBe(true);
     }
   }, 20_000);
+});
+
+describe('publishAgentMdns', () => {
+  test('publishes a synthetic host instead of the OS hostname', async () => {
+    const { publishAgentMdns } = await import('../src/server/mdns.js');
+    const bonjour = await import('bonjour-service');
+    const published = publishAgentMdns({
+      port: 1234,
+      nodeName: 'macmini-ai',
+      fingerprint: null,
+      version: '0.9.9',
+      serviceName: 'macmini-ai',
+    });
+
+    expect((bonjour as unknown as { __lastPublished?: () => Record<string, unknown> | null }).__lastPublished?.()?.host).toBe(
+      'macmini-ai-llamactl',
+    );
+    await published.stop();
+  });
 });

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { access, constants as fsConstants, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -408,16 +408,12 @@ async function runServe(args: string[]): Promise<number> {
     process.stderr.write(`${parsed.error}\n`);
     return 1;
   }
-  const cfgPath = join(parsed.dir, 'agent.yaml');
-  const cfg = agentConfigMod.loadAgentConfig(cfgPath);
-
   // --dial-central / --central-bearer must travel together. The
   // bearer can also come from LLAMACTL_TUNNEL_BEARER so the CLI line
   // doesn't need to embed secrets. Either both are present (and we
   // wire tunnelDial below) or neither is.
   const dialUrl = parsed.dialCentral;
   const dialBearer = parsed.centralBearer ?? process.env.LLAMACTL_TUNNEL_BEARER;
-  const dialNodeName = parsed.tunnelNodeName ?? cfg.nodeName ?? 'agent';
   if (dialUrl || parsed.centralBearer) {
     if (!dialUrl || !dialBearer) {
       process.stderr.write(
@@ -448,37 +444,65 @@ async function runServe(args: string[]): Promise<number> {
     );
   }
 
-  const running = startAgentServer({
-    bindHost: parsed.bindHost ?? cfg.bindHost,
-    port: parsed.port ?? cfg.port,
-    tokenHash: cfg.tokenHash,
-    tls: { certPath: cfg.certPath, keyPath: cfg.keyPath },
-    // Undefined → journal.ts resolves the default path (honors
-    // $LLAMACTL_TUNNEL_JOURNAL and $DEV_STORAGE).
-    ...(parsed.tunnelJournal ? { tunnelJournalPath: parsed.tunnelJournal } : {}),
-    ...(dialUrl && dialBearer
-      ? {
-          tunnelDial: {
-            url: dialUrl,
-            bearer: dialBearer,
-            nodeName: dialNodeName,
-            // Stderr-only diagnostics — never include the bearer or
-            // central URL in the transition line.
-            onStateChange: (s): void => {
-              process.stderr.write(`tunnel: ${s}\n`);
+  const cfgPath = join(parsed.dir, 'agent.yaml');
+  await waitForReadable(cfgPath, 30_000);
+  const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+  await waitForReadable(cfg.certPath, 30_000);
+  await waitForReadable(cfg.keyPath, 30_000);
+  const dialNodeName = parsed.tunnelNodeName ?? cfg.nodeName ?? 'agent';
+
+  let running;
+  try {
+    running = startAgentServer({
+      bindHost: parsed.bindHost ?? cfg.bindHost,
+      port: parsed.port ?? cfg.port,
+      tokenHash: cfg.tokenHash,
+      tls: { certPath: cfg.certPath, keyPath: cfg.keyPath },
+      // Undefined → journal.ts resolves the default path (honors
+      // $LLAMACTL_TUNNEL_JOURNAL and $DEV_STORAGE).
+      ...(parsed.tunnelJournal ? { tunnelJournalPath: parsed.tunnelJournal } : {}),
+      ...(dialUrl && dialBearer
+        ? {
+            tunnelDial: {
+              url: dialUrl,
+              bearer: dialBearer,
+              nodeName: dialNodeName,
+              // Stderr-only diagnostics — never include the bearer or
+              // central URL in the transition line.
+              onStateChange: (s): void => {
+                process.stderr.write(`tunnel: ${s}\n`);
+              },
             },
-          },
-        }
-      : {}),
-    ...(tunnelCentralOn && tunnelCentralBearer
-      ? {
-          tunnelCentral: {
-            expectedBearerHash: auth.hashToken(tunnelCentralBearer),
-            // onNodeConnect/onNodeDisconnect land in Slice D (journal).
-          },
-        }
-      : {}),
-  });
+          }
+        : {}),
+      ...(tunnelCentralOn && tunnelCentralBearer
+        ? {
+            tunnelCentral: {
+              expectedBearerHash: auth.hashToken(tunnelCentralBearer),
+              // onNodeConnect/onNodeDisconnect land in Slice D (journal).
+            },
+          }
+        : {}),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (
+      (message.includes('EADDRINUSE') || (message.includes('port') && message.includes('in use'))) &&
+      typeof parsed.port === 'number'
+    ) {
+      process.stderr.write(`agent: port ${parsed.port} already in use, exiting (launchd will retry)\n`);
+      return 1;
+    }
+    if (
+      (message.includes('EPERM') || message.includes('ENOENT')) &&
+      (message.includes(cfg.certPath) || message.includes(cfg.keyPath))
+    ) {
+      const path = message.includes(cfg.certPath) ? cfg.certPath : cfg.keyPath;
+      process.stderr.write(`agent: cannot read cert path ${path}, exiting (launchd will retry)\n`);
+      return 1;
+    }
+    throw err;
+  }
 
   process.stdout.write(
     `agent listening on ${running.url}\n` +
@@ -537,6 +561,21 @@ function splitFlag(arg: string): [string, string | undefined] {
   const eq = arg.indexOf('=');
   if (eq < 0) return [arg, undefined];
   return [arg.slice(0, eq), arg.slice(eq + 1)];
+}
+
+async function waitForReadable(path: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastErr: unknown;
+  while (Date.now() < deadline) {
+    try {
+      await access(path, fsConstants.R_OK);
+      return;
+    } catch (err) {
+      lastErr = err;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+  throw lastErr ?? new Error(`timed out waiting for ${path}`);
 }
 
 function dedupe<T>(xs: T[]): T[] {

@@ -29,8 +29,10 @@ export interface PublishedAgent {
  */
 export function publishAgentMdns(opts: PublishAgentOptions): PublishedAgent {
   const bonjour = new Bonjour();
+  const synthHost = `${(opts.serviceName ?? opts.nodeName).replace(/[^A-Za-z0-9-]/g, '-')}-llamactl`;
   const service = bonjour.publish({
     name: opts.serviceName ?? opts.nodeName,
+    host: synthHost,
     type: LLAMACTL_SERVICE_TYPE,
     port: opts.port,
     txt: {

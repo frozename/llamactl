@@ -316,6 +316,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
           ? Bun.serve({
               port,
               hostname: bindHost,
+              reusePort: true,
               fetch: fetchHandler,
               websocket: wsConfig,
               tls: { cert: loaded.certPem, key: loaded.keyPem },
@@ -329,6 +330,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
           : Bun.serve({
               port,
               hostname: bindHost,
+              reusePort: true,
               fetch: fetchHandler,
               tls: { cert: loaded.certPem, key: loaded.keyPem },
               idleTimeout: 255,
@@ -338,6 +340,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       ? Bun.serve({
           port,
           hostname: bindHost,
+          reusePort: true,
           fetch: fetchHandler,
           websocket: wsConfig,
           idleTimeout: 255,
@@ -345,6 +348,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       : Bun.serve({
           port,
           hostname: bindHost,
+          reusePort: true,
           fetch: fetchHandler,
           idleTimeout: 255,
         });
