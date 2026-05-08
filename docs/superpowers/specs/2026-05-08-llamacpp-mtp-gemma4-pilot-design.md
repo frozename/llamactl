@@ -51,11 +51,23 @@ On pass, wire an opt-in `decoding: mtp` workload variant for Gemma 4 on
 
 | Node | Profile | Models in scope | Sizing |
 |---|---|---|---|
-| `local` | macbook-pro-48g (M4 Pro) | `unsloth/gemma-4-26B-A4B-it-GGUF` Q4_K_M (base) + `AtomicChat/gemma-4-26B-A4B-it-assistant-GGUF` Q4_K_M (head, ~310 MB) | Comfortable headroom — 26B-A4B is MoE with 4B active; KV at turbo3 stays compact |
+| `local` | macbook-pro-48g (M4 Pro) | `gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf` (base, ~17 GB, on disk) + `AtomicChat/gemma-4-26B-A4B-it-assistant-GGUF` Q4_K_M (head, ~310 MB) | Comfortable headroom — 26B-A4B is MoE with 4B active; KV at turbo3 stays compact |
 
 26B-A4B is selected over 31B dense because the fork's published bench
 datapoint (1.34×) is on this exact size class, and 31B dense is borderline
 for 48 GB once context + KV are accounted for.
+
+### Quant-tier deviation from the published bench
+
+The fork's reported 1.34× datapoint is on Q4_K_M-class. The closest
+unsloth file on disk is `gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf`
+(unsloth-dynamic, slightly higher quality / ~1 GB larger than the
+equivalent UD-Q4_K_M). Decision: reuse the on-disk file and avoid a
+~16 GB download. The MTP-vs-vanilla ratio we are gating on is invariant
+to the precise main-model quant tier within Q4_K_*, since both legs of
+the bench load the same base. The deviation will be called out in the
+results doc, and `download.sh --base` is available to pull
+`gemma-4-26B-A4B-it-UD-Q4_K_M.gguf` if a strict reproduction is needed.
 
 ## Architecture
 
