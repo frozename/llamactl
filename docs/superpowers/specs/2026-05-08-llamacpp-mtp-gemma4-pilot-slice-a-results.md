@@ -99,29 +99,122 @@ Accept rate aggregate (64%) is below the fork's quoted 85.9%, likely
 because the prompt mix has more open-ended / creative prompts than
 their bench, and the head's accept rate is highly prompt-dependent.
 
+## Addendum 1 — Strict UD-Q4_K_M re-bench (2026-05-08 17:32–17:33Z)
+
+After downloading `gemma-4-26B-A4B-it-UD-Q4_K_M.gguf` (16 GB) for the
+strict published-bench reproduction, both the vanilla and MTP runs
+were repeated with the exact same flag set and base/head pairing.
+
+**Vanilla on UD-Q4_K_M crashes deterministically** mid-bench on the
+`stepwise_math` prompt. Two consecutive runs reproduced the same HTTP
+500 on the same prompt (third in the prompt order). Server log shows
+the model emitting corrupted token sequences (`way: � way: way: …`)
+followed by an internal exception
+(`srv operator(): got exception: {"error":{"code":500,"message":"Failed
+to parse input at pos 0…`). Bench JSON files for the failed runs:
+
+- `20260508T173243Z-vanilla-…UD-Q4_K_M.gguf.server.log`
+- `20260508T173541Z-vanilla-…UD-Q4_K_M.gguf.server.log` (retry,
+  reproduced)
+
+**MTP on UD-Q4_K_M completes** but with a degraded accept rate —
+**0.514** aggregate vs 0.644 on UD-Q4_K_XL. Per-prompt decode tps is
+also lower across most prompts (e.g. `explain_concept` 32.8 vs 46.8,
+`code_cpp` 42.3 vs 53.2). The MTP path appears to be more tolerant of
+whatever weight/KV interaction triggers the vanilla crash, but
+performance is worse, not the +5% expected from a tighter K-quant.
+
+Conclusion: **the fork has a stability bug at UD-Q4_K_M + `-ctk turbo3
+-ctv turbo3` on M4 Pro.** UD-Q4_K_XL is the cleaner data and the right
+basis for the gate decision. Worth surfacing upstream to AtomicBot-ai
+as a separate issue if the pilot is revived.
+
+## Addendum 2 — Mac-mini E4B + matching head (2026-05-08 17:40–17:42Z)
+
+Hardware: mac-mini 16 GB. Granite41-8b workload was stopped via
+`llamactl delete workload granite41-8b-mac-mini` for the bench window
+to free RAM (~11 GB free during runs), then restored via
+`llamactl --node mac-mini apply -f templates/workloads/granite41-8b-mac-mini.yaml`.
+
+Models:
+- Base: `gemma-4-E4B-it-UD-Q4_K_XL.gguf` (4.7 GB, on disk).
+- Head: `AtomicChat/gemma-4-E4B-it-assistant-GGUF`
+  `gemma-4-E4B-it-assistant.Q4_K_M.gguf` (75 MB, downloaded via curl).
+
+Same atomic-fork SHA + same flags as the M4 Pro runs. Bench JSONs:
+
+- `/tmp/mtp-gemma4-pilot-macmini/20260508T174038Z-vanilla-…UD-Q4_K_XL.gguf.json`
+- `/tmp/mtp-gemma4-pilot-macmini/20260508T174139Z-mtp-…UD-Q4_K_XL.gguf.json`
+
+| Prompt              | vanilla | MTP   | ratio | accept |
+|---------------------|--------:|------:|------:|-------:|
+| code_python         |   24.1  | 27.6  | 1.15× | 0.694  |
+| code_cpp            |   24.2  | 28.8  | 1.19× | 0.732  |
+| stepwise_math       |   24.2  | 28.1  | 1.16× | 0.709  |
+| summarize           |   24.5  | 22.8  | 0.93× | 0.463  |
+| explain_concept     |   24.2  | 22.3  | 0.92× | 0.455  |
+| qa_factual          |   24.3  | 21.8  | 0.90× | 0.436  |
+| translation         |   25.2  | 19.6  | 0.78× | 0.308  |
+| creative_short      |   24.7  | 18.0  | 0.73× | 0.250  |
+| long_code_review    |   *outlier* | *outlier* | — | — |
+
+`long_code_review` returned `predicted_n=1` on both runs — the E4B
+model emits its EOS right after the prompt at temperature=0. Not a
+server or fork issue; the prompt is too prescriptive for the 4B base
+to engage with at deterministic sampling. Excluded from aggregate.
+
+| metric | vanilla | MTP |
+|---|---:|---:|
+| total_predicted (8 valid) | 923 | 980 |
+| wall_s_total (8 valid) | ~40 | ~43 |
+| **aggregate decode tok/s** | **~22.7** | **~22.7** |
+| **aggregate ratio** | — | **~1.00×** |
+| aggregate_accept_rate | n/a | 0.547 |
+
+**E4B verdict: net wash on aggregate.** MTP only wins on
+code/structured prompts (1.15–1.19×, well below the 1.4× gate);
+conversational and creative prompts are net negative because the
+draft acceptance collapses to 0.25–0.46 and the per-token MTP overhead
+exceeds the saved forward passes. Smaller models gain less from MTP
+because each main-pass is already cheap.
+
+## Cross-cut summary
+
+| Run | Aggregate ratio | Code/QA range | Conversational | Creative | Notes |
+|---|---:|---:|---:|---:|---|
+| M4 Pro · 26B-A4B · UD-Q4_K_XL | **1.27×** | 1.39–1.48× | 1.23–1.36× | 0.92–1.01× | clean, primary dataset |
+| M4 Pro · 26B-A4B · UD-Q4_K_M | (crash) / MTP-only 41.7 tps | n/a | n/a | n/a | vanilla deterministic crash; fork instability |
+| mac-mini · E4B · UD-Q4_K_XL | **~1.00×** | 1.15–1.19× | 0.90–0.93× | 0.73–0.78× | MTP gain too small to clear gate |
+
+Across all three configurations the **aggregate gate (1.4×) is missed**.
+The 26B-A4B + UD-Q4_K_XL config is the strongest case for opt-in MTP
+on code/structured workloads (clears the gate per-class). E4B is too
+small for MTP to amortize, and UD-Q4_K_M is a fork stability liability
+on M4 Pro.
+
 ## Follow-ups
 
-1. **Workload-aware gate.** The 1.4× aggregate gate is too coarse for
+1. **File an upstream issue** with AtomicBot-ai for the UD-Q4_K_M +
+   `turbo3` KV deterministic crash on M4 Pro (Apple10 / pre-M5 LUT
+   path). Repro: `bench.sh vanilla
+   gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf` against
+   pinned `2e81dc5f`.
+2. **Workload-aware gate.** The 1.4× aggregate gate is too coarse for
    spec-decoding evaluation: it averages over workloads where MTP is
    strictly worse (creative / unbounded generation) and workloads
    where it's a clear win (code / structured QA). Future MTP gates
    should split: e.g. `code_*` and `qa_*` prompts must hit 1.4×;
    creative prompts allowed to fall back to vanilla via routing.
-2. **Selective routing.** Plausible Slice B redesign: ship MTP as
+3. **Selective routing.** Plausible Slice B redesign: ship MTP as
    opt-in per workload, AND add a router heuristic (or per-call flag)
-   to disable MTP on creative/long-form workloads. That said, building
-   a reliable workload classifier is its own project; not in scope
-   for this pilot.
-3. **Prefill/TTFT/RSS capture.** Extend `bench-client.py` to read the
+   to disable MTP on creative/long-form workloads. Separate project.
+4. **Prefill/TTFT/RSS capture.** Extend `bench-client.py` to read the
    full `timings` block (`prompt_n`, `prompt_per_second`,
    `predicted_per_second`, `ttft_ms`) so future bench runs hit the
-   gate fields the spec named. Cheap; do it next time we touch the
-   harness.
-4. **Re-bench at strict UD-Q4_K_M** (`download.sh --base`) if anyone
-   challenges the quant deviation. Expected to land within ±5% of the
-   UD-Q4_K_XL numbers based on prior llama.cpp K-quant tier behavior.
-5. **mac-mini E4B + assistant.** Out of scope for Slice A; deferred
-   anyway since this Slice A failed the gate.
+   gate fields the spec named.
+5. **mac-mini E4B follow-up.** No further work warranted under the
+   current gate. If a workload-aware gate is adopted, E4B's code-path
+   1.15–1.19× would still fail any reasonable code-only gate.
 
 ## Reversibility
 
