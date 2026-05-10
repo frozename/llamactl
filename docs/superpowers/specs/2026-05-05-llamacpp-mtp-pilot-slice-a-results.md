@@ -139,3 +139,106 @@ sensitivity to the tuning flags. Either Apple Silicon defaults already
 cover those settings or the MTP per-step overhead dominates regardless.
 
 Slice B stays abandoned. Re-evaluation triggers above remain the path forward.
+
+## Update — 2026-05-10: re-pilot at PR head + froggeric recipe
+
+Triggered by [r/LocalLLaMA post](https://www.reddit.com/r/LocalLLaMA/comments/1t57xuu/25x_faster_inference_with_qwen_36_27b_using_mtp/)
+where `froggeric` reports **2.5×** decode on M2 Max 96 GB with Qwen 3.6 27B
++ PR #22673. Their recipe differs from this pilot in three observable ways:
+
+1. PR head pinned to `5d5f1b46e4f56885801c86363d4677a5f72f83af` (2026-05-07)
+   — five commits past our prior pin, including `86d9f15e` "fix double
+   free" and `5d5f1b46` "fix: use rs for only MTP" — both targeting MTP
+   memory issues.
+2. Their MTP-converted GGUFs at `froggeric/Qwen3.6-27B-MTP-GGUF`
+   (Q4_K_M / Q5_K_M / Q8_0 variants), claimed to differ from RDson's by
+   the inclusion of 7 jinja chat-template fixes plus a different conversion
+   pass.
+3. Server flags: `--cache-type-k q8_0 --cache-type-v q8_0`, no
+   `--flash-attn`, no `-ub 512` (defaults), `--temp 0.7 --top-k 20`.
+
+Repro on this M4 Pro 48 GB box used:
+
+- New PR head rebuild via `tools/llama-cpp-mtp/build.sh` after bumping
+  `PINNED_SHA` to `5d5f1b46e4f56885801c86363d4677a5f72f83af`.
+- New harness `tools/llama-cpp-mtp/bench-froggeric.sh` with the OP's flag
+  set (q8_0 KV, no flash-attn, no `-ub` override). Bench client
+  unchanged — `temperature=0` in the JSON request body, which overrides
+  the server-side `--temp 0.7`. Decode tok/s should be temperature-insensitive
+  for this comparison, so the override is acceptable.
+- Models: pulled `Qwen3.6-27B-Q5_K_M-mtp.gguf` (20 GB) and
+  `Qwen3.6-27B-Q8_0-mtp.gguf` (29 GB) from `froggeric/Qwen3.6-27B-MTP-GGUF`;
+  reused the prior pilot's RDson `Qwen3.6-27B-MTP-Q4_K_M.gguf` (16 GB) on
+  disk.
+
+### Memory wall — Q5 / Q8 OOM on M4 Pro
+
+Both Q5_K_M-mtp and Q8_0-mtp MTP runs deterministically OOM the Metal
+working set on M4 Pro mid-decode. Server log memory breakdown:
+
+```
+MTL0 (Apple M4 Pro) | 38338 = ... + (29056 = 27690 + 870 + 495) + 28213
+                                          model    ctx   compute   unaccounted
+```
+
+`unaccounted ≈ model size` is the smoking gun — PR #22673's MTP draft
+path on Metal allocates an extra ~model-sized buffer on top of the
+formally-tracked allocation. For Q4_K_M (16 GB) the doubled footprint
+(32 GB) fits in the M4 Pro 38 GB Metal cap. For Q5_K_M (20 GB) it just
+barely OOMs. For Q8_0 (29 GB) it can't possibly fit. Tested with
+`-ub 512` on/off and `--flash-attn on`/off — neither moves the
+breakdown numbers, the doubled allocation is structural to the MTP
+path. The OP's M2 Max 96 GB has ~85 GB working set, which absorbs the
+double easily.
+
+### Q4_K_M still slower than vanilla (the verdict held)
+
+| Metric | Vanilla | MTP (froggeric harness) | Ratio |
+|---|---:|---:|---:|
+| Aggregate decode tok/s | 11.9 | 10.0 | **0.84×** |
+| Aggregate wall (s) | 127.34 | 149.97 | 1.18× |
+| Aggregate draft accept rate | n/a | 0.701 | — |
+
+Same shape, same magnitude as the 2026-05-05 and 2026-05-06 re-bench:
+~15% slower than vanilla at 70% accept rate. The `-ctk q8_0 -ctv q8_0`
+flag, the new PR head with the memory fixes, and froggeric's MTP-converted
+GGUF do not change the M4 Pro outcome at the size that fits.
+
+### Build flag check
+
+Build flags match the OP's `cmake -B build -DGGML_METAL=ON
+-DCMAKE_BUILD_TYPE=Release`, plus our two extras: `GGML_METAL_EMBED_LIBRARY=ON`
+(embeds shader source, runtime-equivalent) and `LLAMA_CURL=ON` (URL fetch
+in `llama-server`, no inference effect). CMake cache confirmed.
+
+### Conclusion
+
+The OP's 2.5× is **M2 Max-specific**:
+- Apple9 GPU family, 38 cores, ~400 GB/s memory bandwidth (M2 Max)
+  vs Apple10, 20 cores, ~273 GB/s (M4 Pro). The MTP overhead per
+  decoded token is fixed cost; the speculative win is bandwidth-amortized.
+  M4 Pro doesn't have the bandwidth headroom to make the trade
+  positive.
+- M2 Max 96 GB also tolerates the doubled-model allocation that OOMs
+  M4 Pro 48 GB at Q5+.
+
+PR #22673 is **not** a viable MTP path on M4 Pro 48 GB, regardless of
+GGUF source / quant tier / flag set. The atomic-fork pilot
+(`docs/superpowers/specs/2026-05-08-llamacpp-mtp-gemma4-pilot-design.md`)
+remains the live thread for opt-in MTP on this hardware — its 1.27×
+aggregate (1.39–1.48× on code prompts) on Gemma 4 26B-A4B at UD-Q4_K_XL
+is the only positive M4 Pro result so far.
+
+### Bench artifacts
+
+- `$DEV_STORAGE/bench/mtp-froggeric/20260510T03*-{vanilla,mtp}-Qwen3.6-27B-MTP-GGUF_*.{json,server.log}`
+  (Q4_K_M, Q5_K_M, Q8_0 × {vanilla, mtp, ub-on, flash-on permutations})
+
+### Re-evaluation triggers (updated)
+
+- A subsequent llama.cpp PR fixes the doubled-allocation behavior of
+  MTP draft on Apple Metal pre-M5 GPUs, OR
+- Tested on M2/M3 Max-class hardware where the bandwidth ratio favors
+  the OP's reported numbers, OR
+- A different MTP runtime ships (the atomic fork is one such
+  candidate, already piloted).
