@@ -100,7 +100,7 @@ function formatThroughputDetail(detail?: SubBenchDetail['throughput']): string[]
 function formatContextDetail(detail?: SubBenchDetail['contextRetrieval']): string[] {
   if (!detail) return ['(no per-prompt details available — re-run to regenerate)'];
   const scores = new Map(detail.scores.map((item) => [item.depth, item.score]));
-  return [4096, 8192, 16384].map((depth) => `- ${depth / 1024}k: ${Math.round((scores.get(depth) ?? 0) * 3)}/3 found`);
+  return ([4096, 8192, 16384] as const).map((depth) => `- ${depth / 1024}k: ${Math.round((scores.get(depth) ?? 0) * 3)}/3 found`);
 }
 
 function verdictForBest(best: HardwareMatrixRow | undefined): string {
