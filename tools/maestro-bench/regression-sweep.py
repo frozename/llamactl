@@ -30,6 +30,8 @@ import argparse
 import glob
 import json
 import os
+import shlex
+import shutil
 import statistics
 import subprocess
 import sys
@@ -39,6 +41,24 @@ from urllib import request as urlreq
 
 DEFAULT_URL = "http://127.0.0.1:8181"
 DEFAULT_MODEL = "gemma4-26b-a4b-mtp"
+
+
+def notify_user(title, message):
+    # Best-effort macOS notification. Silent failure — the marker file is
+    # still the source of truth; the notification is a courtesy nudge so
+    # daily regressions don't go unread for days.
+    if os.environ.get("LLAMACTL_SWEEP_NO_NOTIFY") == "1":
+        return
+    osascript = shutil.which("osascript")
+    if not osascript:
+        return
+    safe_msg = message.replace('"', "'").replace("\\", " ")[:240]
+    safe_title = title.replace('"', "'")[:80]
+    script = f'display notification "{safe_msg}" with title "{safe_title}"'
+    try:
+        subprocess.run([osascript, "-e", script], check=False, timeout=3)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def out_dir_default():
@@ -124,6 +144,8 @@ def main():
                 "model": args.model,
                 "detail": msg,
             }, f, indent=2)
+        notify_user("llamactl maestro sweep — unreachable",
+                    f"{args.url} did not respond. See {marker_path}.")
         return 2
 
     # 2. Run the bench
@@ -140,6 +162,8 @@ def main():
                 "model": args.model,
                 "detail": msg,
             }, f, indent=2)
+        notify_user("llamactl maestro sweep — bench error",
+                    f"bench exited {proc.returncode}. See {marker_path}.")
         return 3
     print(proc.stdout.rstrip())
 
@@ -208,6 +232,9 @@ def main():
         with open(marker_path, "w") as f:
             json.dump(summary, f, indent=2)
         print("REGRESSION:", json.dumps(summary["regressions"]), file=sys.stderr)
+        axes = ", ".join(r["axis"] for r in summary["regressions"])
+        notify_user("llamactl maestro sweep — regression",
+                    f"{args.model}: {axes} dropped beyond threshold. See {marker_path}.")
         return 1
 
     # Clear stale marker on a clean run.
