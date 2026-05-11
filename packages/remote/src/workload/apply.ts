@@ -263,7 +263,19 @@ export async function applyOne(
   getClient: (nodeName: string) => WorkloadClient,
   onEvent?: (e: ApplyEvent) => void,
   gatewayDispatch?: GatewayDispatch,
-  opts?: { workloadsDir?: string },
+  opts?: {
+    workloadsDir?: string;
+    /**
+     * Map a manifest's `spec.node` name to a stable identity (typically
+     * the node's endpoint URL) so the port-collision preflight can
+     * detect aliases — e.g. two manifests on `local` vs `mac-mini`
+     * resolving to the same physical agent. Return `null` when the
+     * name can't be resolved (e.g. operator typo'd the node); the
+     * filter falls back to name-equality so a missing resolution
+     * doesn't accidentally relax the check.
+     */
+    resolveNodeIdentity?: (nodeName: string) => string | null;
+  },
 ): Promise<ApplyResult> {
   if (manifest.spec.gateway) {
     if (gatewayDispatch) {
@@ -301,9 +313,17 @@ export async function applyOne(
   const desired = manifest.spec.endpoint;
   if (desired?.port !== undefined) {
     const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir();
+    const resolveIdent = opts?.resolveNodeIdentity;
+    const desiredIdentity = resolveIdent?.(manifest.spec.node) ?? null;
+    const sameNode = (otherNode: string): boolean => {
+      if (otherNode === manifest.spec.node) return true;
+      if (!resolveIdent || !desiredIdentity) return false;
+      const otherIdentity = resolveIdent(otherNode);
+      return otherIdentity !== null && otherIdentity === desiredIdentity;
+    };
     const others = listWorkloads(workloadsDir)
       .filter((m) => m.metadata.name !== manifest.metadata.name)
-      .filter((m) => m.spec.node === manifest.spec.node);
+      .filter((m) => sameNode(m.spec.node));
     for (const other of others) {
       if (
         other.status?.phase === 'Failed' &&

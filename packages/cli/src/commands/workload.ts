@@ -134,6 +134,9 @@ async function applyModelRunFromRaw(raw: string, json: boolean): Promise<number>
       (name) => getNodeClientByName(name),
       undefined,
       gatewayDispatch,
+      {
+        resolveNodeIdentity: (n) => lookupNode(n)?.endpoint ?? null,
+      },
     );
   } catch (err) {
     process.stderr.write(`apply: ${(err as Error).message}\n`);

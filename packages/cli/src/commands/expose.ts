@@ -1,4 +1,5 @@
 import {
+  config as kubecfg,
   workloadApply,
   workloadSchema,
   workloadStore,
@@ -134,7 +135,22 @@ export async function runExpose(args: string[]): Promise<number> {
 
   let result: workloadApply.ApplyResult;
   try {
-    result = await workloadApply.applyOne(manifest, (n) => getNodeClientByName(n));
+    const cfg = kubecfg.loadConfig();
+    result = await workloadApply.applyOne(
+      manifest,
+      (n) => getNodeClientByName(n),
+      undefined,
+      undefined,
+      {
+        resolveNodeIdentity: (n) => {
+          try {
+            return kubecfg.resolveNode(cfg, n).node.endpoint || null;
+          } catch {
+            return null;
+          }
+        },
+      },
+    );
   } catch (err) {
     process.stderr.write(`expose: apply failed: ${(err as Error).message}\n`);
     return 1;

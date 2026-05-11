@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -58,8 +59,42 @@ export function saveWorkload(
   const validated = ModelRunSchema.parse(workload);
   mkdirSync(dir, { recursive: true });
   const path = workloadPath(validated.metadata.name, dir);
-  writeFileSync(path, stringifyYaml(validated), 'utf8');
+  // Atomic write: a partial writeFileSync on the target can race with a
+  // concurrent reader (or a second writer for the same name) and leave
+  // truncated YAML on disk. Write to a sibling tmp file and rename over
+  // the target — POSIX rename on the same filesystem is atomic.
+  const tmp = `${path}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 10)}`;
+  writeFileSync(tmp, stringifyYaml(validated), 'utf8');
+  renameSync(tmp, path);
   return path;
+}
+
+/**
+ * In-process async mutex keyed by `workloadsDir`. Concurrent callers
+ * for the same directory are serialized, so a list→check→save
+ * transaction (port-collision preflight in `applyOne` plus the
+ * subsequent `saveWorkload`) can't interleave with another such
+ * transaction inside the same controller process. Cross-process
+ * coordination still relies on `acquireLock` from `./lock.ts`.
+ */
+const workloadsMutexQueues = new Map<string, Promise<unknown>>();
+
+export function withWorkloadsMutex<T>(
+  key: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const tail = (workloadsMutexQueues.get(key) ?? Promise.resolve()).catch(
+    () => undefined,
+  );
+  const run = tail.then(fn);
+  workloadsMutexQueues.set(
+    key,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
 }
 
 export function listWorkloadNames(

@@ -1090,6 +1090,7 @@ export const router = t.router({
     .mutation(async ({ input }) => {
       const manifest: ModelRun = workloadStoreMod.parseWorkload(input.yaml);
       const cfg = kubecfg.loadConfig();
+      const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
       // applyOne's NodeClient type pulls AppRouter → NodeClient → AppRouter
       // at the type level. clientForNode returns a structurally-compatible
       // surface (serverStatus/serverStop/rpcServerStop + the subscription
@@ -1097,21 +1098,41 @@ export const router = t.router({
       // client on the remote path; local path wraps core directly).
       // `WorkloadClient` was widened from `NodeClient` precisely so this
       // callsite no longer needs an `as any` escape.
-      const result = await workloadApplyMod.applyOne(manifest, (nodeName) =>
-        clientForNode(cfg, nodeName),
-      );
-      if (result.error) {
-        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
-      }
-      const persisted: ModelRun = { ...manifest, status: result.statusSection };
-      const savedPath = workloadStoreMod.saveWorkload(persisted);
-      return {
-        action: result.action,
-        path: savedPath,
-        status: result.statusSection,
-        name: manifest.metadata.name,
-        node: manifest.spec.node,
-      };
+      //
+      // Serialize list-check-save under a per-directory in-process mutex
+      // so two concurrent `workloadApply` mutations can't both pass the
+      // port-collision preflight and both write. Cross-process callers
+      // (`acquireLock`) are coordinated separately by the file lock.
+      return await workloadStoreMod.withWorkloadsMutex(workloadsDir, async () => {
+        const result = await workloadApplyMod.applyOne(
+          manifest,
+          (nodeName) => clientForNode(cfg, nodeName),
+          undefined,
+          undefined,
+          {
+            workloadsDir,
+            resolveNodeIdentity: (nodeName) => {
+              try {
+                return kubecfg.resolveNode(cfg, nodeName).node.endpoint || null;
+              } catch {
+                return null;
+              }
+            },
+          },
+        );
+        if (result.error) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+        }
+        const persisted: ModelRun = { ...manifest, status: result.statusSection };
+        const savedPath = workloadStoreMod.saveWorkload(persisted, workloadsDir);
+        return {
+          action: result.action,
+          path: savedPath,
+          status: result.statusSection,
+          name: manifest.metadata.name,
+          node: manifest.spec.node,
+        };
+      });
     }),
 
   workloadDelete: t.procedure
