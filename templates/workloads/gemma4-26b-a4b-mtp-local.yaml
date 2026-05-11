@@ -62,13 +62,6 @@ spec:
     - -np
     - "1"
     - --jinja
-    # Override --port/--host injected by the workload launcher (which
-    # reads LLAMA_CPP_PORT/LLAMA_CPP_HOST from the agent env). llama.cpp
-    # honors later flags, so these win.
-    - --host
-    - 127.0.0.1
-    - --port
-    - "8181"
   restartPolicy: Always
   endpoint:
     host: 127.0.0.1
