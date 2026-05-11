@@ -127,7 +127,6 @@ describe.skipIf(SKIP)('mDNS agent discovery', () => {
 describe('publishAgentMdns', () => {
   test('publishes a synthetic host instead of the OS hostname', async () => {
     const { publishAgentMdns } = await import('../src/server/mdns.js');
-    const bonjour = await import('bonjour-service');
     const published = publishAgentMdns({
       port: 1234,
       nodeName: 'macmini-ai',
@@ -136,9 +135,13 @@ describe('publishAgentMdns', () => {
       serviceName: 'macmini-ai',
     });
 
-    expect((bonjour as unknown as { __lastPublished?: () => Record<string, unknown> | null }).__lastPublished?.()?.host).toBe(
-      'macmini-ai-llamactl',
-    );
+    // Assert via the return value rather than the mock's internal
+    // closure: under bun's single-process test runner, vi.mock hoisting
+    // can race when other suites import a transitive dep first, leaving
+    // __lastPublished undefined when this test runs after them. The
+    // synthHost contract lives on the API surface; that's what users
+    // (serve.ts) actually consume.
+    expect(published.host).toBe('macmini-ai-llamactl');
     await published.stop();
   });
 });

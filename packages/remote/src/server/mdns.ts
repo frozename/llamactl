@@ -12,6 +12,8 @@ export interface PublishAgentOptions {
 }
 
 export interface PublishedAgent {
+  /** Synthetic host published to mDNS (never the OS hostname). */
+  host: string;
   stop: () => Promise<void>;
 }
 
@@ -55,6 +57,7 @@ export function publishAgentMdns(opts: PublishAgentOptions): PublishedAgent {
     );
   });
   return {
+    host: synthHost,
     stop: async () => {
       await new Promise<void>((resolve) => {
         if (typeof service.stop === 'function') {
