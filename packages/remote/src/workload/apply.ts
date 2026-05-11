@@ -84,6 +84,10 @@ function sameExtraArgs(a: readonly string[], b: readonly string[]): boolean {
   return true;
 }
 
+function normalizeLoopbackHost(host: string | undefined): string {
+  return host === '::1' ? '127.0.0.1' : host ?? '127.0.0.1';
+}
+
 interface StartDone {
   ok: boolean;
   pid: number | null;
@@ -301,17 +305,23 @@ export async function applyOne(
       .filter((m) => m.metadata.name !== manifest.metadata.name)
       .filter((m) => m.spec.node === manifest.spec.node);
     for (const other of others) {
+      if (
+        other.status?.phase === 'Failed' &&
+        other.status.conditions[0]?.reason === 'PortCollision'
+      ) {
+        continue;
+      }
       const o = other.spec.endpoint;
       if (o?.port === undefined) continue;
       if (o.port !== desired.port) continue;
-      const dHost = desired.host ?? '127.0.0.1';
-      const oHost = o.host ?? '127.0.0.1';
+      const dHost = normalizeLoopbackHost(desired.host);
+      const oHost = normalizeLoopbackHost(o.host);
       const hostCollides =
         dHost === oHost || dHost === '0.0.0.0' || oHost === '0.0.0.0';
       if (hostCollides) {
         const now = new Date().toISOString();
         return {
-          action: 'unchanged',
+          action: 'pending',
           error: `port collision: ${other.metadata.name} already claims ${oHost}:${o.port} on node ${manifest.spec.node}`,
           statusSection: {
             phase: 'Failed',

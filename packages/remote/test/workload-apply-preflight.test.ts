@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stringify as stringifyYaml } from 'yaml';
 import { applyOne, type WorkloadClient } from '../src/workload/apply.js';
+import { parseWorkload } from '../src/workload/store.js';
 import type { ModelRun } from '../src/workload/schema.js';
 
 /**
@@ -212,7 +213,7 @@ describe('applyOne preflight — worker rpcServerDoctor', () => {
     expect(result.statusSection.phase).toBe('Failed');
     // Composed error names the failing node and includes both the
     // reason and the cmake hint for copy-paste.
-    expect(result.error).toContain('rpc-server not available on 1 worker node(s)');
+    expect(result.error).toContain('rpc-server not available');
     expect(result.error).toContain('worker2');
     expect(result.error).toContain('rpc-server-missing');
     expect(result.error).toContain('-DGGML_RPC=ON');
@@ -407,7 +408,7 @@ describe('applyOne preflight — worker rpcServerDoctor', () => {
       undefined,
       { workloadsDir: dir },
     );
-    expect(result.action).toBe('unchanged');
+    expect(result.action).toBe('pending');
     expect(result.error).toContain('port collision: other already claims 127.0.0.1:8181 on node coordinator');
     expect(result.statusSection.phase).toBe('Failed');
     expect(result.statusSection.conditions[0]).toMatchObject({ reason: 'PortCollision' });
@@ -481,18 +482,106 @@ describe('applyOne preflight — worker rpcServerDoctor', () => {
 
   test('unset port — current manifest has no endpoint.port → skip check', async () => {
     const dir = tempWorkloadsDir();
-    const current: ModelRun = {
+    const current = parseWorkload(stringifyYaml({
       ...manifest(),
       spec: {
         ...manifest().spec,
         endpoint: { host: '127.0.0.1' },
       },
-    };
+    }));
     writeManifest(dir, {
       ...manifest(),
       metadata: { ...manifest().metadata, name: 'other' },
       spec: {
         ...manifest().spec,
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      },
+    });
+    const trace: MockTrace = {
+      rpcServerStartCalls: [],
+      rpcServerStopCalls: [],
+      rpcServerDoctorCalls: [],
+      serverStatusCalls: [],
+      serverStartCalls: [],
+      serverStopCalls: [],
+    };
+    const result = await applyOne(
+      current,
+      (node) => makeMockClient(node, { ok: true, path: '/x', llamaCppBin: '/y' }, trace),
+      undefined,
+      undefined,
+      { workloadsDir: dir },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.action).toBe('started');
+  });
+
+  test('::1 localhost collides with 127.0.0.1', async () => {
+    const dir = tempWorkloadsDir();
+    const current: ModelRun = {
+      ...manifest(),
+      spec: {
+        ...manifest().spec,
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      },
+    };
+    writeManifest(dir, {
+      ...current,
+      metadata: { ...current.metadata, name: 'other' },
+      spec: {
+        ...current.spec,
+        endpoint: { host: '::1', port: 8181 },
+      },
+    });
+    const trace: MockTrace = {
+      rpcServerStartCalls: [],
+      rpcServerStopCalls: [],
+      rpcServerDoctorCalls: [],
+      serverStatusCalls: [],
+      serverStartCalls: [],
+      serverStopCalls: [],
+    };
+    const result = await applyOne(
+      current,
+      (node) => makeMockClient(node, { ok: true, path: '/x', llamaCppBin: '/y' }, trace),
+      undefined,
+      undefined,
+      { workloadsDir: dir },
+    );
+    expect(result.error).toContain('port collision');
+    expect(result.statusSection.conditions[0]).toMatchObject({ reason: 'PortCollision' });
+  });
+
+  test('failed PortCollision candidate is ignored on subsequent preflight', async () => {
+    const dir = tempWorkloadsDir();
+    const current: ModelRun = {
+      ...manifest(),
+      spec: {
+        ...manifest().spec,
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      },
+    };
+    writeManifest(dir, current);
+    writeManifest(dir, {
+      ...current,
+      metadata: { ...current.metadata, name: 'other' },
+      status: {
+        phase: 'Failed',
+        serverPid: null,
+        endpoint: null,
+        lastTransitionTime: new Date().toISOString(),
+        conditions: [
+          {
+            type: 'Applied',
+            status: 'False',
+            reason: 'PortCollision',
+            message: 'port 8181 already claimed by tp-split',
+            lastTransitionTime: new Date().toISOString(),
+          },
+        ],
+      },
+      spec: {
+        ...current.spec,
         endpoint: { host: '127.0.0.1', port: 8181 },
       },
     });

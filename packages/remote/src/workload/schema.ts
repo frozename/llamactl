@@ -24,8 +24,8 @@ export const ModelRunTargetSchema = z.object({
 });
 
 export const ModelRunEndpointSchema = z.object({
-  host: z.string().default('127.0.0.1'),
-  port: z.number().int().min(1).max(65535).default(8080),
+  host: z.string().optional(),
+  port: z.number().int().min(1).max(65535).optional(),
 });
 
 export const ModelRunWorkerSchema = z.object({
