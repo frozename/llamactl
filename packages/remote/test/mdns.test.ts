@@ -6,18 +6,43 @@ import { generateToken } from '../src/server/auth.js';
 import { generateSelfSignedCert } from '../src/server/tls.js';
 
 vi.mock('bonjour-service', () => {
-  let lastPublished: Record<string, unknown> | null = null;
+  type PublishOpts = Record<string, unknown> & {
+    name?: string;
+    type?: string;
+    host?: string;
+    port?: number;
+    txt?: Record<string, unknown>;
+  };
+  const registry = new Set<PublishOpts>();
+  let lastPublished: PublishOpts | null = null;
 
   class MockBonjour {
-    publish(opts: Record<string, unknown>) {
+    publish(opts: PublishOpts) {
       lastPublished = opts;
+      registry.add(opts);
       return {
         ...opts,
-        stop: (cb?: () => void) => cb?.(),
+        addresses: ['127.0.0.1'],
+        on(_evt: string, _cb: (err: unknown) => void) {},
+        stop(cb?: () => void) {
+          registry.delete(opts);
+          cb?.();
+        },
       };
     }
 
-    find() {
+    find(filter: { type?: string }, onUp: (svc: Record<string, unknown>) => void) {
+      // Emit each matching pre-registered service to the browser on the
+      // next tick — mirrors how the real Bonjour browser fires `up`
+      // events as responses come in. Synchronous emission would race
+      // with discoverAgents' setTimeout wiring.
+      setTimeout(() => {
+        for (const svc of registry) {
+          if (!filter.type || svc.type === filter.type) {
+            onUp({ ...svc, addresses: ['127.0.0.1'] });
+          }
+        }
+      }, 10);
       return { stop() {} };
     }
 
@@ -27,6 +52,7 @@ vi.mock('bonjour-service', () => {
   return {
     Bonjour: MockBonjour,
     __lastPublished: () => lastPublished,
+    __mockRegistrySize: () => registry.size,
   };
 });
 
