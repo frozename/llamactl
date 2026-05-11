@@ -268,3 +268,34 @@ which can confuse downstream parsers).
 - Atomic fork bench harness: `tools/llama-cpp-mtp-atomic/`
 - Qwen MTP fix patch: `tools/llama-cpp-mtp/0001-mtp-mmap-fix.patch`
 - Bench artifacts: `$DEV_STORAGE/bench/maestro-pilot/2026*.json`
+
+## Penumbra-team response (2026-05-11)
+
+| Ask | Status | Note |
+|---|---|---|
+| 1 — output redactor | **Needs brainstorm** | Placement is load-bearing — dispatcher vs MCP wrapper vs new gateway has different coupling tradeoffs. Will workshop before implementation. |
+| 2 — `maestro_capabilities` tool | (no reply captured here) | Carry forward. |
+| 3 — `acting_on` id envelope | **Deferred to next round** | Moderate effort; not blocking immediate wiring. |
+| 4 — brainstorm/plan workflow shims | (no reply captured here) | Carry forward. |
+| 5 — bench-maestro CI hook | **Not penumbra-side** | Llamactl roadmap decision — we own this. |
+| 6 — per-session maestro selection flag | **Answered (Q1)** | See open-question reply below. |
+
+### Open Q1 — answered
+
+New-session maestro selection writers now exist on the penumbra side:
+
+- HTTP: `POST /maestro/sessions`
+- MCP: `mcp__penumbra__maestro_session_start`
+- CLI: `penumbra maestro session start`
+
+This unblocks the wiring step that this pilot deferred. Llamactl-side
+follow-ups carrying over:
+
+- Ask 1 (redactor): brainstorm before implementation.
+- Ask 3 (acting_on): deferred; revisit when small-model id-loss
+  surfaces again in production.
+- Ask 5 (bench CI): llamactl decides whether to run periodic
+  regression sweeps or per-PR.
+- Wiring: use `maestro_session_start` to opt sessions into the
+  Gemma 4 26B-A4B + MTP candidate; no penumbra change needed for
+  this step now.
