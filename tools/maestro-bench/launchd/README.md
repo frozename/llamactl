@@ -1,51 +1,30 @@
-# Launchd supervisor for the maestro pilot
+# Launchd supervisor for the regression sweep
 
-**Status: opt-in only — requires Full Disk Access grant.** The atomic-fork
-binary, the gguf files, and this very serve script all live under
-`/Volumes/WorkSSD/`. macOS TCC blocks launchd-spawned child processes
-from reading `/Volumes/*` unless the parent (`/bin/bash`) has been
-granted Full Disk Access in System Settings → Privacy & Security →
-Full Disk Access. Without that grant, attempting to load the plist
-results in `last exit code = 126` (script not executable) — confirmed
-empirically.
+The maestro pilot endpoint (Gemma 4 26B-A4B + MTP at `:8181`) used to
+have its own standalone launchd plist in this directory; it has been
+retired in favor of the llamactl-managed workload path. See:
 
-Two options:
+- `templates/workloads/gemma4-26b-a4b-mtp-local.yaml` — the manifest
+- `scripts/launchd/com.llamactl.node-agent.plist` — the per-user
+  node-agent plist (required for `llamactl apply` to reach the local
+  node and for `restartPolicy: Always` to actually supervise the
+  workload across crashes)
+- Commits `c6b2dda` (core: per-workload port) and `d7a5ec3` (template
+  cleanup) — the unblock that made llamactl-managed workloads viable
+  for non-default ports.
 
-## Option A — Foreground / tmux (recommended for pilot)
-
-No system permissions required. Run the server in a long-lived
-terminal session:
+To bring up the maestro endpoint from scratch on a new machine:
 
 ```sh
-tmux new -s maestro-gemma4-26b-a4b-mtp \
-  bash /Volumes/WorkSSD/repos/personal/llamactl/tools/maestro-bench/serve.sh
+cp scripts/launchd/com.llamactl.node-agent.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.llamactl.node-agent.plist
+llamactl apply -f templates/workloads/gemma4-26b-a4b-mtp-local.yaml
 ```
 
-Detach with `Ctrl-b d`, reattach with `tmux attach -t
-maestro-gemma4-26b-a4b-mtp`. Survives terminal closure but not reboot
-(re-run after login).
+This directory now only ships the regression-sweep plist.
 
-## Option B — Launchd persistence (requires FDA)
+## Regression sweep (daily at 03:17 local)
 
-If you accept the security tradeoff of granting Full Disk Access to
-`/bin/bash`:
-
-1. System Settings → Privacy & Security → Full Disk Access → `+` →
-   add `/bin/bash` (or use `/usr/local/bin/bash` if you've installed a
-   homebrew bash you prefer).
-2. `bash tools/maestro-bench/launchd/install.sh`
-3. Verify: `launchctl print gui/$(id -u)/dev.llamactl.maestro-gemma4-26b-a4b-mtp`
-
-Uninstall: `bash tools/maestro-bench/launchd/uninstall.sh`.
-
-## Files
-
-Server (always-on):
-- `dev.llamactl.maestro-gemma4-26b-a4b-mtp.plist` — launchd manifest
-- `install.sh` — copy plist to `~/Library/LaunchAgents/` and bootstrap
-- `uninstall.sh` — bootout, delete, and kill residual server
-
-Regression sweep (daily at 03:17 local):
 - `dev.llamactl.maestro-regression-sweep.plist` — launchd manifest
 - `install-sweep.sh` / `uninstall-sweep.sh`
 - Runs `tools/maestro-bench/regression-sweep.py` against the live
@@ -63,10 +42,5 @@ Regression sweep (daily at 03:17 local):
   deleted on a clean run, so a simple `test -f` is enough to detect
   a known-bad state. `latest.json` always reflects the most recent
   successful run.
-
-## Why not just move everything to `$HOME`?
-
-The atomic-fork checkout is ~6 GB, the Gemma 4 gguf is 17 GB. Moving
-those under `$HOME` to satisfy TCC would split the source-of-truth from
-the rest of the `/Volumes/WorkSSD`-anchored llamactl tooling. Pilot
-intent is "verify the maestro works"; FDA grant is the lighter touch.
+- macOS desktop notification fires on non-clean exit
+  (`LLAMACTL_SWEEP_NO_NOTIFY=1` suppresses in cron-only contexts).

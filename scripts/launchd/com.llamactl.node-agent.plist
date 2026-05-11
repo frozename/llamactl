@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Per-user launchd agent for the local llamactl node-agent (tRPC over
+  TLS on https://127.0.0.1:7843). Required for `llamactl apply -f <m>`
+  to reach the local node when the manifest spec.endpoint matters
+  (per-workload ports — see commit c6b2dda).
+
+  Install:
+    cp scripts/launchd/com.llamactl.node-agent.plist \
+       ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.llamactl.node-agent.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.llamactl.node-agent.plist
+    rm ~/Library/LaunchAgents/com.llamactl.node-agent.plist
+
+  LLAMA_CPP_BIN points at the atomic-fork build because the maestro
+  pilot workload (gemma4-26b-a4b-mtp-local) needs it. If you also run
+  vanilla-fork workloads, those benefit from the atomic binary being
+  a superset — but if that becomes wrong, add per-workload binary
+  resolution as a separate change (server.ts launchBackground would
+  need a `bin` override on LaunchArgs).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.llamactl.node-agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/acordeiro/.bun/bin/bun</string>
+    <string>/Volumes/WorkSSD/repos/personal/llamactl/packages/cli/src/bin.ts</string>
+    <string>agent</string>
+    <string>serve</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/Users/acordeiro/.llamactl/logs/node-agent.stdout.log</string>
+  <key>StandardErrorPath</key><string>/Users/acordeiro/.llamactl/logs/node-agent.stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>/Users/acordeiro</string>
+    <key>PATH</key><string>/Users/acordeiro/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>DEV_STORAGE</key><string>/Users/acordeiro/DevStorage</string>
+    <key>LLAMA_CPP_BIN</key><string>/Volumes/WorkSSD/src/llama.cpp-atomic/build/bin</string>
+    <key>LLAMA_CPP_MODELS</key><string>/Volumes/WorkSSD/ai-models/llama.cpp/models</string>
+  </dict>
+</dict>
+</plist>
