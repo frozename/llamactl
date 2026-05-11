@@ -71,6 +71,14 @@ export async function runController(args: string[]): Promise<number> {
   const cfgPath = process.env.LLAMACTL_CONFIG ?? kubecfg.defaultConfigPath();
   const workloadsDir = process.env.LLAMACTL_WORKLOADS_DIR
     ?? path.join(process.env.DEV_STORAGE ?? `${process.env.HOME}/.llamactl`, 'workloads');
+  const cfg = kubecfg.loadConfig(cfgPath);
+  const resolveNodeIdentity = (n: string): string | null => {
+    try {
+      return kubecfg.resolveNode(cfg, n).node.endpoint || null;
+    } catch {
+      return null;
+    }
+  };
 
   const acquired = workloadLock.acquireLock(workloadsDir);
   if ('error' in acquired) {
@@ -97,6 +105,7 @@ export async function runController(args: string[]): Promise<number> {
     const modelrunResult = await workloadReconciler.reconcileOnce({
       workloadsDir,
       getClient: (nodeName) => getNodeClientByName(nodeName),
+      resolveNodeIdentity,
       onEvent: (e) => {
         process.stdout.write(`[${new Date().toISOString()}] ${e.name}: ${e.message}\n`);
       },

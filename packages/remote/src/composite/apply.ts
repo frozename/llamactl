@@ -348,6 +348,16 @@ async function applyWorkloadComponent(
       void e; // retained for future per-event propagation
     },
     buildGatewayDispatch(opts),
+    {
+      resolveNodeIdentity: (n) => {
+        try {
+          const cfg = loadConfig(opts.configPath);
+          return kubecfgResolveNode(cfg, n).node.endpoint || null;
+        } catch {
+          return null;
+        }
+      },
+    },
   );
   if (result.action === 'pending') {
     throw new Error(`workload '${ref.name}' apply returned Pending: ${result.error ?? 'no details'}`);

@@ -1200,9 +1200,17 @@ export const router = t.router({
     )
     .mutation(({ input }) => {
       const cfg = kubecfg.loadConfig();
+      const resolveNodeIdentity = (n: string): string | null => {
+        try {
+          return kubecfg.resolveNode(cfg, n).node.endpoint || null;
+        } catch {
+          return null;
+        }
+      };
       reconcileLoopMod.startReconcileLoop({
         intervalMs: (input?.intervalSeconds ?? 10) * 1000,
         getClient: (nodeName) => clientForNode(cfg, nodeName),
+        resolveNodeIdentity,
       });
       return reconcileLoopMod.reconcileLoopStatus();
     }),
@@ -1214,9 +1222,17 @@ export const router = t.router({
 
   reconcilerKick: t.procedure.mutation(async () => {
     const cfg = kubecfg.loadConfig();
-    await reconcileLoopMod.kickReconcileLoop((nodeName) =>
-      clientForNode(cfg, nodeName),
-    );
+    const resolveNodeIdentity = (n: string): string | null => {
+      try {
+        return kubecfg.resolveNode(cfg, n).node.endpoint || null;
+      } catch {
+        return null;
+      }
+    };
+    await reconcileLoopMod.kickReconcileLoop({
+      getClient: (nodeName) => clientForNode(cfg, nodeName),
+      resolveNodeIdentity,
+    });
     return reconcileLoopMod.reconcileLoopStatus();
   }),
 

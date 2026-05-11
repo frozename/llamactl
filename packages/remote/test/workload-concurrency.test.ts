@@ -3,7 +3,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyOne, type WorkloadClient } from '../src/workload/apply.js';
+import { reconcileOnce } from '../src/workload/reconciler.js';
 import {
+  loadWorkloadByName,
   parseWorkload,
   saveWorkload,
   withWorkloadsMutex,
@@ -154,5 +156,31 @@ describe('workload apply concurrency', () => {
     const r2 = await applyAndPersist(b, dir, resolver);
     expect(r1.error).toBeUndefined();
     expect(r2.error).toBeUndefined();
+  });
+
+  test('reconcileOnce treats aliased nodes as the same physical node for port collision', async () => {
+    saveWorkload(makeManifest('alpha', 'local'), dir);
+    saveWorkload(makeManifest('beta', 'mac-mini'), dir);
+
+    const resolveNodeIdentity = (n: string): string | null => {
+      if (n === 'local' || n === 'mac-mini') return 'https://127.0.0.1:7843';
+      return null;
+    };
+
+    const result = await reconcileOnce({
+      workloadsDir: dir,
+      getClient: () => makeClient(),
+      resolveNodeIdentity,
+    });
+
+    expect(result.errors).toBe(1);
+    expect(result.reports).toHaveLength(2);
+    expect(result.reports.filter((r) => r.error)).toHaveLength(1);
+
+    const alpha = loadWorkloadByName('alpha', dir);
+    const beta = loadWorkloadByName('beta', dir);
+    expect(alpha.status?.phase).toBe('Failed');
+    expect(alpha.status?.conditions[0]?.reason).toBe('PortCollision');
+    expect(beta.status?.phase).not.toBe('Failed');
   });
 });

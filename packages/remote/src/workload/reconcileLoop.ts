@@ -20,6 +20,8 @@ interface LoopState {
   inflight: boolean;
 }
 
+type ReconcileLoopOpts = Pick<ReconcileOptions, 'getClient' | 'resolveNodeIdentity'>;
+
 const state: LoopState = {
   timer: null,
   running: false,
@@ -40,14 +42,14 @@ const state: LoopState = {
  * this in-process variant is deliberately scoped to "auto-heal while
  * the app is running".
  */
-function scheduleNext(getClient: ReconcileOptions['getClient']): void {
+function scheduleNext(opts: ReconcileLoopOpts): void {
   if (!state.running) return;
   state.timer = setTimeout(() => {
-    void tick(getClient);
+    void tick(opts);
   }, state.intervalMs);
 }
 
-async function tick(getClient: ReconcileOptions['getClient']): Promise<void> {
+async function tick(opts: ReconcileLoopOpts): Promise<void> {
   if (state.inflight) return;
   state.inflight = true;
   const events: Array<ApplyEvent & { name: string; ts: string }> = [];
@@ -56,7 +58,8 @@ async function tick(getClient: ReconcileOptions['getClient']): Promise<void> {
       // Skip manifests whose restartPolicy is Never — the whole
       // point of the policy is "controller leaves this alone".
       filter: (m: ModelRun) => m.spec.restartPolicy !== 'Never',
-      getClient,
+      getClient: opts.getClient,
+      resolveNodeIdentity: opts.resolveNodeIdentity,
       onEvent: (e) => {
         events.push({ ...e, ts: new Date().toISOString() });
       },
@@ -81,19 +84,20 @@ async function tick(getClient: ReconcileOptions['getClient']): Promise<void> {
     state.lastPassAt = Date.now();
     // Keep the last 200 events for UI display without unbounded growth.
     state.lastEvents = [...state.lastEvents, ...events].slice(-200);
-    scheduleNext(getClient);
+    scheduleNext(opts);
   }
 }
 
 export function startReconcileLoop(opts: {
   getClient: ReconcileOptions['getClient'];
+  resolveNodeIdentity?: ReconcileOptions['resolveNodeIdentity'];
   intervalMs?: number;
 }): void {
   if (state.running) return;
   state.running = true;
   state.intervalMs = opts.intervalMs ?? 10_000;
   // Kick immediately so the UI sees an initial pass without waiting.
-  void tick(opts.getClient);
+  void tick(opts);
 }
 
 export function stopReconcileLoop(): void {
@@ -104,10 +108,8 @@ export function stopReconcileLoop(): void {
   }
 }
 
-export async function kickReconcileLoop(
-  getClient: ReconcileOptions['getClient'],
-): Promise<void> {
-  await tick(getClient);
+export async function kickReconcileLoop(opts: ReconcileLoopOpts): Promise<void> {
+  await tick(opts);
 }
 
 export function reconcileLoopStatus(): ReconcileLoopStatus {

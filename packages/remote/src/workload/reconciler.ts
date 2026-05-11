@@ -20,6 +20,9 @@ export interface ReconcileOptions {
    *  router.ts can satisfy it without importing NodeClient (which
    *  would re-trigger the AppRouter circular-type alias). */
   getClient: (nodeName: string) => WorkloadClient;
+  /** Forwarded to applyOne so the per-workload port-collision
+   *  preflight detects aliases that resolve to the same physical node. */
+  resolveNodeIdentity?: (nodeName: string) => string | null;
   /** Bubble up per-workload progress for logging. */
   onEvent?: (e: ApplyEvent & { name: string }) => void;
   /** Optional filter to only reconcile a subset. */
@@ -46,6 +49,9 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
     try {
       const result = await applyOne(manifest, opts.getClient, (e) => {
         opts.onEvent?.({ ...e, name });
+      }, undefined, {
+        workloadsDir: dir,
+        ...(opts.resolveNodeIdentity && { resolveNodeIdentity: opts.resolveNodeIdentity }),
       });
       if (result.error) errors++;
       reports.push({
