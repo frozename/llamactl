@@ -40,9 +40,29 @@ Uninstall: `bash tools/maestro-bench/launchd/uninstall.sh`.
 
 ## Files
 
+Server (always-on):
 - `dev.llamactl.maestro-gemma4-26b-a4b-mtp.plist` — launchd manifest
 - `install.sh` — copy plist to `~/Library/LaunchAgents/` and bootstrap
 - `uninstall.sh` — bootout, delete, and kill residual server
+
+Regression sweep (daily at 03:17 local):
+- `dev.llamactl.maestro-regression-sweep.plist` — launchd manifest
+- `install-sweep.sh` / `uninstall-sweep.sh`
+- Runs `tools/maestro-bench/regression-sweep.py` against the live
+  `:8181` endpoint, archives per-run JSON under
+  `$DEV_STORAGE/bench/maestro-pilot/regression/`, compares current
+  pass_rate / aggregate_decode_tps to a rolling-median baseline over
+  the last 7 runs.
+- Exit codes (surfaced via stderr to launchd's logs):
+  - `0` — clean, baseline updated
+  - `1` — regression past threshold (10% pass drop or 20% tps drop)
+  - `2` — server unreachable
+  - `3` — bench harness exited non-zero
+  - `4` — couldn't parse the bench output
+- Markers: `regression-marker.json` is written on `1`/`2`/`3` and
+  deleted on a clean run, so a simple `test -f` is enough to detect
+  a known-bad state. `latest.json` always reflects the most recent
+  successful run.
 
 ## Why not just move everything to `$HOME`?
 

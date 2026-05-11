@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Periodic regression sweep for the local penumbra maestro candidate.
+     Runs daily at 03:17 local; uses an offset minute to avoid the
+     :00 / :30 thundering-herd. Same TCC caveat as the server plist:
+     requires Full Disk Access on /bin/bash to read /Volumes/WorkSSD.
+     Install/uninstall via the sibling install-sweep.sh.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.llamactl.maestro-regression-sweep</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Volumes/WorkSSD/repos/personal/llamactl/tools/maestro-bench/regression-sweep.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/acordeiro</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>DEV_STORAGE</key>
+    <string>/Volumes/WorkSSD</string>
+  </dict>
+
+  <!-- Run daily at 03:17 local. Off-minute to avoid the :00 cron herd. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>17</integer>
+  </dict>
+
+  <!-- Don't auto-restart on exit; this is a one-shot daily job. The
+       sweep's non-zero exit codes (1=regression, 2=unreachable,
+       3=bench-error, 4=parse-error) are intentional and shouldn't
+       trigger respawn. -->
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/acordeiro/Library/Logs/llamactl/maestro-regression-sweep.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/acordeiro/Library/Logs/llamactl/maestro-regression-sweep.err.log</string>
+</dict>
+</plist>
