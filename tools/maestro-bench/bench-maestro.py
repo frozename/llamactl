@@ -905,9 +905,14 @@ def grade(assertions, response):
 
     # required_text_regex_in_args (used by multi-turn dispatch_then_wait to assert
     # a value crossed turns regardless of which arg name carried it).
+    # Only enforced when a tool call actually happened — when expect_tool is "any"
+    # the model is allowed to reply without dispatching ("I'll wait for explicit
+    # go-ahead"), and a content-only reply has no args to inspect. If the test
+    # author meant to require the value somewhere in the response, they should
+    # use required_text_regex instead.
     req_args_rx = assertions.get("required_text_regex_in_args")
-    if req_args_rx:
-        flat = " ".join(str(v) for v in first_args.values()) if first_args else ""
+    if req_args_rx and first_args:
+        flat = " ".join(str(v) for v in first_args.values())
         if not re.search(req_args_rx, flat, re.I):
             reasons.append(f"required text in tool_call args '{req_args_rx}' missing")
 
