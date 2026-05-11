@@ -242,3 +242,91 @@ is the only positive M4 Pro result so far.
   the OP's reported numbers, OR
 - A different MTP runtime ships (the atomic fork is one such
   candidate, already piloted).
+
+## Update — 2026-05-11: root-cause and one-line fix
+
+Pulled the source for PR #22673 at our pinned SHA `5d5f1b46` and
+traced the doubled-allocation symptom in code. Final answer in 4
+numbers from the server log:
+
+```
+load_tensors:  MTL0_Mapped model buffer size = 18760.13 MiB   # main model
+load_tensors:  MTL0_Mapped model buffer size = 18760.13 MiB   # MTP "head", full duplicate
+```
+
+### Mechanism
+
+1. The MTP head is loaded by reopening the same GGUF with
+   `override_arch = qwen35_mtp[_moe]`
+   (`tools/server/server-context.cpp:837`).
+2. The MTP arch (`src/models/qwen35_mtp.cpp::load_arch_tensors`)
+   registers tensors near both the start of the file (`tok_embd`) and
+   the end (`output`, `nextn.*`, last transformer block).
+3. With the default mmap-backed buffer path
+   (`src/llama-model.cpp:1463-1483`), the backend allocates a single
+   buffer spanning `[first_tensor_offset, last_tensor_offset)` of the
+   GGUF — which for Qwen 3.6 27B covers nearly the entire file.
+4. Apple Metal's `ggml_backend_dev_buffer_from_host_ptr` then uploads
+   that entire range to a Metal-resident buffer, allocating a Metal
+   duplicate of the main model.
+5. The duplicate doesn't roll up into the target context's `self` in
+   `common_memory_breakdown_print`
+   (`common/fit.cpp:858-859`) because the MTP context lives in a
+   sibling `llama_context`. It shows up as `unaccounted ≈ model_size`.
+
+The mapping-range comment in `llama-model.cpp:1467-1469` even
+documents the assumption — *"only the mmap region containing the
+tensors in the model is mapped to the backend buffer"* — but for the
+MTP arch's sparse-at-both-ends tensor selection, that region is the
+entire file.
+
+### Fix
+
+One line in `tools/server/server-context.cpp` next to the MTP load:
+
+```cpp
+mparams_mtp.use_mmap = false;
+```
+
+This routes the MTP load through the non-mmap allocator path
+(`llama-model.cpp:1492`, `ggml_backend_alloc_ctx_tensors_from_buft`),
+which sizes the backend buffer to the **registered tensors** instead
+of the mmap range. Patch saved at
+`tools/llama-cpp-mtp/0001-mtp-mmap-fix.patch`. Filed upstream as
+[ggml-org/llama.cpp#22941](https://github.com/ggml-org/llama.cpp/pull/22941).
+
+### Numbers post-fix (M4 Pro 48 GB, atomic-llama-cpp-turboquant
+unaffected since this fix is for PR #22673 only)
+
+| Quant | Metal MTP buf pre-fix | Metal MTP buf post-fix | Reduction |
+|---|---:|---:|---:|
+| Q5_K_M-mtp (19 GB file) | 18 760 MiB | 1 425 MiB | **13.2×** |
+| Q8_0-mtp   (29 GB file) | 28 213 MiB | 1 719 MiB | **16.4×** |
+
+Aggregate decode tok/s with the OP's recipe
+(`--cache-type-k q8_0 --cache-type-v q8_0`, no flash-attn,
+default `ub`), 9-prompt suite, `temperature=0 seed=42 n_predict=192`:
+
+| Quant | Vanilla | MTP (post-fix) | Ratio | Accept |
+|---|---:|---:|---:|---:|
+| Q4_K_M | 11.9 | 10.0 | 0.85× | 0.701 |
+| Q5_K_M |  9.5 |  8.6 | 0.91× | 0.713 |
+| Q8_0   |  7.4 | 11.1 | **1.49×** | **0.725** |
+
+Q4_K_M unchanged from the pre-fix bench — no regression on the case
+that already fit. Q5 and Q8 are new datapoints since both OOM'd
+pre-fix. **Q8_0 clears the 1.4× gate** on M4 Pro — first positive PR
+#22673 result on Apple10 hardware. Per-prompt range on Q8 is
+1.26×–1.82× (code/math 1.6×–1.8×, translation/creative 1.3×).
+
+### Verdict update
+
+PR #22673 + the one-line fix is **viable on M4 Pro 48 GB for Q8_0
+specifically** — the largest quant that fits inflicts the heaviest
+main-pass cost, which is what the speculative path saves. Q4/Q5 still
+fall below the gate (per-token MTP overhead exceeds the saved passes
+on M4 Pro at smaller quants).
+
+Re-trigger fully cleared if PR #22941 lands in #22673 or if a
+follow-up reduces the speculative per-token overhead enough for
+Q4/Q5 to also clear the gate.

@@ -1,0 +1,60 @@
+From 8d334eeee834e694f4ce4cb9e23a9f0693ab3f81 Mon Sep 17 00:00:00 2001
+From: Alexandre Cordeiro <nenisdeno@gmail.com>
+Date: Mon, 11 May 2026 07:16:02 -0300
+Subject: [PATCH] server: force non-mmap load for MTP head to avoid Metal
+ full-model duplicate
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The MTP head is loaded by reopening the same GGUF with override_arch =
+qwen35_mtp[_moe], which registers tensors near both the start of the
+file (tok_embd) and the end (output, nextn.*, last transformer block).
+With the default mmap-backed buffer path
+(llama-model.cpp:1463-1483), the backend allocates a buffer covering
+the full [first_tensor_offset, last_tensor_offset) range — which for
+Qwen 3.6 27B spans nearly the entire file.
+
+On Apple Silicon the result is a ~model-sized Metal duplicate. Server
+log shows two MTL0_Mapped model buffer size entries of the same byte
+count (one for the main model, one for the MTP head).
+
+Before/after on M4 Pro 48 GB, Qwen 3.6 27B (Apple10 / pre-M5 Metal):
+
+  Q5_K_M-mtp  Metal MTP buffer:  18760 MiB -> 1425 MiB (13.2x)
+  Q8_0-mtp    Metal MTP buffer:  28213 MiB -> 1719 MiB (16.4x)
+
+Q5 and Q8 were both OOMing mid-decode pre-fix; both now run cleanly.
+Q8_0 produces a 1.49x aggregate decode win vs vanilla on M4 Pro.
+
+Force use_mmap=false on the MTP load so the non-mmap allocator path
+sizes the buffer to the registered tensors only. Vanilla, draft-model
+and mmproj load paths are untouched.
+---
+ tools/server/server-context.cpp | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 0ce738bdb..e935308bc 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -833,6 +833,16 @@ private:
+ 
+             auto mparams_mtp = common_model_params_to_llama(params_base);
+             mparams_mtp.override_arch = mtp_arch;
++            // The MTP arch registers tensors near both the start (tok_embd)
++            // and the end (output, nextn.*) of the GGUF. With mmap-backed
++            // buffers, the backend allocates a buffer spanning the full
++            // [first, last) tensor-offset range — for Qwen 3.6 27B that
++            // ends up covering nearly the entire file, allocating a
++            // ~model-sized Metal duplicate of the main model and OOMing
++            // Apple Silicon devices with tight working sets (notably
++            // Apple10 / M4-class). Force non-mmap allocation so the MTP
++            // buffer is sized to the registered tensors only.
++            mparams_mtp.use_mmap = false;
+ 
+             model_mtp.reset(llama_model_load_from_file(params_base.model.path.c_str(), mparams_mtp));
+             if (model_mtp == nullptr) {
+-- 
+2.53.0
+
