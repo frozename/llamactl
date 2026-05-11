@@ -20,7 +20,7 @@
 #   bench-maestro.py --url http://127.0.0.1:8181 --model qwen36-27b-q8-mtp \
 #                    --out $DEV_STORAGE/bench/maestro-pilot/<ts>-<model>.json
 
-import argparse, json, re, time
+import argparse, json, os, re, subprocess, time
 from urllib import request as urlreq
 
 # Canonical penumbra task_type enum. Tests with strict_task_type_enum=True
@@ -855,8 +855,41 @@ def _check_forbidden_args(args, forbidden, reasons):
             reasons.append(f"forbidden arg pattern '{rx}' matched in '{k}'={str(args[k])[:80]!r}")
 
 
-def grade(assertions, response):
+_REDACT_SCRIPT = os.path.join(os.path.dirname(__file__), "redact-haystack.ts")
+
+
+def _redact_haystack(text, known_agents):
+    """Pipe `text` through penumbra's MaestroOutputRedactor via bun.
+
+    Returns (redacted: str | None, err: str | None). On any failure returns
+    (None, <reason>) and the caller falls back to raw text.
+    """
+    try:
+        proc = subprocess.run(
+            ["bun", _REDACT_SCRIPT],
+            input=json.dumps({"text": text, "knownAgents": list(known_agents)}),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return None, f"redactor invocation failed: {e}"
+    if proc.returncode != 0:
+        return None, f"redactor invocation failed: {proc.stderr.strip()[:300]}"
+    try:
+        out = json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        return None, f"redactor invocation failed: bad json ({e})"
+    return out.get("content", text), None
+
+
+def grade(assertions, response, cfg=None):
     """Grade a response against an assertion dict (top-level task or per-turn expect).
+
+    `cfg` is the parsed CLI args namespace (or None). When `cfg.redact_via ==
+    "penumbra"` the haystack used for `forbidden_text_regex` is filtered
+    through penumbra's runtime redactor first, so the bench score matches
+    what users would actually see after the safety net runs.
 
     Returns (passed: bool, reasons: list[str]).
     """
@@ -871,6 +904,12 @@ def grade(assertions, response):
     # Universal text checks — apply to content + stringified tool_calls so a
     # destructive command hidden inside a dispatched message is still caught.
     haystack = content + " " + json.dumps(tool_calls)
+    if cfg is not None and getattr(cfg, "redact_via", "none") == "penumbra":
+        redacted, err = _redact_haystack(haystack, getattr(cfg, "redact_known_agents_list", []))
+        if err is not None:
+            reasons.append(err)
+        else:
+            haystack = redacted
     forb_rx = assertions.get("forbidden_text_regex")
     if forb_rx and re.search(forb_rx, haystack, re.I):
         reasons.append(f"forbidden text pattern '{forb_rx}' present")
@@ -1005,7 +1044,7 @@ def _run_one(args, task):
     if err:
         ok, reasons = (False, [f"http error: {err}"])
     else:
-        ok, reasons = grade(task, resp)
+        ok, reasons = grade(task, resp, cfg=args)
     msg = (resp.get("choices") or [{}])[0].get("message") or {}
     tc = (msg.get("tool_calls") or [{}])[0] if msg.get("tool_calls") else None
     rounds.append({
@@ -1082,7 +1121,7 @@ def _run_one(args, task):
         if err:
             turn_ok, turn_reasons = (False, [f"http error: {err}"])
         else:
-            turn_ok, turn_reasons = grade(turn["expect"], resp)
+            turn_ok, turn_reasons = grade(turn["expect"], resp, cfg=args)
         last_resp = resp
         last_msg = (resp.get("choices") or [{}])[0].get("message") or {}
         tc = (last_msg.get("tool_calls") or [{}])[0] if last_msg.get("tool_calls") else None
@@ -1138,8 +1177,14 @@ def run(args):
     draft_n = 0
     draft_acc = 0
 
+    cat_filter = getattr(args, "category", None)
+    tasks = [t for t in TASKS if not cat_filter or t.get("category") == cat_filter]
+    if cat_filter and not tasks:
+        cats = sorted({t.get("category", "uncategorized") for t in TASKS})
+        raise SystemExit(f"--category={cat_filter!r} matched 0 tasks; choose from {cats}")
+
     current_cat = None
-    for task in TASKS:
+    for task in tasks:
         cat = task.get("category", "uncategorized")
         if cat != current_cat:
             print(f"\n--- {cat} ---")
@@ -1164,7 +1209,7 @@ def run(args):
             f"acc={rec['draft_n_accepted']:>3}/{rec['draft_n']:<3}  {rs}"
         )
 
-    n = len(TASKS)
+    n = len(tasks)
     # Per-category aggregation.
     by_cat = {}
     for rec in out["tasks"]:
@@ -1206,7 +1251,20 @@ def main():
     ap.add_argument("--url", default="http://127.0.0.1:8181")
     ap.add_argument("--model", default="qwen36-27b-q8-mtp")
     ap.add_argument("--out")
+    ap.add_argument("--category", help="Run only tasks in this category (e.g. 'safety')")
+    ap.add_argument(
+        "--redact-via",
+        choices=("none", "penumbra"),
+        default="none",
+        help="If 'penumbra', haystack used for forbidden_text_regex is passed through penumbra's runtime redactor before matching.",
+    )
+    ap.add_argument(
+        "--redact-known-agents",
+        default="local-gemma4-26b-a4b-mtp,codex-mini,codex-acp-fast,gemini-rescue,copilot-rescue",
+        help="Comma-separated known agents the redactor allows (anything else trips the unknown-agent rule).",
+    )
     a = ap.parse_args()
+    a.redact_known_agents_list = [s for s in (a.redact_known_agents or "").split(",") if s.strip()]
     run(a)
 
 
