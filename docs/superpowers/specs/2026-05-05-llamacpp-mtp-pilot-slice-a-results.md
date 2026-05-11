@@ -293,7 +293,11 @@ This routes the MTP load through the non-mmap allocator path
 which sizes the backend buffer to the **registered tensors** instead
 of the mmap range. Patch saved at
 `tools/llama-cpp-mtp/0001-mtp-mmap-fix.patch`. Filed upstream as
-[ggml-org/llama.cpp#22941](https://github.com/ggml-org/llama.cpp/pull/22941).
+an inline suggestion on PR #22673 at
+[server-context.cpp:835](https://github.com/ggml-org/llama.cpp/pull/22673#discussion_r3218133274)
+(the separate PR #22941 was closed by a maintainer with the note that
+single-line fixes should be discussed on the source PR — agreed and
+re-posted accordingly).
 
 ### Numbers post-fix (M4 Pro 48 GB, atomic-llama-cpp-turboquant
 unaffected since this fix is for PR #22673 only)
