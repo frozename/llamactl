@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { stringify as stringifyYaml } from 'yaml';
 import { applyOne, type WorkloadClient } from '../src/workload/apply.js';
 import type { ModelRun } from '../src/workload/schema.js';
 
@@ -129,6 +133,14 @@ function manifest(): ModelRun {
       ],
     },
   };
+}
+
+function tempWorkloadsDir(): string {
+  return mkdtempSync(join(tmpdir(), 'llamactl-workloads-'));
+}
+
+function writeManifest(dir: string, workload: ModelRun): void {
+  writeFileSync(join(dir, `${workload.metadata.name}.yaml`), stringifyYaml(workload), 'utf8');
 }
 
 describe('applyOne preflight — worker rpcServerDoctor', () => {
@@ -359,5 +371,220 @@ describe('applyOne preflight — worker rpcServerDoctor', () => {
     expect(result.action).toBe('restarted');
     expect(trace.serverStopCalls).toEqual(['coordinator']);
     expect(trace.serverStartCalls).toEqual(['coordinator']);
+  });
+
+  test('port collision — same node, same port → rejected with PortCollision', async () => {
+    const dir = tempWorkloadsDir();
+    const current: ModelRun = {
+      ...manifest(),
+      spec: {
+        ...manifest().spec,
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      },
+    };
+    writeManifest(dir, current);
+    writeManifest(dir, {
+      ...current,
+      metadata: { ...current.metadata, name: 'other' },
+      spec: {
+        ...current.spec,
+        target: { kind: 'rel', value: 'different.gguf' },
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      },
+    });
+    const trace: MockTrace = {
+      rpcServerStartCalls: [],
+      rpcServerStopCalls: [],
+      rpcServerDoctorCalls: [],
+      serverStatusCalls: [],
+      serverStartCalls: [],
+      serverStopCalls: [],
+    };
+    const result = await applyOne(
+      current,
+      (node) => makeMockClient(node, { ok: true, path: '/x', llamaCppBin: '/y' }, trace),
+      undefined,
+      undefined,
+      { workloadsDir: dir },
+    );
+    expect(result.action).toBe('unchanged');
+    expect(result.error).toContain('port collision: other already claims 127.0.0.1:8181 on node coordinator');
+    expect(result.statusSection.phase).toBe('Failed');
+    expect(result.statusSection.conditions[0]).toMatchObject({ reason: 'PortCollision' });
+    expect(trace.serverStatusCalls).toEqual([]);
+  });
+
+  test('same name re-apply allowed', async () => {
+    const dir = tempWorkloadsDir();
+    const current: ModelRun = {
+      ...manifest(),
+      spec: {
+        ...manifest().spec,
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      },
+    };
+    writeManifest(dir, current);
+    const trace: MockTrace = {
+      rpcServerStartCalls: [],
+      rpcServerStopCalls: [],
+      rpcServerDoctorCalls: [],
+      serverStatusCalls: [],
+      serverStartCalls: [],
+      serverStopCalls: [],
+    };
+    const result = await applyOne(
+      current,
+      (node) => makeMockClient(node, { ok: true, path: '/x', llamaCppBin: '/y' }, trace),
+      undefined,
+      undefined,
+      { workloadsDir: dir },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.action).toBe('started');
+  });
+
+  test('different ports — same node → both succeed', async () => {
+    const dir = tempWorkloadsDir();
+    const current: ModelRun = {
+      ...manifest(),
+      spec: {
+        ...manifest().spec,
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      },
+    };
+    writeManifest(dir, {
+      ...current,
+      metadata: { ...current.metadata, name: 'other' },
+      spec: {
+        ...current.spec,
+        endpoint: { host: '127.0.0.1', port: 8182 },
+      },
+    });
+    const trace: MockTrace = {
+      rpcServerStartCalls: [],
+      rpcServerStopCalls: [],
+      rpcServerDoctorCalls: [],
+      serverStatusCalls: [],
+      serverStartCalls: [],
+      serverStopCalls: [],
+    };
+    const result = await applyOne(
+      current,
+      (node) => makeMockClient(node, { ok: true, path: '/x', llamaCppBin: '/y' }, trace),
+      undefined,
+      undefined,
+      { workloadsDir: dir },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.action).toBe('started');
+  });
+
+  test('unset port — current manifest has no endpoint.port → skip check', async () => {
+    const dir = tempWorkloadsDir();
+    const current: ModelRun = {
+      ...manifest(),
+      spec: {
+        ...manifest().spec,
+        endpoint: { host: '127.0.0.1' },
+      },
+    };
+    writeManifest(dir, {
+      ...manifest(),
+      metadata: { ...manifest().metadata, name: 'other' },
+      spec: {
+        ...manifest().spec,
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      },
+    });
+    const trace: MockTrace = {
+      rpcServerStartCalls: [],
+      rpcServerStopCalls: [],
+      rpcServerDoctorCalls: [],
+      serverStatusCalls: [],
+      serverStartCalls: [],
+      serverStopCalls: [],
+    };
+    const result = await applyOne(
+      current,
+      (node) => makeMockClient(node, { ok: true, path: '/x', llamaCppBin: '/y' }, trace),
+      undefined,
+      undefined,
+      { workloadsDir: dir },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.action).toBe('started');
+  });
+
+  test('different nodes — same port → both succeed', async () => {
+    const dir = tempWorkloadsDir();
+    const current: ModelRun = {
+      ...manifest(),
+      spec: {
+        ...manifest().spec,
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      },
+    };
+    writeManifest(dir, {
+      ...current,
+      metadata: { ...current.metadata, name: 'other' },
+      spec: {
+        ...current.spec,
+        node: 'different-node',
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      },
+    });
+    const trace: MockTrace = {
+      rpcServerStartCalls: [],
+      rpcServerStopCalls: [],
+      rpcServerDoctorCalls: [],
+      serverStatusCalls: [],
+      serverStartCalls: [],
+      serverStopCalls: [],
+    };
+    const result = await applyOne(
+      current,
+      (node) => makeMockClient(node, { ok: true, path: '/x', llamaCppBin: '/y' }, trace),
+      undefined,
+      undefined,
+      { workloadsDir: dir },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.action).toBe('started');
+  });
+
+  test('0.0.0.0 wildcard host collides with 127.0.0.1', async () => {
+    const dir = tempWorkloadsDir();
+    const current: ModelRun = {
+      ...manifest(),
+      spec: {
+        ...manifest().spec,
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      },
+    };
+    writeManifest(dir, {
+      ...current,
+      metadata: { ...current.metadata, name: 'other' },
+      spec: {
+        ...current.spec,
+        endpoint: { host: '0.0.0.0', port: 8181 },
+      },
+    });
+    const trace: MockTrace = {
+      rpcServerStartCalls: [],
+      rpcServerStopCalls: [],
+      rpcServerDoctorCalls: [],
+      serverStatusCalls: [],
+      serverStartCalls: [],
+      serverStopCalls: [],
+    };
+    const result = await applyOne(
+      current,
+      (node) => makeMockClient(node, { ok: true, path: '/x', llamaCppBin: '/y' }, trace),
+      undefined,
+      undefined,
+      { workloadsDir: dir },
+    );
+    expect(result.error).toContain('port collision: other already claims 0.0.0.0:8181 on node coordinator');
+    expect(result.statusSection.conditions[0]).toMatchObject({ reason: 'PortCollision' });
   });
 });

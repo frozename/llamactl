@@ -1,5 +1,6 @@
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
 import type { GatewayDispatch } from './gateway-handlers/types.js';
+import { defaultWorkloadsDir, listWorkloads } from './store.js';
 
 /**
  * Structural subset of `NodeClient` that `applyOne` actually touches.
@@ -258,6 +259,7 @@ export async function applyOne(
   getClient: (nodeName: string) => WorkloadClient,
   onEvent?: (e: ApplyEvent) => void,
   gatewayDispatch?: GatewayDispatch,
+  opts?: { workloadsDir?: string },
 ): Promise<ApplyResult> {
   if (manifest.spec.gateway) {
     if (gatewayDispatch) {
@@ -290,6 +292,44 @@ export async function applyOne(
           ],
         },
       };
+    }
+  }
+  const desired = manifest.spec.endpoint;
+  if (desired?.port !== undefined) {
+    const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir();
+    const others = listWorkloads(workloadsDir)
+      .filter((m) => m.metadata.name !== manifest.metadata.name)
+      .filter((m) => m.spec.node === manifest.spec.node);
+    for (const other of others) {
+      const o = other.spec.endpoint;
+      if (o?.port === undefined) continue;
+      if (o.port !== desired.port) continue;
+      const dHost = desired.host ?? '127.0.0.1';
+      const oHost = o.host ?? '127.0.0.1';
+      const hostCollides =
+        dHost === oHost || dHost === '0.0.0.0' || oHost === '0.0.0.0';
+      if (hostCollides) {
+        const now = new Date().toISOString();
+        return {
+          action: 'unchanged',
+          error: `port collision: ${other.metadata.name} already claims ${oHost}:${o.port} on node ${manifest.spec.node}`,
+          statusSection: {
+            phase: 'Failed',
+            serverPid: null,
+            endpoint: null,
+            lastTransitionTime: now,
+            conditions: [
+              {
+                type: 'Applied',
+                status: 'False',
+                reason: 'PortCollision',
+                message: `port ${desired.port} already claimed by ${other.metadata.name}`,
+                lastTransitionTime: now,
+              },
+            ],
+          },
+        };
+      }
     }
   }
   const client = getClient(manifest.spec.node);
