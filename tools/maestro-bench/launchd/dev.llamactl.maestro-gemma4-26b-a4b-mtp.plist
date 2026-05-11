@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Persistent Gemma 4 26B-A4B + MTP atomic-fork server for the penumbra
+     maestro pilot. Loaded into the per-user launchd domain
+     (~/Library/LaunchAgents/), runs at login and restarts on exit.
+     Install/uninstall via the sibling install.sh / uninstall.sh.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.llamactl.maestro-gemma4-26b-a4b-mtp</string>
+
+  <!-- ProgramArguments must be absolute. WorkingDirectory is set so any
+       relative gguf paths resolve, but serve.sh uses absolute paths so
+       this is mostly defensive. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Volumes/WorkSSD/repos/personal/llamactl/tools/maestro-bench/serve.sh</string>
+  </array>
+
+  <!-- Run from $HOME so a launchd-spawned process doesn't need TCC
+       grants to enter /Volumes. The serve.sh paths are absolute. -->
+  <key>WorkingDirectory</key>
+  <string>/Users/acordeiro</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>ATOMIC_BIN</key>
+    <string>/Volumes/WorkSSD/src/llama.cpp-atomic/build/bin/llama-server</string>
+    <key>LLAMA_CPP_MODELS</key>
+    <string>/Volumes/WorkSSD/ai-models/llama.cpp/models</string>
+    <key>MAESTRO_PORT</key>
+    <string>8181</string>
+    <key>MAESTRO_ALIAS</key>
+    <string>gemma4-26b-a4b-mtp</string>
+    <key>MAESTRO_CTX</key>
+    <string>32768</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <!-- Only auto-restart on non-zero exit. Lets us stop the service
+         cleanly with `launchctl unload` without an immediate respawn. -->
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <!-- Interactive priority. Per the 2026-05-07 mac-mini optimization
+       note, ProcessType=Interactive yields scheduler priority more
+       appropriate for an inference server than the default Standard. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
+
+  <!-- Log into ~/Library/Logs/ to avoid launchd TCC restrictions on
+       writing into /Volumes/* (sandbox forbids it without an explicit
+       Full Disk Access grant, which we don't want to mandate). The
+       directory is created by install.sh. -->
+  <key>StandardOutPath</key>
+  <string>/Users/acordeiro/Library/Logs/llamactl/maestro-gemma4-26b-a4b-mtp.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/acordeiro/Library/Logs/llamactl/maestro-gemma4-26b-a4b-mtp.err.log</string>
+</dict>
+</plist>
