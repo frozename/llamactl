@@ -21,10 +21,23 @@ PLIST_NAME="dev.llamactl.maestro-gemma4-26b-a4b-mtp.plist"
 SRC="$SCRIPT_DIR/$PLIST_NAME"
 DST="$HOME/Library/LaunchAgents/$PLIST_NAME"
 LABEL="${PLIST_NAME%.plist}"
+SERVE_SRC="$SCRIPT_DIR/../serve.sh"
+SERVE_DST="$HOME/.local/bin/llamactl-maestro-serve.sh"
 
 [[ -f "$SRC" ]] || { echo "missing $SRC" >&2; exit 2; }
+[[ -f "$SERVE_SRC" ]] || { echo "missing $SERVE_SRC" >&2; exit 2; }
 
-mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/llamactl"
+mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/llamactl" "$HOME/.local/bin"
+
+# Copy serve.sh out of /Volumes/ so launchd can execute it. macOS TCC
+# refuses to execve() files under /Volumes/* from a launchd-spawned
+# bash without explicit Full Disk Access on launchd itself, which we
+# don't want to mandate. The destination matches the plist's
+# ProgramArguments.
+cp "$SERVE_SRC" "$SERVE_DST"
+chmod +x "$SERVE_DST"
+echo "wrote $SERVE_DST"
+
 cp "$SRC" "$DST"
 echo "wrote $DST"
 

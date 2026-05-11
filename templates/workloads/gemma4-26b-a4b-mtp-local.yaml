@@ -1,0 +1,68 @@
+# Gemma 4 26B-A4B + MTP maestro pilot on `local`.
+#
+# STATUS: not currently applied. See
+# docs/superpowers/specs/2026-05-11-maestro-workload-blocked.md for why —
+# llamactl's `apply` path requires a node-agent on https://127.0.0.1:7843
+# which isn't running. The maestro endpoint runs via the launchd plist
+# under tools/maestro-bench/launchd/ in the meantime. When the local
+# node-agent is up, this manifest is ready to apply.
+#
+# Atomic-fork dependency: this workload expects the atomic-fork
+# llama.cpp build. Export:
+#   LLAMA_CPP_BIN=/Volumes/WorkSSD/src/llama.cpp-atomic/build/bin
+# before running `llamactl apply -f` so the reconciler finds the right
+# `llama-server` binary. The manifest itself stays portable and only
+# declares the workload shape.
+#
+# Apply (once the node-agent is up):
+#   LLAMA_CPP_BIN=/Volumes/WorkSSD/src/llama.cpp-atomic/build/bin \
+#   llamactl apply -f templates/workloads/gemma4-26b-a4b-mtp-local.yaml
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: gemma4-26b-a4b-mtp-local
+  labels:
+    family: gemma4
+    role: maestro-pilot
+spec:
+  node: local
+  target:
+    kind: rel
+    value: gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf
+  extraArgs:
+    - --alias
+    - gemma4-26b-a4b-mtp
+    - --mtp-head
+    - /Volumes/WorkSSD/ai-models/llama.cpp/models/gemma-4-26B-A4B-it-assistant-GGUF/gemma-4-26B-A4B-it-assistant.Q4_K_M.gguf
+    - --spec-type
+    - mtp
+    - --draft-block-size
+    - "3"
+    - --draft-max
+    - "8"
+    - --draft-min
+    - "0"
+    - -ngl
+    - "99"
+    - -ngld
+    - "99"
+    - -ctk
+    - turbo3
+    - -ctv
+    - turbo3
+    - -ctkd
+    - turbo3
+    - -ctvd
+    - turbo3
+    - --flash-attn
+    - "on"
+    - --ctx-size
+    - "32768"
+    - --no-warmup
+    - -np
+    - "1"
+    - --jinja
+  restartPolicy: Always
+  endpoint:
+    host: 127.0.0.1
+    port: 8181

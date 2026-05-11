@@ -14,6 +14,12 @@ else
   echo "no plist at $DST — already gone"
 fi
 
+SERVE_DST="$HOME/.local/bin/llamactl-maestro-serve.sh"
+if [[ -f "$SERVE_DST" ]]; then
+  rm -f "$SERVE_DST"
+  echo "removed $SERVE_DST"
+fi
+
 # Belt-and-braces: kill any stray binary still listening on the port.
 for pid in $(lsof -nP -iTCP:8181 -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2}' | sort -u); do
   echo "killing residual pid $pid on :8181"

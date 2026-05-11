@@ -10,17 +10,17 @@
   <key>Label</key>
   <string>dev.llamactl.maestro-gemma4-26b-a4b-mtp</string>
 
-  <!-- ProgramArguments must be absolute. WorkingDirectory is set so any
-       relative gguf paths resolve, but serve.sh uses absolute paths so
-       this is mostly defensive. -->
+  <!-- ProgramArguments must be absolute. Reference a copy of serve.sh
+       under $HOME because launchd's sandbox refuses to execute files
+       under /Volumes/* without explicit Full Disk Access (TCC denial
+       returns EPERM and the service flaps in restart loop). install.sh
+       copies serve.sh into ~/.local/bin/ before loading the plist. -->
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Volumes/WorkSSD/repos/personal/llamactl/tools/maestro-bench/serve.sh</string>
+    <string>/Users/acordeiro/.local/bin/llamactl-maestro-serve.sh</string>
   </array>
 
-  <!-- Run from $HOME so a launchd-spawned process doesn't need TCC
-       grants to enter /Volumes. The serve.sh paths are absolute. -->
   <key>WorkingDirectory</key>
   <string>/Users/acordeiro</string>
 
