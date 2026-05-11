@@ -20,14 +20,17 @@ export interface WorkloadClient {
       rel: string | null;
       extraArgs: string[];
       pid: number | null;
+      host: string | null;
+      port: number | null;
+      binary: string | null;
       endpoint: string;
       advertisedEndpoint?: string | null;
     }>;
   };
   serverStop: { mutate(input?: { graceSeconds?: number }): Promise<unknown> };
     serverStart: {
-      subscribe(
-      input: { target: string; extraArgs?: string[]; endpoint?: { host?: string; port?: number }; timeoutSeconds?: number },
+    subscribe(
+      input: { target: string; extraArgs?: string[]; endpoint?: { host?: string; port?: number }; binary?: string; timeoutSeconds?: number },
       callbacks: SubscribeCallbacks,
     ): Unsubscribable;
   };
@@ -293,6 +296,7 @@ export async function applyOne(
   const status = await client.serverStatus.query();
 
   const desiredRel = manifest.spec.target.value;
+  const desiredEndpoint = manifest.spec.endpoint;
   // Compose the effective extraArgs: user args + the --rpc flag if
   // this workload has workers. The coordinator's server.rel /
   // extraArgs comparison below uses the composed form so a diff
@@ -312,8 +316,14 @@ export async function applyOne(
   const liveRel = status.rel;
   const liveArgs = status.extraArgs ?? [];
   const running = status.state === 'up';
+  const endpointMatches =
+    !desiredEndpoint
+    || ((status.host ?? null) === (desiredEndpoint.host ?? null)
+      && (status.port ?? null) === (desiredEndpoint.port ?? null));
+  const binaryMatches =
+    !manifest.spec.binary || (status.binary ?? null) === manifest.spec.binary;
   const matches =
-    running && liveRel === desiredRel && sameExtraArgs(liveArgs, desiredArgs);
+    running && liveRel === desiredRel && sameExtraArgs(liveArgs, desiredArgs) && endpointMatches && binaryMatches;
 
   const now = new Date().toISOString();
 
@@ -383,6 +393,7 @@ export async function applyOne(
         target: desiredRel,
         ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
         ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
+        ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
         timeoutSeconds: manifest.spec.timeoutSeconds,
       },
       {

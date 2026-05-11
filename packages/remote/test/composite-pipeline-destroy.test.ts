@@ -75,7 +75,7 @@ class FakeRuntimeBackend implements RuntimeBackend {
 
 const stubClient: WorkloadClient = {
   serverStatus: { async query() {
-    return { state: 'stopped', rel: null, extraArgs: [], pid: null, endpoint: '' };
+    return { state: 'stopped', rel: null, extraArgs: [], pid: null, host: null, port: null, binary: null, endpoint: '' };
   } },
   serverStop: { async mutate() { return {}; } },
   serverStart: {

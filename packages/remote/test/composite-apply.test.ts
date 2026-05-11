@@ -113,6 +113,9 @@ function makeFakeWorkloadClient(): {
           rel: null,
           extraArgs: [],
           pid: null,
+          host: null,
+          port: null,
+          binary: null,
           endpoint: 'http://127.0.0.1:8080',
         };
       },

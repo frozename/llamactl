@@ -61,6 +61,8 @@ export const ModelRunSpecSchema = z.object({
   /** Optional — informational only in Phase D; carry-through for the
    *  Phase-D-and-beyond controller to prefer a specific endpoint. */
   endpoint: ModelRunEndpointSchema.optional(),
+  /** Optional absolute path to the llama-server binary for this workload. */
+  binary: z.string().optional(),
   timeoutSeconds: z.number().int().positive().max(600).default(60),
   /**
    * Marks this workload as a gateway registration rather than an

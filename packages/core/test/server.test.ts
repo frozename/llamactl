@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as childProcess from 'node:child_process';
 import {
+  advertisedEndpoint,
   endpoint,
   readServerPid,
   serverStatus,
@@ -192,10 +193,106 @@ describe('server.startServer (error paths)', () => {
       expect(fullArgs).toContain('--host');
       expect(fullArgs).toContain('127.0.0.1');
       expect(fullArgs).toContain('--port');
-      expect(fullArgs).toContain(8181);
+      expect(fullArgs).toContain('8181');
       expect(fetchSpy).toHaveBeenCalledWith(
         'http://127.0.0.1:8181/health',
         expect.objectContaining({ method: 'GET' }),
+      );
+    } finally {
+      spawnSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test('reports the launched endpoint from serverStatus after a start with an endpoint override', async () => {
+    const modelDir = join(temp.modelsDir, 'Demo');
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(join(modelDir, 'demo.gguf'), '');
+    const binDir = join(temp.devStorage, 'fake-bin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, 'llama-server'), '#!/bin/sh\nexit 0\n');
+    process.env.LLAMA_CPP_BIN = binDir;
+    process.env.LLAMA_CPP_HOST = '127.0.0.1';
+    process.env.LLAMA_CPP_PORT = '8080';
+
+    const spawnSpy = spyOn(childProcess, 'spawn')
+      .mockImplementation((() =>
+        ({
+          pid: process.pid,
+          unref() {},
+        }) as any));
+    let fetchCalls = 0;
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      fetchCalls += 1;
+      if (fetchCalls === 1) {
+        throw new Error('connection refused');
+      }
+      return new Response('ok', { status: 200 }) as any;
+    }) as any);
+
+    try {
+      const result = await startServer({
+        target: 'Demo/demo.gguf',
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      });
+      expect(result.ok).toBe(true);
+      expect(result.endpoint).toBe('http://127.0.0.1:8181');
+      expect(result.advertisedEndpoint).toBe('http://127.0.0.1:8181');
+
+      const status = await serverStatus();
+      expect(status.endpoint).toBe('http://127.0.0.1:8181');
+      expect(status.advertisedEndpoint).toBe('http://127.0.0.1:8181');
+      expect(status.port).toBe(8181);
+      expect(status.rel).toBe('Demo/demo.gguf');
+      expect(advertisedEndpoint({
+        LLAMA_CPP_HOST: '127.0.0.1',
+        LLAMA_CPP_PORT: '8080',
+      } as any)).toBe('http://127.0.0.1:8080');
+    } finally {
+      spawnSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test('uses a per-workload binary override instead of LLAMA_CPP_BIN', async () => {
+    const modelDir = join(temp.modelsDir, 'Demo');
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(join(modelDir, 'demo.gguf'), '');
+    const defaultBinDir = join(temp.devStorage, 'default-bin');
+    const customBinDir = join(temp.devStorage, 'custom-bin');
+    const customBin = join(customBinDir, 'llama-server');
+    mkdirSync(defaultBinDir, { recursive: true });
+    mkdirSync(customBinDir, { recursive: true });
+    writeFileSync(join(defaultBinDir, 'llama-server'), '#!/bin/sh\nexit 0\n');
+    writeFileSync(customBin, '#!/bin/sh\nexit 0\n');
+    process.env.LLAMA_CPP_BIN = defaultBinDir;
+    process.env.LLAMA_CPP_HOST = '127.0.0.1';
+    process.env.LLAMA_CPP_PORT = '8080';
+
+    const spawnSpy = spyOn(childProcess, 'spawn')
+      .mockImplementation((() =>
+        ({
+          pid: process.pid,
+          unref() {},
+        }) as any));
+    let fetchCalls = 0;
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      fetchCalls += 1;
+      if (fetchCalls === 1) {
+        throw new Error('connection refused');
+      }
+      return new Response('ok', { status: 200 }) as any;
+    }) as any);
+
+    try {
+      await startServer({
+        target: 'Demo/demo.gguf',
+        binary: customBin,
+      } as any);
+      expect(spawnSpy).toHaveBeenCalledWith(
+        customBin,
+        expect.arrayContaining(['--host', '127.0.0.1', '--port', '8080']),
+        expect.objectContaining({ detached: true }),
       );
     } finally {
       spawnSpy.mockRestore();

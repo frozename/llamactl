@@ -58,9 +58,13 @@ export function endpoint(
  * on a LAN-exposed Mac mini), this is the URL to hand to an
  * orchestrator so a 0.0.0.0 bind doesn't leak into the status output.
  */
-export function advertisedEndpoint(resolved: ResolvedEnv = resolveEnv()): string {
-  const host = resolved.LLAMA_CPP_ADVERTISED_HOST || resolved.LLAMA_CPP_HOST;
-  return `http://${host}:${resolved.LLAMA_CPP_PORT}`;
+export function advertisedEndpoint(
+  resolved: ResolvedEnv = resolveEnv(),
+  override?: { host?: string; port?: number | string },
+): string {
+  const host = override?.host ?? (resolved.LLAMA_CPP_ADVERTISED_HOST || resolved.LLAMA_CPP_HOST);
+  const port = override?.port ?? resolved.LLAMA_CPP_PORT;
+  return `http://${host}:${port}`;
 }
 
 function useTunedArgsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -144,6 +148,7 @@ export interface ServerState {
   extraArgs: string[];
   host: string;
   port: string;
+  binary: string;
   pid: number;
   startedAt: string;           // ISO 8601
   tunedProfile: string | null;
@@ -171,7 +176,9 @@ export interface ServerStatus {
   rel: string | null;
   extraArgs: string[];
   startedAt: string | null;
+  host: string | null;
   port: number | null;
+  binary: string | null;
   tunedProfile: string | null;
 }
 
@@ -199,6 +206,7 @@ export function readServerState(
       && typeof parsed.pid === 'number'
       && typeof parsed.startedAt === 'string'
     ) {
+      if (typeof parsed.binary !== 'string') parsed.binary = '';
       return parsed;
     }
     return null;
@@ -232,8 +240,15 @@ export async function serverStatus(
   const pidRaw = readServerPid(resolved);
   const pid = pidRaw && isProcessAlive(pidRaw) ? pidRaw : null;
   if (pidRaw && !pid) removeServerPid(resolved);
-
-  const healthUrl = `${endpoint(resolved)}/health`;
+  const sidecar = readServerState(resolved);
+  // Only trust the sidecar when its PID matches the live one; if the
+  // PIDs diverge, the state file is from a previous launch that
+  // exited uncleanly. Clean up in that case.
+  const validSidecar = sidecar && sidecar.pid === pid;
+  const endpointOverride = validSidecar
+    ? { host: sidecar.host, port: sidecar.port }
+    : undefined;
+  const healthUrl = `${endpoint(resolved, endpointOverride)}/health`;
   let httpCode: number | null = null;
   try {
     const res = await fetch(healthUrl, {
@@ -248,25 +263,22 @@ export async function serverStatus(
   const reachable = httpCode === 200;
   const state: ServerStatus['state'] = reachable || pid !== null ? 'up' : 'down';
 
-  const sidecar = readServerState(resolved);
-  // Only trust the sidecar when its PID matches the live one; if the
-  // PIDs diverge, the state file is from a previous launch that
-  // exited uncleanly. Clean up in that case.
-  const validSidecar = sidecar && sidecar.pid === pid;
   if (sidecar && !validSidecar && state === 'down') {
     removeServerState(resolved);
   }
 
   return {
     state,
-    endpoint: endpoint(resolved),
-    advertisedEndpoint: advertisedEndpoint(resolved),
+    endpoint: endpoint(resolved, endpointOverride),
+    advertisedEndpoint: advertisedEndpoint(resolved, endpointOverride),
     pid,
     health: { httpCode, reachable },
     rel: validSidecar ? sidecar.rel : null,
     extraArgs: validSidecar ? sidecar.extraArgs : [],
     startedAt: validSidecar ? sidecar.startedAt : null,
+    host: validSidecar ? sidecar.host : null,
     port: validSidecar ? Number.parseInt(sidecar.port, 10) || null : null,
+    binary: validSidecar ? (sidecar.binary || null) : null,
     tunedProfile: validSidecar ? sidecar.tunedProfile : null,
   };
 }
@@ -279,6 +291,8 @@ export interface StartServerOptions {
   extraArgs?: string[];
   /** Optional endpoint override from the workload manifest. */
   endpoint?: { host?: string; port?: number };
+  /** Optional absolute path to the llama-server binary. */
+  binary?: string;
   /** How long to wait for /health to return 200 before giving up. */
   timeoutSeconds?: number;
   /** Skip tuned-profile arg lookup even when LLAMA_CPP_USE_TUNED_ARGS is on. */
@@ -436,7 +450,7 @@ export async function startServer(
       ok: false,
       pid: null,
       endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
       tunedProfile: null,
       retried: false,
       error: `Unknown target: ${opts.target}`,
@@ -448,19 +462,19 @@ export async function startServer(
       ok: false,
       pid: null,
       endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
       tunedProfile: null,
       retried: false,
       error: `Model file not found: ${modelPath}`,
     };
   }
-  const bin = join(resolved.LLAMA_CPP_BIN, 'llama-server');
+  const bin = opts.binary ?? join(resolved.LLAMA_CPP_BIN, 'llama-server');
   if (!existsSync(bin)) {
     return {
       ok: false,
       pid: null,
       endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
       tunedProfile: null,
       retried: false,
       error: `llama-server binary not found: ${bin}`,
@@ -483,7 +497,7 @@ export async function startServer(
       ok: false,
       pid: null,
       endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
       tunedProfile: null,
       retried: false,
       error: portConflictHint,
@@ -531,6 +545,7 @@ export async function startServer(
     extraArgs: extra,
     host: launchHost,
     port: String(launchPort),
+    binary: bin,
     pid,
     startedAt: new Date().toISOString(),
     tunedProfile,
@@ -562,7 +577,7 @@ export async function startServer(
       ok: false,
       pid: null,
       endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
       tunedProfile,
       retried: false,
       error: 'Start aborted by caller',
@@ -575,7 +590,7 @@ export async function startServer(
       ok: true,
       pid,
       endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
       tunedProfile,
       retried: false,
     };
@@ -612,7 +627,7 @@ export async function startServer(
         ok: false,
         pid: null,
         endpoint: endpoint(resolved, launchEndpoint),
-        advertisedEndpoint: advertisedEndpoint(resolved),
+        advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
         tunedProfile,
         retried: true,
         error: 'Start aborted by caller',
@@ -625,7 +640,7 @@ export async function startServer(
         ok: true,
         pid: retryPid,
         endpoint: endpoint(resolved, launchEndpoint),
-        advertisedEndpoint: advertisedEndpoint(resolved),
+        advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
         tunedProfile,
         retried: true,
       };
@@ -648,7 +663,7 @@ export async function startServer(
       ok: false,
       pid,
       endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved),
+      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
       tunedProfile,
       retried,
       error: `llama-server readiness check timed out after ${timeoutSeconds}s${conflictHint}`,
@@ -660,7 +675,7 @@ export async function startServer(
     ok: false,
     pid: null,
     endpoint: endpoint(resolved, launchEndpoint),
-    advertisedEndpoint: advertisedEndpoint(resolved),
+    advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
     tunedProfile,
     retried,
     error: 'llama-server exited before becoming ready',
@@ -674,6 +689,7 @@ interface LaunchArgs {
   resolved: ResolvedEnv;
   host?: string;
   port?: number | string;
+  binary?: string;
   onEvent?: (e: ServerEvent) => void;
 }
 
@@ -681,11 +697,11 @@ async function launchBackground(opts: LaunchArgs): Promise<number> {
   const { openSync, closeSync } = await import('node:fs');
   mkdirSync(opts.resolved.LLAMA_CPP_LOGS, { recursive: true });
   const logFd = openSync(serverLog(opts.resolved), 'a');
-  const fullArgs = [
+  const fullArgs: string[] = [
     '-m', opts.modelPath,
     '--alias', opts.resolved.LLAMA_CPP_SERVER_ALIAS,
     '--host', opts.host ?? opts.resolved.LLAMA_CPP_HOST,
-    '--port', opts.port ?? opts.resolved.LLAMA_CPP_PORT,
+    '--port', String(opts.port ?? opts.resolved.LLAMA_CPP_PORT),
     '-ngl', '999',
     ...opts.args,
   ];

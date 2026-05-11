@@ -299,6 +299,9 @@ describe('applyOne + gatewayDispatch integration', () => {
             rel: 'some/model.gguf',
             extraArgs: [],
             pid: 4242,
+            host: 'gpu1.lan',
+            port: 8080,
+            binary: null,
             endpoint: 'http://gpu1.lan:8080',
           };
         },

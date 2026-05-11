@@ -40,14 +40,17 @@ function makeMockClient(
     serverStatus: {
       async query() {
         trace.serverStatusCalls.push(nodeName);
-        return {
-          state: 'down',
-          rel: null,
-          extraArgs: [],
-          pid: null,
-          endpoint: '',
-        };
-      },
+      return {
+        state: 'down',
+        rel: null,
+        extraArgs: [],
+        pid: null,
+        host: null,
+        port: null,
+        binary: null,
+        endpoint: '',
+      };
+    },
     },
     serverStop: {
       async mutate() {
@@ -269,5 +272,92 @@ describe('applyOne preflight — worker rpcServerDoctor', () => {
     expect(result.error).toBeUndefined();
     expect(result.action).toBe('started');
     expect(trace.rpcServerDoctorCalls).toEqual([]);
+  });
+
+  test('changing only the endpoint port forces a restart', async () => {
+    const trace: MockTrace = {
+      rpcServerStartCalls: [],
+      rpcServerStopCalls: [],
+      rpcServerDoctorCalls: [],
+      serverStatusCalls: [],
+      serverStartCalls: [],
+      serverStopCalls: [],
+    };
+    const getClient = (node: string): WorkloadClient => ({
+      serverStatus: {
+        async query() {
+          trace.serverStatusCalls.push(node);
+          return {
+            state: 'up',
+            rel: 'tiny.gguf',
+            extraArgs: [],
+            pid: 123,
+            host: '127.0.0.1',
+            port: 8080,
+            binary: '/fake/bin/llama-server',
+            endpoint: 'http://127.0.0.1:8080',
+          };
+        },
+      },
+      serverStop: {
+        async mutate() {
+          trace.serverStopCalls.push(node);
+          return { stopped: true };
+        },
+      },
+      serverStart: {
+        subscribe(_input, callbacks) {
+          trace.serverStartCalls.push(node);
+          queueMicrotask(() => {
+            callbacks.onData({
+              type: 'done',
+              result: { ok: true, pid: 42, endpoint: 'http://127.0.0.1:8181' },
+            });
+            callbacks.onComplete();
+          });
+          return { unsubscribe() {} };
+        },
+      },
+      rpcServerStart: {
+        subscribe(_input, callbacks) {
+          trace.rpcServerStartCalls.push(node);
+          queueMicrotask(() => {
+            callbacks.onData({
+              type: 'done',
+              result: { ok: true, pid: 99, endpoint: '127.0.0.1:50052' },
+            });
+            callbacks.onComplete();
+          });
+          return { unsubscribe() {} };
+        },
+      },
+      rpcServerStop: {
+        async mutate() {
+          trace.rpcServerStopCalls.push(node);
+          return { stopped: true };
+        },
+      },
+      rpcServerDoctor: {
+        async query() {
+          trace.rpcServerDoctorCalls.push(node);
+          return {
+            ok: true,
+            path: '/fake/bin/rpc-server',
+            llamaCppBin: '/fake/bin',
+          };
+        },
+      },
+    });
+    const m: ModelRun = {
+      ...manifest(),
+      spec: {
+        ...manifest().spec,
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      },
+    };
+    const result = await applyOne(m, getClient);
+    expect(result.action).toBe('restarted');
+    expect(trace.serverStopCalls).toEqual(['coordinator']);
+    expect(trace.serverStartCalls).toEqual(['coordinator']);
   });
 });

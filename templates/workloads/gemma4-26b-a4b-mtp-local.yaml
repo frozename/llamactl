@@ -19,6 +19,7 @@ metadata:
     family: gemma4
     role: maestro-pilot
 spec:
+  binary: /Volumes/WorkSSD/src/llama.cpp-atomic/build/bin/llama-server
   node: local
   target:
     kind: rel
