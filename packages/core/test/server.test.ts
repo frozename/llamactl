@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import * as childProcess from 'node:child_process';
 import {
   endpoint,
   readServerPid,
@@ -129,8 +130,8 @@ describe('server.startServer (error paths)', () => {
 
   test('detects port collision before spawn + names the foreign HTTP code', async () => {
     // Stand up everything past the binary check, then bind a fake
-    // HTTP server on the configured port so the pre-flight detector
-    // sees an answer and bails before launching llama-server.
+    // HTTP answer on the configured port so the pre-flight detector
+    // sees a response and bails before launching llama-server.
     const modelDir = join(temp.modelsDir, 'Demo');
     mkdirSync(modelDir, { recursive: true });
     writeFileSync(join(modelDir, 'demo.gguf'), '');
@@ -138,20 +139,67 @@ describe('server.startServer (error paths)', () => {
     mkdirSync(binDir, { recursive: true });
     writeFileSync(join(binDir, 'llama-server'), '#!/bin/sh\nexit 0\n');
     process.env.LLAMA_CPP_BIN = binDir;
-    const port = 17843;
+    const port = 29143;
     process.env.LLAMA_CPP_PORT = String(port);
-    const blocker = Bun.serve({
-      port,
-      hostname: '127.0.0.1',
-      fetch: () => new Response('nope', { status: 401 }),
-    });
+    const fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('nope', { status: 401 }) as any,
+    );
     try {
       const result = await startServer({ target: 'Demo/demo.gguf' });
       expect(result.ok).toBe(false);
       expect(result.error).toMatch(/already bound/);
       expect(result.error).toMatch(/HTTP 401/);
     } finally {
-      blocker.stop(true);
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test('uses a manifest endpoint override for launch args and readiness', async () => {
+    const modelDir = join(temp.modelsDir, 'Demo');
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(join(modelDir, 'demo.gguf'), '');
+    const binDir = join(temp.devStorage, 'fake-bin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, 'llama-server'), '#!/bin/sh\nexit 0\n');
+    process.env.LLAMA_CPP_BIN = binDir;
+    process.env.LLAMA_CPP_HOST = '127.0.0.1';
+    process.env.LLAMA_CPP_PORT = '8080';
+
+    const spawnSpy = spyOn(childProcess, 'spawn')
+      .mockImplementation((() =>
+        ({
+          pid: 12345,
+          unref() {},
+        }) as any));
+    let fetchCalls = 0;
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      fetchCalls += 1;
+      if (fetchCalls === 1) {
+        throw new Error('connection refused');
+      }
+      return new Response('ok', { status: 200 }) as any;
+    }) as any);
+
+    try {
+      const result = await startServer({
+        target: 'Demo/demo.gguf',
+        endpoint: { host: '127.0.0.1', port: 8181 },
+      });
+      expect(result.ok).toBe(true);
+      expect(result.endpoint).toBe('http://127.0.0.1:8181');
+      expect(spawnSpy).toHaveBeenCalled();
+      const fullArgs = spawnSpy.mock.calls[0]?.[1] ?? [];
+      expect(fullArgs).toContain('--host');
+      expect(fullArgs).toContain('127.0.0.1');
+      expect(fullArgs).toContain('--port');
+      expect(fullArgs).toContain(8181);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://127.0.0.1:8181/health',
+        expect.objectContaining({ method: 'GET' }),
+      );
+    } finally {
+      spawnSpy.mockRestore();
+      fetchSpy.mockRestore();
     }
   });
 });

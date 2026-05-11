@@ -1563,13 +1563,17 @@ export const router = t.router({
     ),
 
   serverStart: t.procedure
-    .input(
-      z.object({
-        target: z.string().min(1),
-        extraArgs: z.array(z.string()).optional(),
-        timeoutSeconds: z.number().int().positive().max(600).optional(),
-        skipTuned: z.boolean().optional(),
-      }),
+      .input(
+        z.object({
+          target: z.string().min(1),
+          extraArgs: z.array(z.string()).optional(),
+          endpoint: z.object({
+            host: z.string().optional(),
+            port: z.number().int().min(1).max(65535).optional(),
+          }).optional(),
+          timeoutSeconds: z.number().int().positive().max(600).optional(),
+          skipTuned: z.boolean().optional(),
+        }),
     )
     .subscription(async function* ({ input, signal }) {
       yield* bridgeEventStream<ServerStartEvent>(
@@ -1578,6 +1582,7 @@ export const router = t.router({
           const result = await serverMod.startServer({
             target: input.target,
             extraArgs: input.extraArgs,
+            endpoint: input.endpoint,
             timeoutSeconds: input.timeoutSeconds,
             skipTuned: input.skipTuned,
             signal: sig,

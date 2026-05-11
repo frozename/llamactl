@@ -42,8 +42,13 @@ function serverLog(resolved: ResolvedEnv): string {
   return join(resolved.LLAMA_CPP_LOGS, 'server.log');
 }
 
-export function endpoint(resolved: ResolvedEnv = resolveEnv()): string {
-  return `http://${resolved.LLAMA_CPP_HOST}:${resolved.LLAMA_CPP_PORT}`;
+export function endpoint(
+  resolved: ResolvedEnv = resolveEnv(),
+  override?: { host?: string; port?: number | string },
+): string {
+  const host = override?.host ?? resolved.LLAMA_CPP_HOST;
+  const port = override?.port ?? resolved.LLAMA_CPP_PORT;
+  return `http://${host}:${port}`;
 }
 
 /**
@@ -272,6 +277,8 @@ export interface StartServerOptions {
   target: string;
   /** Additional arguments appended to the llama-server invocation. */
   extraArgs?: string[];
+  /** Optional endpoint override from the workload manifest. */
+  endpoint?: { host?: string; port?: number };
   /** How long to wait for /health to return 200 before giving up. */
   timeoutSeconds?: number;
   /** Skip tuned-profile arg lookup even when LLAMA_CPP_USE_TUNED_ARGS is on. */
@@ -420,12 +427,15 @@ export async function startServer(
 ): Promise<StartServerResult> {
   const env = opts.env ?? process.env;
   const resolved = opts.resolved ?? resolveEnv(env);
+  const launchEndpoint = opts.endpoint;
+  const launchHost = launchEndpoint?.host ?? resolved.LLAMA_CPP_HOST;
+  const launchPort = launchEndpoint?.port ?? resolved.LLAMA_CPP_PORT;
   const rel = resolveTarget(opts.target, env);
   if (!rel) {
     return {
       ok: false,
       pid: null,
-      endpoint: endpoint(resolved),
+      endpoint: endpoint(resolved, launchEndpoint),
       advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile: null,
       retried: false,
@@ -437,7 +447,7 @@ export async function startServer(
     return {
       ok: false,
       pid: null,
-      endpoint: endpoint(resolved),
+      endpoint: endpoint(resolved, launchEndpoint),
       advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile: null,
       retried: false,
@@ -449,7 +459,7 @@ export async function startServer(
     return {
       ok: false,
       pid: null,
-      endpoint: endpoint(resolved),
+      endpoint: endpoint(resolved, launchEndpoint),
       advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile: null,
       retried: false,
@@ -467,12 +477,12 @@ export async function startServer(
   // either fail silently or land on a duplicate port that the
   // readiness probe would never resolve correctly. Fail fast with
   // the offending HTTP code so the operator knows what to kill.
-  const portConflictHint = await detectPortConflict(endpoint(resolved));
+  const portConflictHint = await detectPortConflict(endpoint(resolved, launchEndpoint));
   if (portConflictHint) {
     return {
       ok: false,
       pid: null,
-      endpoint: endpoint(resolved),
+      endpoint: endpoint(resolved, launchEndpoint),
       advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile: null,
       retried: false,
@@ -511,14 +521,16 @@ export async function startServer(
     modelPath,
     args: launchArgs,
     resolved,
+    host: launchHost,
+    port: launchPort,
     onEvent: opts.onEvent,
   });
   writeServerPid(resolved, pid);
   writeServerState(resolved, {
     rel,
     extraArgs: extra,
-    host: resolved.LLAMA_CPP_HOST,
-    port: resolved.LLAMA_CPP_PORT,
+    host: launchHost,
+    port: String(launchPort),
     pid,
     startedAt: new Date().toISOString(),
     tunedProfile,
@@ -539,7 +551,7 @@ export async function startServer(
   }
 
   const timeoutSeconds = opts.timeoutSeconds ?? 60;
-  const healthUrl = `${endpoint(resolved)}/health`;
+  const healthUrl = `${endpoint(resolved, launchEndpoint)}/health`;
   let readyResult = await pollReady(pid, healthUrl, timeoutSeconds, opts.onEvent, opts.signal);
   let outcome = readyResult.outcome;
   if (outcome === 'aborted') {
@@ -549,7 +561,7 @@ export async function startServer(
     return {
       ok: false,
       pid: null,
-      endpoint: endpoint(resolved),
+      endpoint: endpoint(resolved, launchEndpoint),
       advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile,
       retried: false,
@@ -558,11 +570,11 @@ export async function startServer(
   }
   if (outcome === 'ready') {
     opts.signal?.removeEventListener('abort', killOnAbort);
-    opts.onEvent?.({ type: 'ready', pid, endpoint: endpoint(resolved) });
+    opts.onEvent?.({ type: 'ready', pid, endpoint: endpoint(resolved, launchEndpoint) });
     return {
       ok: true,
       pid,
-      endpoint: endpoint(resolved),
+      endpoint: endpoint(resolved, launchEndpoint),
       advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile,
       retried: false,
@@ -580,6 +592,8 @@ export async function startServer(
       modelPath,
       args: retryArgs,
       resolved,
+      host: launchHost,
+      port: launchPort,
       onEvent: opts.onEvent,
     });
     writeServerPid(resolved, retryPid);
@@ -597,8 +611,8 @@ export async function startServer(
       return {
         ok: false,
         pid: null,
-        endpoint: endpoint(resolved),
-      advertisedEndpoint: advertisedEndpoint(resolved),
+        endpoint: endpoint(resolved, launchEndpoint),
+        advertisedEndpoint: advertisedEndpoint(resolved),
         tunedProfile,
         retried: true,
         error: 'Start aborted by caller',
@@ -606,12 +620,12 @@ export async function startServer(
     }
     if (outcome === 'ready') {
       opts.signal?.removeEventListener('abort', killOnAbort);
-      opts.onEvent?.({ type: 'ready', pid: retryPid, endpoint: endpoint(resolved) });
+      opts.onEvent?.({ type: 'ready', pid: retryPid, endpoint: endpoint(resolved, launchEndpoint) });
       return {
         ok: true,
         pid: retryPid,
-        endpoint: endpoint(resolved),
-      advertisedEndpoint: advertisedEndpoint(resolved),
+        endpoint: endpoint(resolved, launchEndpoint),
+        advertisedEndpoint: advertisedEndpoint(resolved),
         tunedProfile,
         retried: true,
       };
@@ -633,7 +647,7 @@ export async function startServer(
     return {
       ok: false,
       pid,
-      endpoint: endpoint(resolved),
+      endpoint: endpoint(resolved, launchEndpoint),
       advertisedEndpoint: advertisedEndpoint(resolved),
       tunedProfile,
       retried,
@@ -645,8 +659,8 @@ export async function startServer(
   return {
     ok: false,
     pid: null,
-    endpoint: endpoint(resolved),
-      advertisedEndpoint: advertisedEndpoint(resolved),
+    endpoint: endpoint(resolved, launchEndpoint),
+    advertisedEndpoint: advertisedEndpoint(resolved),
     tunedProfile,
     retried,
     error: 'llama-server exited before becoming ready',
@@ -658,6 +672,8 @@ interface LaunchArgs {
   modelPath: string;
   args: string[];
   resolved: ResolvedEnv;
+  host?: string;
+  port?: number | string;
   onEvent?: (e: ServerEvent) => void;
 }
 
@@ -668,8 +684,8 @@ async function launchBackground(opts: LaunchArgs): Promise<number> {
   const fullArgs = [
     '-m', opts.modelPath,
     '--alias', opts.resolved.LLAMA_CPP_SERVER_ALIAS,
-    '--host', opts.resolved.LLAMA_CPP_HOST,
-    '--port', opts.resolved.LLAMA_CPP_PORT,
+    '--host', opts.host ?? opts.resolved.LLAMA_CPP_HOST,
+    '--port', opts.port ?? opts.resolved.LLAMA_CPP_PORT,
     '-ngl', '999',
     ...opts.args,
   ];

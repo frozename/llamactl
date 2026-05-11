@@ -25,9 +25,9 @@ export interface WorkloadClient {
     }>;
   };
   serverStop: { mutate(input?: { graceSeconds?: number }): Promise<unknown> };
-  serverStart: {
-    subscribe(
-      input: { target: string; extraArgs?: string[]; timeoutSeconds?: number },
+    serverStart: {
+      subscribe(
+      input: { target: string; extraArgs?: string[]; endpoint?: { host?: string; port?: number }; timeoutSeconds?: number },
       callbacks: SubscribeCallbacks,
     ): Unsubscribable;
   };
@@ -382,6 +382,7 @@ export async function applyOne(
       {
         target: desiredRel,
         ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
+        ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
         timeoutSeconds: manifest.spec.timeoutSeconds,
       },
       {
