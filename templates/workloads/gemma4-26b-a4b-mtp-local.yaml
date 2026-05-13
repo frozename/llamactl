@@ -21,6 +21,9 @@ metadata:
 spec:
   binary: /Volumes/WorkSSD/src/llama.cpp-atomic/build/bin/llama-server
   node: local
+  enabled: true
+  resources:
+    expectedMemoryGiB: 18
   target:
     kind: rel
     value: gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf

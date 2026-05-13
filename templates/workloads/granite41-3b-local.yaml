@@ -15,6 +15,9 @@ metadata:
     role: agentic
 spec:
   node: local
+  enabled: true
+  resources:
+    expectedMemoryGiB: 3
   target:
     kind: alias
     value: granite41-3b-q4

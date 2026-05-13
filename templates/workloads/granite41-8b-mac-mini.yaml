@@ -31,6 +31,9 @@ metadata:
     role: agentic
 spec:
   node: mac-mini
+  enabled: true
+  resources:
+    expectedMemoryGiB: 7
   target:
     kind: rel
     value: granite-4.1-8b-GGUF/granite-4.1-8b-Q4_K_M.gguf
