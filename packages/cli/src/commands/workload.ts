@@ -14,7 +14,7 @@ import {
 import { getNodeClientByName } from '../dispatcher.js';
 import { makeSpecArtifactResolver } from './noderun-helpers.js';
 
-const APPLY_USAGE = `Usage: llamactl apply -f <manifest.yaml>
+const APPLY_USAGE = `Usage: llamactl apply -f <manifest.yaml> [--evict <name>]... [--force]
 
 Reconcile a ModelRun manifest against the target node:
   * If the node already runs the same rel with the same extraArgs,
@@ -48,11 +48,15 @@ remove the manifest file from the workloads directory.
 interface ApplyFlags {
   file: string;
   json: boolean;
+  evict: string[];
+  force: boolean;
 }
 
 function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
   let file = '';
   let json = false;
+  const evict: string[] = [];
+  let force = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '-f' || arg === '--file') {
@@ -61,6 +65,16 @@ function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
       file = arg.slice('--file='.length);
     } else if (arg === '--json') {
       json = true;
+    } else if (arg === '--evict') {
+      const value = args[++i] ?? '';
+      if (!value) return { error: 'apply: --evict requires a value' };
+      evict.push(value);
+    } else if (arg.startsWith('--evict=')) {
+      const value = arg.slice('--evict='.length);
+      if (!value) return { error: 'apply: --evict requires a value' };
+      evict.push(value);
+    } else if (arg === '--force') {
+      force = true;
     } else if (arg === '-h' || arg === '--help') {
       return { error: 'help' };
     } else if (arg.startsWith('-')) {
@@ -72,7 +86,22 @@ function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
     }
   }
   if (!file) return { error: 'apply: -f <manifest.yaml> is required' };
-  return { file, json };
+  return { file, json, evict, force };
+}
+
+export function stampApplyAnnotations(
+  manifest: workloadSchema.ModelRun,
+  flags: Pick<ApplyFlags, 'evict' | 'force'>,
+): workloadSchema.ModelRun {
+  if (flags.evict.length === 0 && !flags.force) return manifest;
+  const annotations = manifest.metadata.annotations;
+  if (flags.evict.length > 0) {
+    annotations['llamactl.io/evict'] = flags.evict.join(',');
+  }
+  if (flags.force) {
+    annotations['llamactl.io/force-admit'] = 'true';
+  }
+  return manifest;
 }
 
 export async function runApply(args: string[]): Promise<number> {
@@ -100,13 +129,18 @@ export async function runApply(args: string[]): Promise<number> {
   if (kind === 'NodeRun') {
     return applyNodeRunFromRaw(raw, parsed.json);
   }
-  return applyModelRunFromRaw(raw, parsed.json);
+  return applyModelRunFromRaw(raw, parsed.json, parsed);
 }
 
-async function applyModelRunFromRaw(raw: string, json: boolean): Promise<number> {
+async function applyModelRunFromRaw(
+  raw: string,
+  json: boolean,
+  flags: Pick<ApplyFlags, 'evict' | 'force'>,
+): Promise<number> {
   let manifest: workloadSchema.ModelRun;
   try {
     manifest = workloadStore.parseWorkload(raw);
+    stampApplyAnnotations(manifest, flags);
   } catch (err) {
     process.stderr.write(`apply: manifest rejected: ${(err as Error).message}\n`);
     return 1;
