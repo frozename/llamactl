@@ -1,6 +1,9 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { startSearchIngest, stopSearchIngest } from '../search/ingest/lifecycle.js';
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
 import { openaiProxy, workloadRuntime } from '@llamactl/core';
+import { resolveEnv } from '../../../core/src/env.js';
+import { migrateLegacySingletonRuntime } from '../../../core/src/workloadRuntime.js';
 import { router as appRouter } from '../router.js';
 import { unauthorizedResponse, verifyBearer } from './auth.js';
 import { loadCert } from './tls.js';
@@ -32,6 +35,9 @@ import {
   type TunnelServer,
   type TunnelState,
 } from '../tunnel/index.js';
+import { join } from 'node:path';
+import { listWorkloads, saveWorkload } from '../workload/store.js';
+import type { ModelRun } from '../workload/schema.js';
 
 export interface StartAgentOptions {
   bindHost?: string;          // default '127.0.0.1'
@@ -119,6 +125,70 @@ export interface RunningAgent {
   tunnelClient?: TunnelClient;
 }
 
+function synthesizeTransientWorkload(
+  workloadName: string,
+  statePath: string,
+): void {
+  if (!existsSync(statePath)) return;
+  try {
+    const raw = readFileSync(statePath, 'utf8');
+    const parsed = JSON.parse(raw) as {
+      rel?: string;
+      extraArgs?: string[];
+      host?: string;
+      port?: string | number;
+      binary?: string;
+    };
+    if (typeof parsed.rel !== 'string') return;
+    const transient: ModelRun = {
+      apiVersion: 'llamactl/v1',
+      kind: 'ModelRun',
+      metadata: { name: workloadName, labels: {}, annotations: {} },
+      spec: {
+        node: 'local',
+        enabled: true,
+        target: { kind: 'rel', value: parsed.rel },
+        extraArgs: Array.isArray(parsed.extraArgs) ? parsed.extraArgs : [],
+        workers: [],
+        restartPolicy: 'Never',
+        timeoutSeconds: 60,
+        ...(typeof parsed.host === 'string' || typeof parsed.port === 'number'
+          ? {
+              endpoint: {
+                ...(typeof parsed.host === 'string' ? { host: parsed.host } : {}),
+                ...(typeof parsed.port === 'number' ? { port: parsed.port } : {}),
+              },
+            }
+          : {}),
+        ...(typeof parsed.binary === 'string' ? { binary: parsed.binary } : {}),
+        gateway: false,
+      },
+    };
+    saveWorkload(transient);
+  } catch {
+    // Best effort only; the migrated runtime files are the source of truth.
+  }
+}
+
+export function runStartupMigration(): void {
+  try {
+    const resolved = resolveEnv();
+    const migration = migrateLegacySingletonRuntime(resolved, listWorkloads());
+    if (migration.kind === 'migrated') {
+      console.log(`[migration] re-homed legacy runtime under workload '${migration.workload}'`);
+    } else if (migration.kind === 'synthesized') {
+      console.log(`[migration] no manifest matched legacy state; synthesized '${migration.workload}'`);
+      synthesizeTransientWorkload(
+        migration.workload,
+        join(resolved.LOCAL_AI_RUNTIME_DIR, 'workloads', migration.workload, 'llama-server.state'),
+      );
+    }
+  } catch {
+    // Best effort only. If the legacy runtime path is unavailable or
+    // unwritable, the agent still needs to start and serve the current state.
+  }
+}
+
 /**
  * Starts a Bun HTTP(S) server that exposes the llamactl tRPC router
  * behind bearer-token auth. The fetchRequestHandler is the same surface
@@ -144,6 +214,8 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   };
   process.on('uncaughtException', captureFatal('uncaughtException'));
   process.on('unhandledRejection', captureFatal('unhandledRejection'));
+
+  runStartupMigration();
 
   startSearchIngest().catch(() => {});
   agentInfo.set(

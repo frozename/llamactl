@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRemoteNodeClient } from '../src/client/node-client.js';
 import { generateToken } from '../src/server/auth.js';
-import { startAgentServer, type RunningAgent } from '../src/server/serve.js';
+import { startAgentServer, runStartupMigration, type RunningAgent } from '../src/server/serve.js';
 import { generateSelfSignedCert } from '../src/server/tls.js';
+import { loadWorkload } from '../src/workload/store.js';
 
 let dir: string;
 
@@ -145,5 +146,64 @@ describe('startAgentServer (TLS, pinned cert)', () => {
     } finally {
       await srv2.stop();
     }
+  });
+});
+
+describe('startAgentServer migration bootstrap', () => {
+  let runtimeDir: string;
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env.DEV_STORAGE = dir;
+    runtimeDir = join(dir, 'runtime');
+    process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
+    mkdirSync(runtimeDir, { recursive: true });
+    writeFileSync(join(runtimeDir, 'llama-server.pid'), '12345\n');
+    writeFileSync(
+      join(runtimeDir, 'llama-server.state'),
+      JSON.stringify({
+        rel: 'granite/granite-4.1-8b-Q4_K_M.gguf',
+        extraArgs: ['--ctx-size', '4096'],
+        host: '127.0.0.1',
+        port: 8181,
+        binary: '/fake/bin/llama-server',
+        pid: 12345,
+        startedAt: new Date().toISOString(),
+        tunedProfile: null,
+      }),
+    );
+    writeFileSync(join(runtimeDir, 'llama-server.log'), 'legacy log');
+    runStartupMigration();
+  });
+
+  afterEach(() => {
+    for (const key of ['DEV_STORAGE', 'LOCAL_AI_RUNTIME_DIR']) {
+      if (originalEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnv[key]!;
+    }
+  });
+
+  test('re-homes legacy runtime and persists a synthesized manifest', () => {
+    const manifestFiles = readdirSync(join(dir, 'workloads')).filter((name) => name.endsWith('.yaml'));
+    expect(manifestFiles).toHaveLength(1);
+    const manifestName = manifestFiles[0]!.replace(/\.yaml$/, '');
+    const workloadDir = join(runtimeDir, 'workloads', manifestName);
+    const manifestPath = join(dir, 'workloads', manifestFiles[0]!);
+    expect(existsSync(join(workloadDir, 'llama-server.pid'))).toBe(true);
+    expect(existsSync(join(workloadDir, 'llama-server.state'))).toBe(true);
+    expect(existsSync(join(workloadDir, 'llama-server.log'))).toBe(true);
+    expect(existsSync(join(runtimeDir, 'llama-server.pid'))).toBe(false);
+    expect(existsSync(manifestPath)).toBe(true);
+
+    const manifest = loadWorkload(manifestPath);
+    expect(manifest.metadata.name).toMatch(/^imperative-\d+$/);
+    expect(manifest.spec.node).toBe('local');
+    expect(manifest.spec.target).toEqual({
+      kind: 'rel',
+      value: 'granite/granite-4.1-8b-Q4_K_M.gguf',
+    });
+    expect(manifest.spec.endpoint).toEqual({ host: '127.0.0.1', port: 8181 });
+    expect(manifest.spec.extraArgs).toEqual(['--ctx-size', '4096']);
+    expect(manifest.spec.restartPolicy).toBe('Never');
   });
 });
