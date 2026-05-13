@@ -21,6 +21,9 @@ print "\n[2/3] cli e2e"
 print "\n[3/3] shell smoke (against live \$DEV_STORAGE)"
 zsh "$ROOT/test/shell-smoke.zsh"
 
+print "\n[4/4] multi-workload smoke"
+zsh "$ROOT/test/multi-workload.zsh"
+
 print "\n=========================================="
 print "  all green"
 print "=========================================="
