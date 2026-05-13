@@ -1,0 +1,54 @@
+ggml_metal_device_init: tensor API disabled for pre-M5 and pre-A19 devices
+ggml_metal_library_init: using embedded metal library
+ggml_metal_library_init: turbo3 using 4-mag LUT (pre-M5 hardware)
+ggml_metal_library_init: turbo3 sparse V dequant enabled (opt-out: TURBO_SPARSE_V=0)
+ggml_metal_library_init: loaded in 0.044 sec
+ggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)
+ggml_metal_device_init: GPU name:   MTL0
+ggml_metal_device_init: GPU family: MTLGPUFamilyApple9  (1009)
+ggml_metal_device_init: GPU family: MTLGPUFamilyCommon3 (3003)
+ggml_metal_device_init: GPU family: MTLGPUFamilyMetal4  (5002)
+ggml_metal_device_init: simdgroup reduction   = true
+ggml_metal_device_init: simdgroup matrix mul. = true
+ggml_metal_device_init: has unified memory    = true
+ggml_metal_device_init: has bfloat            = true
+ggml_metal_device_init: has tensor            = false
+ggml_metal_device_init: use residency sets    = true
+ggml_metal_device_init: use shared buffers    = true
+ggml_metal_device_init: recommendedMaxWorkingSetSize  = 40200.90 MB
+| model                          |       size |     params | backend    | threads | n_ubatch | type_k | type_v | fa |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | -------: | -----: | -----: | -: | --------------: | -------------------: |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      256 |   q8_0 |   q8_0 |  1 |           pp512 |        385.59 ± 0.50 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      256 |   q8_0 |   q8_0 |  1 |           tg128 |         39.94 ± 0.16 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      256 |   q8_0 |    f16 |  1 |           pp512 |        291.08 ± 1.97 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      256 |   q8_0 |    f16 |  1 |           tg128 |         17.74 ± 8.59 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      256 |    f16 |   q8_0 |  1 |           pp512 |        218.39 ± 5.79 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      256 |    f16 |   q8_0 |  1 |           tg128 |         11.78 ± 8.93 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      256 |    f16 |    f16 |  1 |           pp512 |        391.91 ± 0.09 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      256 |    f16 |    f16 |  1 |           tg128 |         35.63 ± 7.95 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      512 |   q8_0 |   q8_0 |  1 |           pp512 |       194.12 ± 69.55 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      512 |   q8_0 |   q8_0 |  1 |           tg128 |        13.87 ± 11.85 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      512 |   q8_0 |    f16 |  1 |           pp512 |        272.76 ± 6.59 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      512 |   q8_0 |    f16 |  1 |           tg128 |         19.71 ± 1.46 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      512 |    f16 |   q8_0 |  1 |           pp512 |        224.02 ± 2.39 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      512 |    f16 |   q8_0 |  1 |           tg128 |         23.63 ± 0.92 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      512 |    f16 |    f16 |  1 |           pp512 |      142.35 ± 148.54 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |      512 |    f16 |    f16 |  1 |           tg128 |        31.26 ± 12.07 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     1024 |   q8_0 |   q8_0 |  1 |           pp512 |       340.44 ± 83.87 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     1024 |   q8_0 |   q8_0 |  1 |           tg128 |        23.85 ± 11.81 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     1024 |   q8_0 |    f16 |  1 |           pp512 |       284.61 ± 12.68 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     1024 |   q8_0 |    f16 |  1 |           tg128 |         11.75 ± 6.12 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     1024 |    f16 |   q8_0 |  1 |           pp512 |       219.12 ± 12.43 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     1024 |    f16 |   q8_0 |  1 |           tg128 |         13.53 ± 2.56 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     1024 |    f16 |    f16 |  1 |           pp512 |        356.76 ± 1.32 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     1024 |    f16 |    f16 |  1 |           tg128 |         33.35 ± 6.54 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     2048 |   q8_0 |   q8_0 |  1 |           pp512 |        391.91 ± 0.55 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     2048 |   q8_0 |   q8_0 |  1 |           tg128 |         38.70 ± 1.24 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     2048 |   q8_0 |    f16 |  1 |           pp512 |       280.92 ± 18.15 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     2048 |   q8_0 |    f16 |  1 |           tg128 |         18.14 ± 2.90 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     2048 |    f16 |   q8_0 |  1 |           pp512 |      151.32 ± 129.24 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     2048 |    f16 |   q8_0 |  1 |           tg128 |         16.91 ± 1.57 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     2048 |    f16 |    f16 |  1 |           pp512 |      167.38 ± 136.26 |
+| granite 3B Q4_K - Medium       |   4.98 GiB |     8.79 B | MTL,BLAS   |      10 |     2048 |    f16 |    f16 |  1 |           tg128 |          9.16 ± 4.59 |
+
+build: 889369276 (9017)
