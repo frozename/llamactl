@@ -52,7 +52,7 @@ spec:
     - --flash-attn
     - "on"
     - --ctx-size
-    - "32768"
+    - "65536"
     - --no-warmup
     - -np
     - "1"
