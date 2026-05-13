@@ -170,7 +170,7 @@ export async function runExpose(args: string[]): Promise<number> {
   // advertised one for ember synth.
   let advertised = result.statusSection.endpoint ?? null;
   try {
-    const status = await getNodeClientByName(node).serverStatus.query();
+    const status = await getNodeClientByName(node).serverStatus.query({ workload: workloadName });
     advertised = status.advertisedEndpoint ?? advertised;
   } catch {
     // Not fatal — fall back to whatever applyOne recorded.

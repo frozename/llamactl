@@ -271,7 +271,7 @@ async function inspect(
 
   try {
     const client = getNodeClientByName(manifest.spec.node);
-    const status = await client.serverStatus.query();
+    const status = await client.serverStatus.query({ workload: manifest.metadata.name });
     const desired = manifest.spec.target.value;
     const running = status.state === 'up';
     let phase: WorkloadRow['phase'] = 'Stopped';
@@ -379,7 +379,7 @@ export async function runDescribe(args: string[]): Promise<number> {
   let liveStatus: unknown = null;
   try {
     const client = getNodeClientByName(manifest.spec.node);
-    liveStatus = await client.serverStatus.query();
+    liveStatus = await client.serverStatus.query({ workload: manifest.metadata.name });
   } catch (err) {
     liveStatus = { error: (err as Error).message };
   }
@@ -441,12 +441,12 @@ export async function runDelete(args: string[]): Promise<number> {
   if (!keepRunning) {
     try {
       const client = getNodeClientByName(manifest.spec.node);
-      const status = await client.serverStatus.query();
+      const status = await client.serverStatus.query({ workload: manifest.metadata.name });
       // Only stop the server if the running rel matches this workload's
       // target. If something else is running there (perhaps another
       // workload was applied on top), leave it alone.
       if (status.state === 'up' && status.rel === manifest.spec.target.value) {
-        await client.serverStop.mutate({ graceSeconds: 5 });
+        await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
         process.stdout.write(`stopped server on node ${manifest.spec.node}\n`);
       } else if (status.state === 'up') {
         process.stdout.write(

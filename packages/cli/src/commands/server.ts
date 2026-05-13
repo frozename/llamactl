@@ -1,26 +1,29 @@
 import { env as envMod, server, serverLogs as serverLogsMod } from '@llamactl/core';
+import { workloadSchema, workloadStore } from '@llamactl/remote';
 import {
   getGlobals,
   getNodeClient,
   isLocalDispatch,
+  resolveEffectiveNodeName,
   matchDoneEvent,
   subscribeRemote,
 } from '../dispatcher.js';
+import { resolveWorkloadName } from './_workload-resolve.js';
 
 const USAGE = `Usage: llamactl server <subcommand>
 
 Subcommands:
-  start <target> [--timeout=<s>] [--no-tuned] [--json] [-- extra-args]
+  start <target> [--name <workload>] [--timeout=<s>] [--no-tuned] [--json] [-- extra-args]
       Launch llama-server in the background with the tuned profile
       args (when available), wait for /health=200 up to <timeout>
       seconds (default 60), and record the PID. Everything after \`--\`
       is forwarded to llama-server as-is.
 
-  stop [--grace=<s>] [--json]
+  stop [--name <workload>] [--grace=<s>] [--json]
       SIGTERM the tracked llama-server PID and escalate to SIGKILL
       after <grace> seconds (default 5).
 
-  status [--json]
+  status [--name <workload>] [--json]
       Report whether llama-server is reachable at the configured
       endpoint and what PID (if any) is tracked.
 
@@ -68,20 +71,41 @@ async function runStart(args: string[]): Promise<number> {
   let skipTuned = false;
   let timeoutSeconds = 60;
   let sawDashDash = false;
-  for (const arg of args) {
+  let workloadExplicit: string | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
     if (sawDashDash) {
       extra.push(arg);
       continue;
     }
     if (arg === '--') {
       sawDashDash = true;
+      continue;
     } else if (arg === '--json') {
       json = true;
+      continue;
     } else if (arg === '--no-tuned') {
       skipTuned = true;
+      continue;
     } else if (arg.startsWith('--timeout=')) {
       const n = Number.parseInt(arg.slice('--timeout='.length), 10);
       if (Number.isFinite(n) && n > 0) timeoutSeconds = n;
+      continue;
+    } else if (arg === '--name') {
+      workloadExplicit = args[i + 1];
+      if (!workloadExplicit) {
+        process.stderr.write('server start: --name requires a value\n');
+        return 1;
+      }
+      i += 1;
+      continue;
+    } else if (arg.startsWith('--name=')) {
+      workloadExplicit = arg.slice('--name='.length);
+      if (!workloadExplicit) {
+        process.stderr.write('server start: --name requires a value\n');
+        return 1;
+      }
+      continue;
     } else if (arg === '-h' || arg === '--help') {
       process.stdout.write(USAGE);
       return 0;
@@ -100,18 +124,51 @@ async function runStart(args: string[]): Promise<number> {
     return 1;
   }
 
+  const resolved = envMod.resolveEnv();
+  const node = resolveEffectiveNodeName();
+  const workload = resolveWorkloadName(
+    workloadExplicit,
+    resolved,
+    { synthesizeIfEmpty: true },
+  );
+
+  const workloadKind: 'rel' | 'alias' = target.includes('/') || target.endsWith('.gguf')
+    ? 'rel'
+    : 'alias';
+  const manifest: workloadSchema.ModelRun = {
+    apiVersion: 'llamactl/v1',
+    kind: 'ModelRun',
+    metadata: { name: workload, labels: {}, annotations: {} },
+    spec: {
+      node,
+      enabled: true,
+      target: { kind: workloadKind, value: target },
+      extraArgs: extra,
+      workers: [],
+      restartPolicy: 'Always',
+      timeoutSeconds,
+      gateway: false,
+    },
+  };
+  workloadStore.saveWorkload(manifest);
+
   let result: Awaited<ReturnType<typeof server.startServer>>;
   if (isLocalDispatch()) {
     result = await server.startServer({
+      key: { name: workload },
       target,
       extraArgs: extra,
       timeoutSeconds,
       skipTuned,
       onEvent: forwardEvent,
+      resolved,
     });
   } else {
+    const input: { workload: string; target: string; extraArgs?: string[]; timeoutSeconds?: number; skipTuned?: boolean } = {
+      workload,
+      target,
+    };
     try {
-      const input: { target: string; extraArgs?: string[]; timeoutSeconds?: number; skipTuned?: boolean } = { target };
       if (extra.length > 0) input.extraArgs = extra;
       if (timeoutSeconds !== 60) input.timeoutSeconds = timeoutSeconds;
       if (skipTuned) input.skipTuned = skipTuned;
@@ -141,11 +198,26 @@ async function runStart(args: string[]): Promise<number> {
 async function runStop(args: string[]): Promise<number> {
   let json = false;
   let graceSeconds = 5;
-  for (const arg of args) {
+  let name: string | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
     if (arg === '--json') json = true;
     else if (arg.startsWith('--grace=')) {
       const n = Number.parseInt(arg.slice('--grace='.length), 10);
       if (Number.isFinite(n) && n > 0) graceSeconds = n;
+    } else if (arg === '--name') {
+      name = args[i + 1];
+      if (!name) {
+        process.stderr.write('server stop: --name requires a value\n');
+        return 1;
+      }
+      i += 1;
+    } else if (arg.startsWith('--name=')) {
+      name = arg.slice('--name='.length);
+      if (!name) {
+        process.stderr.write('server stop: --name requires a value\n');
+        return 1;
+      }
     } else if (arg === '-h' || arg === '--help') {
       process.stdout.write(USAGE);
       return 0;
@@ -154,12 +226,19 @@ async function runStop(args: string[]): Promise<number> {
       return 1;
     }
   }
+  let workload: string;
+  try {
+    workload = resolveWorkloadName(name, envMod.resolveEnv());
+  } catch (err) {
+    process.stderr.write(`server stop: ${(err as Error).message}\n`);
+    return 1;
+  }
   let result: Awaited<ReturnType<typeof server.stopServer>>;
   if (isLocalDispatch()) {
-    result = await server.stopServer({ graceSeconds });
+    result = await server.stopServer({ key: { name: workload }, graceSeconds });
   } else {
     try {
-      result = await getNodeClient().serverStop.mutate({ graceSeconds }) as typeof result;
+      result = await getNodeClient().serverStop.mutate({ workload, graceSeconds }) as typeof result;
     } catch (err) {
       process.stderr.write(`server stop: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
       return 1;
@@ -177,9 +256,24 @@ async function runStop(args: string[]): Promise<number> {
 
 async function runStatus(args: string[]): Promise<number> {
   let json = false;
-  for (const arg of args) {
+  let name: string | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
     if (arg === '--json') json = true;
-    else if (arg === '-h' || arg === '--help') {
+    else if (arg === '--name') {
+      name = args[i + 1];
+      if (!name) {
+        process.stderr.write('server status: --name requires a value\n');
+        return 1;
+      }
+      i += 1;
+    } else if (arg.startsWith('--name=')) {
+      name = arg.slice('--name='.length);
+      if (!name) {
+        process.stderr.write('server status: --name requires a value\n');
+        return 1;
+      }
+    } else if (arg === '-h' || arg === '--help') {
       process.stdout.write(USAGE);
       return 0;
     } else if (arg.startsWith('--')) {
@@ -188,12 +282,18 @@ async function runStatus(args: string[]): Promise<number> {
     }
   }
   let status: Awaited<ReturnType<typeof server.serverStatus>>;
+  let workload: string;
+  try {
+    workload = resolveWorkloadName(name, envMod.resolveEnv());
+  } catch (err) {
+    process.stderr.write(`server status: ${(err as Error).message}\n`);
+    return 1;
+  }
   if (isLocalDispatch()) {
-    const resolved = envMod.resolveEnv();
-    status = await server.serverStatus(resolved);
+    status = await server.serverStatus({ name: workload }, envMod.resolveEnv());
   } else {
     try {
-      status = await getNodeClient().serverStatus.query() as typeof status;
+      status = await getNodeClient().serverStatus.query({ workload }) as typeof status;
     } catch (err) {
       process.stderr.write(`server status: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
       return 1;

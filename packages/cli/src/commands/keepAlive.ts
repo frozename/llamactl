@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
-import { keepAlive } from '@llamactl/core';
+import { env as envMod, keepAlive } from '@llamactl/core';
 import { getGlobals, getNodeClient, isLocalDispatch } from '../dispatcher.js';
+import { resolveWorkloadName } from './_workload-resolve.js';
 
 const USAGE = `Usage: llamactl keep-alive <subcommand>
 
@@ -12,7 +13,7 @@ Subcommands:
       Health is polled every LLAMA_CPP_KEEP_ALIVE_INTERVAL seconds
       (default 5).
 
-  stop [--grace=<s>] [--json]
+  stop [--name <workload>] [--grace=<s>] [--json]
       Touch the supervisor's stop file and wait up to <grace> seconds
       before SIGTERM. The tracked llama-server is stopped too.
 
@@ -120,11 +121,26 @@ async function runStart(args: string[]): Promise<number> {
 async function runStop(args: string[]): Promise<number> {
   let json = false;
   let graceSeconds = 10;
-  for (const arg of args) {
+  let name: string | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
     if (arg === '--json') json = true;
     else if (arg.startsWith('--grace=')) {
       const n = Number.parseInt(arg.slice('--grace='.length), 10);
       if (Number.isFinite(n) && n > 0) graceSeconds = n;
+    } else if (arg === '--name') {
+      name = args[i + 1];
+      if (!name) {
+        process.stderr.write('keep-alive stop: --name requires a value\n');
+        return 1;
+      }
+      i += 1;
+    } else if (arg.startsWith('--name=')) {
+      name = arg.slice('--name='.length);
+      if (!name) {
+        process.stderr.write('keep-alive stop: --name requires a value\n');
+        return 1;
+      }
     } else if (arg === '-h' || arg === '--help') {
       process.stdout.write(USAGE);
       return 0;
@@ -133,12 +149,21 @@ async function runStop(args: string[]): Promise<number> {
       return 1;
     }
   }
+
+  let workload: string;
+  try {
+    workload = resolveWorkloadName(name, envMod.resolveEnv());
+  } catch (err) {
+    process.stderr.write(`keep-alive stop: ${(err as Error).message}\n`);
+    return 1;
+  }
+
   let result: Awaited<ReturnType<typeof keepAlive.stopKeepAlive>>;
   if (isLocalDispatch()) {
-    result = await keepAlive.stopKeepAlive({ graceSeconds });
+    result = await keepAlive.stopKeepAlive({ key: { name: workload }, graceSeconds });
   } else {
     try {
-      result = await getNodeClient().keepAliveStop.mutate({ graceSeconds }) as typeof result;
+      result = await getNodeClient().keepAliveStop.mutate({ workload, graceSeconds }) as typeof result;
     } catch (err) {
       process.stderr.write(`keep-alive stop: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
       return 1;
@@ -222,6 +247,7 @@ async function runWorker(args: string[]): Promise<number> {
 
   try {
     await keepAlive.runKeepAliveWorker({
+      key: { name: target },
       target,
       intervalSeconds,
       maxBackoff,

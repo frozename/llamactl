@@ -321,7 +321,7 @@ describeMaybe('multinode e2e: coordinator + worker via --rpc', () => {
         // the cheapest way to read back PID + rel + extraArgs in one
         // round-trip (listOpenAIModels reads the same underlying
         // state file, so the signal is equivalent).
-        const status = await coord.client.serverStatus.query();
+        const status = await coord.client.serverStatus.query({ workload: 'e2e-tp-test' });
         expect(status.state).toBe('up');
         expect(status.rel).toBe(ggufPath.rel);
         expect(status.pid).toBeGreaterThan(0);
