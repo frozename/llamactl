@@ -1,6 +1,6 @@
 import { startSearchIngest, stopSearchIngest } from '../search/ingest/lifecycle.js';
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
-import { openaiProxy } from '@llamactl/core';
+import { openaiProxy, workloadRuntime } from '@llamactl/core';
 import { router as appRouter } from '../router.js';
 import { unauthorizedResponse, verifyBearer } from './auth.js';
 import { loadCert } from './tls.js';
@@ -174,8 +174,12 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     let status = 0;
     try {
       if (req.method === 'GET' && url.pathname === '/v1/models') {
-        const models = openaiProxy.listOpenAIModels();
-        llamaServerUp.set(models.data.length > 0 ? 1 : 0);
+        const data = workloadRuntime
+          .listLocalWorkloads()
+          .filter((e) => e.alive)
+          .flatMap((e) => openaiProxy.listOpenAIModels({ name: e.name }).data);
+        const models = { object: 'list' as const, data };
+        llamaServerUp.set(data.length > 0 ? 1 : 0);
         status = 200;
         return Response.json(models);
       }

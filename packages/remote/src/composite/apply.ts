@@ -609,7 +609,9 @@ async function teardownComponent(
       const spec = manifest.spec.workloads.find((w) => w.node === rec.ref.name);
       if (!spec) return;
       const client = opts.getWorkloadClient(spec.node);
-      await client.serverStop.mutate({ graceSeconds: 10 }).catch(() => {});
+      await client.serverStop
+        .mutate({ workload: spec.node, graceSeconds: 10 })
+        .catch(() => {});
       return;
     }
     case 'rag': {
@@ -798,7 +800,7 @@ async function destroyComponent(
       const spec = manifest.spec.workloads.find((w) => w.node === ref.name);
       if (!spec) return;
       const client = opts.getWorkloadClient(spec.node);
-      await client.serverStop.mutate({ graceSeconds: 10 });
+      await client.serverStop.mutate({ workload: spec.node, graceSeconds: 10 });
       return;
     }
     case 'rag': {

@@ -24,10 +24,11 @@ const originalEnv = { ...process.env };
 beforeAll(async () => {
   devStorage = mkdtempSync(join(tmpdir(), 'llamactl-metrics-'));
   const runtimeDir = join(devStorage, 'ai-models', 'local-ai');
-  mkdirSync(runtimeDir, { recursive: true });
-  writeFileSync(join(runtimeDir, 'llama-server.pid'), String(process.pid));
+  const workloadDir = join(runtimeDir, 'workloads', 'metrics-test');
+  mkdirSync(workloadDir, { recursive: true });
+  writeFileSync(join(workloadDir, 'llama-server.pid'), String(process.pid));
   writeFileSync(
-    join(runtimeDir, 'llama-server.state'),
+    join(workloadDir, 'llama-server.state'),
     JSON.stringify({
       rel: 'metrics-test/model.gguf',
       extraArgs: [],

@@ -166,7 +166,7 @@ describe('cluster-serverstart: remote serverStart over SSE', () => {
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('serverStart timed out')), 15_000);
       const sub = client.serverStart.subscribe(
-        { target: 'fake-repo/fake-model.gguf', timeoutSeconds: 8 },
+        { workload: 'fake-model', target: 'fake-repo/fake-model.gguf', timeoutSeconds: 8 },
         {
           onData: (e: unknown) => {
             const evt = e as Record<string, unknown>;
@@ -199,7 +199,7 @@ describe('cluster-serverstart: remote serverStart over SSE', () => {
       .toBe(`http://127.0.0.1:${fakePort}`);
 
     // Bring it down cleanly through the normal mutation path.
-    const stop = await client.serverStop.mutate({ graceSeconds: 2 });
+    const stop = await client.serverStop.mutate({ workload: 'fake-model', graceSeconds: 2 });
     expect(stop).toBeDefined();
   });
 });

@@ -933,9 +933,12 @@ export const router = t.router({
       // inline a call through the pinned-fetch path when remote,
       // and use the core listOpenAIModels directly when local.
       if (resolved.node.endpoint.startsWith('inproc://')) {
-        const { openaiProxy } = await import('@llamactl/core');
-        const res = openaiProxy.listOpenAIModels();
-        return { node: input.name, kind, models: res.data };
+        const { openaiProxy, workloadRuntime } = await import('@llamactl/core');
+        const data = workloadRuntime
+          .listLocalWorkloads()
+          .filter((e) => e.alive)
+          .flatMap((e) => openaiProxy.listOpenAIModels({ name: e.name }).data);
+        return { node: input.name, kind, models: data };
       }
       // Remote agent: scrape its /v1/models endpoint via pinned fetch.
       const token = kubecfg.resolveToken(resolved.user);
@@ -1038,7 +1041,7 @@ export const router = t.router({
         let endpoint: string | null = null;
         try {
           const client = clientForNode(cfg, nodeName);
-          const status = await client.serverStatus.query();
+          const status = await client.serverStatus.query({ workload: manifest.metadata.name });
           const desired = manifest.spec.target.value;
           if (status.state === 'up' && status.rel === desired) phase = 'Running';
           else if (status.state === 'up' && status.rel !== desired) phase = 'Mismatch';
@@ -1078,7 +1081,7 @@ export const router = t.router({
       let liveStatus: unknown;
       try {
         const client = clientForNode(cfg, manifest.spec.node);
-        liveStatus = await client.serverStatus.query();
+        liveStatus = await client.serverStatus.query({ workload: manifest.metadata.name });
       } catch (err) {
         liveStatus = { error: (err as Error).message };
       }
@@ -1149,9 +1152,12 @@ export const router = t.router({
         const cfg = kubecfg.loadConfig();
         try {
           const client = clientForNode(cfg, manifest.spec.node);
-          const status = await client.serverStatus.query();
+          const status = await client.serverStatus.query({ workload: manifest.metadata.name });
           if (status.state === 'up' && status.rel === manifest.spec.target.value) {
-            await client.serverStop.mutate({ graceSeconds: 5 });
+            await client.serverStop.mutate({
+              workload: manifest.metadata.name,
+              graceSeconds: 5,
+            });
             stops.push(`stopped llama-server on ${manifest.spec.node}`);
           }
         } catch (err) {
@@ -1569,7 +1575,9 @@ export const router = t.router({
       return presets.readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE);
     }),
 
-  serverStatus: t.procedure.query(async () => serverMod.serverStatus()),
+  serverStatus: t.procedure
+    .input(z.object({ workload: z.string().min(1) }))
+    .query(async ({ input }) => serverMod.serverStatus({ name: input.workload })),
 
   serverLogs: t.procedure
     .input(
@@ -1594,30 +1602,40 @@ export const router = t.router({
     }),
 
   serverStop: t.procedure
-    .input(z.object({ graceSeconds: z.number().int().positive().max(60).optional() }).optional())
+    .input(
+      z.object({
+        workload: z.string().min(1),
+        graceSeconds: z.number().int().positive().max(60).optional(),
+      }),
+    )
     .mutation(async ({ input }) =>
-      serverMod.stopServer({ graceSeconds: input?.graceSeconds }),
+      serverMod.stopServer({
+        key: { name: input.workload },
+        graceSeconds: input.graceSeconds,
+      }),
     ),
 
   serverStart: t.procedure
-      .input(
-        z.object({
-          target: z.string().min(1),
-          extraArgs: z.array(z.string()).optional(),
-          endpoint: z.object({
-            host: z.string().optional(),
-            port: z.number().int().min(1).max(65535).optional(),
-          }).optional(),
-          binary: z.string().optional(),
-          timeoutSeconds: z.number().int().positive().max(600).optional(),
-          skipTuned: z.boolean().optional(),
-        }),
+    .input(
+      z.object({
+        workload: z.string().min(1),
+        target: z.string().min(1),
+        extraArgs: z.array(z.string()).optional(),
+        endpoint: z.object({
+          host: z.string().optional(),
+          port: z.number().int().min(1).max(65535).optional(),
+        }).optional(),
+        binary: z.string().optional(),
+        timeoutSeconds: z.number().int().positive().max(600).optional(),
+        skipTuned: z.boolean().optional(),
+      }),
     )
     .subscription(async function* ({ input, signal }) {
       yield* bridgeEventStream<ServerStartEvent>(
         signal as AbortSignal,
         async (emit, sig) => {
           const result = await serverMod.startServer({
+            key: { name: input.workload },
             target: input.target,
             extraArgs: input.extraArgs,
             endpoint: input.endpoint,
@@ -1720,10 +1738,16 @@ export const router = t.router({
 
   keepAliveStop: t.procedure
     .input(
-      z.object({ graceSeconds: z.number().int().positive().max(60).optional() }).optional(),
+      z.object({
+        workload: z.string().min(1),
+        graceSeconds: z.number().int().positive().max(60).optional(),
+      }),
     )
     .mutation(async ({ input }) =>
-      keepAliveMod.stopKeepAlive({ graceSeconds: input?.graceSeconds }),
+      keepAliveMod.stopKeepAlive({
+        key: { name: input.workload },
+        graceSeconds: input.graceSeconds,
+      }),
     ),
 
   keepAliveStart: t.procedure

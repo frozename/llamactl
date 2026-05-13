@@ -96,9 +96,11 @@ beforeAll(async () => {
 
   // Write a sidecar state file so `/v1/models` returns a model entry.
   const pid = process.pid;
-  writeFileSync(join(runtimeDir, 'llama-server.pid'), String(pid));
+  const workloadDir = join(runtimeDir, 'workloads', 'test-model');
+  mkdirSync(workloadDir, { recursive: true });
+  writeFileSync(join(workloadDir, 'llama-server.pid'), String(pid));
   writeFileSync(
-    join(runtimeDir, 'llama-server.state'),
+    join(workloadDir, 'llama-server.state'),
     JSON.stringify({
       rel: 'test-org/test-model/model-Q4.gguf',
       extraArgs: [],

@@ -16,7 +16,7 @@ type Unsubscribable = { unsubscribe?: () => void };
 
 export interface WorkloadClient {
   serverStatus: {
-    query(): Promise<{
+    query(input: { workload: string }): Promise<{
       state: string;
       rel: string | null;
       extraArgs: string[];
@@ -28,10 +28,19 @@ export interface WorkloadClient {
       advertisedEndpoint?: string | null;
     }>;
   };
-  serverStop: { mutate(input?: { graceSeconds?: number }): Promise<unknown> };
-    serverStart: {
+  serverStop: {
+    mutate(input: { workload: string; graceSeconds?: number }): Promise<unknown>;
+  };
+  serverStart: {
     subscribe(
-      input: { target: string; extraArgs?: string[]; endpoint?: { host?: string; port?: number }; binary?: string; timeoutSeconds?: number },
+      input: {
+        workload: string;
+        target: string;
+        extraArgs?: string[];
+        endpoint?: { host?: string; port?: number };
+        binary?: string;
+        timeoutSeconds?: number;
+      },
       callbacks: SubscribeCallbacks,
     ): Unsubscribable;
   };
@@ -363,7 +372,7 @@ export async function applyOne(
     }
   }
   const client = getClient(manifest.spec.node);
-  const status = await client.serverStatus.query();
+  const status = await client.serverStatus.query({ workload: manifest.metadata.name });
 
   const desiredRel = manifest.spec.target.value;
   const desiredEndpoint = manifest.spec.endpoint;
@@ -419,7 +428,7 @@ export async function applyOne(
   let action: ApplyAction;
   if (running) {
     onEvent?.({ type: 'stop', message: `${manifest.metadata.name}: stopping mismatched server` });
-    await client.serverStop.mutate({ graceSeconds: 5 });
+    await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
     action = 'restarted';
   } else {
     action = 'started';
@@ -460,6 +469,7 @@ export async function applyOne(
     let done: StartDone | null = null;
     const sub = client.serverStart.subscribe(
       {
+        workload: manifest.metadata.name,
         target: desiredRel,
         ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
         ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),

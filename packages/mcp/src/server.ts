@@ -137,9 +137,15 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       title: 'Local llama-server status',
       description:
         'Return the control plane\'s local llama-server state: up/down, running rel, PID, endpoint, and extraArgs. Operators use this alongside workload.list to reconcile "what the manifest wants" against "what is actually serving".',
-      inputSchema: {},
+      inputSchema: {
+        workload: z
+          .string()
+          .min(1)
+          .describe('Name of the ModelRun workload to inspect.'),
+      },
     },
-    async () => toTextContent(await serverMod.serverStatus()),
+    async ({ workload }) =>
+      toTextContent(await serverMod.serverStatus({ name: workload })),
   );
 
   server.registerTool(

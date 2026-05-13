@@ -175,7 +175,7 @@ export async function dispatchOpsChatTool(
         result = await caller.env();
         break;
       case 'llamactl.server.status':
-        result = await caller.serverStatus();
+        result = await caller.serverStatus({ workload: requireString(args, 'workload') });
         break;
       case 'llamactl.node.ls':
         result = await caller.nodeList();
