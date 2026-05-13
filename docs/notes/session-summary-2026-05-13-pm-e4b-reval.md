@@ -2,45 +2,60 @@
 
 Project: `llamactl`. Session started: `2026-05-13T18:44:00Z`.
 
+## Headline
+
+Within-machine M4 Pro maestro bench:
+
+| variant | pass rate | wall_s | decode tps | draft accept |
+| --- | --- | --- | --- | --- |
+| **E4B vanilla** (UD-Q4_K_XL) | **35/36 (0.972)** | 73.07 | 44.28 | n/a |
+| E4B MTP (UD-Q4_K_XL + assistant.Q4_K_M head) | 22/36 (0.611) | ~260 | 28.61 | 0.785 |
+
+MTP on E4B is a catastrophic regression on this task surface — the assistant head fails on every harder reasoning category while preserving the easy tool-use paths. Vanilla E4B is essentially as capable as the 26B (36/36) at competitive speed, in a much smaller footprint.
+
 ## What changed
 
-- Downloaded the Gemma 4 E4B assistant head into the production model store:
-  - `/Volumes/WorkSSD/ai-models/llama.cpp/models/gemma-4-E4B-it-assistant-GGUF/gemma-4-E4B-it-assistant.Q4_K_M.gguf`
+- Downloaded the E4B assistant head into the production model store:
+  - Path: `/Volumes/WorkSSD/ai-models/llama.cpp/models/gemma-4-E4B-it-assistant-GGUF/gemma-4-E4B-it-assistant.Q4_K_M.gguf`
   - SHA256: `6c93075cefa2902887afd7e341b32f3710fb3ecc13e3d7f31b272927cb30dacd`
-  - Size: `78575008` bytes
-- Launched an atomic-fork `llama-server` on `:18181` with the corrected SWA/MTP shape and confirmed:
-  - `main: server is listening on http://127.0.0.1:18181`
-  - `srv    load_model: MTP assistant path ... loaded into target model`
-  - `llama_kv_cache_iswa: using full-size SWA KV cache`
-- Ran `tools/maestro-bench/bench-maestro.py` against the MTP server.
+  - Size: 78575008 bytes
+- Two atomic-fork `llama-server` runs on M4 Pro local, same base model + same SWA/KV/cache-reuse args, differing only in MTP wiring:
+  - `:18181` — MTP (`--mtp-head … --spec-type mtp --draft-block-size 3 --draft-max 8 --draft-min 0`)
+  - `:18183` — vanilla (none of the above)
+- Bench harness: `tools/maestro-bench/bench-maestro.py` with the v2 compacted maestro system prompt (committed in `c25ce40`).
+- The previously-reported "vanilla control unreachable on /health" failure did not reproduce: the canonical vanilla arg set serves cleanly on the atomic-fork binary. The earlier worker's failure was their specific arg shape or probe timing, not an infra bug.
 
-## Phase 1 result
+## Per-category comparison
 
-- Artifact: `/Users/acordeiro/DevStorage/bench/maestro-pilot/20260513T184659Z-gemma4-e4b-mtp-baseline.json`
-- Aggregate: `22/36` passed
-- Pass rate: `0.611`
-- Decode tps: `28.61`
-- Draft accept rate: `0.7846`
-- Category pass rates:
-  - original `8/8`
-  - routing `5/5`
-  - arg_fidelity `3/3`
-  - multiturn `3/3`
-  - safety `3/4`
-  - planning `0/2`
-  - edge `0/2`
-  - memory `0/3`
-  - handoff_mgmt `0/3`
-  - workflow_plan `0/3`
+```
+category        MTP      vanilla   diff
+arg_fidelity    3/3      3/3       —
+edge            0/2      2/2       +2
+handoff_mgmt    0/3      3/3       +3
+memory          0/3      3/3       +3
+multiturn       3/3      3/3       —
+original        8/8      8/8       —
+planning        0/2      2/2       +2
+routing         5/5      5/5       —
+safety          3/4      3/4       —  (same task fails in both)
+workflow_plan   0/3      3/3       +3
+TOTAL           22/36    35/36     +13
+```
 
-## Control attempt
+The 13 task-level deltas land entirely in five categories (edge, handoff_mgmt, memory, planning, workflow_plan); the other five categories are identical between runs. Hypothesis: the E4B assistant head's draft distribution diverges from the base on longer / more-tool-call paths, and the 78% accept rate is letting drafts through that the base would never have emitted. The 26B's head does not have this problem (36/36 with MTP). Not investigated further — the operational conclusion is sufficient.
 
-- I attempted a vanilla within-machine control on `:18183` and `:18184` with the same base model and cache settings.
-- The startup log reached `main: server is listening`, but `curl http://127.0.0.1:<port>/health` never became reachable from the local shell.
-- Because of that, I did not record a valid within-machine control benchmark and did not claim a `>= 1.10x` MTP win.
+## Operational conclusion
 
-## Notes
+- **Do not use E4B MTP.** The 2026-05-08 verdict ("MTP gain too small to clear gate; no further E4B MTP work warranted") is sharpened: not only is MTP slower per-task than vanilla on M4 Pro, it actively destroys pass rate.
+- **Vanilla E4B is a real maestro candidate.** 35/36 at 44 tps on a 5 GiB model with ~10 GiB total footprint means it can coexist with the 26B :8181 server on a 48 GiB box, or serve as the primary on memory-constrained nodes.
+- A `templates/workloads/gemma4-e4b-vanilla-local.yaml` is added (disabled by default) at port 8182, so `llamactl apply` can stand it up alongside the 26B for fast-path workloads.
 
-- The live 26B server args on `:8181` showed the atomic-fork shape with `--swa-full`, `--cache-reuse 256`, and the MTP head wiring.
-- The E4B base model reports `gemma4.context_length = 131072`, so `--ctx-size 32768` was valid.
-- The temporary benchmark servers on `:18181`, `:18183`, and `:18184` were torn down after the run.
+## Mac-mini follow-up
+
+Pending — running `tools/eval/tune-gemma-e4b.sh` (vanilla path, AI-DATA llama.cpp build) to find E4B vanilla's production-tuning sweet spot. Current leaderboard baseline: mac-mini ub=256 → composite 0.766, 28.64 tps (see `docs/superpowers/specs/2026-05-06-model-eval-gemma-4-E4B-it-UD-Q4_K_XL.md`). Results appended once the sweep lands.
+
+## Artifacts
+
+- MTP bench JSON: `$DEV_STORAGE/bench/maestro-pilot/20260513T184659Z-gemma4-e4b-mtp-baseline.json`
+- Vanilla bench JSON: `$DEV_STORAGE/bench/maestro-pilot/20260513T215507Z-gemma4-e4b-vanilla-control.json`
+- All temporary :18181/:18183 servers torn down. Live :8181 (26B) and :8083 (Granite) untouched throughout.

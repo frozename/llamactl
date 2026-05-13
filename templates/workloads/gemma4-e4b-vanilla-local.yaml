@@ -1,0 +1,65 @@
+# Gemma 4 E4B vanilla maestro candidate on `local`.
+#
+# Vanilla (no MTP) because the 2026-05-13 within-machine bench found the
+# E4B MTP assistant head catastrophically degrades pass rate on harder
+# reasoning categories (planning/edge/memory/handoff_mgmt/workflow_plan
+# all 0/N vs 100% vanilla), while vanilla E4B itself scores 35/36 (0.972)
+# on the same 36-task maestro bench at 44 tps — competitive with the 26B's
+# 36/36 @ 47-50 tps, at ~3x less RAM. The 26B MTP head works fine; only
+# the E4B head is broken on this task surface.
+#
+# Disabled by default — applied alongside the 26B :8181 server when a
+# fast-path fallback is wanted, or as a primary on memory-constrained nodes.
+#
+# Apply:
+#   llamactl apply -f templates/workloads/gemma4-e4b-vanilla-local.yaml
+#
+# Verify:
+#   llamactl get workloads
+#   curl http://127.0.0.1:8182/health
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: gemma4-e4b-vanilla-local
+  labels:
+    family: gemma4
+    role: maestro-candidate
+spec:
+  binary: /Volumes/WorkSSD/src/llama.cpp-atomic/build/bin/llama-server
+  node: local
+  enabled: false
+  resources:
+    expectedMemoryGiB: 10
+  target:
+    kind: rel
+    value: gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf
+  extraArgs:
+    - --alias
+    - gemma4-e4b-vanilla
+    - -ngl
+    - "999"
+    - -ctk
+    - f16
+    - -ctv
+    - f16
+    - --flash-attn
+    - "on"
+    - --ctx-size
+    - "32768"
+    - --no-warmup
+    - -np
+    - "1"
+    - --jinja
+    - -b
+    - "2048"
+    - -ub
+    - "1024"
+    - --reasoning
+    - "off"
+    - --swa-full
+    - --cache-reuse
+    - "256"
+  restartPolicy: Always
+  endpoint:
+    host: 127.0.0.1
+    port: 8182
