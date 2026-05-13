@@ -121,3 +121,47 @@ test('force-admit annotation bypasses the budget check', async () => {
   );
   expect(result.action).toBe('started');
 });
+
+test('concurrent applies on the same node serialize through the mutex', async () => {
+  const callOrder: string[] = [];
+  const slowClient = () => ({
+    serverStatus: {
+      query: async () => ({
+        state: 'down',
+        pid: null,
+        rel: null,
+        extraArgs: [],
+        host: null,
+        port: null,
+        binary: null,
+        endpoint: '',
+      }),
+    },
+    serverStop: { mutate: async () => ({ stopped: true }) },
+    serverStart: {
+      subscribe: async (
+        { workload }: { workload: string },
+        callbacks: { onData: (e: unknown) => void; onError: (err: unknown) => void; onComplete: () => void },
+      ) => {
+        callOrder.push(`start:${workload}`);
+        setTimeout(() => {
+          callOrder.push(`done:${workload}`);
+          callbacks.onData({ type: 'done', result: { ok: true, pid: 1, endpoint: '' } });
+          callbacks.onComplete();
+        }, 50);
+        return { unsubscribe() {} };
+      },
+    },
+    rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+    rpcServerStop: { mutate: async () => ({ stopped: true }) },
+    rpcServerDoctor: { query: async () => ({ ok: true, path: '', llamaCppBin: '' }) },
+  } as unknown as WorkloadClient);
+  const mfA = mkManifest('a', { port: 8181, node: 'same' });
+  const mfB = mkManifest('b', { port: 8090, node: 'same' });
+  await Promise.all([
+    applyOne(mfA, slowClient as any, undefined, undefined, { listManifests: () => [] }),
+    applyOne(mfB, slowClient as any, undefined, undefined, { listManifests: () => [] }),
+  ]);
+  expect(callOrder[0]?.startsWith('start:')).toBe(true);
+  expect(callOrder[1]).toBe(callOrder[0]!.replace('start:', 'done:'));
+});

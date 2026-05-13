@@ -2,6 +2,7 @@ import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
 import type { GatewayDispatch } from './gateway-handlers/types.js';
 import { computeNodeBudget } from './admission.js';
 import { defaultWorkloadsDir, listWorkloads } from './store.js';
+import { withNodeLock } from './node-mutex.js';
 
 /**
  * Structural subset of `NodeClient` that `applyOne` actually touches.
@@ -453,174 +454,174 @@ export async function applyOne(
     }
   }
 
-  const listManifests = opts?.listManifests ?? (() => listWorkloads(opts?.workloadsDir));
-  const living = listManifests().filter(
-    (m) =>
-      m.metadata.name !== manifest.metadata.name
-      && m.spec.node === manifest.spec.node
-      && m.spec.enabled !== false
-      && !evictTargets.includes(m.metadata.name),
-  );
-  const budget = opts?.getNodeBudgetGiB?.(manifest.spec.node) ?? Number.POSITIVE_INFINITY;
-  const forceAdmit = manifest.metadata.annotations['llamactl.io/force-admit'] === 'true';
-  const adm = computeNodeBudget({
-    nodeName: manifest.spec.node,
-    nodeBudgetGiB: budget,
-    livingManifests: living,
-    incoming: manifest,
-    forceAdmit,
-  });
-  if (!adm.ok) {
-    return {
-      action: 'pending',
-      error: adm.reason,
-      statusSection: {
-        phase: 'Failed',
-        serverPid: null,
-        endpoint: null,
-        lastTransitionTime: now,
-        conditions: [
-          {
-            type: 'Applied',
-            status: 'False',
-            reason: 'BudgetExceeded',
-            message: adm.reason,
-            lastTransitionTime: now,
-          },
-        ],
-      },
-    };
-  }
-
-  if (matches) {
-    onEvent?.({
-      type: 'skipped',
-      message: `${manifest.metadata.name}: already running (${desiredRel})`,
+  return await withNodeLock(manifest.spec.node, async () => {
+    const listManifests = opts?.listManifests ?? (() => listWorkloads(opts?.workloadsDir));
+    const living = listManifests().filter(
+      (m) =>
+        m.metadata.name !== manifest.metadata.name
+        && m.spec.node === manifest.spec.node
+        && m.spec.enabled !== false
+        && !evictTargets.includes(m.metadata.name),
+    );
+    const budget = opts?.getNodeBudgetGiB?.(manifest.spec.node) ?? Number.POSITIVE_INFINITY;
+    const forceAdmit = manifest.metadata.annotations['llamactl.io/force-admit'] === 'true';
+    const adm = computeNodeBudget({
+      nodeName: manifest.spec.node,
+      nodeBudgetGiB: budget,
+      livingManifests: living,
+      incoming: manifest,
+      forceAdmit,
     });
-    return {
-      action: 'unchanged',
-      statusSection: {
-        phase: 'Running',
-        serverPid: status.pid,
-        endpoint: status.endpoint,
-        lastTransitionTime: now,
-        conditions: [
-          { type: 'Applied', status: 'True', reason: 'unchanged', lastTransitionTime: now },
-        ],
-      },
-    };
-  }
+    if (!adm.ok) {
+      return {
+        action: 'pending',
+        error: adm.reason,
+        statusSection: {
+          phase: 'Failed',
+          serverPid: null,
+          endpoint: null,
+          lastTransitionTime: now,
+          conditions: [
+            {
+              type: 'Applied',
+              status: 'False',
+              reason: 'BudgetExceeded',
+              message: adm.reason,
+              lastTransitionTime: now,
+            },
+          ],
+        },
+      };
+    }
 
-  let action: ApplyAction;
-  if (running) {
-    onEvent?.({ type: 'stop', message: `${manifest.metadata.name}: stopping mismatched server` });
-    await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
-    action = 'restarted';
-  } else {
-    action = 'started';
-  }
+    if (matches) {
+      onEvent?.({
+        type: 'skipped',
+        message: `${manifest.metadata.name}: already running (${desiredRel})`,
+      });
+      return {
+        action: 'unchanged',
+        statusSection: {
+          phase: 'Running',
+          serverPid: status.pid,
+          endpoint: status.endpoint,
+          lastTransitionTime: now,
+          conditions: [
+            { type: 'Applied', status: 'True', reason: 'unchanged', lastTransitionTime: now },
+          ],
+        },
+      };
+    }
 
-  if (workers.length > 0) {
-    const wres = await startWorkers(workers, getClient, onEvent);
-    if (wres.error) {
-      const when = new Date().toISOString();
+    let action: ApplyAction;
+    if (running) {
+      onEvent?.({ type: 'stop', message: `${manifest.metadata.name}: stopping mismatched server` });
+      await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
+      action = 'restarted';
+    } else {
+      action = 'started';
+    }
+
+    if (workers.length > 0) {
+      const wres = await startWorkers(workers, getClient, onEvent);
+      if (wres.error) {
+        const when = new Date().toISOString();
+        return {
+          action,
+          statusSection: {
+            phase: 'Failed',
+            serverPid: null,
+            endpoint: null,
+            lastTransitionTime: when,
+            conditions: [
+              {
+                type: 'Applied',
+                status: 'False',
+                reason: action,
+                message: wres.error,
+                lastTransitionTime: when,
+              },
+            ],
+          },
+          error: wres.error,
+        };
+      }
+    }
+
+    onEvent?.({ type: 'start', message: `${manifest.metadata.name}: starting ${desiredRel}` });
+    const startResult = await new Promise<StartDone | null>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('serverStart timed out')),
+        (manifest.spec.timeoutSeconds + 5) * 1000,
+      );
+      let done: StartDone | null = null;
+      const sub = client.serverStart.subscribe(
+        {
+          workload: manifest.metadata.name,
+          target: desiredRel,
+          ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
+          ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
+          ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
+          timeoutSeconds: manifest.spec.timeoutSeconds,
+        },
+        {
+          onData: (evt: unknown) => {
+            const e = evt as { type?: string; result?: unknown };
+            if (e.type === 'done') done = e.result as StartDone;
+          },
+          onError: (err: unknown) => {
+            clearTimeout(timer);
+            reject(err as Error);
+          },
+          onComplete: () => {
+            clearTimeout(timer);
+            resolve(done);
+          },
+        },
+      );
+      void sub;
+    });
+
+    if (!startResult || !startResult.ok) {
+      const err = startResult?.error ?? 'serverStart failed';
+      if (workers.length > 0) await stopWorkers(workers, getClient);
       return {
         action,
         statusSection: {
           phase: 'Failed',
           serverPid: null,
           endpoint: null,
-          lastTransitionTime: when,
+          lastTransitionTime: now,
           conditions: [
-            {
-              type: 'Applied',
-              status: 'False',
-              reason: action,
-              message: wres.error,
-              lastTransitionTime: when,
-            },
+            { type: 'Applied', status: 'False', reason: action, message: err, lastTransitionTime: now },
           ],
         },
-        error: wres.error,
+        error: err,
       };
     }
-  }
 
-  onEvent?.({ type: 'start', message: `${manifest.metadata.name}: starting ${desiredRel}` });
-  const startResult = await new Promise<StartDone | null>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error('serverStart timed out')),
-      (manifest.spec.timeoutSeconds + 5) * 1000,
-    );
-    let done: StartDone | null = null;
-    const sub = client.serverStart.subscribe(
-      {
-        workload: manifest.metadata.name,
-        target: desiredRel,
-        ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
-        ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
-        ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
-        timeoutSeconds: manifest.spec.timeoutSeconds,
-      },
-      {
-        onData: (evt: unknown) => {
-          const e = evt as { type?: string; result?: unknown };
-          if (e.type === 'done') done = e.result as StartDone;
-        },
-        onError: (err: unknown) => {
-          clearTimeout(timer);
-          reject(err as Error);
-        },
-        onComplete: () => {
-          clearTimeout(timer);
-          resolve(done);
-        },
-      },
-    );
-    void sub;
-  });
+    onEvent?.({
+      type: 'started',
+      message: `${manifest.metadata.name}: ready at ${startResult.endpoint} pid=${startResult.pid ?? '?'}`,
+    });
 
-  if (!startResult || !startResult.ok) {
-    const err = startResult?.error ?? 'serverStart failed';
-    // Tear down any workers we just started so a failed coordinator
-    // doesn't leave rpc-servers listening forever.
-    if (workers.length > 0) await stopWorkers(workers, getClient);
     return {
       action,
       statusSection: {
-        phase: 'Failed',
-        serverPid: null,
-        endpoint: null,
+        phase: 'Running',
+        serverPid: startResult.pid,
+        endpoint: startResult.endpoint,
         lastTransitionTime: now,
         conditions: [
-          { type: 'Applied', status: 'False', reason: action, message: err, lastTransitionTime: now },
+          { type: 'Applied', status: 'True', reason: action, lastTransitionTime: now },
+          {
+            type: 'BudgetReserved',
+            status: 'True',
+            message: `node reserves ${adm.reservedAfter.toFixed(1)} / ${adm.budget === Infinity ? 'unbounded' : adm.budget.toFixed(1)} GiB`,
+            lastTransitionTime: now,
+          },
         ],
       },
-      error: err,
     };
-  }
-
-  onEvent?.({
-    type: 'started',
-    message: `${manifest.metadata.name}: ready at ${startResult.endpoint} pid=${startResult.pid ?? '?'}`,
   });
-
-  return {
-    action,
-    statusSection: {
-      phase: 'Running',
-      serverPid: startResult.pid,
-      endpoint: startResult.endpoint,
-      lastTransitionTime: now,
-      conditions: [
-        { type: 'Applied', status: 'True', reason: action, lastTransitionTime: now },
-        {
-          type: 'BudgetReserved',
-          status: 'True',
-          message: `node reserves ${adm.reservedAfter.toFixed(1)} / ${adm.budget === Infinity ? 'unbounded' : adm.budget.toFixed(1)} GiB`,
-          lastTransitionTime: now,
-        },
-      ],
-    },
-  };
 }
