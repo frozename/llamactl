@@ -52,7 +52,17 @@ The 13 task-level deltas land entirely in five categories (edge, handoff_mgmt, m
 
 ## Mac-mini follow-up
 
-Pending — running `tools/eval/tune-gemma-e4b.sh` (vanilla path, AI-DATA llama.cpp build) to find E4B vanilla's production-tuning sweet spot. Current leaderboard baseline: mac-mini ub=256 → composite 0.766, 28.64 tps (see `docs/superpowers/specs/2026-05-06-model-eval-gemma-4-E4B-it-UD-Q4_K_XL.md`). Results appended once the sweep lands.
+Ran `tools/eval/tune-gemma-e4b.sh` against vanilla llama.cpp (`/Volumes/AI-DATA/src/llama.cpp/build/bin/llama-server`) on mac-mini :18182. The script's hardcoded sweep is `ub=256` only (`ub=512` gated as "already done") so no new tuning knobs were tried this pass. Auto-generated leaderboard doc at `docs/superpowers/specs/2026-05-13-model-eval-gemma-4-E4B-it-UD-Q4_K_XL.md`.
+
+| node | ub | tps | ttft_ms | composite | asof |
+| --- | --- | --- | --- | --- | --- |
+| mac-mini | 256 | 28.65 | 7029 | **0.767** | 2026-05-13 |
+| mac-mini | 256 | 28.64 | 7055 | 0.766 | 2026-05-06 (prior) |
+| mac-mini | 512 | 27.74 | 7288 | 0.757 | 2026-05-06 |
+
+Within measurement noise — agentic-eval composite is stable. Note: the maestro-bench harness on M4 Pro (35/36 vanilla = 0.972 pass-rate) and the agentic-eval composite (0.767) measure different things; the maestro-bench is the right gate for orchestrator-role suitability.
+
+Production :8090 is currently the Granite 4.1 8B long-lived server (penumbra memory-refinement agent, task #2 subject). The `restart-gemma-e4b-server.sh` step at the end of the sweep brief was **not** run — replacing Granite with E4B on :8090 is a separate operational decision and depends on whether E4B vanilla becomes the new `local` agent or coexists. Deferred for explicit approval.
 
 ## Artifacts
 
