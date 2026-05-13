@@ -1,0 +1,3850 @@
+[
+  {
+    "findingId": "f9972587258f55574c58ec3ad9c60a49",
+    "sourceReview": "2026-05-08T10-29-51.639Z",
+    "ts": "2026-05-08T10:29:51Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Untyped cross-layer args contract  (architect)"
+  },
+  {
+    "findingId": "c68b6d7eb42d1d604c7ee09b2a8a6074",
+    "sourceReview": "2026-05-08T10-29-51.639Z",
+    "ts": "2026-05-08T10:29:51Z",
+    "index": 2,
+    "severity": "High",
+    "text": "Workflow coupled to global config shape  (architect)"
+  },
+  {
+    "findingId": "75e25037f50141ab9b1b80dfd1525962",
+    "sourceReview": "2026-05-08T10-29-51.639Z",
+    "ts": "2026-05-08T10:29:51Z",
+    "index": 3,
+    "severity": "Medium",
+    "text": "Optional input modeled as unconditional recall source  (architect)"
+  },
+  {
+    "findingId": "19c4d69f6aa882180ff306ae8906a42b",
+    "sourceReview": "2026-05-08T10-29-51.639Z",
+    "ts": "2026-05-08T10:29:51Z",
+    "index": 4,
+    "severity": "Medium",
+    "text": "Missing template args silently coerce to empty string  (architect)"
+  },
+  {
+    "findingId": "a35121ffe7d67a0017d91f474f8fca36",
+    "sourceReview": "2026-05-08T10-56-00.315Z",
+    "ts": "2026-05-08T10:56:00Z",
+    "index": 1,
+    "severity": "High",
+    "text": "file.contents can become arbitrary file-read proxy if args are user-parameterized  (devils_advocate)"
+  },
+  {
+    "findingId": "9eb7e4a258b8b7633318cf317fc49c9f",
+    "sourceReview": "2026-05-08T10-56-00.315Z",
+    "ts": "2026-05-08T10:56:00Z",
+    "index": 2,
+    "severity": "High",
+    "text": "awaitChain polling loop creates N×4 DB queries/sec under persona fan-out  (performance)"
+  },
+  {
+    "findingId": "4383b85187ab16eb602096d09ca8b632",
+    "sourceReview": "2026-05-08T10-56-00.315Z",
+    "ts": "2026-05-08T10:56:00Z",
+    "index": 3,
+    "severity": "High",
+    "text": "artifact paths are double-recorded  (simplicity)"
+  },
+  {
+    "findingId": "290cfd1c9cff451cd7ccc2d9fd54fb45",
+    "sourceReview": "2026-05-08T10-56-00.315Z",
+    "ts": "2026-05-08T10:56:00Z",
+    "index": 4,
+    "severity": "High",
+    "text": "architectural expansion may be disproportionate to use case  (devils_advocate)"
+  },
+  {
+    "findingId": "d190108e1a63507bfd31417aa4577b88",
+    "sourceReview": "2026-05-08T10-56-00.315Z",
+    "ts": "2026-05-08T10:56:00Z",
+    "index": 5,
+    "severity": "Medium",
+    "text": "snapshot dedup happens in app memory after broad fetch  (performance)"
+  },
+  {
+    "findingId": "84f1feb8b781af629668bbddd578f784",
+    "sourceReview": "2026-05-08T10-56-00.315Z",
+    "ts": "2026-05-08T10:56:00Z",
+    "index": 6,
+    "severity": "Medium",
+    "text": "manual runtime re-validation duplicates existing schema guarantees  (simplicity)"
+  },
+  {
+    "findingId": "65acfb65608114aaa2550c5daac5a5a0",
+    "sourceReview": "2026-05-08T10-56-00.315Z",
+    "ts": "2026-05-08T10:56:00Z",
+    "index": 7,
+    "severity": "Medium",
+    "text": "duplicated buildWorkflowCtx(...) route blocks  (simplicity)"
+  },
+  {
+    "findingId": "5de66674f91f31dce088b2f6ccff966b",
+    "sourceReview": "2026-05-08T10-56-00.315Z",
+    "ts": "2026-05-08T10:56:00Z",
+    "index": 8,
+    "severity": "Medium",
+    "text": "InputSchemaLike/duck-typing adds indirection around zod safeParse  (simplicity)"
+  },
+  {
+    "findingId": "9be775553f945860b980e3e17cadfa61",
+    "sourceReview": "2026-05-08T10-56-00.315Z",
+    "ts": "2026-05-08T10:56:00Z",
+    "index": 9,
+    "severity": "Medium",
+    "text": "unused ReviewPersonaSchema.description field  (simplicity)"
+  },
+  {
+    "findingId": "8566b08f52889890fdba8d6be12e7977",
+    "sourceReview": "2026-05-08T10-56-00.315Z",
+    "ts": "2026-05-08T10:56:00Z",
+    "index": 10,
+    "severity": "Low",
+    "text": "scope mixing (subscription pressure changes bundled with workflow feature)  (devils_advocate)"
+  },
+  {
+    "findingId": "4b2e8ceed9d22957fc40e054a001298a",
+    "sourceReview": "2026-05-08T10-56-00.315Z",
+    "ts": "2026-05-08T10:56:00Z",
+    "index": 11,
+    "severity": "Low",
+    "text": "AgentChatConfigLike mirrors existing schema type  (simplicity)"
+  },
+  {
+    "findingId": "e73913631b4e3f6a37c98e3622fab063",
+    "sourceReview": "2026-05-08T10-56-00.315Z",
+    "ts": "2026-05-08T10:56:00Z",
+    "index": 12,
+    "severity": "Low",
+    "text": "repeated (services as any) casts hide missing service typing  (simplicity)"
+  },
+  {
+    "findingId": "1a624efa7e1678b37e1a497dbbb97fcd",
+    "sourceReview": "2026-05-08T10-56-00.315Z",
+    "ts": "2026-05-08T10:56:00Z",
+    "index": 13,
+    "severity": null,
+    "text": "Info — good N+1 query removal in quota status path (performance)"
+  },
+  {
+    "findingId": "b6144f240b81ffef5e12c63bf6dc7ae4",
+    "sourceReview": "2026-05-08T14-04-48.079Z",
+    "ts": "2026-05-08T14:04:48Z",
+    "index": 1,
+    "severity": "Medium",
+    "text": "Trigger/manual contract drift in recall inputs  (persona: architect)"
+  },
+  {
+    "findingId": "5806da8b2c12d255839c49c430f93bf7",
+    "sourceReview": "2026-05-08T14-04-48.079Z",
+    "ts": "2026-05-08T14:04:48Z",
+    "index": 2,
+    "severity": "Low",
+    "text": "Runtime duck-typing weakens cross-package contract safety  (persona: architect)"
+  },
+  {
+    "findingId": "ea0775a382515c43225e63f371accbf9",
+    "sourceReview": "2026-05-08T14-04-48.079Z",
+    "ts": "2026-05-08T14:04:48Z",
+    "index": 3,
+    "severity": "Low",
+    "text": "Unreachable declared schema variant (triviality_reason)  (persona: architect)"
+  },
+  {
+    "findingId": "b465b1474e613bbd65c36d53bd373204",
+    "sourceReview": "2026-05-08T14-08-45.025Z",
+    "ts": "2026-05-08T14:08:45Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Shell command injection risk via untrusted git refs (base_ref/target_ref) interpolated into git command strings. (personas: security)"
+  },
+  {
+    "findingId": "1283c87db5cb3de8d10e302a4b44485f",
+    "sourceReview": "2026-05-08T14-08-45.025Z",
+    "ts": "2026-05-08T14:08:45Z",
+    "index": 2,
+    "severity": "High",
+    "text": "Arbitrary local file read/secret exfiltration path through caller-controlled cwd + content_path + file.contents. (personas: security, devils_advocate)"
+  },
+  {
+    "findingId": "76d49995494f74b9b0686933a27f8ea0",
+    "sourceReview": "2026-05-08T14-08-45.025Z",
+    "ts": "2026-05-08T14:08:45Z",
+    "index": 3,
+    "severity": "High",
+    "text": "Arbitrary file write outside workspace via unconfined absolute out_dir and ctx.fileWrite. (personas: security)"
+  },
+  {
+    "findingId": "affbf21180c5a65e64e213072559f9c5",
+    "sourceReview": "2026-05-08T14-08-45.025Z",
+    "ts": "2026-05-08T14:08:45Z",
+    "index": 4,
+    "severity": "High",
+    "text": "Workflow dispatch path bypasses chain-start route invariants (validation/worker checks), creating split behavior and drift risk. (personas: architect)"
+  },
+  {
+    "findingId": "4eccf60fe55c1c93ba999cdea8058169",
+    "sourceReview": "2026-05-08T14-08-45.025Z",
+    "ts": "2026-05-08T14:08:45Z",
+    "index": 5,
+    "severity": "High",
+    "text": "Chain-status polling path likely scales poorly: missing/insufficient lookup indexing plus frequent polling amplification under fan-out workloads. (personas: performance)"
+  },
+  {
+    "findingId": "542db26ab1b2421a6681f964c0154121",
+    "sourceReview": "2026-05-08T14-08-45.025Z",
+    "ts": "2026-05-08T14:08:45Z",
+    "index": 6,
+    "severity": "Medium",
+    "text": "Workflow core is coupled to HTTP transport (Response parsing in workflow ctx), weakening abstraction boundaries and portability. (personas: architect, naming_clarity)"
+  },
+  {
+    "findingId": "ee87fda88cde21909dc5357d794e0148",
+    "sourceReview": "2026-05-08T14-08-45.025Z",
+    "ts": "2026-05-08T14:08:45Z",
+    "index": 7,
+    "severity": "Medium",
+    "text": "Run/trigger orchestration logic is duplicated (ctx construction/validation/plumbing), increasing inconsistency risk. (personas: architect, simplicity)"
+  },
+  {
+    "findingId": "ca6c1a20d27223facf449b04defe79cc",
+    "sourceReview": "2026-05-08T14-08-45.025Z",
+    "ts": "2026-05-08T14:08:45Z",
+    "index": 8,
+    "severity": "Medium",
+    "text": "Input-schema contract is inconsistent/fail-open (parse vs safeParse, unknown schema typing, manual revalidation duplication). (personas: architect, maintainability, simplicity)"
+  },
+  {
+    "findingId": "65be0614f01e863699b7307fb84bda99",
+    "sourceReview": "2026-05-08T14-08-45.025Z",
+    "ts": "2026-05-08T14:08:45Z",
+    "index": 9,
+    "severity": "Medium",
+    "text": "Blocking/inefficient runtime behaviors: sync realpathSync in async path; aggressive fixed-interval polling. (personas: performance)"
+  },
+  {
+    "findingId": "07061ee27f2a4c9aef040f17d4f7b7fb",
+    "sourceReview": "2026-05-08T14-08-45.025Z",
+    "ts": "2026-05-08T14:08:45Z",
+    "index": 10,
+    "severity": "Medium",
+    "text": "Feature direction risk: workflows are drifting into imperative orchestration runtime complexity; requires explicit scope guard to avoid long-term sprawl. (personas: devils_advocate, architect)"
+  },
+  {
+    "findingId": "353d1f7e30dfedadb1e672ca5d482c71",
+    "sourceReview": "2026-05-08T14-08-45.025Z",
+    "ts": "2026-05-08T14:08:45Z",
+    "index": 11,
+    "severity": "Low",
+    "text": "Multiple API/error-message/naming clarity issues reduce operability (mixed casing, vague errors, any, ambiguous units). (personas: naming_clarity, maintainability)"
+  },
+  {
+    "findingId": "c8ff7b3d56085e1def38dcfe6580be2c",
+    "sourceReview": "2026-05-08T14-08-45.025Z",
+    "ts": "2026-05-08T14:08:45Z",
+    "index": 12,
+    "severity": "Low",
+    "text": "Deletable/redundant code and YAGNI debt (unreachable guards, repeated accessors/blocks, unused fields/helpers). (personas: simplicity, maintainability)"
+  },
+  {
+    "findingId": "c9bc0442ee41116626ec535f52c08c3c",
+    "sourceReview": "2026-05-08T14-41-35.619Z",
+    "ts": "2026-05-08T14:41:35Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Cross-workflow trigger coupling via shared args payload"
+  },
+  {
+    "findingId": "96b177f1a340b890cd0fd62d9391adad",
+    "sourceReview": "2026-05-08T14-41-35.619Z",
+    "ts": "2026-05-08T14:41:35Z",
+    "index": 2,
+    "severity": "Medium",
+    "text": "inputSchema contract mismatch (load-time vs run-time)"
+  },
+  {
+    "findingId": "b06a84cd520aa3089f8d7673a58ba89b",
+    "sourceReview": "2026-05-08T14-41-35.619Z",
+    "ts": "2026-05-08T14:41:35Z",
+    "index": 3,
+    "severity": "Medium",
+    "text": "Security-sensitive path confinement logic duplicated across layers"
+  },
+  {
+    "findingId": "81c72d10ad866d9aaa0ed2c2f305207d",
+    "sourceReview": "2026-05-08T14-41-35.619Z",
+    "ts": "2026-05-08T14:41:35Z",
+    "index": 4,
+    "severity": "Medium",
+    "text": "Workflow generic/type scaffolding appears premature for current adoption"
+  },
+  {
+    "findingId": "bebbdffbab95a0b4c0c74bd5f90381f1",
+    "sourceReview": "2026-05-08T14-41-35.619Z",
+    "ts": "2026-05-08T14:41:35Z",
+    "index": 5,
+    "severity": "Low",
+    "text": "Filesystem existence oracle for out-of-scope paths"
+  },
+  {
+    "findingId": "14391fb64fbbab42f24983e8657bee29",
+    "sourceReview": "2026-05-08T14-41-35.619Z",
+    "ts": "2026-05-08T14:41:35Z",
+    "index": 6,
+    "severity": "Low",
+    "text": "Non-terminal handoffs reported with status: 'failed'"
+  },
+  {
+    "findingId": "e3d03ed4a3c1c2e65efd3987df83508a",
+    "sourceReview": "2026-05-08T14-41-35.619Z",
+    "ts": "2026-05-08T14:41:35Z",
+    "index": 7,
+    "severity": "Low",
+    "text": "Redundant git-ref forbidden-char check in range path"
+  },
+  {
+    "findingId": "5b8cde60e932edb38fefb66e3419284f",
+    "sourceReview": "2026-05-08T14-41-35.619Z",
+    "ts": "2026-05-08T14:41:35Z",
+    "index": 8,
+    "severity": "Low",
+    "text": "resolveCaptureAttribution over-extracted for single call site"
+  },
+  {
+    "findingId": "6d207436c1a68b43cde39bd836db0cda",
+    "sourceReview": "2026-05-08T14-41-35.619Z",
+    "ts": "2026-05-08T14:41:35Z",
+    "index": 9,
+    "severity": "Low",
+    "text": "isTrivialResponse + threshold constant only used once"
+  },
+  {
+    "findingId": "c310dc3a969fd29aee73f3a651b21a1d",
+    "sourceReview": "2026-05-08T14-41-35.619Z",
+    "ts": "2026-05-08T14:41:35Z",
+    "index": 10,
+    "severity": null,
+    "text": "Info — allowed_roots schema knob has no current consumers"
+  },
+  {
+    "findingId": "068bf63e812a5e74e4fe39094e2cd7c1",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Command injection via branch_base in shell command composition  ([security])"
+  },
+  {
+    "findingId": "b98a2caf84b3c86eaa7c97f78d5567ea",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 2,
+    "severity": "High",
+    "text": "Command injection via path-derived package names in scoped test command  ([security])"
+  },
+  {
+    "findingId": "96a6c61ec3b48d890bfce33c9698612f",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 3,
+    "severity": "High",
+    "text": "Schema migration executed in request path  ([architect])"
+  },
+  {
+    "findingId": "b168a978eb4ab8dc6747fca2e89222d0",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 4,
+    "severity": "High",
+    "text": "Telemetry contract drift from centralized enums  ([architect])"
+  },
+  {
+    "findingId": "964b0430b8d4630f4b099f3418861e71",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 5,
+    "severity": "High",
+    "text": "Route-level mutable git orchestration in daemon handler  ([architect], [performance])"
+  },
+  {
+    "findingId": "e102131017bbdbd18c981d253979f9a0",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 6,
+    "severity": "High",
+    "text": "Auto-rebase + force-push safety risk on shared branches  ([devils_advocate])"
+  },
+  {
+    "findingId": "6d99f1e784f330302ccc3985d77b2feb",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 7,
+    "severity": "High",
+    "text": "Product/workflow premise risk (verified without PR visibility)  ([devils_advocate])"
+  },
+  {
+    "findingId": "455b42298f3a5e5a093a8732bfc93762",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 8,
+    "severity": "Medium",
+    "text": "Duplicate GitHub client abstractions and boundary leakage  ([architect], [maintainability])"
+  },
+  {
+    "findingId": "1a5d93b84ae3c3156af7b82a931cc875",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 9,
+    "severity": "Medium",
+    "text": "Reconciler has monolithic multi-concern orchestration  ([architect], [maintainability], [simplicity])"
+  },
+  {
+    "findingId": "2b2193ac353878413e669d6d88c4638c",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 10,
+    "severity": "Medium",
+    "text": "N+1 and serialization bottlenecks in sweepers/reconciler  ([performance])"
+  },
+  {
+    "findingId": "6066c05b615348a6ae2d7553d0ec1610",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 11,
+    "severity": "Medium",
+    "text": "Overlapping sweeper tick race  ([data_correctness])"
+  },
+  {
+    "findingId": "729f1bb2e037219b94b3d080219a12bb",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 12,
+    "severity": "Medium",
+    "text": "since timestamp filter is lexicographic with timezone-offset bug  ([data_correctness])"
+  },
+  {
+    "findingId": "57b354adf1a1421f0d4bf36f6a00938d",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 13,
+    "severity": "Medium",
+    "text": "CLI/review flow contains unreachable/duplicated 409 handling  ([maintainability], [simplicity])"
+  },
+  {
+    "findingId": "5f284d597f9226632b288cb7f31ee505",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 14,
+    "severity": "Medium",
+    "text": "Config semantics bypass central settings schema  ([maintainability])"
+  },
+  {
+    "findingId": "1ae3e1657cb5678e028f85aea150dc4d",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 15,
+    "severity": "Medium",
+    "text": "Repeated boilerplate in MCP/route/task sync glue  ([simplicity], [maintainability])"
+  },
+  {
+    "findingId": "a17ff89f3a939dfab761e80e806a8a60",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 16,
+    "severity": "Low",
+    "text": "Stale gh_state returned after successful push  ([data_correctness])"
+  },
+  {
+    "findingId": "fd8fcbcdd096aca67d1188a8c9b01d9e",
+    "sourceReview": "2026-05-08T17-32-35.087Z",
+    "ts": "2026-05-08T17:32:35Z",
+    "index": 17,
+    "severity": "Low",
+    "text": "Additional cleanup debt (naming/readability/magic limits/backoff behavior)  ([maintainability], [simplicity])"
+  },
+  {
+    "findingId": "a6b998ff0f609f0fb69e6f35023c2d26",
+    "sourceReview": "2026-05-08T19-28-19.798Z",
+    "ts": "2026-05-08T19:28:19Z",
+    "index": 1,
+    "severity": "Medium",
+    "text": "No reviewable change set in scope (main...HEAD empty), so this review cannot validate the intended change."
+  },
+  {
+    "findingId": "9b11ed15d8c14e0d74e63d6699ccf7ec",
+    "sourceReview": "2026-05-08T19-30-19.788Z",
+    "ts": "2026-05-08T19:30:19Z",
+    "index": 1,
+    "severity": null,
+    "text": "Info — Empty review scope prevents substantive evaluation"
+  },
+  {
+    "findingId": "60bf19265536ee7ace8639797cf2cd25",
+    "sourceReview": "2026-05-08T19-33-10.257Z",
+    "ts": "2026-05-08T19:33:10Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Sync cursor/freshness coupling can drop or misorder inbound comments  (architect, data_correctness, devils_advocate)"
+  },
+  {
+    "findingId": "9551437a10690b3e8e92b72cf1e16f62",
+    "sourceReview": "2026-05-08T19-33-10.257Z",
+    "ts": "2026-05-08T19:33:10Z",
+    "index": 2,
+    "severity": "High",
+    "text": "Blocking gh CLI/process execution on hot /tasks paths  (architect, performance)"
+  },
+  {
+    "findingId": "9c061e6c64a1bfab88e7f1b5cdf0b993",
+    "sourceReview": "2026-05-08T19-33-10.257Z",
+    "ts": "2026-05-08T19:33:10Z",
+    "index": 3,
+    "severity": "High",
+    "text": "Untrusted GitHub comment bodies are mirrored into memory/events without strong trust gating  (security)"
+  },
+  {
+    "findingId": "46281ed30037dfb47f75087ab5d840ae",
+    "sourceReview": "2026-05-08T19-33-10.257Z",
+    "ts": "2026-05-08T19:33:10Z",
+    "index": 4,
+    "severity": "High",
+    "text": "Route/API naming contract drift (/comment_gh vs kebab-case siblings)  (naming_clarity, architect)"
+  },
+  {
+    "findingId": "0b1d61312c68ad4b87c4efaf2a1fc47d",
+    "sourceReview": "2026-05-08T19-33-10.257Z",
+    "ts": "2026-05-08T19:33:10Z",
+    "index": 5,
+    "severity": "Medium",
+    "text": "GH authored-comment detection is forgeable / misclassifies comments  (security, data_correctness)"
+  },
+  {
+    "findingId": "db2981e36f9e93dfec9ea65196fc5c26",
+    "sourceReview": "2026-05-08T19-33-10.257Z",
+    "ts": "2026-05-08T19:33:10Z",
+    "index": 6,
+    "severity": "Medium",
+    "text": "Partial-failure contract for gh_create is ambiguous and weakly surfaced  (architect, devils_advocate)"
+  },
+  {
+    "findingId": "40ec2d2cbbcf6e6508fc80b39d0928ae",
+    "sourceReview": "2026-05-08T19-33-10.257Z",
+    "ts": "2026-05-08T19:33:10Z",
+    "index": 7,
+    "severity": "Medium",
+    "text": "MCP deep-imports core internals instead of public exports  (architect, maintainability, simplicity, naming_clarity)"
+  },
+  {
+    "findingId": "e21692d3da13e7003ed49f31921b26f9",
+    "sourceReview": "2026-05-08T19-33-10.257Z",
+    "ts": "2026-05-08T19:33:10Z",
+    "index": 8,
+    "severity": "Medium",
+    "text": "Missing targeted tests for new/edge behavior  (maintainability)"
+  },
+  {
+    "findingId": "da4249b04f1a3bd0fb1e6b5e96de61bc",
+    "sourceReview": "2026-05-08T19-33-10.257Z",
+    "ts": "2026-05-08T19:33:10Z",
+    "index": 9,
+    "severity": "Medium",
+    "text": "Concurrent sync paths can duplicate mirrored comment events  (data_correctness)"
+  },
+  {
+    "findingId": "0dbb0f99daca345fb89fbca3fc47eaa9",
+    "sourceReview": "2026-05-08T19-33-10.257Z",
+    "ts": "2026-05-08T19:33:10Z",
+    "index": 10,
+    "severity": "Low",
+    "text": "Dead/simple wrappers and unused parameter add cognitive load  (simplicity, maintainability, naming_clarity)"
+  },
+  {
+    "findingId": "32aaf3c0771f2b052ad9b221986713c9",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Empty diff means nothing is approvable as a code change (architect, security, data_correctness)."
+  },
+  {
+    "findingId": "4045d0f7ed2b50b95d75f44f16248db0",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 2,
+    "severity": null,
+    "text": "[High] Missing auth/CSRF protections for localhost mutation endpoints (security; architect supports with local-loopback auth concern)."
+  },
+  {
+    "findingId": "d97bef5644ea274000d4293304c44e16",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 3,
+    "severity": null,
+    "text": "[High] Path traversal risk in planned /reviews/:id filesystem reads (security)."
+  },
+  {
+    "findingId": "40b980fe28f9274a51ee19e67946d768",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 4,
+    "severity": null,
+    "text": "[High] Stored XSS risk when rendering synthesis.md/review artifacts (security)."
+  },
+  {
+    "findingId": "f4d3bade693d143e09870589d727c77e",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 5,
+    "severity": null,
+    "text": "[High] Browser bootstrap contract is broken/unclear (daemon.lock/home-file discovery in web runtime) (architect, maintainability)."
+  },
+  {
+    "findingId": "a4421037c529438367f48d5fbfdb0adf",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 6,
+    "severity": null,
+    "text": "[High] Client-side-only filtering/pagination for large datasets will not scale (performance)."
+  },
+  {
+    "findingId": "e2bdd571bc1af9df3ecda63f6b1a779f",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 7,
+    "severity": null,
+    "text": "[High] Large-list rendering without virtualization risks UI collapse (performance)."
+  },
+  {
+    "findingId": "8c4c0d4c4b2b87457723494bff8e7de2",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 8,
+    "severity": null,
+    "text": "[High] dispatch-events represented as SSE when route is JSON-only (spec mismatch) (maintainability)."
+  },
+  {
+    "findingId": "cf4c907d2c2775856d6a1b339bd27dd1",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 9,
+    "severity": null,
+    "text": "[High] External unreachable architectural dependency (llamactl/packages/app) in core spec guidance (maintainability)."
+  },
+  {
+    "findingId": "dbc24685ebcbd0ccd8709c6b549272b2",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 10,
+    "severity": null,
+    "text": "[High] Upfront complexity/premise risk: pixel-perfect custom UI and heavy scaffolding for internal tool (devils_advocate, simplicity)."
+  },
+  {
+    "findingId": "03acaf41399235c8804fe231ad4ffd0d",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 11,
+    "severity": null,
+    "text": "[Medium] Global always-on SSE subscriptions over-couple modules and increase load (architect, performance)."
+  },
+  {
+    "findingId": "cd74cb77d9af7cf9712f475403df1e20",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 12,
+    "severity": null,
+    "text": "[Medium] API contract/versioning not explicit; backend surface may drift during phased rollout (architect, devils_advocate, maintainability)."
+  },
+  {
+    "findingId": "5396c8cc0f237221acae1f13be43a7c2",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 13,
+    "severity": null,
+    "text": "[Medium] Daemon URL fallback can allow remote redirection/SSRF-like exfil if not loopback-restricted (security)."
+  },
+  {
+    "findingId": "9d11aa20902219b26cc4ea140b97e47c",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 14,
+    "severity": null,
+    "text": "[Medium] Missing test strategy for console package (stores/hooks/SSE/UI contracts) (maintainability)."
+  },
+  {
+    "findingId": "0900e2f0c9241d21d32709c3bb5bb528",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 15,
+    "severity": null,
+    "text": "[Medium] Error/loading/empty/downtime behavior deferred or undefined for early live phases (maintainability)."
+  },
+  {
+    "findingId": "7ae0ec9a7cb1f966b65e004a7725af99",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 16,
+    "severity": null,
+    "text": "[Medium] Spec over-scopes early phases (too many routes/stubs/stores/themes/palette before core loop is proven) (simplicity)."
+  },
+  {
+    "findingId": "1aa51c277d8a54adae36daf3dec92bfc",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 17,
+    "severity": null,
+    "text": "[Medium] Tauri phase introduces major supply-chain/ops risk if updater trust/signing policy is not mandatory (security, devils_advocate)."
+  },
+  {
+    "findingId": "b2c6b1a293e8d564565d374eba2180a8",
+    "sourceReview": "2026-05-08T20-40-27.675Z",
+    "ts": "2026-05-08T20:40:27Z",
+    "index": 18,
+    "severity": null,
+    "text": "[Low] Naming clarity issues (disp/res, ui-store, GH, etc.) reduce ergonomics but are non-blocking (naming_clarity)."
+  },
+  {
+    "findingId": "7c7b87aedad1e2a3936c6b445a125c47",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Build-time token injection leaks bearer secret to browser bundle (security)."
+  },
+  {
+    "findingId": "7f5a3b8b52ccabe48307c4b6d914ba79",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 2,
+    "severity": null,
+    "text": "[High] SSE CRLF framing is not parsed, causing silent event loss (data_correctness)."
+  },
+  {
+    "findingId": "72782d5638cb0b04be1488f57e29098b",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 3,
+    "severity": null,
+    "text": "[High] Stream can stall permanently after clean EOF because reconnect path is not triggered (data_correctness)."
+  },
+  {
+    "findingId": "b53b02b727b77ac73920be891dfaa775",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 4,
+    "severity": null,
+    "text": "[High] Reconnect backoff counter never resets after successful reconnect, causing pathological delays (maintainability)."
+  },
+  {
+    "findingId": "a1b0481c84bbcc4e52daa3bec74df15a",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 5,
+    "severity": null,
+    "text": "[High] Unbounded event retention/update strategy in useStream causes memory growth and O(n) update cost (architect), with related parser-side unbounded buffering risk (security)."
+  },
+  {
+    "findingId": "917519a0583bb94bd5f7214a70e27041",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] Remote override mode can exfiltrate bearer token to arbitrary host (security)."
+  },
+  {
+    "findingId": "adcb1550fbc20649824b27f412ac01d1",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Medium] Stream transport is coupled directly to global UI store, weakening layering/reuse (architect)."
+  },
+  {
+    "findingId": "35619e0cf7a3c0ba68368c906ac0773b",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Medium] Validated responses are returned as Promise<unknown>, discarding type contracts (architect, naming_clarity, simplicity)."
+  },
+  {
+    "findingId": "65067e3680804d1316ad49d6fee4be23",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 9,
+    "severity": null,
+    "text": "[Medium] Dead/duplicated styling surface (duplicate token files, large unimplemented CSS blocks, commented-out themes) (simplicity, maintainability)."
+  },
+  {
+    "findingId": "0c8c5cf1f981282e875f434c56d124fa",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 10,
+    "severity": null,
+    "text": "[Medium] Hardcoded version duplicated in multiple components/tests, drift risk (maintainability)."
+  },
+  {
+    "findingId": "5b6bb213b1f17559106d0217fffa2740",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 11,
+    "severity": null,
+    "text": "[Medium] Loopback allowlist excludes IPv6 ([::1]) and is brittle as regex gate (maintainability)."
+  },
+  {
+    "findingId": "2a81fd61eaf954a893b994463170bcd6",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 12,
+    "severity": null,
+    "text": "[Medium] Stream message shape uses fake sentinel in raw field (MessageEvent | {reconnect:true}), weakening type correctness (naming_clarity)."
+  },
+  {
+    "findingId": "afea782d0788265e99dfefc1350b964c",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 13,
+    "severity": null,
+    "text": "[Low] Naming/ergonomics debt (vague public names, repetitive magic strings, terse CSS class names, opaque error text) (naming_clarity)."
+  },
+  {
+    "findingId": "23d867e4d1e4d6f1719afb61d75909bd",
+    "sourceReview": "2026-05-08T23-16-42.513Z",
+    "ts": "2026-05-08T23:16:42Z",
+    "index": 14,
+    "severity": null,
+    "text": "[Low] Minor YAGNI/abstraction noise (tiny wrapper components, unused test injection hook, verbose option shaping) (simplicity)."
+  },
+  {
+    "findingId": "fe4e8800a5d82b0da9a5c5cfb1bed621",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Browser-exposed daemon bearer token (bundle/meta/config path) can leak privileged auth (security, devils_advocate)."
+  },
+  {
+    "findingId": "b0f2e92fca7ae4c7d57e403a7ff11e15",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 2,
+    "severity": null,
+    "text": "[High] Stream transport is tightly coupled to global UI store and process-wide singleton broker (multi-context scaling/testability risk) (architect)."
+  },
+  {
+    "findingId": "6a80ac9b562432f2ad7f97d99eb559da",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 3,
+    "severity": null,
+    "text": "[High] SSE transport robustness gaps: CRLF-framed events can be dropped and parser permits unbounded buffer growth (DoS vector) (data_correctness, security)."
+  },
+  {
+    "findingId": "db88bfd487377cd47cc7295d829affe9",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 4,
+    "severity": null,
+    "text": "[High] Reconnect semantics are misleading/incorrect: reconnect signal emitted before success, sticky reconnected semantics, and retry backoff not reset after healthy recovery (data_correctness, naming"
+  },
+  {
+    "findingId": "cc746e7095abd5d437dd0c4ba9f6a4c6",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 5,
+    "severity": null,
+    "text": "[High] Premature full SPA stack introduces disproportionate long-term complexity vs current delivered behavior (devils_advocate, simplicity)."
+  },
+  {
+    "findingId": "3716dcb0b2564547dde01a051a4c1337",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] Remote daemon override can exfiltrate auth token to arbitrary origin when enabled (security)."
+  },
+  {
+    "findingId": "411377c308b5ec9192da2400d6bd9d08",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Medium] API contract ergonomics degrade correctness: runtime-validated responses returned as unknown; mixed snake_case TS options in public client API (architect, naming_clarity)."
+  },
+  {
+    "findingId": "4b8729d8f12b5ae0b8e34a47e29790da",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Medium] Stream topic naming/API shape is inconsistent (-events vs -stream) and forces special-case mapping (naming_clarity)."
+  },
+  {
+    "findingId": "bfc8bbd618154862d12d2f0c0e019c1d",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 9,
+    "severity": null,
+    "text": "[Medium] Module registry/navigation IDs are duplicated across router/rail/store (drift risk) (architect)."
+  },
+  {
+    "findingId": "924628087e3540cd5e04484c6b0eac01",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 10,
+    "severity": null,
+    "text": "[Medium] Unused heavy dependencies (@tanstack/react-query, @tanstack/react-virtual) add maintenance surface with no callers (architect, simplicity)."
+  },
+  {
+    "findingId": "f80094b3bcdbc9478542a8dd8fd77163",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 11,
+    "severity": null,
+    "text": "[Medium] YAGNI/deletability issues in UI shell: dead prop surfaces, tiny wrapper abstractions, test-only seams in production API (simplicity)."
+  },
+  {
+    "findingId": "735b1f70d89425c3a7cfab3e7f59fc9d",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 12,
+    "severity": null,
+    "text": "[Medium] Commented-out theme blocks and tests asserting TODO comments institutionalize dead code (simplicity)."
+  },
+  {
+    "findingId": "8383ce2a68d07be230a1bb4771b9ea2f",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 13,
+    "severity": null,
+    "text": "[Medium] Loopback URL validation rejects valid trailing-slash form (http://127.0.0.1:PORT/) (data_correctness)."
+  },
+  {
+    "findingId": "5dd477b9a4cdec237ac7f8ab292b2bd7",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 14,
+    "severity": null,
+    "text": "[Medium] Stream/SSE error logs omit topic/url context, reducing operability (naming_clarity)."
+  },
+  {
+    "findingId": "abcbaf7e4af3ee0876a50652f3347ab0",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 15,
+    "severity": null,
+    "text": "[Low] Minor naming clarity debt (abbreviations, vague identifiers) should be cleaned opportunistically (naming_clarity, simplicity)."
+  },
+  {
+    "findingId": "0001cf7d1f79eb66a7e54426cc90ad5a",
+    "sourceReview": "2026-05-08T23-19-53.771Z",
+    "ts": "2026-05-08T23:19:53Z",
+    "index": 16,
+    "severity": null,
+    "text": "[Low] Declared stream topics without production callers increase speculative surface (simplicity)."
+  },
+  {
+    "findingId": "824a8682c7f6c3da4085cc68b240d13e",
+    "sourceReview": "2026-05-09T00-20-13.851Z",
+    "ts": "2026-05-09T00:20:13Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Daemon bearer token is exposed to browser-readable DOM/JS (packages/cli/src/commands/console.ts, packages/console/src/api/config.ts). Personas: security."
+  },
+  {
+    "findingId": "14dcb0a6948669910623d909edee40b4",
+    "sourceReview": "2026-05-09T00-20-13.851Z",
+    "ts": "2026-05-09T00:20:13Z",
+    "index": 2,
+    "severity": null,
+    "text": "[High] Stream hook scales poorly (unbounded accumulation + full-array clone per event) (packages/console/src/hooks/useStream.ts). Personas: architect."
+  },
+  {
+    "findingId": "1c04d729542423614b30823dc742a533",
+    "sourceReview": "2026-05-09T00-20-13.851Z",
+    "ts": "2026-05-09T00:20:13Z",
+    "index": 3,
+    "severity": null,
+    "text": "[High] Console startup can block on synchronous build; runtime also coupled to monorepo/source layout (packages/cli/src/commands/console.ts). Personas: performance, architect."
+  },
+  {
+    "findingId": "463184404c8d6bc41eb800c07f52283e",
+    "sourceReview": "2026-05-09T00-20-13.851Z",
+    "ts": "2026-05-09T00:20:13Z",
+    "index": 4,
+    "severity": null,
+    "text": "[High] Complex stream broker reconnect/replay/backoff logic lacks direct tests (packages/console/src/api/streams.ts). Personas: maintainability."
+  },
+  {
+    "findingId": "b00b5fa553eccbd2c200cbd0dc5b72b7",
+    "sourceReview": "2026-05-09T00-20-13.851Z",
+    "ts": "2026-05-09T00:20:13Z",
+    "index": 5,
+    "severity": null,
+    "text": "[Medium] Reconnect invalidates wrong query key, causing stale pending-handoff data (packages/console/src/modules/mission/T0Tail.tsx, PendingHandoffs.tsx). Personas: architect, data_correctness."
+  },
+  {
+    "findingId": "932d3db28ca0fff2bf6d277200085cb9",
+    "sourceReview": "2026-05-09T00-20-13.851Z",
+    "ts": "2026-05-09T00:20:13Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] Anti-framing/clickjacking protection is ineffective via meta CSP only (packages/console/index.html, CLI response headers). Personas: security."
+  },
+  {
+    "findingId": "f5d47e982e3e9207cfd1e1c09ece403e",
+    "sourceReview": "2026-05-09T00-20-13.851Z",
+    "ts": "2026-05-09T00:20:13Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Medium] Duplicate polling paths for pending handoffs create redundant daemon load (Rail.tsx, PendingHandoffs.tsx). Personas: performance, simplicity."
+  },
+  {
+    "findingId": "919d516e92a28dfee42f8a04c804af8c",
+    "sourceReview": "2026-05-09T00-20-13.851Z",
+    "ts": "2026-05-09T00:20:13Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Medium] Chain data uses stringly typed escape hatch instead of schema fields (InFlightChains.tsx, packages/api-contract/src/chains.ts). Personas: architect, maintainability, simplicity."
+  },
+  {
+    "findingId": "b0d5f8dfb0519dc6a9b5a4c95905bda3",
+    "sourceReview": "2026-05-09T00-20-13.851Z",
+    "ts": "2026-05-09T00:20:13Z",
+    "index": 9,
+    "severity": null,
+    "text": "[Medium] Error handling gaps in mission actions/logging (approve/deny failures and opener failures are swallowed) (PendingHandoffs.tsx, console.ts). Personas: maintainability, naming_clarity."
+  },
+  {
+    "findingId": "c4088598eed359e77d2a99fb16f1f875",
+    "sourceReview": "2026-05-09T00-20-13.851Z",
+    "ts": "2026-05-09T00:20:13Z",
+    "index": 10,
+    "severity": null,
+    "text": "[Medium] Test strategy issues reduce reliability (build-in-test CSP behavior; missing DaemonClient unit tests) (packages/console/test/csp.test.ts, src/api/client.ts). Personas: maintainability."
+  },
+  {
+    "findingId": "7d788eeae66a78d7e852ac9136bcd7a1",
+    "sourceReview": "2026-05-09T00-20-13.851Z",
+    "ts": "2026-05-09T00:20:13Z",
+    "index": 11,
+    "severity": null,
+    "text": "[Medium] Deletability/scope bloat: unused or placeholder UI/features in P0 (LaneChip.tsx, Sparkline.tsx, disabled “open” button, placeholder stat card). Personas: simplicity, maintainability."
+  },
+  {
+    "findingId": "68b74843f2e677d009682bf788a4ab55",
+    "sourceReview": "2026-05-09T00-20-13.851Z",
+    "ts": "2026-05-09T00:20:13Z",
+    "index": 12,
+    "severity": null,
+    "text": "[Low] Data edge cases: invalid timestamps render NaNd ago; UTF-16 truncation can break emoji previews (PendingHandoffs.tsx). Personas: data_correctness."
+  },
+  {
+    "findingId": "9eb2c83170a18c5ada900784c341b917",
+    "sourceReview": "2026-05-09T00-20-13.851Z",
+    "ts": "2026-05-09T00:20:13Z",
+    "index": 13,
+    "severity": null,
+    "text": "[Low] Widespread naming/comment clarity debt (misleading prop/method names, abbreviations, stale task-comment references) (multiple files). Personas: naming_clarity, maintainability."
+  },
+  {
+    "findingId": "8b35d05f5034da92922ba27eb6b538e1",
+    "sourceReview": "2026-05-09T06-08-36.995Z",
+    "ts": "2026-05-09T06:08:36Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Local process can bootstrap session cookie and access privileged /api/* proxy routes (packages/cli/src/commands/console.ts:251). Personas: security."
+  },
+  {
+    "findingId": "cf5b4c81d1101bef23e56809d1a27724",
+    "sourceReview": "2026-05-09T06-08-36.995Z",
+    "ts": "2026-05-09T06:08:36Z",
+    "index": 2,
+    "severity": "High",
+    "text": "e2e specs import missing symbols (bootViteWithHarness, ViteHandle), so coverage is broken (packages/console/e2e/navigation.spec.ts:3, .../t0-tail.spec.ts:3). Personas: maintainability, naming_clarity."
+  },
+  {
+    "findingId": "06945d239cca0017c2b3fc4f8a9ef206",
+    "sourceReview": "2026-05-09T06-08-36.995Z",
+    "ts": "2026-05-09T06:08:36Z",
+    "index": 3,
+    "severity": "Medium",
+    "text": "Console proxy snapshots daemon bootstrap (port/token) once and does not refresh, causing post-restart auth/connectivity fragility (packages/cli/src/commands/console.ts:236). Personas: architect."
+  },
+  {
+    "findingId": "e34a2d07dbfb2c9d3a897decb3f628e0",
+    "sourceReview": "2026-05-09T06-08-36.995Z",
+    "ts": "2026-05-09T06:08:36Z",
+    "index": 4,
+    "severity": "Medium",
+    "text": "useStream retention invariant bug: bufferSize=0 still stores one message (packages/console/src/hooks/useStream.ts:60). Personas: data_correctness."
+  },
+  {
+    "findingId": "a56705f4607dc542b35df3f4316f5140",
+    "sourceReview": "2026-05-09T06-08-36.995Z",
+    "ts": "2026-05-09T06:08:36Z",
+    "index": 5,
+    "severity": "Medium",
+    "text": "CSP connect-src allows broad localhost egress in production context (packages/console/index.html:6). Personas: security."
+  },
+  {
+    "findingId": "b5352c16054359e88ffd76815f7b123d",
+    "sourceReview": "2026-05-09T06-08-36.995Z",
+    "ts": "2026-05-09T06:08:36Z",
+    "index": 6,
+    "severity": "Medium",
+    "text": "Poll interval magic number 5_000 duplicated across multiple modules, increasing drift risk. Personas: maintainability."
+  },
+  {
+    "findingId": "710fb840fa85e20a644f9fbb78a100c9",
+    "sourceReview": "2026-05-09T06-08-36.995Z",
+    "ts": "2026-05-09T06:08:36Z",
+    "index": 7,
+    "severity": "Low",
+    "text": "Reducing bufferSize does not immediately clamp existing snapshot (packages/console/src/hooks/useStream.ts:39). Personas: data_correctness."
+  },
+  {
+    "findingId": "8fc823b13dcdceedc19e0a0eba9fd946",
+    "sourceReview": "2026-05-09T06-08-36.995Z",
+    "ts": "2026-05-09T06:08:36Z",
+    "index": 8,
+    "severity": "Low",
+    "text": "URL-builder logic duplicated in client.ts and streams.ts (packages/console/src/api/client.ts:67, packages/console/src/api/streams.ts:83). Personas: architect, simplicity."
+  },
+  {
+    "findingId": "10b2aa64becf38391f66db7fc79d873c",
+    "sourceReview": "2026-05-09T06-08-36.995Z",
+    "ts": "2026-05-09T06:08:36Z",
+    "index": 9,
+    "severity": "Low",
+    "text": "_helpers.ts uses implicit cwd: '.' for bun run dev, making e2e behavior invocation-directory-dependent (packages/console/e2e/_helpers.ts:15). Personas: maintainability."
+  },
+  {
+    "findingId": "25ace3a693005970e57c12c9afc4caba",
+    "sourceReview": "2026-05-09T06-08-36.995Z",
+    "ts": "2026-05-09T06:08:36Z",
+    "index": 10,
+    "severity": "Low",
+    "text": "Added Storybook toolchain expands supply-chain surface with permissive ranges (packages/console/package.json:29). Personas: security."
+  },
+  {
+    "findingId": "fe0e0ba7aae4a3de9ac8aa5766813671",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Build-breaking duplicate import { z } from 'zod' across new long-lived MCP tool files."
+  },
+  {
+    "findingId": "7504ace3f856371a3aa224c867c6a2ed",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 2,
+    "severity": "High",
+    "text": "Long-lived mutator tools lack caller-scoped authorization; any MCP-capable caller can mutate other operators."
+  },
+  {
+    "findingId": "1d4f6064f3db33b847f384b590e54b1e",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 3,
+    "severity": "High",
+    "text": "Approval/rejection audit trail can be forged (decided_by='user' hardcoded)."
+  },
+  {
+    "findingId": "dac76b00971002157a9cfd6b90c7f6da",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 4,
+    "severity": "High",
+    "text": "long_lived_pending_actions contract mismatch: optional id becomes /long-lived/null/..., producing silent wrong behavior."
+  },
+  {
+    "findingId": "99409e1fdf9198224738fd53c768313c",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 5,
+    "severity": "High",
+    "text": "agent_kind parameter is not propagated through MCP/daemon rank surfaces, so caller intent is dropped."
+  },
+  {
+    "findingId": "f010bfafe63d2c126dc4e475d7e84a36",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 6,
+    "severity": "High",
+    "text": "agent_kind SQL predicate (IS NULL OR = ?) contaminates long_lived results with legacy NULL rows (and is non-sargable)."
+  },
+  {
+    "findingId": "8e80c20a63abd0b5727979b81952f3dd",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 7,
+    "severity": "Medium",
+    "text": "Long-lived tick data semantics are misclassified in performance ledger (task_type/source values don’t reflect actual provenance)."
+  },
+  {
+    "findingId": "1115142a1e0656957bd347cd2c4250d5",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 8,
+    "severity": "Medium",
+    "text": "handoff_id is overloaded with tick identity, conflating domains and risking future join/report ambiguity."
+  },
+  {
+    "findingId": "5e946d8b48ccd291fde2a2e6642598c0",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 9,
+    "severity": "Medium",
+    "text": "Teardown mutates multiple tables without a transaction boundary, risking partial state under failure."
+  },
+  {
+    "findingId": "7ee789d05df05d464b2e53b9910e0421",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 10,
+    "severity": "Medium",
+    "text": "Daemon and tests import core internals via relative src paths, bypassing package exports and increasing coupling."
+  },
+  {
+    "findingId": "3cfc40b12a871d489dee61b57b754560",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 11,
+    "severity": "Medium",
+    "text": "Long-lived read/write tools expose broad internal state and allow unbounded persisted memory/goal payloads (exfiltration + prompt-injection/cost amplification risk)."
+  },
+  {
+    "findingId": "fb4e6457248ae5da88755078442bccd3",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 12,
+    "severity": "Medium",
+    "text": "Reject-action reason accepted at MCP edge is dropped by daemon route, causing audit/context loss."
+  },
+  {
+    "findingId": "1aaa3bef1125bd4c7dff809b71b125f4",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 13,
+    "severity": "Low",
+    "text": "Per-tick instantiation of AgentPerformanceWriter may add avoidable overhead in hot paths."
+  },
+  {
+    "findingId": "654339d7226953268c75e6f5c6c1fe5e",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 14,
+    "severity": "Low",
+    "text": "Naming/API ergonomics inconsistencies (tool naming convention drift, ambiguous fields like id/partial, weak typing like Promise<unknown>)."
+  },
+  {
+    "findingId": "70090224243adb17b04b328fbae1b4c1",
+    "sourceReview": "2026-05-11T10-37-48.232Z",
+    "ts": "2026-05-11T10:37:48Z",
+    "index": 15,
+    "severity": "Low",
+    "text": "Minor hygiene gaps (unused imports, undocumented dual tool pattern)."
+  },
+  {
+    "findingId": "f5a4860abb76044466d3ce9fb7343f7d",
+    "sourceReview": "2026-05-11T11-38-27.028Z",
+    "ts": "2026-05-11T11:38:27Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Broken decided_by wire contract causes silent provenance corruption ('user' fallback for MCP path)."
+  },
+  {
+    "findingId": "e10f4f569310b08db2fa5d119e2f1fd5",
+    "sourceReview": "2026-05-11T11-38-27.028Z",
+    "ts": "2026-05-11T11:38:27Z",
+    "index": 2,
+    "severity": "Medium",
+    "text": "decided_by is caller-controlled and unauthenticated, enabling forged audit actor attribution."
+  },
+  {
+    "findingId": "ab121ae7f9ec111983887ee4fa85198e",
+    "sourceReview": "2026-05-11T11-38-27.028Z",
+    "ts": "2026-05-11T11:38:27Z",
+    "index": 3,
+    "severity": "Medium",
+    "text": "Decision state update and audit insert are non-transactional; partial-write inconsistency is possible."
+  },
+  {
+    "findingId": "c243eba4aebefc47e4f78ab7b96263b2",
+    "sourceReview": "2026-05-11T11-38-27.028Z",
+    "ts": "2026-05-11T11:38:27Z",
+    "index": 4,
+    "severity": "Medium",
+    "text": "No cross-layer integration test for long-lived approve/reject provenance over real HTTP boundary."
+  },
+  {
+    "findingId": "8ccb27f368ee2dfd6801f2dadd3efaa2",
+    "sourceReview": "2026-05-11T11-38-27.028Z",
+    "ts": "2026-05-11T11:38:27Z",
+    "index": 5,
+    "severity": "Medium",
+    "text": "agent_kind null semantics handled in reads (COALESCE) instead of schema-default/backfill/index strategy; long-term model/query drift risk."
+  },
+  {
+    "findingId": "de1aa95dd99596dd9fc207c76edc701b",
+    "sourceReview": "2026-05-11T11-38-27.028Z",
+    "ts": "2026-05-11T11:38:27Z",
+    "index": 6,
+    "severity": "Medium",
+    "text": "Validation mismatch: MCP shape allows empty decided_by, downstream schema rejects it later."
+  },
+  {
+    "findingId": "f63bd36871661379e5e0ae070d3c4780",
+    "sourceReview": "2026-05-11T11-38-27.028Z",
+    "ts": "2026-05-11T11:38:27Z",
+    "index": 7,
+    "severity": "Low",
+    "text": "Redundant cast for agent_kind in recommend reader adds noise and suggests stale typing."
+  },
+  {
+    "findingId": "a30c5f4fe1155a2ddc75d0fd31f27440",
+    "sourceReview": "2026-05-11T11-38-27.028Z",
+    "ts": "2026-05-11T11:38:27Z",
+    "index": 8,
+    "severity": "Low",
+    "text": "agent_kind taxonomy/definition drift risks: duplicated enum declaration and repeated 'coding' default literal."
+  },
+  {
+    "findingId": "0221ec89666061c9216db74288364879",
+    "sourceReview": "2026-05-11T11-38-27.028Z",
+    "ts": "2026-05-11T11:38:27Z",
+    "index": 9,
+    "severity": "Low",
+    "text": "Structural maintainability debt: approve/reject handlers heavily duplicated; SELECT * fragility in rank reader."
+  },
+  {
+    "findingId": "032cc550b2da880668949d90a04f8e69",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 1,
+    "severity": "High",
+    "text": "plan_open allows fenced-block/meta injection from user text (goal/steps) into executable plan metadata. Personas: security."
+  },
+  {
+    "findingId": "16dc3e43e72810a5598c2cc980c20536",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 2,
+    "severity": "High",
+    "text": "POST /maestro/sessions accepts forged/non-validated task/handoff/agent linkage (authz + invariant gap; orphan/poisoned sessions possible). Personas: security, data_correctness."
+  },
+  {
+    "findingId": "f99ac2aded2bf3dd7c063425cb506d61",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 3,
+    "severity": "High",
+    "text": "Maestro session response contract is internally inconsistent (consumed_* and *_consumed both present), forcing fallback parsing and ambiguity. Personas: maintainability, naming_clarity, devils_advocat"
+  },
+  {
+    "findingId": "9c2be8a9b2e58ab740b2b8b84c691b90",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 4,
+    "severity": "High",
+    "text": "maestro list has N+1 daemon calls (tasks/list + per-task session fetch), causing linear latency growth. Personas: performance."
+  },
+  {
+    "findingId": "0ebaab51c18c979b985f27076314b81e",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 5,
+    "severity": "High",
+    "text": "maestro_capabilities per-agent task_types is semantically misleading (global enum repeated per agent). Personas: architect."
+  },
+  {
+    "findingId": "8f8c882c75bd17df128f6c9a31140053",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 6,
+    "severity": "Medium",
+    "text": "plan_open fallback agent resolution is hardcoded/order-dependent and can silently degrade to nonexistent agents. Personas: architect, maintainability, naming_clarity."
+  },
+  {
+    "findingId": "1e61dbaf1862e12efdd5f3f41656433c",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 7,
+    "severity": "Medium",
+    "text": "plan_open writes temp artifacts as a side-channel and does not clean them up in normal flow. Personas: architect, maintainability."
+  },
+  {
+    "findingId": "eaf3e4a0c8c104fafe0ead4a55bf89f8",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 8,
+    "severity": "Medium",
+    "text": "MCP tool naming is inconsistent with established dot-namespace style (maestro_session_start, plan_open, etc.), harming discoverability and API ergonomics. Personas: naming_clarity, architect."
+  },
+  {
+    "findingId": "250c89d029076bea64386748a8d3d3b2",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 9,
+    "severity": "Medium",
+    "text": "plan_open test coverage is happy-path only; key failure and malicious-input paths are untested. Personas: maintainability, security (implicitly via exploitability)."
+  },
+  {
+    "findingId": "98b7361767dbcac8b808a3603773f3f2",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 10,
+    "severity": "Medium",
+    "text": "Route/tool layering duplication: route-level policy/casts in maestro route and duplicated CLI request paths increase maintenance cost. Personas: architect, maintainability, simplicity."
+  },
+  {
+    "findingId": "3eb3b34a3d6d15a88e4351e1bca0f53f",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 11,
+    "severity": "Medium",
+    "text": "maestro list may underreport wall-clock consumption (0%) when consumed_wall_clock_ms is absent despite started_at showing elapsed runtime. Personas: data_correctness."
+  },
+  {
+    "findingId": "a0648416876a1f61b6e40540e5dae288",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 12,
+    "severity": "Medium",
+    "text": "Core premise risk: MaestroSession may duplicate existing Task/Lease lifecycle and create dual-source-of-truth drift. Personas: devils_advocate."
+  },
+  {
+    "findingId": "21323d8f39685440a090d49c4a9dc406",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 13,
+    "severity": "Low",
+    "text": "Visibility/filter conventions and terminology are under-documented or unclear (internal-/_ filtering, jargon like paste-ready, abbreviated helper/type names). Personas: maintainability, naming_clarity"
+  },
+  {
+    "findingId": "7eb04f072e3970932a975670fe820fff",
+    "sourceReview": "2026-05-11T13-28-40.332Z",
+    "ts": "2026-05-11T13:28:40Z",
+    "index": 14,
+    "severity": "Low",
+    "text": "Repeated utility duplication (safeJson, small wrappers) and minor non-hot-path I/O inefficiencies. Personas: simplicity, performance."
+  },
+  {
+    "findingId": "8acd8c942271888542cda36bf32b78dd",
+    "sourceReview": "2026-05-11T15-36-36.062Z",
+    "ts": "2026-05-11T15:36:36Z",
+    "index": 1,
+    "severity": null,
+    "text": "High (F1) — Non-plain objects (e.g., Date) can be corrupted during output redaction walk, mutating clean payloads (Date -> {}), which is a data-correctness regression."
+  },
+  {
+    "findingId": "1b7c217b096bbfda9fbf5bf350a469c6",
+    "sourceReview": "2026-05-11T15-36-36.062Z",
+    "ts": "2026-05-11T15:36:36Z",
+    "index": 2,
+    "severity": null,
+    "text": "High (F2) — Redaction walker/policy logic is duplicated (walkAndRedact vs existing checkValue/core traversal), increasing drift and maintenance risk."
+  },
+  {
+    "findingId": "dd3de901ca7db976aef6c9b02dab97e1",
+    "sourceReview": "2026-05-11T15-36-36.062Z",
+    "ts": "2026-05-11T15:36:36Z",
+    "index": 3,
+    "severity": null,
+    "text": "High (F3) — Blocked-event contract is inconsistent for tool results versus documented blocked semantics, forcing downstream special-casing."
+  },
+  {
+    "findingId": "445844d2b2733cbcd972e271478aa740",
+    "sourceReview": "2026-05-11T15-36-36.062Z",
+    "ts": "2026-05-11T15:36:36Z",
+    "index": 4,
+    "severity": null,
+    "text": "Medium (F4) — Unbounded recursive traversal can be abused for CPU/stack pressure and, on exception, may suppress expected audit emission."
+  },
+  {
+    "findingId": "66bf506dd052f3b4074f24e403c98ac0",
+    "sourceReview": "2026-05-11T15-36-36.062Z",
+    "ts": "2026-05-11T15:36:36Z",
+    "index": 5,
+    "severity": null,
+    "text": "Medium (F5) — Synchronous deep traversal/clone behavior can create latency and allocation spikes on large outputs."
+  },
+  {
+    "findingId": "04cf02d8af57832d532b06300d2b3dad",
+    "sourceReview": "2026-05-11T15-36-36.062Z",
+    "ts": "2026-05-11T15:36:36Z",
+    "index": 6,
+    "severity": null,
+    "text": "Medium (F6) — Missing integration test for agent-tool-result-redaction-hit (rewritten/non-blocked output path)."
+  },
+  {
+    "findingId": "5730e6cc77c73411a409464035cb3450",
+    "sourceReview": "2026-05-11T15-36-36.062Z",
+    "ts": "2026-05-11T15:36:36Z",
+    "index": 7,
+    "severity": null,
+    "text": "Medium (F7) — Naming/message clarity issues in capture path (outputResult reuse, vague bypass summary, sentinel key semantics) reduce operator readability."
+  },
+  {
+    "findingId": "1922867199bbe54ac2e8d71ff3c17fa9",
+    "sourceReview": "2026-05-11T15-36-36.062Z",
+    "ts": "2026-05-11T15:36:36Z",
+    "index": 8,
+    "severity": null,
+    "text": "Low (F8) — Secrets embedded in object keys are not redacted (values-only scanning gap)."
+  },
+  {
+    "findingId": "e355f2cb02378bb1d200a03f26c87609",
+    "sourceReview": "2026-05-11T15-36-36.062Z",
+    "ts": "2026-05-11T15:36:36Z",
+    "index": 9,
+    "severity": null,
+    "text": "Low (F9) — Implicit decision precedence/order and small payload-summary inconsistencies add cognitive overhead."
+  },
+  {
+    "findingId": "657e8ef4d9d79e17ebca5dfaafeff9a0",
+    "sourceReview": "2026-05-11T15-36-36.062Z",
+    "ts": "2026-05-11T15:36:36Z",
+    "index": 10,
+    "severity": null,
+    "text": "Low (F10) — Minor dead/redundant shape in blocked payload (decision constant in blocked branch)."
+  },
+  {
+    "findingId": "8512d978890b174d3d2aae5eece326f2",
+    "sourceReview": "2026-05-11T15-36-36.062Z",
+    "ts": "2026-05-11T15:36:36Z",
+    "index": 11,
+    "severity": null,
+    "text": "Info (F11) — git_force_push regex fix is scope-misaligned with main feature and would be cleaner as separate commit."
+  },
+  {
+    "findingId": "011d46b476aacb9a1afa2047ef908d14",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Tick/agent binding flaw allows cross-agent long-lived tick manipulation (chains stamps agent+tick independently; teardown acts on tick ID). Personas: security, data_correctness."
+  },
+  {
+    "findingId": "58384c667613ff8d108ebaf7f62168af",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 2,
+    "severity": null,
+    "text": "[High] Cancel-complete terminal path can skip long-lived tick teardown (handoff terminal, tick may remain unresolved). Personas: data_correctness."
+  },
+  {
+    "findingId": "28e172775fe40595cb179445963ce051",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 3,
+    "severity": null,
+    "text": "[High] Self-state authz is env-trust-based and impersonable (PENUMBRA_LONG_LIVED_AGENT_ID controls identity; direct DB read/write path). Personas: security, architect."
+  },
+  {
+    "findingId": "6c11bcb8c4e41ac48331b5b74c6ecec8",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 4,
+    "severity": null,
+    "text": "[High] MCP allowlist/identity contract is inconsistent and partially fail-open (prefixed/unprefixed tool IDs + regex-based server detection can bypass restriction/injection). Personas: architect, secu"
+  },
+  {
+    "findingId": "060b1faad6d1e145dbff86c328ab9f8e",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 5,
+    "severity": null,
+    "text": "[High] Critical adapter policy duplication for MCP env/allowlist injection (same logic/constants duplicated in two adapters; high drift risk in security policy). Personas: architect, maintainability, "
+  },
+  {
+    "findingId": "c755aa908097acdcb4743bec8e395f5e",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] Global withActingOn wrapper is order-sensitive and implicit (map insertion order affects identity; “magic” output shaping; broad wrapper semantics). Personas: architect, maintainability, devi"
+  },
+  {
+    "findingId": "8a1330af3eed4e200c0cf4f68efa3774",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Medium] withActingOn adds hot-path allocation overhead (object spread/wrapping on frequent tool calls). Personas: performance."
+  },
+  {
+    "findingId": "fa8b2f7af701a173dbf0adbcbaa8d2ec",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Medium] Key-redaction collisions can silently overwrite object fields (multiple keys rewriting to same key drops data). Personas: data_correctness."
+  },
+  {
+    "findingId": "e97cbfed91684b3b733d890287c748c7",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 9,
+    "severity": null,
+    "text": "[Medium] Error-code semantics are ambiguous/misleading for clients (missing vs unknown agent/tick conflated; self-tools throw tick-missing for agent-missing). Personas: naming_clarity."
+  },
+  {
+    "findingId": "3f251c01b10461b982a02504ca8e6dd9",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 10,
+    "severity": null,
+    "text": "[Medium] JSON fallback silently swallows corruption without audit signal (parseJsonWithFallback returns default on parse failure; minimal visibility/tests). Personas: naming_clarity, maintainability."
+  },
+  {
+    "findingId": "ede2db9897a00cd19d30d2ac75f41777",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 11,
+    "severity": null,
+    "text": "[Medium] Redactor callsite weakens type safety / limit clarity (as any cast; MAX_SAFE_INTEGER bypass path needs explicit intent/tests). Personas: maintainability."
+  },
+  {
+    "findingId": "bc2eef06185209c6bcf35cfc2b5b3d34",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 12,
+    "severity": null,
+    "text": "[Medium] PR scope mixes major long-lived feature + security-sensitive redactor refactor (reviewability/risk concentration concern). Personas: devils_advocate."
+  },
+  {
+    "findingId": "b234a7676eb570f5f3deed2a3981511e",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 13,
+    "severity": null,
+    "text": "[Low] Boilerplate/self-tool wrapper repetition and minor dead/unused abstractions (factory opportunity, dead type variants, tiny helper over-abstraction). Personas: simplicity."
+  },
+  {
+    "findingId": "af3dc0e1514c7c02ba4c86549ba0e6c8",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 14,
+    "severity": null,
+    "text": "[Low] Naming/log clarity debt (alias/name mismatches, awkward identifiers, noisy log shape). Personas: naming_clarity."
+  },
+  {
+    "findingId": "3d7f98c8b754414c0a5aa1cb2968d6ec",
+    "sourceReview": "2026-05-11T17-11-41.857Z",
+    "ts": "2026-05-11T17:11:41Z",
+    "index": 15,
+    "severity": null,
+    "text": "[Low] Duplicated defaults/constants and minor test gaps (shared bounds constants, explicit malformed-JSON unit cases). Personas: maintainability."
+  },
+  {
+    "findingId": "d444058f3e79cab1967423853451adea",
+    "sourceReview": "2026-05-11T18-05-38.252Z",
+    "ts": "2026-05-11T18:05:38Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Redaction collision resolver still allows silent overwrite/data loss (architect, security)"
+  },
+  {
+    "findingId": "efa36c8f58a1dac4baa9bbaca31209e5",
+    "sourceReview": "2026-05-11T18-05-38.252Z",
+    "ts": "2026-05-11T18:05:38Z",
+    "index": 2,
+    "severity": null,
+    "text": "[Medium] Cancel path ignores transition outcome before teardown (state split risk) (architect)"
+  },
+  {
+    "findingId": "cca48d51137fdfdc0061298f74715575",
+    "sourceReview": "2026-05-11T18-05-38.252Z",
+    "ts": "2026-05-11T18:05:38Z",
+    "index": 3,
+    "severity": null,
+    "text": "[Medium] Invariant enforcement split across ingress/runtime causes phase-dependent failures (architect)"
+  },
+  {
+    "findingId": "3ba1218cf31d83833a751d8373ba3ac0",
+    "sourceReview": "2026-05-11T18-05-38.252Z",
+    "ts": "2026-05-11T18:05:38Z",
+    "index": 4,
+    "severity": null,
+    "text": "[Medium] Allowlist parser/canonicalizer has redundant passes and surprising filtering semantics (maintainability, simplicity, naming_clarity)"
+  },
+  {
+    "findingId": "b010787b68fd2385cccc37a0492e7d73",
+    "sourceReview": "2026-05-11T18-05-38.252Z",
+    "ts": "2026-05-11T18:05:38Z",
+    "index": 5,
+    "severity": null,
+    "text": "[Medium] Repeated DB validation on every self-tool call may create latency amplification (performance, simplicity, devils_advocate)"
+  },
+  {
+    "findingId": "0cf60dc89ffbfb141b2521e8d1f1c857",
+    "sourceReview": "2026-05-11T18-05-38.252Z",
+    "ts": "2026-05-11T18:05:38Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] Reject/cancel write-then-read-back coupling is fragile and partially redundant (maintainability, performance, simplicity)"
+  },
+  {
+    "findingId": "fc81325f3b2ca71a7b2e686168579c10",
+    "sourceReview": "2026-05-11T18-05-38.252Z",
+    "ts": "2026-05-11T18:05:38Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Low] Unbounded reject reason now propagates into teardown persistence (security)"
+  },
+  {
+    "findingId": "e4827086d6633ea1bd0cb4e7b7044174",
+    "sourceReview": "2026-05-11T18-05-38.252Z",
+    "ts": "2026-05-11T18:05:38Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Low] Naming/error-code clarity issues reduce operability (naming_clarity, partially maintainability)"
+  },
+  {
+    "findingId": "3f13d19bafaa1d519c59e2c528ef1996",
+    "sourceReview": "2026-05-11T18-05-38.252Z",
+    "ts": "2026-05-11T18:05:38Z",
+    "index": 9,
+    "severity": null,
+    "text": "[Low] Redaction walker now allocates per object even on no-op paths (performance, simplicity)"
+  },
+  {
+    "findingId": "7c72a03591f3b95d7598118afcabfadb",
+    "sourceReview": "2026-05-11T18-05-38.252Z",
+    "ts": "2026-05-11T18:05:38Z",
+    "index": 10,
+    "severity": null,
+    "text": "[Low] Outcome semantics conflate procedural stop with technical failure (devils_advocate)"
+  },
+  {
+    "findingId": "0696a77a70b0f2f3b2495114328a1e84",
+    "sourceReview": "2026-05-11T18-11-44.238Z",
+    "ts": "2026-05-11T18:11:44Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Redaction collision suffixing is not globally unique; silent data loss still possible in mixed keyspaces (packages/core/src/redaction/value-patterns.ts:156-173). Personas: architect, security, data_co"
+  },
+  {
+    "findingId": "bb5e5f6061b7b4a42c18d0cef1590cae",
+    "sourceReview": "2026-05-11T18-11-44.238Z",
+    "ts": "2026-05-11T18:11:44Z",
+    "index": 2,
+    "severity": "High",
+    "text": "Architectural challenge: per-tool-call identity revalidation may be the wrong trust boundary; might belong in worker lifecycle/process supervision instead (packages/mcp/src/long-lived-context.ts). Per"
+  },
+  {
+    "findingId": "f45b41ccef93bd57130cc38a7edcd395",
+    "sourceReview": "2026-05-11T18-11-44.238Z",
+    "ts": "2026-05-11T18:11:44Z",
+    "index": 3,
+    "severity": "Medium",
+    "text": "Chain start validates tick ownership but not terminal tick state, creating boundary inconsistency with MCP self-tools (packages/daemon/src/routes/chains.ts:866+). Persona: architect."
+  },
+  {
+    "findingId": "266c5d4b3e970ccfc467ef89b37d4b64",
+    "sourceReview": "2026-05-11T18-11-44.238Z",
+    "ts": "2026-05-11T18:11:44Z",
+    "index": 4,
+    "severity": "Medium",
+    "text": "Identity verification and state mutation are non-atomic; possible race to post-terminal writes (packages/mcp/src/tools/long-lived-self-state-set.ts:27+). Persona: architect."
+  },
+  {
+    "findingId": "b70e6dec335d149c55febd8092ce5d9f",
+    "sourceReview": "2026-05-11T18-11-44.238Z",
+    "ts": "2026-05-11T18:11:44Z",
+    "index": 5,
+    "severity": "Medium",
+    "text": "Sync DB query on every self-tool identity check can block event loop under load (packages/mcp/src/long-lived-context.ts:40). Persona: performance."
+  },
+  {
+    "findingId": "05ce5dd1917b6fd7205617a4cd7293de",
+    "sourceReview": "2026-05-11T18-11-44.238Z",
+    "ts": "2026-05-11T18:11:44Z",
+    "index": 6,
+    "severity": "Medium",
+    "text": "Sync DB query added to chain-start hot path can degrade throughput/latency (packages/daemon/src/routes/chains.ts:866). Persona: performance."
+  },
+  {
+    "findingId": "d1d7f798fc16add141cc7532cf805873",
+    "sourceReview": "2026-05-11T18-11-44.238Z",
+    "ts": "2026-05-11T18:11:44Z",
+    "index": 7,
+    "severity": "Medium",
+    "text": "parseAllowlist double-splits input (dead intermediate tokens), adding confusion and unnecessary work (packages/mcp/src/server.ts:10). Personas: maintainability, simplicity."
+  },
+  {
+    "findingId": "798732054e6eaa7c5fd1f64eed92d5c3",
+    "sourceReview": "2026-05-11T18-11-44.238Z",
+    "ts": "2026-05-11T18:11:44Z",
+    "index": 8,
+    "severity": "Medium",
+    "text": "Redaction tests do not cover 3+ collisions / pre-existing __N keys / secondary collisions (packages/core/test/redaction/value-patterns-redact-value.test.ts). Persona: maintainability."
+  },
+  {
+    "findingId": "98b2a77c6280254d64fa496960e35caf",
+    "sourceReview": "2026-05-11T18-11-44.238Z",
+    "ts": "2026-05-11T18:11:44Z",
+    "index": 9,
+    "severity": "Medium",
+    "text": "Naming clarity: terminal_status alias and tick_terminal_status_set message are misleading/telegraphic (packages/mcp/src/long-lived-context.ts). Persona: naming_clarity."
+  },
+  {
+    "findingId": "c7f9801df72eeeafb050c8eeae063174",
+    "sourceReview": "2026-05-11T18-11-44.238Z",
+    "ts": "2026-05-11T18:11:44Z",
+    "index": 10,
+    "severity": "Medium",
+    "text": "Product behavior premise: auto-failing tick on rejected handoff may be too rigid and reduce recovery options (packages/daemon/src/routes/handoffs.ts:227+). Persona: devils_advocate."
+  },
+  {
+    "findingId": "03f4b71d149784ab17bb03320ac5083a",
+    "sourceReview": "2026-05-11T18-11-44.238Z",
+    "ts": "2026-05-11T18:11:44Z",
+    "index": 11,
+    "severity": "Low",
+    "text": "Post-mutation handoff re-reads for unchanged fields are likely redundant (packages/daemon/src/routes/handoffs.ts reject/cancel/complete paths). Personas: maintainability, simplicity, performance."
+  },
+  {
+    "findingId": "80ddece7d29ff09acb1721b0bbc5d583",
+    "sourceReview": "2026-05-11T18-11-44.238Z",
+    "ts": "2026-05-11T18:11:44Z",
+    "index": 12,
+    "severity": "Low",
+    "text": "Redactor now does unconditional per-object allocations (rewrittenEntries + Map) on a hot traversal path (packages/core/src/redaction/value-patterns.ts). Personas: performance, simplicity."
+  },
+  {
+    "findingId": "e56930fbaf0636c6814e45bc613ea93a",
+    "sourceReview": "2026-05-11T18-11-44.238Z",
+    "ts": "2026-05-11T18:11:44Z",
+    "index": 13,
+    "severity": "Low",
+    "text": "Context/type ergonomics and cleanup items: optional running_tick_id vs fail-closed behavior, single-use constant export, minor test-name casing/style. Personas: maintainability, simplicity, naming_cla"
+  },
+  {
+    "findingId": "16661c2e86c7773c298bb4edd33af564",
+    "sourceReview": "2026-05-11T18-46-35.934Z",
+    "ts": "2026-05-11T18:46:35Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Contract regression in MCP chain.start from implicit strict cwd resolution (packages/mcp/src/tools/chain-start.ts, related core/daemon schema mismatch)."
+  },
+  {
+    "findingId": "3fa4961bcdc8063bd52371401fdbc271",
+    "sourceReview": "2026-05-11T18-46-35.934Z",
+    "ts": "2026-05-11T18:46:35Z",
+    "index": 2,
+    "severity": null,
+    "text": "[High] Fragile tool wiring via string special-case + any cast in registry (packages/mcp/src/tools/registry.ts)."
+  },
+  {
+    "findingId": "8e4dfbed7dbbe5d751b437f1ef8aafd1",
+    "sourceReview": "2026-05-11T18-46-35.934Z",
+    "ts": "2026-05-11T18:46:35Z",
+    "index": 3,
+    "severity": null,
+    "text": "[Medium] Failure-mode conflation: resolver swallows parse/IO errors and reports cwd_not_registered (packages/mcp/src/tools/registry.ts, surfaced in chain-start.ts)."
+  },
+  {
+    "findingId": "161aebf9c9704d02da7e4eff77b581bf",
+    "sourceReview": "2026-05-11T18-46-35.934Z",
+    "ts": "2026-05-11T18:46:35Z",
+    "index": 4,
+    "severity": null,
+    "text": "[Medium] Hot-path sync I/O and repeated registry parsing/realpath resolution per call (packages/mcp/src/tools/registry.ts, packages/core/src/projects/registry-cwd.ts)."
+  },
+  {
+    "findingId": "c1c8adeeafabd35fa3306f84fc737208",
+    "sourceReview": "2026-05-11T18-46-35.934Z",
+    "ts": "2026-05-11T18:46:35Z",
+    "index": 5,
+    "severity": null,
+    "text": "[Medium] Explicit project_id: null is treated like omitted and can hard-fail dispatch in unregistered cwd (packages/mcp/src/tools/chain-start.ts)."
+  },
+  {
+    "findingId": "206590c7ab5880e00893c013a14d734c",
+    "sourceReview": "2026-05-11T18-46-35.934Z",
+    "ts": "2026-05-11T18:46:35Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] Validation semantics are inconsistent across layers (empty registry behavior, guard asymmetry) (packages/daemon/src/routes/chains.ts, packages/core/src/worktree/manager.ts)."
+  },
+  {
+    "findingId": "9d91be3b05c984d6da2dc4541d5b976d",
+    "sourceReview": "2026-05-11T18-46-35.934Z",
+    "ts": "2026-05-11T18:46:35Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Low] unknown_project_id response leaks full registered project IDs (packages/daemon/src/routes/chains.ts)."
+  },
+  {
+    "findingId": "2f35dcf2f357eaefbc4ebcf7673e4b79",
+    "sourceReview": "2026-05-11T18-46-35.934Z",
+    "ts": "2026-05-11T18:46:35Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Low] Naming/error clarity debt (misleading hard-coded registry path, inconsistent error terms, vague identifiers) (chain-start.ts, manager.ts, registry-cwd.ts, chains.ts)."
+  },
+  {
+    "findingId": "baf41234191594081b6c20c060ca8048",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Hidden longLivedReactor wiring contract via mutation/cast (runtime-only safety). Raised by: architect, maintainability, simplicity."
+  },
+  {
+    "findingId": "832060649b0befe86ce83ca033aacdd0",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 2,
+    "severity": null,
+    "text": "[High] Manual tick is a privileged execution trigger without per-agent authorization scope. Raised by: security (with premise escalation from devils_advocate)."
+  },
+  {
+    "findingId": "199db6e74dae8bb5920fd30f8be76b37",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 3,
+    "severity": null,
+    "text": "[High] Tick response API has confusing double-nested outcome shape. Raised by: naming_clarity."
+  },
+  {
+    "findingId": "133e03aa17d8d6443dc0a33c8726699e",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 4,
+    "severity": null,
+    "text": "[Medium] Long-lived route dispatch split across separate matchers (tick branch drift risk). Raised by: architect, simplicity."
+  },
+  {
+    "findingId": "eac8131ebf0c9d167c0b344fbb10bbe9",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 5,
+    "severity": null,
+    "text": "[Medium] tick logic bypasses existing shared long-lived handler boundary, mixing domain logic into route layer. Raised by: architect."
+  },
+  {
+    "findingId": "9ff175d7031c6faeacb03e51f915a427",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] Cron scheduler tests rely on wall-clock sleep windows and are CI-flake prone. Raised by: architect, maintainability."
+  },
+  {
+    "findingId": "7797ad8f78e45ce48ecd916fe48f3da6",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Medium] Manual tick endpoint can be abused for DB write amplification (long_lived_ticks spam). Raised by: security."
+  },
+  {
+    "findingId": "24bf824b868f4e52765326ca70a2d0a8",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Medium] Inconsistent error schema across long-lived routes ({error:{code}} vs string error). Raised by: naming_clarity."
+  },
+  {
+    "findingId": "22abdb6be837cc2e11832154f3ef1c0a",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 9,
+    "severity": null,
+    "text": "**[Medium] Naming/export asymmetry in MCP index (longLivedTickHandler among handleLongLived*).** Raised by: maintainability."
+  },
+  {
+    "findingId": "ce35e204d6fb1846301e899f2652c280",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 10,
+    "severity": null,
+    "text": "[Low] Over-abstracted/weakly typed route dependency (LongLivedReactorLike, unknown return). Raised by: maintainability, simplicity."
+  },
+  {
+    "findingId": "ee045d36f513eff8ed42cb7e0b8be0a0",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 11,
+    "severity": null,
+    "text": "[Low] Ambiguous error semantics (unavailable, not_active without status). Raised by: naming_clarity."
+  },
+  {
+    "findingId": "f0c056585f7bb69db3ec1db95031f0cf",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 12,
+    "severity": null,
+    "text": "[Low] croner dependency is semver-floating (^9.0.0) in daemon runtime. Raised by: security."
+  },
+  {
+    "findingId": "dd77373ce1a27cfe7e731889aba4f9a3",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 13,
+    "severity": null,
+    "text": "[Low] Manual + scheduled dual-trigger model increases concurrency/state reasoning complexity. Raised by: devils_advocate."
+  },
+  {
+    "findingId": "23f050e1248dfe1173f850186c61c4c3",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 14,
+    "severity": null,
+    "text": "[Low] manualTick sync path could block event loop if tick gate ever does blocking work (needs confirmation). Raised by: performance."
+  },
+  {
+    "findingId": "b2a36dc878e29f98b30dcb3e1d056ce2",
+    "sourceReview": "2026-05-11T20-32-47.091Z",
+    "ts": "2026-05-11T20:32:47Z",
+    "index": 15,
+    "severity": null,
+    "text": "[Low] Route-level status check overlap/unreachable guard adds confusion (status double-check, optional reactor branch). Raised by: maintainability, simplicity."
+  },
+  {
+    "findingId": "372c5ee114ae7b04f5283f65345cb9e5",
+    "sourceReview": "2026-05-11T21-41-17.403Z",
+    "ts": "2026-05-11T21:41:17Z",
+    "index": 1,
+    "severity": null,
+    "text": "[Medium] Success contract masks degraded reload/policy state — ok: true on reactor reload failure can cause callers to assume policy/config took effect when runtime remains stale. Personas: architect,"
+  },
+  {
+    "findingId": "e68156173e8d045af1d6e2d83040af1e",
+    "sourceReview": "2026-05-11T21-41-17.403Z",
+    "ts": "2026-05-11T21:41:17Z",
+    "index": 2,
+    "severity": null,
+    "text": "[Medium] worktreeRootDir test-helper change is out-of-scope and leaks temp dirs — appears unrelated to reactor wiring and created dirs are not cleaned up. Personas: simplicity, maintainability."
+  },
+  {
+    "findingId": "cf2d8b9db398943eedacfb17f1663965",
+    "sourceReview": "2026-05-11T21-41-17.403Z",
+    "ts": "2026-05-11T21:41:17Z",
+    "index": 3,
+    "severity": null,
+    "text": "[Medium] Route is accumulating orchestration responsibilities — handler directly coordinates multiple subsystem reloads, increasing coupling and future change pressure in HTTP layer. Persona: architec"
+  },
+  {
+    "findingId": "087e6bfa3f0908880d3c5a41acea1c06",
+    "sourceReview": "2026-05-11T21-41-17.403Z",
+    "ts": "2026-05-11T21:41:17Z",
+    "index": 4,
+    "severity": null,
+    "text": "[Low] Internal exception text is exposed to API clients/logs — returning raw error.message increases authenticated reconnaissance surface. Persona: security."
+  },
+  {
+    "findingId": "dce46a594925a71a2c811c044fcd6395",
+    "sourceReview": "2026-05-11T21-41-17.403Z",
+    "ts": "2026-05-11T21:41:17Z",
+    "index": 5,
+    "severity": null,
+    "text": "[Low] Reactor status fields are ambiguous/inconsistent — boolean conflates absent vs failed; conditional error key changes payload shape and can confuse clients. Personas: simplicity, maintainability."
+  },
+  {
+    "findingId": "3da2c0b944b740be73a67a173b25a32f",
+    "sourceReview": "2026-05-11T21-41-17.403Z",
+    "ts": "2026-05-11T21:41:17Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Low] Synchronous reactor reload on request path can degrade control-plane responsiveness — latency now depends on reactor internals. Persona: architect."
+  },
+  {
+    "findingId": "2f5e2c86be02989d315a833630a3134c",
+    "sourceReview": "2026-05-11T21-41-17.403Z",
+    "ts": "2026-05-11T21:41:17Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Low] Route JSDoc is stale after behavior expansion — comment no longer reflects what reload now includes. Persona: maintainability."
+  },
+  {
+    "findingId": "671e63c8a1ef65fa70b38cbfc326ec83",
+    "sourceReview": "2026-05-11T21-41-17.403Z",
+    "ts": "2026-05-11T21:41:17Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Low] Test intent/structure could be improved — failure-path test is verbose for its value, while success path misses assertion of info-log field emission. Personas: simplicity, maintainability."
+  },
+  {
+    "findingId": "009ee139f8754ef3ff286f0232909081",
+    "sourceReview": "2026-05-11T21-41-17.403Z",
+    "ts": "2026-05-11T21:41:17Z",
+    "index": 9,
+    "severity": null,
+    "text": "[Info] Unrelated assertion added in existing test — project_registry_count assertion appears orthogonal to this feature commit. Persona: simplicity."
+  },
+  {
+    "findingId": "f86829bee7b7f701ec0ca300fc338eae",
+    "sourceReview": "2026-05-11T22-05-12.814Z",
+    "ts": "2026-05-11T22:05:12Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Contract drift: config accepts hosted_mcp_servers before runtime owns/uses it."
+  },
+  {
+    "findingId": "4e58f941b51e3c626031216dcd26a9f6",
+    "sourceReview": "2026-05-11T22-05-12.814Z",
+    "ts": "2026-05-11T22:05:12Z",
+    "index": 2,
+    "severity": null,
+    "text": "[Medium] Duplicate MCP contract definitions risk divergence."
+  },
+  {
+    "findingId": "4ad54f815ec9351a69543573908ed5b3",
+    "sourceReview": "2026-05-11T22-05-12.814Z",
+    "ts": "2026-05-11T22:05:12Z",
+    "index": 3,
+    "severity": null,
+    "text": "[Medium] Whitespace-only command passes validation but is non-executable."
+  },
+  {
+    "findingId": "171ed19d2cd11b43585b0f5f48f88ea3",
+    "sourceReview": "2026-05-11T22-05-12.814Z",
+    "ts": "2026-05-11T22:05:12Z",
+    "index": 4,
+    "severity": null,
+    "text": "[Medium] hosted_mcp_servers uses .optional() instead of normalized empty-list semantics."
+  },
+  {
+    "findingId": "408e1fb18cd309d74540704e648469f2",
+    "sourceReview": "2026-05-11T22-05-12.814Z",
+    "ts": "2026-05-11T22:05:12Z",
+    "index": 5,
+    "severity": null,
+    "text": "[Medium] env allows duplicate variable names with undefined resolution semantics."
+  },
+  {
+    "findingId": "90c5e51b3401855f4626f0d0d9a41ac3",
+    "sourceReview": "2026-05-11T22-05-12.814Z",
+    "ts": "2026-05-11T22:05:12Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] Hosted MCP schema lacks lifecycle/intent documentation."
+  },
+  {
+    "findingId": "b58b728810ae470213fd17b0ac26af88",
+    "sourceReview": "2026-05-11T22-05-12.814Z",
+    "ts": "2026-05-11T22:05:12Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Medium] Test suite includes low-signal schema self-tests and misses a key invariant-path case (env[].name empty rejection)."
+  },
+  {
+    "findingId": "25037adf03b663c080a1e552b41b5cec",
+    "sourceReview": "2026-05-11T22-05-12.814Z",
+    "ts": "2026-05-11T22:05:12Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Low] Empty-env-value test uses misleading var name (TOKEN)."
+  },
+  {
+    "findingId": "f3828cbcc6671bf786bd7ebf58677b11",
+    "sourceReview": "2026-05-11T22-19-56.704Z",
+    "ts": "2026-05-11T22:19:56Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Same-name MCP server reuse ignores spec drift (command/args/env), enabling stale runtime behavior and cross-agent server confusion. Personas: architect, data_correctness, security."
+  },
+  {
+    "findingId": "f2c7d293086ee439b1a2bdf77c88d842",
+    "sourceReview": "2026-05-11T22-19-56.704Z",
+    "ts": "2026-05-11T22:19:56Z",
+    "index": 2,
+    "severity": "High",
+    "text": "Hosted MCP subprocesses inherit full daemon environment, exposing ambient secrets to compromised/malicious child servers. Personas: security."
+  },
+  {
+    "findingId": "648d3df728955b2fae7763bf8856250a",
+    "sourceReview": "2026-05-11T22-19-56.704Z",
+    "ts": "2026-05-11T22:19:56Z",
+    "index": 3,
+    "severity": "High",
+    "text": "MCP transport contract is hard-coded to newline-delimited JSON framing, risking incompatibility with compliant MCP servers and hidden lock-in. Personas: architect."
+  },
+  {
+    "findingId": "bc7078419762958d2ad0ce2812e274b1",
+    "sourceReview": "2026-05-11T22-19-56.704Z",
+    "ts": "2026-05-11T22:19:56Z",
+    "index": 4,
+    "severity": "High",
+    "text": "Reactor shutdown does not await async pool shutdown (void call), so child-process teardown completion is not guaranteed. Personas: maintainability, architect."
+  },
+  {
+    "findingId": "d027d19ddfe6790846e9bd050a25ac7e",
+    "sourceReview": "2026-05-11T22-19-56.704Z",
+    "ts": "2026-05-11T22:19:56Z",
+    "index": 5,
+    "severity": "Medium",
+    "text": "Reload is non-atomic/fail-fast: state clears occur before fallible MCP bootstrap, so one failure can abort reconciliation and leave partial scheduler state. Personas: architect, data_correctness."
+  },
+  {
+    "findingId": "9236b07ff7f1bb521866fe4d75af240a",
+    "sourceReview": "2026-05-11T22-19-56.704Z",
+    "ts": "2026-05-11T22:19:56Z",
+    "index": 6,
+    "severity": "Medium",
+    "text": "Unbounded stdout buffer accumulation allows subprocess-driven memory DoS (no max line/buffer limit). Personas: security."
+  },
+  {
+    "findingId": "e8301ca6da493f264e385cf2716842c0",
+    "sourceReview": "2026-05-11T22-19-56.704Z",
+    "ts": "2026-05-11T22:19:56Z",
+    "index": 7,
+    "severity": "Medium",
+    "text": "callTool duplicates JSON-RPC send/timeout/pending logic instead of reusing helper, increasing bug-fix divergence risk. Personas: simplicity, maintainability."
+  },
+  {
+    "findingId": "b20fa046ecf67c50c5e833d84912c298",
+    "sourceReview": "2026-05-11T22-19-56.704Z",
+    "ts": "2026-05-11T22:19:56Z",
+    "index": 8,
+    "severity": "Medium",
+    "text": "Services.mcpPool type is overly narrowed (shutdown only), potentially blocking legitimate future consumers through the service bag. Personas: maintainability (with weaker pushback from simplicity)."
+  },
+  {
+    "findingId": "4983f26fba317d893bc6a493645c6eec",
+    "sourceReview": "2026-05-11T22-19-56.704Z",
+    "ts": "2026-05-11T22:19:56Z",
+    "index": 9,
+    "severity": "Low",
+    "text": "Migration warning may log sensitive legacy MCP config values; redact to metadata-only logs. Personas: security."
+  },
+  {
+    "findingId": "b8b4b1553cb4569a13859273d1987d7c",
+    "sourceReview": "2026-05-11T22-19-56.704Z",
+    "ts": "2026-05-11T22:19:56Z",
+    "index": 10,
+    "severity": "Low",
+    "text": "Test gap for callTool unknown-server branch (mcp_unavailable). Personas: maintainability."
+  },
+  {
+    "findingId": "89e5039b704bfe94655d25e4a5e4ad6c",
+    "sourceReview": "2026-05-11T22-19-56.704Z",
+    "ts": "2026-05-11T22:19:56Z",
+    "index": 11,
+    "severity": "Low",
+    "text": "Magic interval constants / configurability/documentation gaps (DEFAULT_GRACE_MS, sweep interval). Personas: maintainability."
+  },
+  {
+    "findingId": "26d186f42db71c695a97d9e6fd707f3d",
+    "sourceReview": "2026-05-11T22-19-56.704Z",
+    "ts": "2026-05-11T22:19:56Z",
+    "index": 12,
+    "severity": "Low",
+    "text": "Minor cleanup: no-op states.set in teardown, one-off helper over-abstraction (envFromSpec), dual logger path ambiguity, fragile any cast for mcpServers, race-prone sleep in test. Personas: simplicity,"
+  },
+  {
+    "findingId": "21b33b5e52675c2d603eba2bc17d90d2",
+    "sourceReview": "2026-05-11T22-37-33.916Z",
+    "ts": "2026-05-11T22:37:33Z",
+    "index": 1,
+    "severity": "High",
+    "text": "New endpoint is not wired to a runtime ActionGate, so it can degrade to action_gate_not_configured in real runtime paths. Personas: architect."
+  },
+  {
+    "findingId": "6d538e0c73926edbb3a0460441846359",
+    "sourceReview": "2026-05-11T22-37-33.916Z",
+    "ts": "2026-05-11T22:37:33Z",
+    "index": 2,
+    "severity": "High",
+    "text": "Tool-name regex rejects valid dotted long-lived tool IDs, causing false invalid_input before policy evaluation. Personas: architect, data_correctness."
+  },
+  {
+    "findingId": "f1644d0d2ebba208fa88d1922a9fa6b7",
+    "sourceReview": "2026-05-11T22-37-33.916Z",
+    "ts": "2026-05-11T22:37:33Z",
+    "index": 3,
+    "severity": "High",
+    "text": "Route re-authenticates with PENUMBRA_TOKEN env and plain equality, conflicting with centralized daemon auth/token source and causing pass-global/fail-local behavior. Personas: architect, simplicity, d"
+  },
+  {
+    "findingId": "839ddbd8523b9207732ce0281fc33bca",
+    "sourceReview": "2026-05-11T22-37-33.916Z",
+    "ts": "2026-05-11T22:37:33Z",
+    "index": 4,
+    "severity": "Medium",
+    "text": "Caller-controlled (agent_id, tick_id) allows cross-agent impersonation for any bearer-token holder; identity is not caller-bound. Personas: security."
+  },
+  {
+    "findingId": "d700da772282732b520ec46d31b32582",
+    "sourceReview": "2026-05-11T22-37-33.916Z",
+    "ts": "2026-05-11T22:37:33Z",
+    "index": 5,
+    "severity": "Medium",
+    "text": "Open-tick authorization is replayable (no nonce/sequence/signed freshness binding). Personas: security."
+  },
+  {
+    "findingId": "2b0bfeca17ac91808734b114095b64ee",
+    "sourceReview": "2026-05-11T22-37-33.916Z",
+    "ts": "2026-05-11T22:37:33Z",
+    "index": 6,
+    "severity": "Medium",
+    "text": "TOCTOU race: tick may close after identity check but before handleCall, allowing stale-identity execution. Personas: data_correctness."
+  },
+  {
+    "findingId": "ed12af8980b1e3b95b96cf49d22cf2ca",
+    "sourceReview": "2026-05-11T22-37-33.916Z",
+    "ts": "2026-05-11T22:37:33Z",
+    "index": 7,
+    "severity": "Medium",
+    "text": "Local json() helper duplicates shared route helper. Personas: simplicity."
+  },
+  {
+    "findingId": "3b8cb5ca6bec87c2d30a14abf9e8fd59",
+    "sourceReview": "2026-05-11T22-37-33.916Z",
+    "ts": "2026-05-11T22:37:33Z",
+    "index": 8,
+    "severity": "Medium",
+    "text": "identity.ts abstraction has one call site and may be unnecessary indirection (non-blocking cleanup candidate). Personas: simplicity."
+  },
+  {
+    "findingId": "e85b8d23f093966bcc74398cb106633c",
+    "sourceReview": "2026-05-11T22-37-33.916Z",
+    "ts": "2026-05-11T22:37:33Z",
+    "index": 9,
+    "severity": "Medium",
+    "text": "ActionGateLike includes currently unused fields in this path (pending_action_id, tier, snapshot_id), potential YAGNI cleanup. Personas: simplicity."
+  },
+  {
+    "findingId": "4002861bb7c376f0816e5818f690b30f",
+    "sourceReview": "2026-05-11T22-37-33.916Z",
+    "ts": "2026-05-11T22:37:33Z",
+    "index": 10,
+    "severity": "Low",
+    "text": "No explicit body/args size/depth guard; authenticated oversized payloads can cause resource pressure. Personas: security."
+  },
+  {
+    "findingId": "0420607293f32148a18baec5ee4426dd",
+    "sourceReview": "2026-05-11T22-37-33.916Z",
+    "ts": "2026-05-11T22:37:33Z",
+    "index": 11,
+    "severity": "Low",
+    "text": "Queued response includes hardcoded instructional message likely to drift. Personas: simplicity."
+  },
+  {
+    "findingId": "4904efcf2d84fe31318d4fb18bfce56b",
+    "sourceReview": "2026-05-11T22-37-33.916Z",
+    "ts": "2026-05-11T22:37:33Z",
+    "index": 12,
+    "severity": "Low",
+    "text": "Repetitive test setup (large repeated agent insert; manual Services stubs) increases drift/noise. Personas: simplicity."
+  },
+  {
+    "findingId": "581fa7b16874dbd64fc3bad241701c81",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Federated tools bypass PENUMBRA_MCP_TOOL_ALLOWLIST enforcement (architect, security)."
+  },
+  {
+    "findingId": "749425317e49fd4093563f29017f219c",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 2,
+    "severity": "High",
+    "text": "Allowlist contract mismatch: discovery uses exact match while execution uses glob matching (architect)."
+  },
+  {
+    "findingId": "3922e1c8e78cc3bc497d8544381b2754",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 3,
+    "severity": "Medium",
+    "text": "Unhandled JSON parse for mcp_allowlist_json can cause route failure / availability impact (maintainability, security)."
+  },
+  {
+    "findingId": "5480597be32f6ef83756edd7f0d5fc3f",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 4,
+    "severity": "Medium",
+    "text": "services.mcpPool dependency is implicit/under-typed, increasing runtime drift risk (maintainability)."
+  },
+  {
+    "findingId": "81fb02bf2d531f6f1ecc3626f612bb1c",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 5,
+    "severity": "Medium",
+    "text": "buildServer async conversion adds cross-file churn; tradeoff unresolved (simplicity)."
+  },
+  {
+    "findingId": "5dbe163a508769f862474a0c6d24a460",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 6,
+    "severity": "Medium",
+    "text": "Duplicated error-shaping branches in federation client increase maintenance burden (simplicity)."
+  },
+  {
+    "findingId": "4ae55c7d3d29d653b6e2cd4bdbd27177",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 7,
+    "severity": "Medium",
+    "text": "mcpCall wrapper is single-consumer abstraction (possible YAGNI) (simplicity)."
+  },
+  {
+    "findingId": "b5eed160f17e4bf48a5fa8dcce00b22e",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 8,
+    "severity": "Low",
+    "text": "Queued instruction string duplicates daemon-provided message contract (simplicity)."
+  },
+  {
+    "findingId": "9469c20ae8dae239e4afe5e026a8f671",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 9,
+    "severity": "Low",
+    "text": "console.warn in MCP path is inconsistent with structured logging and may be noisy for stdio consumers (maintainability)."
+  },
+  {
+    "findingId": "6dbbce6039b3578d427c39f694a424e6",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 10,
+    "severity": "Low",
+    "text": "Malformed allowlist entries (bad server:tool format) are silently skipped without operator feedback (maintainability)."
+  },
+  {
+    "findingId": "537c4c9aa492068e05865bfae5a3ee96",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 11,
+    "severity": "Low",
+    "text": "services.log.warn without guard/assert can crash if logger wiring regresses (maintainability)."
+  },
+  {
+    "findingId": "b3698c7ffd9587617afd83fb8b1f9d38",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 12,
+    "severity": "Low",
+    "text": "Unused optional agentId/tickId options add cognitive overhead (maintainability)."
+  },
+  {
+    "findingId": "092e4247353ef32348093a77dd259ea4",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 13,
+    "severity": "Low",
+    "text": "Test scaffolding is heavier than needed (Services mega-stub, wide INSERT), reducing readability (simplicity, maintainability)."
+  },
+  {
+    "findingId": "90a422dd3fe1f1605bba1fa00a19e922",
+    "sourceReview": "2026-05-11T22-52-17.025Z",
+    "ts": "2026-05-11T22:52:17Z",
+    "index": 14,
+    "severity": "Low",
+    "text": "Single-use local abstractions (FederationToolDescriptor, tiny parse helper) may be over-factored unless reused (simplicity)."
+  },
+  {
+    "findingId": "b5ca050333e0f451add681f1a50b6ba4",
+    "sourceReview": "2026-05-11T23-09-24.899Z",
+    "ts": "2026-05-11T23:09:24Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Snapshot contract collapses success/failure into string sentinels (fail-open semantics)"
+  },
+  {
+    "findingId": "4814efad36fd4ff12e9f27e1fdb715a9",
+    "sourceReview": "2026-05-11T23-09-24.899Z",
+    "ts": "2026-05-11T23:09:24Z",
+    "index": 2,
+    "severity": null,
+    "text": "[High] Factory abstraction adds indirection for one caller and duplicates existing dependency interface"
+  },
+  {
+    "findingId": "d1161802c6b85bde24ad7a74b790404b",
+    "sourceReview": "2026-05-11T23-09-24.899Z",
+    "ts": "2026-05-11T23:09:24Z",
+    "index": 3,
+    "severity": null,
+    "text": "[Medium] Snapshot capability naming mismatch (ha:snapshot.create vs ha:ha_backup_create) can silently skip snapshots"
+  },
+  {
+    "findingId": "34d4bb3f42acfa89bd083d9049fa8870",
+    "sourceReview": "2026-05-11T23-09-24.899Z",
+    "ts": "2026-05-11T23:09:24Z",
+    "index": 4,
+    "severity": null,
+    "text": "[Medium] Policy logic duplicated across gate and callback adapter"
+  },
+  {
+    "findingId": "6402c2098320b0cb3f55cce19c1e3e9c",
+    "sourceReview": "2026-05-11T23-09-24.899Z",
+    "ts": "2026-05-11T23:09:24Z",
+    "index": 5,
+    "severity": null,
+    "text": "[Medium] Redundant DB query for allowlist in takeSnapshot path"
+  },
+  {
+    "findingId": "9db75f9b852ee06c310d285f252522c2",
+    "sourceReview": "2026-05-11T23-09-24.899Z",
+    "ts": "2026-05-11T23:09:24Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] Unvalidated args forwarded as z.unknown() into MCP tool execution"
+  },
+  {
+    "findingId": "869c9ef33c48da33420268c6ef08cb1d",
+    "sourceReview": "2026-05-11T23-09-24.899Z",
+    "ts": "2026-05-11T23:09:24Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Medium] Optional mcpPool + unreachable defensive branch in production wiring"
+  },
+  {
+    "findingId": "4f644f59f6aa45db9c36db749b1069ac",
+    "sourceReview": "2026-05-11T23-09-24.899Z",
+    "ts": "2026-05-11T23:09:24Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Low] Non-string allowlist entries can throw during glob compilation"
+  },
+  {
+    "findingId": "dfb923b9701227b597924872c4ba86ff",
+    "sourceReview": "2026-05-11T23-09-24.899Z",
+    "ts": "2026-05-11T23:09:24Z",
+    "index": 9,
+    "severity": null,
+    "text": "[Low] Deep relative import from core internals weakens package boundary"
+  },
+  {
+    "findingId": "2ee2f4691fb2db039355f60a76ccee59",
+    "sourceReview": "2026-05-11T23-09-24.899Z",
+    "ts": "2026-05-11T23:09:24Z",
+    "index": 10,
+    "severity": null,
+    "text": "[Low] Raw upstream error message logged from snapshot failure path"
+  },
+  {
+    "findingId": "a1cb08c7f87633fc577ad0c48329a718",
+    "sourceReview": "2026-05-11T23-09-24.899Z",
+    "ts": "2026-05-11T23:09:24Z",
+    "index": 11,
+    "severity": null,
+    "text": "[Low] Integration test file duplicates existing gate behavior tests"
+  },
+  {
+    "findingId": "deb110ec02d62c9f37e25cf6f42ef9f2",
+    "sourceReview": "2026-05-11T23-51-39.028Z",
+    "ts": "2026-05-11T23:51:39Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Federated tool arguments are stripped to {} before forwarding, breaking end-to-end payload correctness."
+  },
+  {
+    "findingId": "d5798590b083a6b91add3eae5ebdb64d",
+    "sourceReview": "2026-05-11T23-51-39.028Z",
+    "ts": "2026-05-11T23:51:39Z",
+    "index": 2,
+    "severity": "Medium",
+    "text": "Boundary contract/validation erosion from dropping upstream schema (inputSchema: {}): weaker local validation, poorer introspection, possible policy-target ambiguity under malformed args."
+  },
+  {
+    "findingId": "9bd1e9fe28ca4dd0fe577ff65ca0ae43",
+    "sourceReview": "2026-05-11T23-51-39.028Z",
+    "ts": "2026-05-11T23:51:39Z",
+    "index": 3,
+    "severity": "Medium",
+    "text": "Registration failures are tolerated but not surfaced programmatically (warn-only), enabling silent degraded federation."
+  },
+  {
+    "findingId": "508b78c8d2f400de3425916fe7583519",
+    "sourceReview": "2026-05-11T23-51-39.028Z",
+    "ts": "2026-05-11T23:51:39Z",
+    "index": 4,
+    "severity": "Medium",
+    "text": "Tests do not lock down intended schema/forwarding behavior (no assertion for registered schema intent and no call-path assertion that forwarded args are preserved)."
+  },
+  {
+    "findingId": "05aa616bd74297864a9cc6cc540e29e3",
+    "sourceReview": "2026-05-11T23-51-39.028Z",
+    "ts": "2026-05-11T23:51:39Z",
+    "index": 5,
+    "severity": "Low",
+    "text": "Return semantics are misleading (registered subset vs prior/all-tools expectation; stale inputSchema on returned defs can mislead readers)."
+  },
+  {
+    "findingId": "be98c7e353848e1707c9be45050bf88c",
+    "sourceReview": "2026-05-11T23-51-39.028Z",
+    "ts": "2026-05-11T23:51:39Z",
+    "index": 6,
+    "severity": "Low",
+    "text": "Logging path needs hardening/operability polish (unsanitized tool name, non-grep-stable multi-arg warn formatting, noisy per-item sync logging in bulk-failure mode)."
+  },
+  {
+    "findingId": "5215869c0d200e23e1a1a6b813c985b2",
+    "sourceReview": "2026-05-11T23-51-39.028Z",
+    "ts": "2026-05-11T23:51:39Z",
+    "index": 7,
+    "severity": "Low",
+    "text": "Minor maintainability debt: broad as any casts and naming/error-message clarity nits (unknown_error fallback ambiguity, vague identifiers)."
+  },
+  {
+    "findingId": "5e78a7ca722b17332867ef29da881c67",
+    "sourceReview": "2026-05-12T00-15-10.911Z",
+    "ts": "2026-05-12T00:15:10Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Fail-closed policy bypass on malformed allowlist"
+  },
+  {
+    "findingId": "ab7fac4e4cba4baf33cfd8f93fd3f35f",
+    "sourceReview": "2026-05-12T00-15-10.911Z",
+    "ts": "2026-05-12T00:15:10Z",
+    "index": 2,
+    "severity": null,
+    "text": "[Medium] Degraded federation startup signal is produced but not consumed at boot boundary"
+  },
+  {
+    "findingId": "16efb9a1c73a327bb4262ef55f675854",
+    "sourceReview": "2026-05-12T00-15-10.911Z",
+    "ts": "2026-05-12T00:15:10Z",
+    "index": 3,
+    "severity": null,
+    "text": "[Medium] Federated schema passthrough weakens validation guarantees"
+  },
+  {
+    "findingId": "48096dbbc78f21f79c295112c87fb56d",
+    "sourceReview": "2026-05-12T00-15-10.911Z",
+    "ts": "2026-05-12T00:15:10Z",
+    "index": 4,
+    "severity": null,
+    "text": "[Medium] Config invariants enforced too late"
+  },
+  {
+    "findingId": "f3f9fb8da4da3e1801eb4c246a3ccac7",
+    "sourceReview": "2026-05-12T00-15-10.911Z",
+    "ts": "2026-05-12T00:15:10Z",
+    "index": 5,
+    "severity": null,
+    "text": "[Medium] Snapshot failure reasons collapsed into generic public error"
+  },
+  {
+    "findingId": "8fcaf26ae0723a0acd22b09b2de6fbe4",
+    "sourceReview": "2026-05-12T00-15-10.911Z",
+    "ts": "2026-05-12T00:15:10Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] Repeated allowlist regex compilation on hot path"
+  },
+  {
+    "findingId": "50ab3c6d03385f2c0273b057e62aa228",
+    "sourceReview": "2026-05-12T00-15-10.911Z",
+    "ts": "2026-05-12T00:15:10Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Low] Boolean policy field is unconstrained integer"
+  },
+  {
+    "findingId": "3ec8262a0bb2809dc7bef36151d65f64",
+    "sourceReview": "2026-05-12T00-15-10.911Z",
+    "ts": "2026-05-12T00:15:10Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Low] Incomplete test coverage for fail-closed edge throw paths"
+  },
+  {
+    "findingId": "02d647a8feb7907fd37882c1e164b261",
+    "sourceReview": "2026-05-12T00-15-10.911Z",
+    "ts": "2026-05-12T00:15:10Z",
+    "index": 9,
+    "severity": null,
+    "text": "[Low] Readability/simplicity debt (naming, boilerplate, fragile comments)"
+  },
+  {
+    "findingId": "c64d5530922b4e96d87b5d97d5fba21a",
+    "sourceReview": "2026-05-12T00-15-10.911Z",
+    "ts": "2026-05-12T00:15:10Z",
+    "index": 10,
+    "severity": null,
+    "text": "[Low] Product/defaults concern (safety posture)"
+  },
+  {
+    "findingId": "a5c5e4f8da0a773f5b1b540ce4df24d1",
+    "sourceReview": "2026-05-12T00-56-56.377Z",
+    "ts": "2026-05-12T00:56:56Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Cross-layer contract break: dot-form federation IDs fail execution paths (architect, data_correctness)"
+  },
+  {
+    "findingId": "4a5c461812fc7fb2586c340c3b717c00",
+    "sourceReview": "2026-05-12T00-56-56.377Z",
+    "ts": "2026-05-12T00:56:56Z",
+    "index": 2,
+    "severity": null,
+    "text": "[Medium] Allowlist parser mis-splits canonical IDs when server names include dots (data_correctness)"
+  },
+  {
+    "findingId": "65988ed6957360b106370c96a3d07198",
+    "sourceReview": "2026-05-12T00-56-56.377Z",
+    "ts": "2026-05-12T00:56:56Z",
+    "index": 3,
+    "severity": null,
+    "text": "[Medium] Health endpoint returns raw failure reasons (information disclosure) (security)"
+  },
+  {
+    "findingId": "1f27d9212292a2eab3b4e1380576742b",
+    "sourceReview": "2026-05-12T00-56-56.377Z",
+    "ts": "2026-05-12T00:56:56Z",
+    "index": 4,
+    "severity": null,
+    "text": "[Medium] Health snapshot semantics are stale/unbounded/misleading (architect, maintainability, naming_clarity, data_correctness, devils_advocate)"
+  },
+  {
+    "findingId": "c45d2f37bb2b319f082392f21bcfc705",
+    "sourceReview": "2026-05-12T00-56-56.377Z",
+    "ts": "2026-05-12T00:56:56Z",
+    "index": 5,
+    "severity": null,
+    "text": "[Medium] mcp-pool state mutation model is fragile and hard to maintain (maintainability, naming_clarity, devils_advocate)"
+  },
+  {
+    "findingId": "3358cd7c814e5f50844f201069e3f334",
+    "sourceReview": "2026-05-12T00-56-56.377Z",
+    "ts": "2026-05-12T00:56:56Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] Tool-ID canonicalization is fragmented across packages (architect, maintainability, simplicity)"
+  },
+  {
+    "findingId": "6678c34808247125df3033d23ab5fe33",
+    "sourceReview": "2026-05-12T00-56-56.377Z",
+    "ts": "2026-05-12T00:56:56Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Medium] Potential scaling issues in federation-tools filtering and health recomputation (performance)"
+  },
+  {
+    "findingId": "914e2db15562ccbcfc48145a56328cf3",
+    "sourceReview": "2026-05-12T00-56-56.377Z",
+    "ts": "2026-05-12T00:56:56Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Medium] Scope creep in diff (long_lived_tick registry changes unrelated to core migration/health) (simplicity)"
+  },
+  {
+    "findingId": "c889f628780612207b5e98c0c46a1073",
+    "sourceReview": "2026-05-12T00-56-56.377Z",
+    "ts": "2026-05-12T00:56:56Z",
+    "index": 9,
+    "severity": null,
+    "text": "[Low] Raw skipped-error details logged to stderr (security, maintainability, architect, devils_advocate)"
+  },
+  {
+    "findingId": "38f2d344e0b53a017e77f277d9dad481",
+    "sourceReview": "2026-05-12T00-56-56.377Z",
+    "ts": "2026-05-12T00:56:56Z",
+    "index": 10,
+    "severity": null,
+    "text": "[Low] API/field naming and shape clarity issues (name, tool===server, dead/redundant branches, duplicate helpers/comments) (maintainability, naming_clarity, simplicity)"
+  },
+  {
+    "findingId": "c1b3b6528fbe7b5e24f39ba14b525a5f",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Critical dispatch path now blocks on recall I/O without a hard budget (architect, performance, devils_advocate)"
+  },
+  {
+    "findingId": "1aae974e5aa68583763388059724c418",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 2,
+    "severity": null,
+    "text": "[High] Redundant outer try/catch around auto-recall appears unreachable/dead (simplicity)"
+  },
+  {
+    "findingId": "bb8dc7fe1464565ab1c47548036c4d9e",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 3,
+    "severity": null,
+    "text": "[Medium] Auto-recall can run without project scoping, enabling cross-project memory exposure (security)"
+  },
+  {
+    "findingId": "e8895c989b3ae208d15930f4def20168",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 4,
+    "severity": null,
+    "text": "[Medium] Recall adapter contract is unstable and weakly typed (any, heterogeneous shapes) (architect, maintainability, simplicity)"
+  },
+  {
+    "findingId": "333a3c969d4914758c4bcd5569934a13",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 5,
+    "severity": null,
+    "text": "[Medium] Non-string recall fields can break injection rendering and silently zero out recall artifacts (data_correctness)"
+  },
+  {
+    "findingId": "f8d57294140670c51f62325fc08b8d4c",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] task_class bypasses canonical request schema (split API contract) (architect)"
+  },
+  {
+    "findingId": "4ec7ee313000ed01e89254260e2eb62a",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Medium] Feature behavior/control plane is ambiguous (env parsing and implicit enablement) (maintainability, simplicity, devils_advocate)"
+  },
+  {
+    "findingId": "fb66d9bbbb5e93b1338eab97b8bf14ac",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Medium] chainStart scope creep / abstraction conflation (start + recall orchestration + lane concerns) (devils_advocate)"
+  },
+  {
+    "findingId": "66b915ce30022f25d6fa078371a7232e",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 9,
+    "severity": null,
+    "text": "[Medium] top_k constants lack rationale/calibration traceability (maintainability)"
+  },
+  {
+    "findingId": "29808634ac37540b5c24249db63a348c",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 10,
+    "severity": null,
+    "text": "[Medium] Test utility duplication (tempServices) increases maintenance burden (simplicity)"
+  },
+  {
+    "findingId": "46ca2055c72f8e43e2c6c6ddd20dee7f",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 11,
+    "severity": null,
+    "text": "[Low] Prompt-injection surface from verbatim recalled text prepend (security)"
+  },
+  {
+    "findingId": "918572bdce430cf7990eb08f4132dc31",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 12,
+    "severity": null,
+    "text": "[Low] Missing targeted tests for TRIVIAL no-call guarantee and BOUNDARY path/top_k (maintainability)"
+  },
+  {
+    "findingId": "1b8e7daa2d1f06708d4c4d1abe49ae59",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 13,
+    "severity": null,
+    "text": "[Low] Env mutation in tests is process-global and race-prone (maintainability)"
+  },
+  {
+    "findingId": "a00aa88d5a0026c428d1f5f094780769",
+    "sourceReview": "2026-05-12T12-11-24.709Z",
+    "ts": "2026-05-12T12:11:24Z",
+    "index": 14,
+    "severity": null,
+    "text": "[Low] Naming/log clarity issues (auto, r, h, generic log phrasing, test var names/hyphenation) (naming_clarity)"
+  },
+  {
+    "findingId": "5616b02be9cb2198482622429e825993",
+    "sourceReview": "2026-05-12T13-18-54.941Z",
+    "ts": "2026-05-12T13:18:54Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Verification lacks provenance/audit semantics (architect, devils_advocate)"
+  },
+  {
+    "findingId": "f0fd4625dad97f64654f4178d1d0dc04",
+    "sourceReview": "2026-05-12T13-18-54.941Z",
+    "ts": "2026-05-12T13:18:54Z",
+    "index": 2,
+    "severity": null,
+    "text": "[High] Fragile cross-package deep import bypasses public core boundary (maintainability, architect, naming_clarity)"
+  },
+  {
+    "findingId": "2d14339432118069ac0dd11d1e216328",
+    "sourceReview": "2026-05-12T13-18-54.941Z",
+    "ts": "2026-05-12T13:18:54Z",
+    "index": 3,
+    "severity": null,
+    "text": "[Medium] Missing object-level authorization scope in memory.verify (security)"
+  },
+  {
+    "findingId": "05f9472a9f36f99b0c4be053879c8e4c",
+    "sourceReview": "2026-05-12T13-18-54.941Z",
+    "ts": "2026-05-12T13:18:54Z",
+    "index": 4,
+    "severity": null,
+    "text": "[Medium] Malformed timestamps misclassify stale as fresh (fail-open) (data_correctness, security)"
+  },
+  {
+    "findingId": "d70cf630684a0ca3827a73149a7073eb",
+    "sourceReview": "2026-05-12T13-18-54.941Z",
+    "ts": "2026-05-12T13:18:54Z",
+    "index": 5,
+    "severity": null,
+    "text": "[Medium] Verification mutates updated_at and blurs content-change invariant (maintainability, devils_advocate)."
+  },
+  {
+    "findingId": "2070fa32019f25b6db0fc2f60465b7b2",
+    "sourceReview": "2026-05-12T13-18-54.941Z",
+    "ts": "2026-05-12T13:18:54Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] Freshness contract is inconsistent across recall flows (architect, maintainability)"
+  },
+  {
+    "findingId": "3f0167f0a96f0341cd46502707e7f2f6",
+    "sourceReview": "2026-05-12T13-18-54.941Z",
+    "ts": "2026-05-12T13:18:54Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Medium] Global hardcoded staleness policy (30 days) is too rigid/poorly placed (maintainability, architect, devils_advocate, naming_clarity)."
+  },
+  {
+    "findingId": "0aba2d16c03760be9348bd6386d0bd1e",
+    "sourceReview": "2026-05-12T13-18-54.941Z",
+    "ts": "2026-05-12T13:18:54Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Medium] Potential YAGNI/perf overhead in search freshness enrichment path (simplicity, performance)"
+  },
+  {
+    "findingId": "9879713958f17fb6b6d30b8b72d1757c",
+    "sourceReview": "2026-05-12T13-18-54.941Z",
+    "ts": "2026-05-12T13:18:54Z",
+    "index": 9,
+    "severity": null,
+    "text": "[Medium] Missing tests for key edge paths (verifyMemory null, /memory/verify HTTP behaviors) (maintainability)."
+  },
+  {
+    "findingId": "c953f183f93e6751af471fe76063c81c",
+    "sourceReview": "2026-05-12T13-18-54.941Z",
+    "ts": "2026-05-12T13:18:54Z",
+    "index": 10,
+    "severity": null,
+    "text": "[Low] MCP registry contract snapshot drift (memory.verify not reflected in test expectations) (architect)."
+  },
+  {
+    "findingId": "b0a8037ba64251804697f5013a88e502",
+    "sourceReview": "2026-05-12T13-18-54.941Z",
+    "ts": "2026-05-12T13:18:54Z",
+    "index": 11,
+    "severity": null,
+    "text": "[Low] Redundant created_at select alias in search query (naming_clarity)."
+  },
+  {
+    "findingId": "43382d290ee81101b16b8b7a6aa23763",
+    "sourceReview": "2026-05-12T13-18-54.941Z",
+    "ts": "2026-05-12T13:18:54Z",
+    "index": 12,
+    "severity": null,
+    "text": "[Low] Sync sqlite calls in async route context (known constraint, low immediate risk) (performance)."
+  },
+  {
+    "findingId": "8f6acd92000984c29c330adc27b9b526",
+    "sourceReview": "2026-05-12T13-18-54.941Z",
+    "ts": "2026-05-12T13:18:54Z",
+    "index": 13,
+    "severity": null,
+    "text": "[Low] memory.verify operational workflow/actor not clearly documented (devils_advocate)."
+  },
+  {
+    "findingId": "2b2cc3d4c91ec05793890624cae8c0f9",
+    "sourceReview": "2026-05-12T13-52-53.192Z",
+    "ts": "2026-05-12T13:52:53Z",
+    "index": 1,
+    "severity": null,
+    "text": "[H1] Routing-policy split creates drift between preview and runtime decisions (architect): routeForRole and resolveAgentForRole are separate engines with different policy contracts."
+  },
+  {
+    "findingId": "c4c9832ab038592da4649fdefd53e0a4",
+    "sourceReview": "2026-05-12T13-52-53.192Z",
+    "ts": "2026-05-12T13:52:53Z",
+    "index": 2,
+    "severity": null,
+    "text": "[H2] Timestamp normalization corrupts temporal correctness (architect, maintainability, data_correctness): malformed non-ISO timestamps break lexical/SQL cutoff behavior."
+  },
+  {
+    "findingId": "d308b3179232cbfc8746451f927752cd",
+    "sourceReview": "2026-05-12T13-52-53.192Z",
+    "ts": "2026-05-12T13:52:53Z",
+    "index": 3,
+    "severity": null,
+    "text": "[H3] Classification key collision can mislabel findings across files (data_correctness): map keyed only by local index causes overwrite/cross-file class bleed."
+  },
+  {
+    "findingId": "63a59cc9f6bd5c90cc81f231ce4cc478",
+    "sourceReview": "2026-05-12T13-52-53.192Z",
+    "ts": "2026-05-12T13:52:53Z",
+    "index": 4,
+    "severity": null,
+    "text": "[H4] Layering/type-contract breach in daemon route wiring (architect, maintainability): deep imports into core/src/* plus casted Services extension (agentchatConfig) bypass published boundaries."
+  },
+  {
+    "findingId": "32d2e1a7a8f5cb314190bc2e8c7d09e6",
+    "sourceReview": "2026-05-12T13-52-53.192Z",
+    "ts": "2026-05-12T13:52:53Z",
+    "index": 5,
+    "severity": null,
+    "text": "[H5] Rebuild path is unbounded and blocking (DoS/cost/latency risk) (security, performance, architect, maintainability): sync FS I/O + sequential remote classification + in-request execution."
+  },
+  {
+    "findingId": "94e865c17136b309d5673d04397cb9b0",
+    "sourceReview": "2026-05-12T13-52-53.192Z",
+    "ts": "2026-05-12T13:52:53Z",
+    "index": 6,
+    "severity": null,
+    "text": "[H6] Caller-controlled reviews_dir allows out-of-scope filesystem ingestion (security): missing realpath/root containment/symlink-escape checks."
+  },
+  {
+    "findingId": "4d4fa043e2d690028269dcbfb8e07fd0",
+    "sourceReview": "2026-05-12T13-52-53.192Z",
+    "ts": "2026-05-12T13:52:53Z",
+    "index": 7,
+    "severity": null,
+    "text": "[H7] Invalid numeric query params can produce NaN/500 misbehavior (data_correctness): window_days/min_samples lack schema coercion/finite validation."
+  },
+  {
+    "findingId": "67f4bf16b21939ec39a1a12feced12f7",
+    "sourceReview": "2026-05-12T13-52-53.192Z",
+    "ts": "2026-05-12T13:52:53Z",
+    "index": 8,
+    "severity": null,
+    "text": "[M8] Parser fails when findings section is terminal (data_correctness): JS regex uses \\Z semantics incorrectly; EOF section can be dropped."
+  },
+  {
+    "findingId": "f95dc680c5e960e7708f5a9d0f117a17",
+    "sourceReview": "2026-05-12T13-52-53.192Z",
+    "ts": "2026-05-12T13:52:53Z",
+    "index": 9,
+    "severity": null,
+    "text": "[M9] MCP/tool boundary validation inconsistency (architect, data_correctness): some new tool/query inputs are raw-cast instead of schema-validated."
+  },
+  {
+    "findingId": "0873cbaaccfcb127c7ec972037f7b685",
+    "sourceReview": "2026-05-12T13-52-53.192Z",
+    "ts": "2026-05-12T13:52:53Z",
+    "index": 10,
+    "severity": null,
+    "text": "[M10] Dead/placeholder data contract pieces increase confusion (simplicity, naming_clarity): raw_response_json always null, riskClass/default_roles effectively no-op."
+  },
+  {
+    "findingId": "e86b6e5d800cbaf5127fef45da3e7729",
+    "sourceReview": "2026-05-12T13-52-53.192Z",
+    "ts": "2026-05-12T13:52:53Z",
+    "index": 11,
+    "severity": null,
+    "text": "[M11] Classifier robustness gaps cause silent drops (maintainability, naming_clarity): fragile JSON extraction/log context and prompt-schema string quality issues."
+  },
+  {
+    "findingId": "df6eb3e47a732bef346c386d484f1d4e",
+    "sourceReview": "2026-05-12T13-52-53.192Z",
+    "ts": "2026-05-12T13:52:53Z",
+    "index": 12,
+    "severity": null,
+    "text": "[L12] Naming/readability debt in new APIs and logs (naming_clarity, maintainability, simplicity): misleading reason text, stuttering handler names, abbreviations, inconsistent path/var naming."
+  },
+  {
+    "findingId": "db3a7105d6af84b3be6b06220a7cea7b",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Invalid numeric query params can corrupt routing or throw 500s (data_correctness)"
+  },
+  {
+    "findingId": "d7429cc187ac4e3e8121f1d2489140f1",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 2,
+    "severity": null,
+    "text": "[High] Findings parser regex uses non-JS \\Z, causing dropped/truncated findings (data_correctness)"
+  },
+  {
+    "findingId": "c3cbb0f89c9c107cae8cf23ecd37083f",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 3,
+    "severity": null,
+    "text": "[High] Untrusted reviews_dir can exfiltrate local data to external LLM (security)"
+  },
+  {
+    "findingId": "69b2e81c42048d8c2565fe98316a2cd1",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 4,
+    "severity": null,
+    "text": "[High] Rebuild endpoint is request-coupled heavy work (sync I/O + remote calls) (architect, performance, security)"
+  },
+  {
+    "findingId": "a62057d6e22cb8aa479585bf09a385ea",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 5,
+    "severity": null,
+    "text": "[High] Routing policy is fragmented across parallel engines (architect, maintainability, devils_advocate)"
+  },
+  {
+    "findingId": "5411619d3894fb413c660db1375b747d",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 6,
+    "severity": null,
+    "text": "[High] Test/API mismatch: test passes unsupported recommendations input (maintainability, simplicity, naming_clarity)"
+  },
+  {
+    "findingId": "9e2f09e4cfa5267dd916ac9b5271d25b",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 7,
+    "severity": null,
+    "text": "[High] Timestamp handling/ordering is incorrect across mixed formats (maintainability, data_correctness)"
+  },
+  {
+    "findingId": "bb4abc5512a9e1818d1ef7f086a03609",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 8,
+    "severity": null,
+    "text": "[High] Daemon-core boundary violations via deep core/src imports and unsafe service casts (architect, maintainability, simplicity)"
+  },
+  {
+    "findingId": "4697d56b7b528267e20b540f186784aa",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 9,
+    "severity": null,
+    "text": "[High] riskClass is accepted/plumbed but no-op (simplicity)"
+  },
+  {
+    "findingId": "9e0280ff23cf79a8929fa11a3d2cbf20",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 10,
+    "severity": null,
+    "text": "[Medium] MCP input validation is inconsistent across adjacent tools (architect, maintainability, simplicity)"
+  },
+  {
+    "findingId": "5653f50ca182b946472719c2ca667c77",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 11,
+    "severity": null,
+    "text": "[Medium] raw_response_json schema field is always null (dead schema surface) (maintainability, simplicity)"
+  },
+  {
+    "findingId": "484e164da9e157b50d20b0aa5a04dc8f",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 12,
+    "severity": null,
+    "text": "[Medium] Classifier pipeline robustness/perf gaps (performance, maintainability, naming_clarity, security)"
+  },
+  {
+    "findingId": "c26d9487e11f0042bb1be115a0e8acea",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 13,
+    "severity": null,
+    "text": "[Medium] Unused/unclear routing config fields (default_roles) and naming/error-shape inconsistencies (maintainability, simplicity, naming_clarity)"
+  },
+  {
+    "findingId": "f2f1f193dcfb7d575fd39db499156c1d",
+    "sourceReview": "2026-05-12T14-04-05.495Z",
+    "ts": "2026-05-12T14:04:05Z",
+    "index": 14,
+    "severity": null,
+    "text": "[Low] Misc readability/deletability issues (maintainability, simplicity, naming_clarity)"
+  },
+  {
+    "findingId": "0dcab8e32b2b89e58077dbec6e79c900",
+    "sourceReview": "2026-05-12T15-10-22.689Z",
+    "ts": "2026-05-12T15:10:22Z",
+    "index": 1,
+    "severity": null,
+    "text": "[High] Stuck running jobs are not recoverable after crash/restart (architect, devils_advocate, data_correctness)"
+  },
+  {
+    "findingId": "40c69a45ea18648b22372456a62e9dff",
+    "sourceReview": "2026-05-12T15-10-22.689Z",
+    "ts": "2026-05-12T15:10:22Z",
+    "index": 2,
+    "severity": null,
+    "text": "[High] Rebuild contract changed silently from sync work to async enqueue on same surface (architect)"
+  },
+  {
+    "findingId": "ec6f9bcb77e494e1dbe649e266e769be",
+    "sourceReview": "2026-05-12T15-10-22.689Z",
+    "ts": "2026-05-12T15:10:22Z",
+    "index": 3,
+    "severity": null,
+    "text": "[High] Jobs are accepted even when no worker/backend is available (devils_advocate, data_correctness, security, simplicity, architect)"
+  },
+  {
+    "findingId": "d86dd6438c14cd9bb7e4981abbb76ee0",
+    "sourceReview": "2026-05-12T15-10-22.689Z",
+    "ts": "2026-05-12T15:10:22Z",
+    "index": 4,
+    "severity": null,
+    "text": "[Medium] No queue backpressure (rate limits/caps/dedupe/TTL) enables authenticated resource exhaustion (security, performance)"
+  },
+  {
+    "findingId": "bfdda72459f4871f0fbe0830891f9849",
+    "sourceReview": "2026-05-12T15-10-22.689Z",
+    "ts": "2026-05-12T15:10:22Z",
+    "index": 5,
+    "severity": null,
+    "text": "[Medium] limit input is weakly validated (NaN -> 500, negative -> unlimited) (security, data_correctness, architect)"
+  },
+  {
+    "findingId": "9e9a5c424a5851ad150a497ec83172a0",
+    "sourceReview": "2026-05-12T15-10-22.689Z",
+    "ts": "2026-05-12T15:10:22Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Medium] Queue runner lifecycle is outside normal supervisor semantics (architect)"
+  },
+  {
+    "findingId": "175dd59f43e2ed58440178e2f4a0a770",
+    "sourceReview": "2026-05-12T15-10-22.689Z",
+    "ts": "2026-05-12T15:10:22Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Medium] Missing index for ORDER BY ts_enqueued DESC LIMIT ? path (performance)"
+  },
+  {
+    "findingId": "9665adab6c8767f38b22e7866a9d9054",
+    "sourceReview": "2026-05-12T15-10-22.689Z",
+    "ts": "2026-05-12T15:10:22Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Medium] Missing tests for runner and new route surfaces (maintainability)"
+  },
+  {
+    "findingId": "87c2dd3c5455f1f8304afcdf78a94c79",
+    "sourceReview": "2026-05-12T15-10-22.689Z",
+    "ts": "2026-05-12T15:10:22Z",
+    "index": 9,
+    "severity": null,
+    "text": "[Medium] Reader/writer boundary drift and ambiguous API naming (architect, naming_clarity, maintainability)"
+  },
+  {
+    "findingId": "e0dacd550c874a14a0c161740b4ef2b7",
+    "sourceReview": "2026-05-12T15-10-22.689Z",
+    "ts": "2026-05-12T15:10:22Z",
+    "index": 10,
+    "severity": null,
+    "text": "[Low] Schema/status typing looseness (free-form status, no CHECK, stale enum strings in descriptions) (architect, maintainability, naming_clarity)"
+  },
+  {
+    "findingId": "35204b2f5f446a4e71391a9f0522ffbf",
+    "sourceReview": "2026-05-12T15-10-22.689Z",
+    "ts": "2026-05-12T15:10:22Z",
+    "index": 11,
+    "severity": null,
+    "text": "[Low] Dead imports and minor clarity/logging issues (maintainability, simplicity, naming_clarity)"
+  },
+  {
+    "findingId": "5e7c28ae823838669ae30c3172a5fb6c",
+    "sourceReview": "2026-05-12T15-10-22.689Z",
+    "ts": "2026-05-12T15:10:22Z",
+    "index": 12,
+    "severity": null,
+    "text": "[Low] No retention policy for job history table (performance)"
+  },
+  {
+    "findingId": "8a864cf6e7161c5a970b3605ceebf7d7",
+    "sourceReview": "2026-05-12T15-42-23.816Z",
+    "ts": "2026-05-12T15:42:23Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Cross-package boundary bypass import in daemon route (packages/daemon/src/routes/quality.ts:3)."
+  },
+  {
+    "findingId": "b928106e368e628f3b45deac61106538",
+    "sourceReview": "2026-05-12T15-42-23.816Z",
+    "ts": "2026-05-12T15:42:23Z",
+    "index": 2,
+    "severity": "High",
+    "text": "Misleading public contract: *_24h field names with non-24h configurable window (packages/core/src/readers/quality-status.ts:31+)."
+  },
+  {
+    "findingId": "77c56bef4b083231e2ebfad84f676e1c",
+    "sourceReview": "2026-05-12T15-42-23.816Z",
+    "ts": "2026-05-12T15:42:23Z",
+    "index": 3,
+    "severity": "High",
+    "text": "Adversarial query path is both brittle and expensive (LIKE on JSON text, parse loop, weak index alignment), creating correctness and request-amplified load risk (packages/core/src/readers/quality-stat"
+  },
+  {
+    "findingId": "fcdd5df17b50f62376dc48ce48ae2926",
+    "sourceReview": "2026-05-12T15-42-23.816Z",
+    "ts": "2026-05-12T15:42:23Z",
+    "index": 4,
+    "severity": "Medium",
+    "text": "Lane metrics can silently truncate/bias due to recentLanes(..., 10_000) and opened-time filtering semantics (packages/core/src/readers/quality-status.ts:55, lane-ledger.ts)."
+  },
+  {
+    "findingId": "7361f0c0bb031cddff55f840fd9ce199",
+    "sourceReview": "2026-05-12T15-42-23.816Z",
+    "ts": "2026-05-12T15:42:23Z",
+    "index": 5,
+    "severity": "Medium",
+    "text": "Error-handling paths are under-tested; adversarial latency/outcome branch coverage is incomplete (packages/daemon/test/routes/quality.test.ts)."
+  },
+  {
+    "findingId": "34a4b5bd297411cd127df1a2ba3b8c19",
+    "sourceReview": "2026-05-12T15-42-23.816Z",
+    "ts": "2026-05-12T15:42:23Z",
+    "index": 6,
+    "severity": "Medium",
+    "text": "Agent recommendation output is hardwired to one task type (implement_substantial), limiting future-proofing (packages/core/src/readers/quality-status.ts:116+)."
+  },
+  {
+    "findingId": "d7bc1e6b3d9a6b521a50c649a675a7e1",
+    "sourceReview": "2026-05-12T15-42-23.816Z",
+    "ts": "2026-05-12T15:42:23Z",
+    "index": 7,
+    "severity": "Medium",
+    "text": "Potential event-loop impact from sync multi-query aggregation in request path (packages/core/src/readers/quality-status.ts, route async handler)."
+  },
+  {
+    "findingId": "d67340e76161e6d6cc415a7bf6dd2a5d",
+    "sourceReview": "2026-05-12T15-42-23.816Z",
+    "ts": "2026-05-12T15:42:23Z",
+    "index": 8,
+    "severity": "Low",
+    "text": "Raw internal error strings returned in API payload (errors[]) leak implementation detail (packages/core/src/readers/quality-status.ts:66,153, route pass-through)."
+  },
+  {
+    "findingId": "b1441b61a8db48923119cd511c65b3db",
+    "sourceReview": "2026-05-12T15-42-23.816Z",
+    "ts": "2026-05-12T15:42:23Z",
+    "index": 9,
+    "severity": "Low",
+    "text": "Zero-latency values excluded from average (payload_latency > 0) can bias/nullify latency metric (packages/core/src/readers/quality-status.ts:96)."
+  },
+  {
+    "findingId": "fad0dd835a8e94ae2afea287e0352a26",
+    "sourceReview": "2026-05-12T15-42-23.816Z",
+    "ts": "2026-05-12T15:42:23Z",
+    "index": 10,
+    "severity": "Low",
+    "text": "Local json() helper duplication and minor naming/API ergonomics debt (snake_case leakage, vague min_samples, generic validation message, etc.)."
+  },
+  {
+    "findingId": "e44cd413624f9820df3e5f95ee0a4014",
+    "sourceReview": "2026-05-12T18-07-47.187Z",
+    "ts": "2026-05-12T18:07:47Z",
+    "index": 1,
+    "severity": null,
+    "text": "[H1] Client-forgeable verifier provenance (integrity/authz risk). Caller-provided by/session_id is written as authoritative provenance without identity binding. Raised by: security (primary), architec"
+  },
+  {
+    "findingId": "eb6a142a78493296259dd2ad275fa5c2",
+    "sourceReview": "2026-05-12T18-07-47.187Z",
+    "ts": "2026-05-12T18:07:47Z",
+    "index": 2,
+    "severity": null,
+    "text": "[H2] “Audit” is last-write-wins, not historical. Verification context is overwritten in t2_memories; prior verification events are lost. Raised by: architect, devils_advocate."
+  },
+  {
+    "findingId": "746d9ec205581c449b52dd502a458086",
+    "sourceReview": "2026-05-12T18-07-47.187Z",
+    "ts": "2026-05-12T18:07:47Z",
+    "index": 3,
+    "severity": null,
+    "text": "[H3] Recall contract inconsistency drops provenance on hydration. search returns provenance but getObservations/ObservationDetailSchema do not, breaking the documented search→timeline→get_observations"
+  },
+  {
+    "findingId": "738950cf1ee0fcd0abd97cbadbca39f8",
+    "sourceReview": "2026-05-12T18-07-47.187Z",
+    "ts": "2026-05-12T18:07:47Z",
+    "index": 4,
+    "severity": null,
+    "text": "[M4] Provenance fields are unbounded/underspecified free text. No length/format/vocabulary constraints; enables inconsistent values and possible storage/response amplification. Raised by: security, ar"
+  },
+  {
+    "findingId": "d770b7b3cd936644a6912f74c1797f5d",
+    "sourceReview": "2026-05-12T18-07-47.187Z",
+    "ts": "2026-05-12T18:07:47Z",
+    "index": 5,
+    "severity": null,
+    "text": "[M5] Missing route/tool integration tests for new params. Optional fields added at daemon/MCP boundaries lack forwarding/mapping tests. Raised by: maintainability."
+  },
+  {
+    "findingId": "1f0a852342eda825858e8fa95b8b1e08",
+    "sourceReview": "2026-05-12T18-07-47.187Z",
+    "ts": "2026-05-12T18:07:47Z",
+    "index": 6,
+    "severity": null,
+    "text": "[M6] Shared SearchHit shape is accumulating tier-specific fields. Flat schema now carries t2-only verification metadata, increasing contract ambiguity. Raised by: architect."
+  },
+  {
+    "findingId": "fa428f454dbfd6648df5e3c0df688c1d",
+    "sourceReview": "2026-05-12T18-07-47.187Z",
+    "ts": "2026-05-12T18:07:47Z",
+    "index": 7,
+    "severity": null,
+    "text": "[M7] Consumer gap / potential YAGNI surface bloat. New columns/fields/routes may be ahead of active production consumers. Raised by: simplicity (disputed by maintainability’s contract-gap finding)."
+  },
+  {
+    "findingId": "8179c4e472ddf55230f12205f67fc8d5",
+    "sourceReview": "2026-05-12T18-07-47.187Z",
+    "ts": "2026-05-12T18:07:47Z",
+    "index": 8,
+    "severity": null,
+    "text": "[L8] Naming clarity issues in public/API and opts fields. by/reason are vague; sessionId vs session_id mismatch adds translation friction. Raised by: naming_clarity."
+  },
+  {
+    "findingId": "ea10b114ed2a0ac6c7bcabbfcf3f8329",
+    "sourceReview": "2026-05-12T18-07-47.187Z",
+    "ts": "2026-05-12T18:07:47Z",
+    "index": 9,
+    "severity": null,
+    "text": "[L9] Implicit NULL lifecycle dependency in writeT2Memory. Insert omits provenance columns and depends on defaults; currently valid but fragile if constraints evolve. Raised by: maintainability."
+  },
+  {
+    "findingId": "f52d24958b498dfe37823e8b8b4746d4",
+    "sourceReview": "2026-05-12T18-07-47.187Z",
+    "ts": "2026-05-12T18:07:47Z",
+    "index": 10,
+    "severity": null,
+    "text": "[I10] No indexes on new provenance columns. No immediate impact now; future filtering would scan. Raised by: performance (informational)."
+  },
+  {
+    "findingId": "436b8f29022b1e8715247fa213597943",
+    "sourceReview": "2026-05-12T20-39-58.637Z",
+    "ts": "2026-05-12T20:39:58Z",
+    "index": 1,
+    "severity": null,
+    "text": "[Medium] Multi-mode API consolidation weakened public ergonomics and abstraction boundaries (architect, devils_advocate)"
+  },
+  {
+    "findingId": "372956c79ddaa1df8d5e00d43cc798a3",
+    "sourceReview": "2026-05-12T20-39-58.637Z",
+    "ts": "2026-05-12T20:39:58Z",
+    "index": 2,
+    "severity": null,
+    "text": "[Medium] Role-resolution policy wiring duplicated across daemon routes (drift risk) (architect)"
+  },
+  {
+    "findingId": "cc46a82b0d3699bfa67a4f9550963123",
+    "sourceReview": "2026-05-12T20-39-58.637Z",
+    "ts": "2026-05-12T20:39:58Z",
+    "index": 3,
+    "severity": null,
+    "text": "[Medium] Test route helpers duplicated across 5 files (maintainability, simplicity)"
+  },
+  {
+    "findingId": "385b7372586e3c09eed5d22b320384bd",
+    "sourceReview": "2026-05-12T20-39-58.637Z",
+    "ts": "2026-05-12T20:39:58Z",
+    "index": 4,
+    "severity": null,
+    "text": "[Medium] Vague repeated test error messages (“expected rank/summary envelope”) reduce debuggability (naming_clarity)"
+  },
+  {
+    "findingId": "7f91c04b386bda6852225ee488534609",
+    "sourceReview": "2026-05-12T20-39-58.637Z",
+    "ts": "2026-05-12T20:39:58Z",
+    "index": 5,
+    "severity": null,
+    "text": "[Low] riskClass is accepted but unused (void input.riskClass) (maintainability)"
+  },
+  {
+    "findingId": "4043c0382c38c4922b64ab8a611d3498",
+    "sourceReview": "2026-05-12T20-39-58.637Z",
+    "ts": "2026-05-12T20:39:58Z",
+    "index": 6,
+    "severity": null,
+    "text": "[Low] DetailMode not exported despite being part of exported input shape (maintainability)"
+  },
+  {
+    "findingId": "c9a75cd273e48087c6365159288c1116",
+    "sourceReview": "2026-05-12T20-39-58.637Z",
+    "ts": "2026-05-12T20:39:58Z",
+    "index": 7,
+    "severity": null,
+    "text": "[Low] Stale test naming after wrapper deletion (naming_clarity)"
+  },
+  {
+    "findingId": "3f8c956d6b10464c65c17fd2fb932771",
+    "sourceReview": "2026-05-12T20-39-58.637Z",
+    "ts": "2026-05-12T20:39:58Z",
+    "index": 8,
+    "severity": null,
+    "text": "[Low] Redundant export pattern for agent-recommend symbols (simplicity)"
+  },
+  {
+    "findingId": "c6a0946eb51997528a75cf024c2ab33d",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 1,
+    "severity": null,
+    "text": "[F1][high] Sweeper scalability/perf regression: full dispatched scan + per-row lookup/filter each tick; DB-side filtering removed. Personas: architect, performance, security, maintainability, devils_a"
+  },
+  {
+    "findingId": "abd290f41dc8fb26efa5912b49eab19b",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 2,
+    "severity": null,
+    "text": "[F2][high] Task-type threshold tests are miswired: smoke_test/implement_small use default opts and can pass without validating resolver behavior. Personas: maintainability, architect, data_correctness"
+  },
+  {
+    "findingId": "3fe00a60232336d027a4c9e656fece8f",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 3,
+    "severity": null,
+    "text": "[F3][high] Scoped typecheck workaround is brittle and expensive: unconditional packages/core prepend plus tsc -b --force may mask dependency-graph issues and increase reconciliation latency. Personas:"
+  },
+  {
+    "findingId": "b708248c0d9175b29f8c83390b59a23b",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 4,
+    "severity": null,
+    "text": "[F4][medium] Threshold mapping duplication/drift risk between serve.ts and test helper; no single source of truth. Personas: architect, maintainability, simplicity, naming_clarity."
+  },
+  {
+    "findingId": "8565c1e0424d56fee09b5341116d867c",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 5,
+    "severity": null,
+    "text": "[F5][medium] packagesToBuild logic duplicated in merge-reconciler command/error paths, increasing maintenance drift risk. Personas: maintainability, simplicity, naming_clarity."
+  },
+  {
+    "findingId": "141e7ad974c48eaa93a94fabb50450db",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 6,
+    "severity": null,
+    "text": "[F6][medium] Option API clarity issue: staleAfterMs name implies scalar but also accepts resolver function; ergonomics/mental-model mismatch. Personas: naming_clarity."
+  },
+  {
+    "findingId": "27ea89b465fce5a170982e20d64b9c3a",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 7,
+    "severity": null,
+    "text": "[F7][low] Minor dead/redundant branches (case 'unknown'/case null same as default) and related readability noise. Personas: maintainability, simplicity."
+  },
+  {
+    "findingId": "c605edcbc49571a149b9727e90aea91e",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 8,
+    "severity": null,
+    "text": "[F8][low] Minor readability/ergonomics nits (toCommandArgs thin wrapper, IIFE normalization, JSDoc ambiguity). Personas: naming_clarity, simplicity, maintainability."
+  },
+  {
+    "findingId": "824ec1f4001175ed68e49a16f5338f76",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 9,
+    "severity": null,
+    "text": "Fix [F1] first: restore DB-side prefiltering (at least coarse ts < now - minTTL), avoid N+1 reads, and add per-tick cap/pagination guardrails."
+  },
+  {
+    "findingId": "841371a91c24a38f327d03474c641c25",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 10,
+    "severity": null,
+    "text": "Fix [F2] immediately: switch those tests to task-aware opts and add boundary assertions (e.g., 14m/16m for implement_small, 4m/6m for smoke_test)."
+  },
+  {
+    "findingId": "6b18e591dedd5cd0f069c4e988847156",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 11,
+    "severity": null,
+    "text": "Address [F3] with a bounded mitigation: remove unconditional --force if possible; if temporarily required, gate it narrowly and open a follow-up to validate/fix TS project reference closure."
+  },
+  {
+    "findingId": "8a4ae74b0249be2c44300c44bf251ccd",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 12,
+    "severity": null,
+    "text": "Refactor for [F4]: extract one typed threshold resolver/map used by daemon wiring and tests."
+  },
+  {
+    "findingId": "da9f14a50b9fe7f9a5b88a424334b78d",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 13,
+    "severity": null,
+    "text": "Clean [F5]-[F8] in a quick follow-up: dedupe packagesToBuild, simplify wrappers/normalization, and remove or document redundant switch branches."
+  },
+  {
+    "findingId": "bb581dcfaf9da12adf90f1c0cbb9fd41",
+    "sourceReview": "2026-05-12T21-46-50.485Z",
+    "ts": "2026-05-12T21:46:50Z",
+    "index": 14,
+    "severity": null,
+    "text": "None. All 8 personas returned findings; no dispatch failures reported."
+  },
+  {
+    "findingId": "a561a6ea436524bf2e2f02776fcdfbed",
+    "sourceReview": "2026-05-12T22-16-43.965Z",
+    "ts": "2026-05-12T22:16:43Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Foreign-key cascade invariant likely not enforced at runtime; stale verification events can survive delete/recreate of the same memory_id."
+  },
+  {
+    "findingId": "4154d326861e211e0a793fb6e9fbd858",
+    "sourceReview": "2026-05-12T22-16-43.965Z",
+    "ts": "2026-05-12T22:16:43Z",
+    "index": 2,
+    "severity": "High",
+    "text": "Provenance contract is semantically unsafe: last_verified_by meaning changed in-place, while claimed_by is client-asserted and spoofable if treated as authenticated identity."
+  },
+  {
+    "findingId": "2093a0ef2482ff48b2c7f37067beec76",
+    "sourceReview": "2026-05-12T22-16-43.965Z",
+    "ts": "2026-05-12T22:16:43Z",
+    "index": 3,
+    "severity": "Medium",
+    "text": "Audit trail boundary is incoherent (write path added, but read contract strategy unclear; exported reader is untested/possibly unused)."
+  },
+  {
+    "findingId": "75778ea421ce30b1c4d828158e89e4c1",
+    "sourceReview": "2026-05-12T22-16-43.965Z",
+    "ts": "2026-05-12T22:16:43Z",
+    "index": 4,
+    "severity": "Medium",
+    "text": "last_verified_claimed_by on t2_memories appears to be dead storage (written but not surfaced on core read paths)."
+  },
+  {
+    "findingId": "db9a060002c84f3d16f8148cc498eb88",
+    "sourceReview": "2026-05-12T22-16-43.965Z",
+    "ts": "2026-05-12T22:16:43Z",
+    "index": 5,
+    "severity": "Medium",
+    "text": "Verification event ordering can be wrong on timestamp ties (event_id tie-break is non-temporal); index/order mismatch may require extra sort work."
+  },
+  {
+    "findingId": "5583f9ae27a223f77d26d3807fb5c59b",
+    "sourceReview": "2026-05-12T22-16-43.965Z",
+    "ts": "2026-05-12T22:16:43Z",
+    "index": 6,
+    "severity": "Medium",
+    "text": "Writer API coupling: verifyMemory requires infra injection (uuid, clock-style dependency) at call sites, increasing boundary leakage."
+  },
+  {
+    "findingId": "60d84375a54fc7939c8695b69e981134",
+    "sourceReview": "2026-05-12T22-16-43.965Z",
+    "ts": "2026-05-12T22:16:43Z",
+    "index": 7,
+    "severity": "Medium",
+    "text": "Throughput risk: synchronous dual-write transaction in async route can become a contention hotspot under high concurrency."
+  },
+  {
+    "findingId": "3c05a7fa0e2281cd330fe49ae6fd24c3",
+    "sourceReview": "2026-05-12T22-16-43.965Z",
+    "ts": "2026-05-12T22:16:43Z",
+    "index": 8,
+    "severity": "Low",
+    "text": "Verify route response construction is redundant (spread + overrides + dead event_id fallback) and increases cognitive load."
+  },
+  {
+    "findingId": "da40d64d4d198406729d86565d45381b",
+    "sourceReview": "2026-05-12T22-16-43.965Z",
+    "ts": "2026-05-12T22:16:43Z",
+    "index": 9,
+    "severity": "Low",
+    "text": "by alias handling is unclear and inconsistent (underdocumented deprecation, regex mismatch with claimed_by, MCP guidance ambiguity)."
+  },
+  {
+    "findingId": "a5ef9a0aff2e898511ece40bc0baae84",
+    "sourceReview": "2026-05-12T22-16-43.965Z",
+    "ts": "2026-05-12T22:16:43Z",
+    "index": 10,
+    "severity": "Low",
+    "text": "Reader boundary guard missing: negative limit can disable bounding (LIMIT -1 behavior)."
+  },
+  {
+    "findingId": "f5ed592cc4c0201e9ad119ff83f585a9",
+    "sourceReview": "2026-05-12T22-16-43.965Z",
+    "ts": "2026-05-12T22:16:43Z",
+    "index": 11,
+    "severity": "Low",
+    "text": "Scope hygiene concern: unrelated reviews_dir hardening bundled with audit/provenance change."
+  },
+  {
+    "findingId": "aad3195ba7113c9a156f122b9b58253b",
+    "sourceReview": "2026-05-12T22-37-40.706Z",
+    "ts": "2026-05-12T22:37:40Z",
+    "index": 1,
+    "severity": "High",
+    "text": "Completion lacks ownership CAS; stale worker can write terminal state after lease loss (completeJob by job_id only, runner continues after failed heartbeat). Personas: security, data_correctness, main"
+  },
+  {
+    "findingId": "75d1fe2de198a313fa291fbcc564cea1",
+    "sourceReview": "2026-05-12T22-37-40.706Z",
+    "ts": "2026-05-12T22:37:40Z",
+    "index": 2,
+    "severity": "High",
+    "text": "Reclaim race/TOCTOU: stale sweep does SELECT then unconditional UPDATE by job_id, allowing live claims to be clobbered. Personas: architect, security, maintainability."
+  },
+  {
+    "findingId": "fd977509346540cce36e038bb6647fa4",
+    "sourceReview": "2026-05-12T22-37-40.706Z",
+    "ts": "2026-05-12T22:37:40Z",
+    "index": 3,
+    "severity": "High",
+    "text": "Layering break: daemon imports packages/core/src/* internals directly, coupling runtime to core file layout/build internals. Personas: architect, maintainability."
+  },
+  {
+    "findingId": "15da272e67215c515e81fd583b45a481",
+    "sourceReview": "2026-05-12T22-37-40.706Z",
+    "ts": "2026-05-12T22:37:40Z",
+    "index": 4,
+    "severity": "Medium",
+    "text": "sweepStaleJobs takes unused leaseTtlMs (void opts), propagating dead/misleading API surface to callers. Personas: naming_clarity, simplicity, maintainability."
+  },
+  {
+    "findingId": "7a70e03e484cac450e78c6558e56b5bc",
+    "sourceReview": "2026-05-12T22-37-40.706Z",
+    "ts": "2026-05-12T22:37:40Z",
+    "index": 5,
+    "severity": "Medium",
+    "text": "Runner does not abort when heartbeat/lease extension fails; can continue expensive work concurrently with a reclaimed attempt. Personas: maintainability, security."
+  },
+  {
+    "findingId": "fea0407ee9902e3c6b6cfdc9c227082d",
+    "sourceReview": "2026-05-12T22-37-40.706Z",
+    "ts": "2026-05-12T22:37:40Z",
+    "index": 6,
+    "severity": "Medium",
+    "text": "ts_started is preserved on direct reclaim (COALESCE), corrupting per-attempt timing semantics. Personas: data_correctness."
+  },
+  {
+    "findingId": "7cc556c379c6c9eed145305596a1d757",
+    "sourceReview": "2026-05-12T22-37-40.706Z",
+    "ts": "2026-05-12T22:37:40Z",
+    "index": 7,
+    "severity": "Medium",
+    "text": "Sweeper robustness gap: missing interval try/catch + unref, diverging from established sweeper resilience pattern. Personas: architect."
+  },
+  {
+    "findingId": "745ce27e7afcb5e18f5e6bc7fc678bd7",
+    "sourceReview": "2026-05-12T22-37-40.706Z",
+    "ts": "2026-05-12T22:37:40Z",
+    "index": 8,
+    "severity": "Medium",
+    "text": "DB efficiency risks: N+1 updates in stale sweep and likely missing indexes for (status, ts_enqueued) / (status, lease_expires_at). Personas: performance."
+  },
+  {
+    "findingId": "b9567826a84f85bd3ce351e530f86959",
+    "sourceReview": "2026-05-12T22-37-40.706Z",
+    "ts": "2026-05-12T22:37:40Z",
+    "index": 9,
+    "severity": "Medium",
+    "text": "Shared Services contract absorbs feature-specific mutable liveness state (memoryEfficacyRunnerHeartbeatAt), increasing coupling. Personas: architect."
+  },
+  {
+    "findingId": "dd1c90d46fa50770d6dc777d62627ae3",
+    "sourceReview": "2026-05-12T22-37-40.706Z",
+    "ts": "2026-05-12T22:37:40Z",
+    "index": 10,
+    "severity": "Medium",
+    "text": "Enqueue route liveness gate may violate queue decoupling (503 instead of accept-and-queue). Personas: devils_advocate."
+  },
+  {
+    "findingId": "5479ca60d99629831e7dc43a7a4dbc56",
+    "sourceReview": "2026-05-12T22-37-40.706Z",
+    "ts": "2026-05-12T22:37:40Z",
+    "index": 11,
+    "severity": "Low",
+    "text": "Silent external contract drift from pending → queued without migration/deprecation path. Personas: maintainability."
+  },
+  {
+    "findingId": "94fbbb867a49df9b066d3ba16ef4e6f8",
+    "sourceReview": "2026-05-12T22-37-40.706Z",
+    "ts": "2026-05-12T22:37:40Z",
+    "index": 12,
+    "severity": "Low",
+    "text": "Naming/log/API clarity inconsistencies (sweeper naming/prefixes, generic backend_unavailable, minor variable naming/readability issues). Personas: naming_clarity, simplicity."
+  },
+  {
+    "findingId": "4ee180e8f301a1fb696ba085a52c6448",
+    "sourceReview": "2026-05-12T23-01-27.410Z",
+    "ts": "2026-05-12T23:01:27Z",
+    "index": 1,
+    "severity": null,
+    "text": "[F1 | Medium] Timestamp contract is incorrect/inconsistent and can reject valid ISO timestamps with offsets; validation is also fragmented across layers."
+  },
+  {
+    "findingId": "0a89efe62ab176d8089cc4b2b9ad1b2c",
+    "sourceReview": "2026-05-12T23-01-27.410Z",
+    "ts": "2026-05-12T23:01:27Z",
+    "index": 2,
+    "severity": null,
+    "text": "[F2 | Medium] Finding-classification correlation is brittle due to overloaded index and positional coupling (batchIndex + 1 / j + 1) across dual batching loops."
+  },
+  {
+    "findingId": "314ee784a1c17d4fa37dfe7555ab4257",
+    "sourceReview": "2026-05-12T23-01-27.410Z",
+    "ts": "2026-05-12T23:01:27Z",
+    "index": 3,
+    "severity": null,
+    "text": "[F3 | Medium] Classification batching is serial and can produce large wall-clock latency on big inputs."
+  },
+  {
+    "findingId": "bfbefba69490b77b335d2bb44e55650a",
+    "sourceReview": "2026-05-12T23-01-27.410Z",
+    "ts": "2026-05-12T23:01:27Z",
+    "index": 4,
+    "severity": null,
+    "text": "[F4 | Low] Route test setup and assertions are weaker than they should be (partial Services cast, no assertion on validation message quality)."
+  },
+  {
+    "findingId": "65e0673a6453871cdc2201446b045229",
+    "sourceReview": "2026-05-12T23-01-27.410Z",
+    "ts": "2026-05-12T23:01:27Z",
+    "index": 5,
+    "severity": null,
+    "text": "[F5 | Low] Heartbeat staleness threshold is magic-numbered and mirrored in tests (60_000 / 61_000), creating drift risk."
+  },
+  {
+    "findingId": "7289a929ec0a279ada3604a94a7773cc",
+    "sourceReview": "2026-05-12T23-01-27.410Z",
+    "ts": "2026-05-12T23:01:27Z",
+    "index": 6,
+    "severity": null,
+    "text": "[F6 | Low] Redundant heartbeat reassignment in test is deletable noise."
+  }
+]
