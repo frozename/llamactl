@@ -102,7 +102,6 @@ export default function Server(): React.JSX.Element {
       ? { ...starting, workload }
       : skipToken,
     {
-      enabled: starting !== null && !!workload,
       onData: handleEvent,
       onError: handleError,
     },
@@ -391,7 +390,7 @@ export default function Server(): React.JSX.Element {
             <Button
               type="button"
               variant="destructive"
-              onClick={() => keepAliveStopMutation.mutate({ graceSeconds: 10 })}
+              onClick={() => workload && keepAliveStopMutation.mutate({ workload, graceSeconds: 10 })}
               disabled={!ka?.running || keepAliveStopMutation.isPending}
               style={{ flex: 1 }}
             >

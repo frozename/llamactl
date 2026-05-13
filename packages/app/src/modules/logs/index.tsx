@@ -38,7 +38,7 @@ export default function Logs(): React.JSX.Element {
   const serverDown = serverStatus.data?.state === 'down';
 
   trpc.serverLogs.useSubscription(
-    workload ? { workload, lines: historyLines, follow } : undefined,
+    workload ? { workload, lines: historyLines, follow } : skipToken,
     {
       enabled: !!workload && !serverDown,
       onStarted: () => {

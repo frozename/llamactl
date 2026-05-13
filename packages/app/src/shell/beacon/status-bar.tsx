@@ -5,6 +5,7 @@ import { useTabStore } from '@/stores/tab-store';
 import { useStatusBarStore } from '@/stores/status-bar-store';
 import { useThemeStore } from '@/stores/theme-store';
 import { useCommandPaletteOpen } from '@/shell/command-palette';
+import { WorkloadPicker } from './workload-picker';
 import { getTheme } from '@/themes';
 
 /**
@@ -51,6 +52,7 @@ export function StatusBar(): React.JSX.Element {
       }}
     >
       <SBItem glyph="⊡" text={`${running} running`} tone={running > 0 ? 'ok' : 'muted'} />
+      <WorkloadPicker />
 
       {moduleItems.length > 0 && (
         <>
