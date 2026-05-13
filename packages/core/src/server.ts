@@ -71,7 +71,7 @@ export function advertisedEndpoint(
   resolved: ResolvedEnv = resolveEnv(),
   override?: { host?: string; port?: number | string },
 ): string {
-  const host = override?.host ?? (resolved.LLAMA_CPP_ADVERTISED_HOST || resolved.LLAMA_CPP_HOST);
+  const host = resolved.LLAMA_CPP_ADVERTISED_HOST || override?.host || resolved.LLAMA_CPP_HOST;
   const port = override?.port ?? resolved.LLAMA_CPP_PORT;
   return `http://${host}:${port}`;
 }

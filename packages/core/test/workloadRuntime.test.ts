@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import {
   workloadRuntimeDir,
   listLocalWorkloads,
+  listWorkloadDirs,
   ensureWorkloadRuntimeDir,
   migrateLegacySingletonRuntime,
 } from '../src/workloadRuntime.js';
@@ -47,6 +48,16 @@ test('listLocalWorkloads returns names of workload subdirs with pidfiles', () =>
     expect(names).toEqual(['a']);
     expect(entries[0]!.pid).toBe(99999);
     expect(entries[0]!.alive).toBe(false);
+  } finally { t.cleanup(); }
+});
+
+test('listWorkloadDirs returns workload subdirs without requiring pidfiles', () => {
+  const t = tempEnv();
+  try {
+    mkdirSync(join(t.runtimeDir, 'workloads', 'a'), { recursive: true });
+    mkdirSync(join(t.runtimeDir, 'workloads', 'b'), { recursive: true });
+    writeFileSync(join(t.runtimeDir, 'workloads', 'b', 'llama-server.pid'), '123\n');
+    expect(listWorkloadDirs(t.resolved).sort()).toEqual(['a', 'b']);
   } finally { t.cleanup(); }
 });
 

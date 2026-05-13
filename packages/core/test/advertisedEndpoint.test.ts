@@ -28,6 +28,16 @@ describe('advertisedEndpoint', () => {
     expect(advertisedEndpoint(resolved)).toBe('http://mac-mini.local:8080');
   });
 
+  test('prefers LLAMA_CPP_ADVERTISED_HOST over an override host', () => {
+    process.env.LLAMA_CPP_HOST = '127.0.0.1';
+    process.env.LLAMA_CPP_PORT = '8080';
+    process.env.LLAMA_CPP_ADVERTISED_HOST = 'mac-mini.local';
+    const resolved = resolveEnv();
+    expect(advertisedEndpoint(resolved, { host: '0.0.0.0', port: 8181 })).toBe(
+      'http://mac-mini.local:8181',
+    );
+  });
+
   test('keeps bind endpoint unchanged when override matches bind', () => {
     process.env.LLAMA_CPP_HOST = '127.0.0.1';
     process.env.LLAMA_CPP_PORT = '8080';

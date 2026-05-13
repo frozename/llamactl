@@ -50,6 +50,16 @@ export function listLocalWorkloads(resolved: ResolvedEnv = resolveEnv()): Worklo
   return entries;
 }
 
+export function listWorkloadDirs(resolved: ResolvedEnv = resolveEnv()): string[] {
+  const root = workloadRuntimeRoot(resolved);
+  if (!existsSync(root)) return [];
+  const out: string[] = [];
+  for (const dirent of readdirSync(root, { withFileTypes: true })) {
+    if (dirent.isDirectory()) out.push(dirent.name);
+  }
+  return out;
+}
+
 export type MigrationResult =
   | { kind: 'skipped' }
   | { kind: 'no-legacy' }
