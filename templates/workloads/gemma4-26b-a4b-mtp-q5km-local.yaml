@@ -1,0 +1,69 @@
+# Gemma 4 26B-A4B UD-Q5_K_M + MTP bench variant on `local`.
+#
+# Higher-quant target — 21 GB weights. Fits alongside Granite on 48 GB.
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: gemma4-26b-a4b-mtp-q5km-local
+  labels:
+    family: gemma4
+    role: bench-quant-sweep
+spec:
+  binary: /Volumes/WorkSSD/src/llama.cpp-atomic/build/bin/llama-server
+  node: local
+  enabled: true
+  resources:
+    expectedMemoryGiB: 22
+  target:
+    kind: rel
+    value: gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q5_K_M.gguf
+  extraArgs:
+    - --alias
+    - gemma4-26b-a4b-mtp
+    - --mtp-head
+    - /Volumes/WorkSSD/ai-models/llama.cpp/models/gemma-4-26B-A4B-it-assistant-GGUF/gemma-4-26B-A4B-it-assistant.Q4_K_M.gguf
+    - --spec-type
+    - mtp
+    - --draft-block-size
+    - "3"
+    - --draft-max
+    - "8"
+    - --draft-min
+    - "0"
+    - -ngl
+    - "99"
+    - -ngld
+    - "99"
+    - -ctk
+    - turbo3
+    - -ctv
+    - turbo3
+    - -ctkd
+    - turbo3
+    - -ctvd
+    - turbo3
+    - --flash-attn
+    - "on"
+    - --ctx-size
+    - "65536"
+    - --no-warmup
+    - -np
+    - "1"
+    - --jinja
+    - -b
+    - "2048"
+    - -ub
+    - "1024"
+    - --reasoning
+    - "off"
+    - --swa-full
+    # Re-enable prompt prefix reuse — fork commit "Gemma 4 time-to-first-token
+    # drops from 8-12s to <1s by unblocking cache reuse" makes this safe again
+    # on TurboQuant KV. Min chunk size 256 (default elsewhere) matches the
+    # bench's shared system+tools prefix length.
+    - --cache-reuse
+    - "256"
+  restartPolicy: Always
+  endpoint:
+    host: 127.0.0.1
+    port: 8181

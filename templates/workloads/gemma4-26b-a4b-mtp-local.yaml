@@ -26,7 +26,11 @@ spec:
     expectedMemoryGiB: 18
   target:
     kind: rel
-    value: gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf
+    # Tuning sweep 2026-05-13: UD-Q4_K_M matches the larger Q5/Q6/Q8 quants
+    # on pass rate (0.972) when paired with f16 KV — same RAM footprint as
+    # the prior UD-Q4_K_XL baseline, higher decode tps, leaves Granite room
+    # to coexist on a 48 GB box.
+    value: gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf
   extraArgs:
     - --alias
     - gemma4-26b-a4b-mtp
@@ -44,14 +48,20 @@ spec:
     - "99"
     - -ngld
     - "99"
+    # KV cache type: f16 instead of turbo3. The 2026-05-13 tuning grid
+    # showed f16 lifts pass rate from 0.944 → 0.972 (one extra correct
+    # routing call) and bumps median decode from 54 → 64 tps for this
+    # 36-task maestro bench. Cost: ~2× KV memory vs turbo3, but at
+    # ctx 65536 with SWA + a 17 GB Q4_K_M model we stay under 30 GB
+    # total and Granite still coexists.
     - -ctk
-    - turbo3
+    - f16
     - -ctv
-    - turbo3
+    - f16
     - -ctkd
-    - turbo3
+    - f16
     - -ctvd
-    - turbo3
+    - f16
     - --flash-attn
     - "on"
     - --ctx-size
@@ -80,6 +90,12 @@ spec:
     # ctx-size 65536 on M4 Pro). Gain: turns 2+ pay only the delta-prefill,
     # not the full 25k-token system prompt.
     - --swa-full
+    # Re-enable prompt prefix reuse — fork commit "Gemma 4 time-to-first-token
+    # drops from 8-12s to <1s by unblocking cache reuse" makes this safe again
+    # on TurboQuant KV. Min chunk size 256 (default elsewhere) matches the
+    # bench's shared system+tools prefix length.
+    - --cache-reuse
+    - "256"
   restartPolicy: Always
   endpoint:
     host: 127.0.0.1
