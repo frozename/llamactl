@@ -12,6 +12,7 @@ build/
 out/
 release/
 *.log
+*.tsbuildinfo
 .npm/
 .pnpm-store/
 
