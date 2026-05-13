@@ -1,5 +1,6 @@
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
 import type { GatewayDispatch } from './gateway-handlers/types.js';
+import { computeNodeBudget } from './admission.js';
 import { defaultWorkloadsDir, listWorkloads } from './store.js';
 
 /**
@@ -284,6 +285,8 @@ export async function applyOne(
      * doesn't accidentally relax the check.
      */
     resolveNodeIdentity?: (nodeName: string) => string | null;
+    listManifests?: () => ModelRun[];
+    getNodeBudgetGiB?: (nodeName: string) => number;
   },
 ): Promise<ApplyResult> {
   if (manifest.spec.gateway) {
@@ -319,6 +322,32 @@ export async function applyOne(
       };
     }
   }
+  const client = getClient(manifest.spec.node);
+  if (manifest.spec.enabled === false) {
+    const now = new Date().toISOString();
+    const status = await client.serverStatus.query({ workload: manifest.metadata.name });
+    if (status.state === 'up') {
+      onEvent?.({ type: 'stop', message: `${manifest.metadata.name}: stopping disabled server` });
+      await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
+    }
+    return {
+      action: 'unchanged',
+      statusSection: {
+        phase: 'Stopped',
+        serverPid: null,
+        endpoint: null,
+        lastTransitionTime: now,
+        conditions: [
+          {
+            type: 'Applied',
+            status: 'True',
+            reason: 'Disabled',
+            lastTransitionTime: now,
+          },
+        ],
+      },
+    };
+  }
   const desired = manifest.spec.endpoint;
   if (desired?.port !== undefined) {
     const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir();
@@ -332,7 +361,8 @@ export async function applyOne(
     };
     const others = listWorkloads(workloadsDir)
       .filter((m) => m.metadata.name !== manifest.metadata.name)
-      .filter((m) => sameNode(m.spec.node));
+      .filter((m) => sameNode(m.spec.node))
+      .filter((m) => m.spec.enabled !== false);
     for (const other of others) {
       if (
         other.status?.phase === 'Failed' &&
@@ -371,7 +401,6 @@ export async function applyOne(
       }
     }
   }
-  const client = getClient(manifest.spec.node);
   const status = await client.serverStatus.query({ workload: manifest.metadata.name });
 
   const desiredRel = manifest.spec.target.value;
@@ -405,6 +434,63 @@ export async function applyOne(
     running && liveRel === desiredRel && sameExtraArgs(liveArgs, desiredArgs) && endpointMatches && binaryMatches;
 
   const now = new Date().toISOString();
+  const evictTargets = (manifest.metadata.annotations['llamactl.io/evict'] ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  for (const target of evictTargets) {
+    try {
+      const targetStatus = await client.serverStatus.query({ workload: target });
+      if (targetStatus.state !== 'up') {
+        onEvent?.({ type: 'skipped', message: `${manifest.metadata.name}: eviction target ${target} already stopped` });
+        continue;
+      }
+      onEvent?.({ type: 'stop', message: `${manifest.metadata.name}: evicting ${target}` });
+      await client.serverStop.mutate({ workload: target, graceSeconds: 5 });
+    } catch {
+      onEvent?.({ type: 'skipped', message: `${manifest.metadata.name}: eviction target ${target} not found` });
+    }
+  }
+
+  const listManifests = opts?.listManifests ?? (() => listWorkloads(opts?.workloadsDir));
+  const living = listManifests().filter(
+    (m) =>
+      m.metadata.name !== manifest.metadata.name
+      && m.spec.node === manifest.spec.node
+      && m.spec.enabled !== false
+      && !evictTargets.includes(m.metadata.name),
+  );
+  const budget = opts?.getNodeBudgetGiB?.(manifest.spec.node) ?? Number.POSITIVE_INFINITY;
+  const forceAdmit = manifest.metadata.annotations['llamactl.io/force-admit'] === 'true';
+  const adm = computeNodeBudget({
+    nodeName: manifest.spec.node,
+    nodeBudgetGiB: budget,
+    livingManifests: living,
+    incoming: manifest,
+    forceAdmit,
+  });
+  if (!adm.ok) {
+    return {
+      action: 'pending',
+      error: adm.reason,
+      statusSection: {
+        phase: 'Failed',
+        serverPid: null,
+        endpoint: null,
+        lastTransitionTime: now,
+        conditions: [
+          {
+            type: 'Applied',
+            status: 'False',
+            reason: 'BudgetExceeded',
+            message: adm.reason,
+            lastTransitionTime: now,
+          },
+        ],
+      },
+    };
+  }
 
   if (matches) {
     onEvent?.({
@@ -528,6 +614,12 @@ export async function applyOne(
       lastTransitionTime: now,
       conditions: [
         { type: 'Applied', status: 'True', reason: action, lastTransitionTime: now },
+        {
+          type: 'BudgetReserved',
+          status: 'True',
+          message: `node reserves ${adm.reservedAfter.toFixed(1)} / ${adm.budget === Infinity ? 'unbounded' : adm.budget.toFixed(1)} GiB`,
+          lastTransitionTime: now,
+        },
       ],
     },
   };
