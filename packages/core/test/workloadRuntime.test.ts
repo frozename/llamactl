@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { existsSync, mkdirSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -79,6 +79,9 @@ test('migrateLegacySingletonRuntime moves files under a matching workload dir', 
     expect(existsSync(join(dest, 'llama-server.pid'))).toBe(true);
     expect(existsSync(join(dest, 'llama-server.state'))).toBe(true);
     expect(existsSync(join(dest, 'llama-server.log'))).toBe(true);
+    expect(JSON.parse(readFileSync(join(dest, 'llama-server.state'), 'utf8')).rel).toBe(
+      'granite/granite-4.1-8b-Q4_K_M.gguf',
+    );
     expect(existsSync(join(t.runtimeDir, 'llama-server.pid'))).toBe(false);
     expect(existsSync(join(t.runtimeDir, '.migrated-v2'))).toBe(true);
   } finally { t.cleanup(); }
