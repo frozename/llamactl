@@ -182,6 +182,22 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
+    'llamactl.node.budget',
+    {
+      title: 'Node workload budget rollup',
+      description:
+        'Return the current budget, reserved GiB, and declared workloads for a node. Mirrors the node budget rollup used by `llamactl describe node` and the remote nodeBudget procedure. Read-only.',
+      inputSchema: {
+        node: z.string().min(1).describe('Name of the node to inspect.'),
+      },
+    },
+    async (input) => {
+      const caller = router.createCaller({});
+      return toTextContent(await caller.nodeBudget({ node: input.node }));
+    },
+  );
+
+  server.registerTool(
     'llamactl.node.add',
     {
       title: 'Add a node from a bootstrap blob',

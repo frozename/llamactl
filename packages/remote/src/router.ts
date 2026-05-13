@@ -16,6 +16,8 @@ import * as infraServicesMod from './infra/services.js';
 import type { ClusterNode, Config } from './config/schema.js';
 import * as workloadStoreMod from './workload/store.js';
 import * as workloadApplyMod from './workload/apply.js';
+import { defaultNodeBudgetGiB } from './workload/admission.js';
+import * as nodeRunStoreMod from './workload/noderun-store.js';
 import * as reconcileLoopMod from './workload/reconcileLoop.js';
 import * as benchScheduleMod from './bench/schedule.js';
 import * as benchScheduleLoopMod from './bench/scheduleLoop.js';
@@ -1086,6 +1088,35 @@ export const router = t.router({
         liveStatus = { error: (err as Error).message };
       }
       return { manifest, liveStatus };
+    }),
+
+  nodeBudget: t.procedure
+    .input(z.object({ node: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const nodeRuns = nodeRunStoreMod.listNodeRuns();
+      const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
+      const budget = defaultNodeBudgetGiB(node?.spec.budget?.memoryGiB);
+      const manifests = workloadStoreMod
+        .listWorkloads()
+        .filter((m) => m.spec.node === input.node);
+      const live = manifests.filter((m) => m.spec.enabled !== false);
+      const reserved = live.reduce(
+        (sum, manifest) => sum + (manifest.spec.resources?.expectedMemoryGiB ?? 0),
+        0,
+      );
+      return {
+        budget,
+        reserved,
+        workloads: manifests.map((manifest) => ({
+          name: manifest.metadata.name,
+          enabled: manifest.spec.enabled !== false,
+          expectedMemoryGiB: manifest.spec.resources?.expectedMemoryGiB ?? null,
+          endpoint: manifest.spec.endpoint
+            ? `${manifest.spec.endpoint.host ?? '127.0.0.1'}:${manifest.spec.endpoint.port ?? '?'}`
+            : null,
+          phase: manifest.status?.phase ?? 'Pending',
+        })),
+      };
     }),
 
   workloadApply: t.procedure

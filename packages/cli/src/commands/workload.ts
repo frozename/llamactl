@@ -37,6 +37,10 @@ const DESCRIBE_USAGE = `Usage: llamactl describe workload <name> [--json]
 
 Print a workload manifest plus the live serverStatus from its target
 node, side by side.
+
+Usage: llamactl describe node <name> [--json]
+
+Show the node budget rollup for declared workloads on that node.
 `;
 
 const DELETE_USAGE = `Usage: llamactl delete workload <name> [--keep-running]
@@ -395,6 +399,9 @@ export async function runDescribe(args: string[]): Promise<number> {
   if ((kind === 'noderun' || kind === 'noderuns') && name) {
     return runDescribeNodeRun(name, json);
   }
+  if (kind === 'node' && name) {
+    return runDescribeNode(name, json);
+  }
   if (kind !== 'workload' && kind !== 'workloads') {
     process.stderr.write(DESCRIBE_USAGE);
     return 1;
@@ -433,6 +440,50 @@ export async function runDescribe(args: string[]): Promise<number> {
   }
   process.stdout.write(`LiveStatus: ${JSON.stringify(liveStatus, null, 2).replace(/\n/g, '\n            ')}\n`);
   return 0;
+}
+
+async function runDescribeNode(name: string, json: boolean): Promise<number> {
+  try {
+    const client = getNodeClientByName(name);
+    const budget = await client.nodeBudget.query({ node: name });
+    if (json) {
+      process.stdout.write(`${JSON.stringify(budget, null, 2)}\n`);
+      return 0;
+    }
+    const pad = (s: string, w: number): string =>
+      s.length >= w ? s : s + ' '.repeat(w - s.length);
+    process.stdout.write(
+      `Budget:   ${budget.reserved.toFixed(1)} / ${budget.budget.toFixed(1)} GiB\n`,
+    );
+    process.stdout.write(`Workloads:\n`);
+    if (budget.workloads.length === 0) {
+      process.stdout.write(`  (none)\n`);
+    } else {
+      const rows = budget.workloads.map((row) => ({
+        name: row.name,
+        endpoint: row.endpoint ?? '-',
+        phase: row.phase.toLowerCase(),
+        memory: row.expectedMemoryGiB == null ? '-' : `${row.expectedMemoryGiB.toFixed(1)} GiB`,
+      }));
+      const nameW = Math.max(4, ...rows.map((r) => r.name.length));
+      const endpointW = Math.max(8, ...rows.map((r) => r.endpoint.length));
+      const phaseW = Math.max(5, ...rows.map((r) => r.phase.length));
+      for (const row of rows) {
+        process.stdout.write(
+          `  ${pad(row.name, nameW)}  ${pad(row.endpoint, endpointW)}  ${pad(row.phase, phaseW)}  ${row.memory}\n`,
+        );
+      }
+    }
+    if (budget.reserved > budget.budget) {
+      process.stdout.write(
+        `WARNING: budget exceeded (${budget.reserved.toFixed(1)} > ${budget.budget.toFixed(1)} GiB) — applies will require --force\n`,
+      );
+    }
+    return 0;
+  } catch (err) {
+    process.stderr.write(`describe: ${(err as Error).message}\n`);
+    return 1;
+  }
 }
 
 export async function runDelete(args: string[]): Promise<number> {

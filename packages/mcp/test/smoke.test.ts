@@ -89,6 +89,8 @@ describe('@llamactl/mcp read surface', () => {
     const MCP_ONLY_EXCLUDED = new Set([
       'llamactl.embersynth.sync',
       'llamactl.embersynth.set-default-profile',
+      'llamactl.node.budget',
+      'llamactl_models_leaderboard',
     ]);
     const OPS_CHAT_ONLY_EXCLUDED = new Set([
       'llamactl.project.apply',
@@ -119,6 +121,7 @@ describe('@llamactl/mcp read surface', () => {
       'llamactl.embersynth.sync',
       'llamactl.env',
       'llamactl.node.add',
+      'llamactl.node.budget',
       'llamactl.node.facts',
       'llamactl.node.ls',
       'llamactl.node.remove',
@@ -138,6 +141,7 @@ describe('@llamactl/mcp read surface', () => {
       'llamactl.server.status',
       'llamactl.workload.delete',
       'llamactl.workload.list',
+      'llamactl_models_leaderboard',
     ]);
   });
 
@@ -593,6 +597,6 @@ describe('@llamactl/mcp M.1 pipeline-tool pickup', () => {
     const llamactlTools = list.tools
       .map((t) => t.name)
       .filter((n) => n.startsWith('llamactl.') && !n.startsWith('llamactl.pipeline.'));
-    expect(llamactlTools.length).toBe(33);
+    expect(llamactlTools.length).toBe(34);
   });
 });
