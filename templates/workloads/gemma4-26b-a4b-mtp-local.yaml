@@ -57,6 +57,26 @@ spec:
     - -np
     - "1"
     - --jinja
+    - -b
+    - "2048"
+    # Bigger ubatch — better prefill throughput on M4 Pro for the long
+    # claude-agent-acp prompts. Trade: slightly higher peak VRAM during prefill.
+    - -ub
+    - "1024"
+    # Disable gemma's default chain-of-thought reasoning. Without this, gemma
+    # fills every response's output budget with `thinking` blocks and never
+    # emits a `text` block — claude-agent-acp's SDK then exits with "process
+    # exited unexpectedly" because the response shape is unusable. Per-request
+    # `chat_template_kwargs.enable_thinking=true` can re-enable when needed.
+    - --reasoning
+    - "off"
+    # Enable full-size SWA cache so the sliding-window-attention layers can
+    # preserve KV across turns within a session. Without this, llama-server
+    # logs "forcing full prompt re-processing due to lack of cache data"
+    # every tool call. Cost: more VRAM for the KV cache (manageable at
+    # ctx-size 65536 on M4 Pro). Gain: turns 2+ pay only the delta-prefill,
+    # not the full 25k-token system prompt.
+    - --swa-full
   restartPolicy: Always
   endpoint:
     host: 127.0.0.1

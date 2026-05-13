@@ -1,0 +1,58 @@
+# Granite 4.1 8B Q4 on M4 Pro (`local`), tuned for long-lived agents.
+#
+# Sibling to granite41-8b-local.yaml. Distinct port (8083) so both can
+# coexist; this one is configured for claude-agent-acp / opencode-acp
+# multi-turn use cases with large stable prefixes (system + tools + brief).
+#
+# Differences from granite41-8b-local.yaml:
+# - --jinja for /v1/messages compatibility with claude-agent-acp
+# - --ctx-size 65536 (was 8192) — long-lived ticks accumulate conversation
+# - -ub 2048 (was 512) — bigger prefill batches; granite 8B has headroom
+# - -b 4096 — logical batch paired with ubatch
+# - -ctk/-ctv q8_0 — KV cache quantization; safer than gemma's turbo3 for unverified model
+# - --cache-reuse 256 — KV shifting reuse for the transformer-attention layers
+#   in granite's Mamba-2 hybrid stack (analog of gemma's --swa-full for non-SWA)
+# - --reasoning off — cheap insurance; granite 4.1 isn't a reasoning model but
+#   verify by /v1/messages probe before assuming
+#
+# Apply:
+#   llamactl apply -f templates/workloads/granite41-8b-long-lived-local.yaml
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: granite41-8b-long-lived-local
+  labels:
+    family: granite41
+    role: long-lived
+spec:
+  node: local
+  target:
+    kind: rel
+    value: granite-4.1-8b-GGUF/granite-4.1-8b-Q4_K_M.gguf
+  extraArgs:
+    - --jinja
+    - --ctx-size
+    - "65536"
+    - -ngl
+    - "999"
+    - --flash-attn
+    - "on"
+    - -b
+    - "4096"
+    - -ub
+    - "2048"
+    - -ctk
+    - q8_0
+    - -ctv
+    - q8_0
+    - --cache-reuse
+    - "256"
+    - --reasoning
+    - "off"
+    - --no-warmup
+    - -np
+    - "1"
+  restartPolicy: Always
+  endpoint:
+    host: 127.0.0.1
+    port: 8083
