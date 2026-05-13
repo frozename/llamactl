@@ -121,9 +121,10 @@ export async function runExpose(args: string[]): Promise<number> {
   const manifest: workloadSchema.ModelRun = {
     apiVersion: 'llamactl/v1',
     kind: 'ModelRun',
-    metadata: { name: workloadName, labels: {} },
+    metadata: { name: workloadName, labels: {}, annotations: {} },
     spec: {
       node,
+      enabled: true,
       target: { kind: targetKind, value: target },
       extraArgs,
       workers: [],
