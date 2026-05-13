@@ -5,6 +5,8 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildMcpServer } from '../src/server.js';
+import { saveNodeRun } from '../../remote/src/workload/noderun-store.js';
+import { saveWorkload } from '../../remote/src/workload/store.js';
 
 /**
  * Smoke tests for the llamactl MCP surface. Every mutation has a
@@ -27,6 +29,7 @@ beforeEach(() => {
     LOCAL_AI_RUNTIME_DIR: runtimeDir,
     LOCAL_AI_PRESET_OVERRIDES_FILE: join(runtimeDir, 'preset-overrides.tsv'),
     LLAMACTL_MCP_AUDIT_DIR: auditDir,
+    LLAMACTL_WORKLOADS_DIR: join(runtimeDir, 'workloads'),
     LLAMACTL_EMBERSYNTH_CONFIG: join(runtimeDir, 'embersynth.yaml'),
     LLAMACTL_CONFIG: join(runtimeDir, 'config'),
     // Scope pipeline-tool pickup into the sandbox runtime dir — any
@@ -42,6 +45,39 @@ afterEach(() => {
   rmSync(runtimeDir, { recursive: true, force: true });
   rmSync(auditDir, { recursive: true, force: true });
 });
+
+function seedNodeBudgetFixtures(): void {
+  const workloadsDir = join(runtimeDir, 'workloads');
+  saveNodeRun(
+    {
+      apiVersion: 'llamactl/v1',
+      kind: 'NodeRun',
+      metadata: { name: 'budget-node', labels: {} },
+      spec: { node: 'local', budget: { memoryGiB: 24 }, infra: [] },
+    },
+    workloadsDir,
+  );
+  saveWorkload(
+    {
+      apiVersion: 'llamactl/v1',
+      kind: 'ModelRun',
+      metadata: { name: 'gemma4-26b-a4b-mtp-local', labels: {}, annotations: {} },
+      spec: {
+        node: 'local',
+        enabled: true,
+        target: { kind: 'rel', value: 'fake-org/fake-model.gguf' },
+        extraArgs: [],
+        workers: [],
+        restartPolicy: 'Always',
+        resources: { expectedMemoryGiB: 18 },
+        endpoint: { host: '127.0.0.1', port: 8181 },
+        timeoutSeconds: 60,
+        gateway: false,
+      },
+    },
+    workloadsDir,
+  );
+}
 
 async function connected() {
   const server = buildMcpServer();
@@ -246,6 +282,31 @@ describe('@llamactl/mcp read surface', () => {
     const parsed = JSON.parse(textOf(result)) as { count: number; workloads: unknown[] };
     expect(parsed.count).toBe(0);
     expect(parsed.workloads).toEqual([]);
+  });
+
+  test('llamactl.node.budget returns the seeded workload rollup', async () => {
+    seedNodeBudgetFixtures();
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: 'llamactl.node.budget',
+      arguments: { node: 'local' },
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      budget: number;
+      reserved: number;
+      workloads: Array<{
+        name: string;
+        endpoint: string | null;
+        phase: string;
+        expectedMemoryGiB: number | null;
+      }>;
+    };
+    expect(parsed.budget).toBeGreaterThan(0);
+    expect(parsed.reserved).toBe(18);
+    const row = parsed.workloads.find((w) => w.name === 'gemma4-26b-a4b-mtp-local');
+    expect(row).toBeDefined();
+    expect(row?.endpoint).toBe('127.0.0.1:8181');
+    expect(row?.phase).toBe('Pending');
   });
 
   test('llamactl.workload.delete dry-run reports "no manifest" when absent', async () => {

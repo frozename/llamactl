@@ -49,6 +49,44 @@ Stop the server on the target node (unless --keep-running is set) and
 remove the manifest file from the workloads directory.
 `;
 
+export interface NodeBudgetView {
+  budget: number;
+  reserved: number;
+  workloads: Array<{
+    name: string;
+    endpoint: string | null;
+    phase: string;
+    expectedMemoryGiB: number | null;
+  }>;
+}
+
+export function renderNodeBudget(budget: NodeBudgetView): string {
+  const pad = (s: string, w: number): string => (s.length >= w ? s : s + ' '.repeat(w - s.length));
+  const out: string[] = [];
+  out.push(`Budget:   ${budget.reserved.toFixed(1)} / ${budget.budget.toFixed(1)} GiB`);
+  out.push(`Workloads:`);
+  if (budget.workloads.length === 0) {
+    out.push('  (none)');
+  } else {
+    const rows = budget.workloads.map((row) => ({
+      name: row.name,
+      endpoint: row.endpoint ?? '-',
+      phase: row.phase.toLowerCase(),
+      memory: row.expectedMemoryGiB == null ? '-' : `${row.expectedMemoryGiB.toFixed(1)} GiB`,
+    }));
+    const nameW = Math.max(4, ...rows.map((r) => r.name.length));
+    const endpointW = Math.max(8, ...rows.map((r) => r.endpoint.length));
+    const phaseW = Math.max(5, ...rows.map((r) => r.phase.length));
+    for (const row of rows) {
+      out.push(`  ${pad(row.name, nameW)}  ${pad(row.endpoint, endpointW)}  ${pad(row.phase, phaseW)}  ${row.memory}`);
+    }
+  }
+  if (budget.reserved > budget.budget) {
+    out.push(`WARNING: budget exceeded (${budget.reserved.toFixed(1)} > ${budget.budget.toFixed(1)} GiB) — applies will require --force`);
+  }
+  return out.join('\n') + '\n';
+}
+
 interface ApplyFlags {
   file: string;
   json: boolean;
@@ -450,35 +488,7 @@ async function runDescribeNode(name: string, json: boolean): Promise<number> {
       process.stdout.write(`${JSON.stringify(budget, null, 2)}\n`);
       return 0;
     }
-    const pad = (s: string, w: number): string =>
-      s.length >= w ? s : s + ' '.repeat(w - s.length);
-    process.stdout.write(
-      `Budget:   ${budget.reserved.toFixed(1)} / ${budget.budget.toFixed(1)} GiB\n`,
-    );
-    process.stdout.write(`Workloads:\n`);
-    if (budget.workloads.length === 0) {
-      process.stdout.write(`  (none)\n`);
-    } else {
-      const rows = budget.workloads.map((row) => ({
-        name: row.name,
-        endpoint: row.endpoint ?? '-',
-        phase: row.phase.toLowerCase(),
-        memory: row.expectedMemoryGiB == null ? '-' : `${row.expectedMemoryGiB.toFixed(1)} GiB`,
-      }));
-      const nameW = Math.max(4, ...rows.map((r) => r.name.length));
-      const endpointW = Math.max(8, ...rows.map((r) => r.endpoint.length));
-      const phaseW = Math.max(5, ...rows.map((r) => r.phase.length));
-      for (const row of rows) {
-        process.stdout.write(
-          `  ${pad(row.name, nameW)}  ${pad(row.endpoint, endpointW)}  ${pad(row.phase, phaseW)}  ${row.memory}\n`,
-        );
-      }
-    }
-    if (budget.reserved > budget.budget) {
-      process.stdout.write(
-        `WARNING: budget exceeded (${budget.reserved.toFixed(1)} > ${budget.budget.toFixed(1)} GiB) — applies will require --force\n`,
-      );
-    }
+    process.stdout.write(renderNodeBudget(budget));
     return 0;
   } catch (err) {
     process.stderr.write(`describe: ${(err as Error).message}\n`);
