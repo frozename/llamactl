@@ -36,6 +36,9 @@ The root cause is in two places:
     other.
   - **Hot swap**: replace one workload with another by explicit
     operator intent — not as a silent side-effect of `apply`.
+- Allow disabling a workload without deleting the manifest, so the
+  operator can park a config on disk and bring it back later without
+  reauthoring it.
 - Surface a soft RAM budget so the operator hears about overcommit
   before the M4 Pro's unified memory thrashes.
 
@@ -89,6 +92,9 @@ Invariants:
 `packages/remote/src/workload/schema.ts`:
 
 ```ts
+// ModelRunSpecSchema (new)
+enabled: z.boolean().default(true),
+
 // ModelRunSpecSchema (new optional)
 resources: z.object({
   expectedMemoryGiB: z.number().positive().optional(),
@@ -97,6 +103,11 @@ resources: z.object({
 // ModelRunMetadataSchema (new)
 annotations: z.record(z.string(), z.string()).default({}),
 ```
+
+`spec.enabled: false` means "reconciler keeps this stopped." Manifest
+stays on disk, status reports `Stopped` with `reason: Disabled`, RAM
+budget does not count it. Re-enable by editing the field and
+re-applying, or via `llamactl enable <name>` (below).
 
 Reserved annotation keys:
 
@@ -166,24 +177,31 @@ the root) are deleted from the live code; tests update.
 `applyOne()` reshape:
 
 1. Gateway / worker handling unchanged.
-2. Port-collision preflight unchanged (already cross-manifest).
-3. **Evict step.** Read `annotations['llamactl.io/evict']`. For each
+2. **Disabled short-circuit.** If `spec.enabled === false`, ensure
+   the workload's server is stopped (call `serverStop` only when its
+   PID is live), skip admission and eviction, and return a `Stopped`
+   status with a `Disabled` condition. Port-collision preflight and
+   budget accounting both exclude disabled manifests.
+3. Port-collision preflight unchanged (already cross-manifest;
+   filters out disabled manifests).
+4. **Evict step.** Read `annotations['llamactl.io/evict']`. For each
    named workload that is currently running on the same node, call
    `client.serverStop.mutate({ workload: name, graceSeconds: 5 })`.
    Emit `evict` events. A missing eviction target logs a warning and
    continues (operator may have already deleted it).
-4. **Admission check.** Sum `expectedMemoryGiB` across all live
-   workloads on this node (excluding any just evicted, including the
-   new one). If sum > node budget and `force-admit` is absent → return
-   `pending` with a `BudgetExceeded` condition. CLI translates that to
-   a non-zero exit with a "rerun with `--force`" hint.
-5. **Diff for this workload only.** `client.serverStatus.query({
+5. **Admission check.** Sum `expectedMemoryGiB` across all live,
+   enabled workloads on this node (excluding any just evicted,
+   including the new one). If sum > node budget and `force-admit` is
+   absent → return `pending` with a `BudgetExceeded` condition. CLI
+   translates that to a non-zero exit with a "rerun with `--force`"
+   hint.
+6. **Diff for this workload only.** `client.serverStatus.query({
    workload: manifest.metadata.name })` returns state for that
    workload's process. The "stop the mismatched server" branch only
    stops *this* workload's old process. Other workloads on the node
    are not touched — the core bug fix.
-6. Start the new server under the workload's runtime dir.
-7. Status reporting unchanged in shape; `ModelRunStatus` is already
+7. Start the new server under the workload's runtime dir.
+8. Status reporting unchanged in shape; `ModelRunStatus` is already
    per-manifest.
 
 `reconcileLoop.ts` continues to iterate `listWorkloads()`; each
@@ -204,8 +222,15 @@ runtime dirs (no live process) → clean up.
 - `--evict <name>` (repeatable) — stamps annotation.
 - `--force` — stamps `force-admit`.
 
+`llamactl enable <name>` / `llamactl disable <name>`: edit
+`spec.enabled` on the persisted manifest and re-apply. `disable`
+gracefully stops the running server if any; `enable` triggers normal
+admission + start. Both are thin wrappers over `apply` so the
+manifest file remains the durable record.
+
 `llamactl get workloads`: gains a `RESERVED` column (per-workload
-`expectedMemoryGiB`). Output already lists per-manifest.
+`expectedMemoryGiB`) and shows `Disabled` in the `PHASE` column for
+parked manifests.
 
 `llamactl describe node <name>`:
 
@@ -260,7 +285,7 @@ Bun test suites (`packages/remote/src/workload/`,
 | Suite | Cases |
 |---|---|
 | `server.test.ts` (core) | Two workloads spawn concurrently into separate dirs; `serverStop(A)` does not touch B; `listLocalWorkloads()` returns both; crash-recovery walk after orphaning A's pid. |
-| `apply.test.ts` | Parallel apply: B applies cleanly while A is live, no stop. Evict: `evict: A` stops A then starts B; A's runtime dir cleaned. Budget overflow → `pending` + `BudgetExceeded`, unless `force-admit`. Hot-swap of same name still restarts in place. |
+| `apply.test.ts` | Parallel apply: B applies cleanly while A is live, no stop. Evict: `evict: A` stops A then starts B; A's runtime dir cleaned. Budget overflow → `pending` + `BudgetExceeded`, unless `force-admit`. Hot-swap of same name still restarts in place. Disable while running stops the server, status reports `Disabled`, RAM accounting drops it. Re-enable starts it back. |
 | `migration.test.ts` | Legacy `runtime/llama-server.pid` + matching manifest → moves under workload dir. No matching manifest → synthesizes `imperative-*`. `.migrated-v2` flag blocks re-run. |
 | Integration shell (`test/run-all.zsh`) | Apply Granite + Gemma → both serve. `apply --evict granite gemma` → only Gemma. Apply over budget → fails; `--force` → succeeds. |
 
