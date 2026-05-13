@@ -606,11 +606,11 @@ async function teardownComponent(
     }
     case 'workload': {
       // Reuse the existing stop path: getClient(node).serverStop.mutate.
-      const spec = manifest.spec.workloads.find((w) => w.node === rec.ref.name);
-      if (!spec) return;
-      const client = opts.getWorkloadClient(spec.node);
+      const manifestWorkload = manifest.spec.workloads.find((w) => w.node === rec.ref.name);
+      if (!manifestWorkload) return;
+      const client = opts.getWorkloadClient(manifestWorkload.node);
       await client.serverStop
-        .mutate({ workload: spec.node, graceSeconds: 10 })
+        .mutate({ workload: manifest.metadata.name, graceSeconds: 10 })
         .catch(() => {});
       return;
     }
@@ -797,10 +797,10 @@ async function destroyComponent(
       return;
     }
     case 'workload': {
-      const spec = manifest.spec.workloads.find((w) => w.node === ref.name);
-      if (!spec) return;
-      const client = opts.getWorkloadClient(spec.node);
-      await client.serverStop.mutate({ workload: spec.node, graceSeconds: 10 });
+      const manifestWorkload = manifest.spec.workloads.find((w) => w.node === ref.name);
+      if (!manifestWorkload) return;
+      const client = opts.getWorkloadClient(manifestWorkload.node);
+      await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 10 });
       return;
     }
     case 'rag': {
