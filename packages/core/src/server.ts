@@ -20,6 +20,11 @@ import { ctxForModel } from './ctx.js';
 import { resolveEnv } from './env.js';
 import { resolveTarget } from './target.js';
 import type { ResolvedEnv } from './types.js';
+import type { WorkloadKey } from './workloadRuntime.js';
+import {
+  ensureWorkloadRuntimeDir,
+  workloadRuntimeDir,
+} from './workloadRuntime.js';
 
 /**
  * Lifecycle events emitted during `startServer`. Forwarded to the CLI
@@ -34,12 +39,16 @@ export type ServerEvent =
   | { type: 'timeout'; pid: number }
   | { type: 'exited'; code: number | null };
 
-function pidFile(resolved: ResolvedEnv): string {
-  return join(resolved.LOCAL_AI_RUNTIME_DIR, 'llama-server.pid');
+function pidFile(resolved: ResolvedEnv, key: WorkloadKey): string {
+  return join(workloadRuntimeDir(resolved, key), 'llama-server.pid');
 }
 
-function serverLog(resolved: ResolvedEnv): string {
-  return join(resolved.LLAMA_CPP_LOGS, 'server.log');
+function serverLog(resolved: ResolvedEnv, key: WorkloadKey): string {
+  return join(workloadRuntimeDir(resolved, key), 'llama-server.log');
+}
+
+function serverStateFile(resolved: ResolvedEnv, key: WorkloadKey): string {
+  return join(workloadRuntimeDir(resolved, key), 'llama-server.state');
 }
 
 export function endpoint(
@@ -107,8 +116,11 @@ function hasMmprojArg(args: readonly string[]): boolean {
  * absent or malformed. The caller should then verify the PID is alive
  * (kill -0) before trusting it — stale files linger after crashes.
  */
-export function readServerPid(resolved: ResolvedEnv = resolveEnv()): number | null {
-  const file = pidFile(resolved);
+export function readServerPid(
+  key: WorkloadKey,
+  resolved: ResolvedEnv = resolveEnv(),
+): number | null {
+  const file = pidFile(resolved, key);
   if (!existsSync(file)) return null;
   try {
     const raw = readFileSync(file, 'utf8').trim();
@@ -119,14 +131,14 @@ export function readServerPid(resolved: ResolvedEnv = resolveEnv()): number | nu
   }
 }
 
-function writeServerPid(resolved: ResolvedEnv, pid: number): void {
-  mkdirSync(resolved.LOCAL_AI_RUNTIME_DIR, { recursive: true });
-  writeFileSync(pidFile(resolved), `${pid}\n`);
+function writeServerPid(resolved: ResolvedEnv, key: WorkloadKey, pid: number): void {
+  ensureWorkloadRuntimeDir(resolved, key);
+  writeFileSync(pidFile(resolved, key), `${pid}\n`);
 }
 
-function removeServerPid(resolved: ResolvedEnv): void {
+function removeServerPid(resolved: ResolvedEnv, key: WorkloadKey): void {
   try {
-    unlinkSync(pidFile(resolved));
+    unlinkSync(pidFile(resolved, key));
   } catch {
     // no-op
   }
@@ -182,10 +194,6 @@ export interface ServerStatus {
   tunedProfile: string | null;
 }
 
-function serverStateFile(resolved: ResolvedEnv): string {
-  return join(resolved.LOCAL_AI_RUNTIME_DIR, 'llama-server.state');
-}
-
 /**
  * Read the sidecar state file written at startServer time. Returns
  * null when absent or malformed — callers should treat that as "no
@@ -193,9 +201,10 @@ function serverStateFile(resolved: ResolvedEnv): string {
  * as the pre-D.0 ServerStatus shape.
  */
 export function readServerState(
+  key: WorkloadKey,
   resolved: ResolvedEnv = resolveEnv(),
 ): ServerState | null {
-  const file = serverStateFile(resolved);
+  const file = serverStateFile(resolved, key);
   if (!existsSync(file)) return null;
   try {
     const raw = readFileSync(file, 'utf8');
@@ -215,14 +224,14 @@ export function readServerState(
   }
 }
 
-function writeServerState(resolved: ResolvedEnv, state: ServerState): void {
-  mkdirSync(resolved.LOCAL_AI_RUNTIME_DIR, { recursive: true });
-  writeFileSync(serverStateFile(resolved), JSON.stringify(state, null, 2));
+function writeServerState(resolved: ResolvedEnv, key: WorkloadKey, state: ServerState): void {
+  ensureWorkloadRuntimeDir(resolved, key);
+  writeFileSync(serverStateFile(resolved, key), JSON.stringify(state, null, 2));
 }
 
-function removeServerState(resolved: ResolvedEnv): void {
+function removeServerState(resolved: ResolvedEnv, key: WorkloadKey): void {
   try {
-    unlinkSync(serverStateFile(resolved));
+    unlinkSync(serverStateFile(resolved, key));
   } catch {
     // no-op
   }
@@ -235,12 +244,13 @@ function removeServerState(resolved: ResolvedEnv): void {
  * shutdown.
  */
 export async function serverStatus(
+  key: WorkloadKey,
   resolved: ResolvedEnv = resolveEnv(),
 ): Promise<ServerStatus> {
-  const pidRaw = readServerPid(resolved);
+  const pidRaw = readServerPid(key, resolved);
   const pid = pidRaw && isProcessAlive(pidRaw) ? pidRaw : null;
-  if (pidRaw && !pid) removeServerPid(resolved);
-  const sidecar = readServerState(resolved);
+  if (pidRaw && !pid) removeServerPid(resolved, key);
+  const sidecar = readServerState(key, resolved);
   // Only trust the sidecar when its PID matches the live one; if the
   // PIDs diverge, the state file is from a previous launch that
   // exited uncleanly. Clean up in that case.
@@ -264,7 +274,7 @@ export async function serverStatus(
   const state: ServerStatus['state'] = reachable || pid !== null ? 'up' : 'down';
 
   if (sidecar && !validSidecar && state === 'down') {
-    removeServerState(resolved);
+    removeServerState(resolved, key);
   }
 
   return {
@@ -286,6 +296,7 @@ export async function serverStatus(
 // ---- start/stop --------------------------------------------------------
 
 export interface StartServerOptions {
+  key: WorkloadKey;
   target: string;
   /** Additional arguments appended to the llama-server invocation. */
   extraArgs?: string[];
@@ -441,6 +452,7 @@ export async function startServer(
 ): Promise<StartServerResult> {
   const env = opts.env ?? process.env;
   const resolved = opts.resolved ?? resolveEnv(env);
+  const key = opts.key;
   const launchEndpoint = opts.endpoint;
   const launchHost = launchEndpoint?.host ?? resolved.LLAMA_CPP_HOST;
   const launchPort = launchEndpoint?.port ?? resolved.LLAMA_CPP_PORT;
@@ -482,7 +494,7 @@ export async function startServer(
   }
 
   // Stop any existing instance — best effort.
-  await stopServer({ resolved });
+  await stopServer({ key, resolved });
 
   // Pre-flight port-collision check. After our own stopServer, the
   // configured port should be free. If something still answers on
@@ -535,12 +547,13 @@ export async function startServer(
     modelPath,
     args: launchArgs,
     resolved,
+    key,
     host: launchHost,
     port: launchPort,
     onEvent: opts.onEvent,
   });
-  writeServerPid(resolved, pid);
-  writeServerState(resolved, {
+  writeServerPid(resolved, key, pid);
+  writeServerState(resolved, key, {
     rel,
     extraArgs: extra,
     host: launchHost,
@@ -572,7 +585,7 @@ export async function startServer(
   if (outcome === 'aborted') {
     opts.signal?.removeEventListener('abort', killOnAbort);
     killOnAbort();
-    removeServerPid(resolved);
+    removeServerPid(resolved, key);
     return {
       ok: false,
       pid: null,
@@ -600,18 +613,19 @@ export async function startServer(
   let retried = false;
   if (hasMmprojArg(launchArgs)) {
     opts.onEvent?.({ type: 'retry', reason: 'mmproj safe-flag retry' });
-    await stopServer({ resolved });
+    await stopServer({ key, resolved });
     const retryArgs = [...launchArgs, ...safeRetryArgs()];
     const retryPid = await launchBackground({
       bin,
       modelPath,
       args: retryArgs,
       resolved,
+      key,
       host: launchHost,
       port: launchPort,
       onEvent: opts.onEvent,
     });
-    writeServerPid(resolved, retryPid);
+    writeServerPid(resolved, key, retryPid);
     readyResult = await pollReady(retryPid, healthUrl, timeoutSeconds, opts.onEvent, opts.signal);
     outcome = readyResult.outcome;
     retried = true;
@@ -621,7 +635,7 @@ export async function startServer(
       } catch {
         // already gone
       }
-      removeServerPid(resolved);
+      removeServerPid(resolved, key);
       opts.signal?.removeEventListener('abort', killOnAbort);
       return {
         ok: false,
@@ -687,6 +701,7 @@ interface LaunchArgs {
   modelPath: string;
   args: string[];
   resolved: ResolvedEnv;
+  key: WorkloadKey;
   host?: string;
   port?: number | string;
   binary?: string;
@@ -695,8 +710,8 @@ interface LaunchArgs {
 
 async function launchBackground(opts: LaunchArgs): Promise<number> {
   const { openSync, closeSync } = await import('node:fs');
-  mkdirSync(opts.resolved.LLAMA_CPP_LOGS, { recursive: true });
-  const logFd = openSync(serverLog(opts.resolved), 'a');
+  ensureWorkloadRuntimeDir(opts.resolved, opts.key);
+  const logFd = openSync(serverLog(opts.resolved, opts.key), 'a');
   const fullArgs: string[] = [
     '-m', opts.modelPath,
     '--alias', opts.resolved.LLAMA_CPP_SERVER_ALIAS,
@@ -719,6 +734,7 @@ async function launchBackground(opts: LaunchArgs): Promise<number> {
 // ---- stop --------------------------------------------------------------
 
 export interface StopServerOptions {
+  key: WorkloadKey;
   resolved?: ResolvedEnv;
   /** Max seconds to wait for SIGTERM to take effect before SIGKILL. */
   graceSeconds?: number;
@@ -736,29 +752,30 @@ export interface StopServerResult {
  * alive after the grace period. Clears the PID file on exit.
  */
 export async function stopServer(
-  opts: StopServerOptions = {},
+  opts: StopServerOptions,
 ): Promise<StopServerResult> {
   const resolved = opts.resolved ?? resolveEnv();
+  const key = opts.key;
   const grace = Math.max(1, opts.graceSeconds ?? 5);
-  const pid = readServerPid(resolved);
+  const pid = readServerPid(key, resolved);
   if (pid === null || !isProcessAlive(pid)) {
-    removeServerPid(resolved);
-    removeServerState(resolved);
+    removeServerPid(resolved, key);
+    removeServerState(resolved, key);
     return { stopped: true, pid, killed: false };
   }
 
   try {
     process.kill(pid, 'SIGTERM');
   } catch {
-    removeServerPid(resolved);
-    removeServerState(resolved);
+    removeServerPid(resolved, key);
+    removeServerState(resolved, key);
     return { stopped: true, pid, killed: false };
   }
 
   for (let i = 0; i < grace; i += 1) {
     if (!isProcessAlive(pid)) {
-      removeServerPid(resolved);
-      removeServerState(resolved);
+      removeServerPid(resolved, key);
+      removeServerState(resolved, key);
       return { stopped: true, pid, killed: false };
     }
     await new Promise((r) => setTimeout(r, 1000));
@@ -769,7 +786,7 @@ export async function stopServer(
   } catch {
     // process already gone
   }
-  removeServerPid(resolved);
-  removeServerState(resolved);
+  removeServerPid(resolved, key);
+  removeServerState(resolved, key);
   return { stopped: true, pid, killed: true };
 }

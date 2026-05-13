@@ -131,7 +131,7 @@ describe('stopKeepAlive', () => {
   });
 
   test('no-op when there is nothing running', async () => {
-    const result = await stopKeepAlive();
+    const result = await stopKeepAlive({ key: { name: 'test-wl' } });
     expect(result.stopped).toBe(true);
     expect(result.killed).toBe(false);
     expect(existsSync(keepAliveStopFile())).toBe(false);
@@ -139,7 +139,7 @@ describe('stopKeepAlive', () => {
 
   test('cleans stale pid files without a running process', async () => {
     writeFileSync(keepAlivePidFile(), '999999\n');
-    const result = await stopKeepAlive();
+    const result = await stopKeepAlive({ key: { name: 'test-wl' } });
     expect(result.stopped).toBe(true);
     expect(readKeepAlivePid()).toBeNull();
   });

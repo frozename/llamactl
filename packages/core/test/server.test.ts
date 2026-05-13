@@ -10,7 +10,11 @@ import {
   startServer,
   stopServer,
 } from '../src/server.js';
+import { ensureWorkloadRuntimeDir, workloadRuntimeDir } from '../src/workloadRuntime.js';
+import { resolveEnv } from '../src/env.js';
 import { envForTemp, makeTempRuntime } from './helpers.js';
+
+const TEST_KEY = { name: 'test-wl' };
 
 describe('server.endpoint', () => {
   test('builds an http URL from host + port', () => {
@@ -37,17 +41,19 @@ describe('server.readServerPid', () => {
   });
 
   test('returns null when the file is missing', () => {
-    expect(readServerPid()).toBeNull();
+    expect(readServerPid(TEST_KEY)).toBeNull();
   });
 
   test('parses a valid PID file', () => {
-    writeFileSync(join(temp.runtimeDir, 'llama-server.pid'), '42\n');
-    expect(readServerPid()).toBe(42);
+    const dir = ensureWorkloadRuntimeDir(resolveEnv(), TEST_KEY);
+    writeFileSync(join(dir, 'llama-server.pid'), '42\n');
+    expect(readServerPid(TEST_KEY)).toBe(42);
   });
 
   test('returns null for a malformed PID file', () => {
-    writeFileSync(join(temp.runtimeDir, 'llama-server.pid'), 'not-a-number');
-    expect(readServerPid()).toBeNull();
+    const dir = ensureWorkloadRuntimeDir(resolveEnv(), TEST_KEY);
+    writeFileSync(join(dir, 'llama-server.pid'), 'not-a-number');
+    expect(readServerPid(TEST_KEY)).toBeNull();
   });
 });
 
@@ -73,18 +79,19 @@ describe('server.serverStatus', () => {
   });
 
   test('reports down when no PID and endpoint is unreachable', async () => {
-    const status = await serverStatus();
+    const status = await serverStatus(TEST_KEY);
     expect(status.state).toBe('down');
     expect(status.pid).toBeNull();
     expect(status.health.reachable).toBe(false);
   });
 
   test('clears a stale PID file when the process is not alive', async () => {
-    writeFileSync(join(temp.runtimeDir, 'llama-server.pid'), '999999\n');
-    const status = await serverStatus();
+    const dir = ensureWorkloadRuntimeDir(resolveEnv(), TEST_KEY);
+    writeFileSync(join(dir, 'llama-server.pid'), '999999\n');
+    const status = await serverStatus(TEST_KEY);
     expect(status.pid).toBeNull();
     // Stale file should have been removed.
-    expect(readServerPid()).toBeNull();
+    expect(readServerPid(TEST_KEY)).toBeNull();
   });
 });
 
@@ -107,14 +114,14 @@ describe('server.startServer (error paths)', () => {
   });
 
   test('errors when the target does not resolve', async () => {
-    const result = await startServer({ target: 'not-a-real-alias' });
+    const result = await startServer({ key: TEST_KEY, target: 'not-a-real-alias' });
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/Unknown target/);
   });
 
   test('errors when the model file is missing on disk', async () => {
     // resolveTarget accepts rel-style strings verbatim.
-    const result = await startServer({ target: 'Demo/demo.gguf' });
+    const result = await startServer({ key: TEST_KEY, target: 'Demo/demo.gguf' });
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/Model file not found/);
   });
@@ -124,7 +131,7 @@ describe('server.startServer (error paths)', () => {
     const modelDir = join(temp.modelsDir, 'Demo');
     mkdirSync(modelDir, { recursive: true });
     writeFileSync(join(modelDir, 'demo.gguf'), '');
-    const result = await startServer({ target: 'Demo/demo.gguf' });
+    const result = await startServer({ key: TEST_KEY, target: 'Demo/demo.gguf' });
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/llama-server binary not found/);
   });
@@ -146,7 +153,7 @@ describe('server.startServer (error paths)', () => {
       new Response('nope', { status: 401 }) as any,
     );
     try {
-      const result = await startServer({ target: 'Demo/demo.gguf' });
+      const result = await startServer({ key: TEST_KEY, target: 'Demo/demo.gguf' });
       expect(result.ok).toBe(false);
       expect(result.error).toMatch(/already bound/);
       expect(result.error).toMatch(/HTTP 401/);
@@ -183,6 +190,7 @@ describe('server.startServer (error paths)', () => {
 
     try {
       const result = await startServer({
+        key: TEST_KEY,
         target: 'Demo/demo.gguf',
         endpoint: { host: '127.0.0.1', port: 8181 },
       });
@@ -232,6 +240,7 @@ describe('server.startServer (error paths)', () => {
 
     try {
       const result = await startServer({
+        key: TEST_KEY,
         target: 'Demo/demo.gguf',
         endpoint: { host: '127.0.0.1', port: 8181 },
       });
@@ -239,7 +248,7 @@ describe('server.startServer (error paths)', () => {
       expect(result.endpoint).toBe('http://127.0.0.1:8181');
       expect(result.advertisedEndpoint).toBe('http://127.0.0.1:8181');
 
-      const status = await serverStatus();
+      const status = await serverStatus(TEST_KEY);
       expect(status.endpoint).toBe('http://127.0.0.1:8181');
       expect(status.advertisedEndpoint).toBe('http://127.0.0.1:8181');
       expect(status.port).toBe(8181);
@@ -286,6 +295,7 @@ describe('server.startServer (error paths)', () => {
 
     try {
       await startServer({
+        key: TEST_KEY,
         target: 'Demo/demo.gguf',
         binary: customBin,
       } as any);
@@ -319,15 +329,47 @@ describe('server.stopServer', () => {
   });
 
   test('no-op when there is nothing to stop', async () => {
-    const result = await stopServer();
+    const result = await stopServer({ key: TEST_KEY });
     expect(result.stopped).toBe(true);
     expect(result.killed).toBe(false);
   });
 
   test('clears a stale PID file when the process is gone', async () => {
-    writeFileSync(join(temp.runtimeDir, 'llama-server.pid'), '999999\n');
-    const result = await stopServer();
+    const dir = ensureWorkloadRuntimeDir(resolveEnv(), TEST_KEY);
+    writeFileSync(join(dir, 'llama-server.pid'), '999999\n');
+    const result = await stopServer({ key: TEST_KEY });
     expect(result.stopped).toBe(true);
-    expect(readServerPid()).toBeNull();
+    expect(readServerPid(TEST_KEY)).toBeNull();
+  });
+});
+
+describe('server per-workload isolation', () => {
+  let temp: ReturnType<typeof makeTempRuntime>;
+  let originalEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    temp = makeTempRuntime();
+    originalEnv = { ...process.env };
+    for (const [k, v] of Object.entries(envForTemp(temp))) {
+      if (v !== undefined) process.env[k] = v;
+    }
+    mkdirSync(temp.runtimeDir, { recursive: true });
+  });
+  afterEach(() => {
+    process.env = originalEnv;
+    temp.cleanup();
+  });
+
+  test('per-workload state files are isolated', () => {
+    const resolved = resolveEnv();
+    const A = { name: 'a' };
+    const B = { name: 'b' };
+    const aDir = ensureWorkloadRuntimeDir(resolved, A);
+    writeFileSync(join(aDir, 'llama-server.pid'), '12345\n');
+    expect(readServerPid(A, resolved)).toBe(12345);
+    expect(readServerPid(B, resolved)).toBeNull();
+    // Sanity-check that the directories land where we expect.
+    expect(workloadRuntimeDir(resolved, A)).toBe(join(temp.runtimeDir, 'workloads', 'a'));
+    expect(workloadRuntimeDir(resolved, B)).toBe(join(temp.runtimeDir, 'workloads', 'b'));
   });
 });

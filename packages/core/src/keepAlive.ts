@@ -12,6 +12,7 @@ import { formatBenchTimestamp } from './bench/runner.js';
 import { endpoint, readServerPid, startServer, stopServer } from './server.js';
 import { resolveTarget } from './target.js';
 import type { ResolvedEnv } from './types.js';
+import type { WorkloadKey } from './workloadRuntime.js';
 
 export function keepAlivePidFile(resolved: ResolvedEnv = resolveEnv()): string {
   return join(resolved.LOCAL_AI_RUNTIME_DIR, 'llama-keep-alive.pid');
@@ -159,6 +160,7 @@ export function keepAliveStatus(
 }
 
 export interface StopKeepAliveOptions {
+  key: WorkloadKey;
   resolved?: ResolvedEnv;
   graceSeconds?: number;
 }
@@ -176,9 +178,10 @@ export interface StopKeepAliveResult {
  * llama-server as a safety net in case the supervisor missed cleanup.
  */
 export async function stopKeepAlive(
-  opts: StopKeepAliveOptions = {},
+  opts: StopKeepAliveOptions,
 ): Promise<StopKeepAliveResult> {
   const resolved = opts.resolved ?? resolveEnv();
+  const key = opts.key;
   const grace = Math.max(1, opts.graceSeconds ?? 10);
   const pid = readKeepAlivePid(resolved);
   if (pid === null) {
@@ -213,7 +216,7 @@ export async function stopKeepAlive(
       // no-op
     }
   }
-  await stopServer({ resolved });
+  await stopServer({ key, resolved });
   try {
     unlinkSync(keepAlivePidFile(resolved));
   } catch {
@@ -228,6 +231,7 @@ export async function stopKeepAlive(
 }
 
 export interface RunKeepAliveWorkerOptions {
+  key: WorkloadKey;
   target: string;
   resolved?: ResolvedEnv;
   env?: NodeJS.ProcessEnv;
@@ -266,6 +270,7 @@ export async function runKeepAliveWorker(
 ): Promise<void> {
   const env = opts.env ?? process.env;
   const resolved = opts.resolved ?? resolveEnv(env);
+  const key = opts.key;
   const intervalSeconds =
     opts.intervalSeconds ??
     Math.max(
@@ -320,7 +325,7 @@ export async function runKeepAliveWorker(
       restarts,
       backoff_seconds: backoff,
     });
-    await stopServer({ resolved });
+    await stopServer({ key, resolved });
     try {
       unlinkSync(keepAlivePidFile(resolved));
     } catch {
@@ -362,6 +367,7 @@ export async function runKeepAliveWorker(
       logLine(resolved, `starting server for rel=${rel}`);
 
       const startRes = await startServer({
+        key,
         target: rel,
         timeoutSeconds: 60,
         resolved,
@@ -408,7 +414,7 @@ export async function runKeepAliveWorker(
         } catch {
           ok = false;
         }
-        const pid = readServerPid(resolved);
+        const pid = readServerPid(key, resolved);
         if (!ok || pid === null) {
           logLine(resolved, `health lost for rel=${rel}, will restart`);
           break;

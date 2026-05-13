@@ -2,6 +2,7 @@ import type { ModelInfo, ModelListResponse } from '@nova/contracts';
 import { resolveEnv } from './env.js';
 import { endpoint as llamaEndpoint, readServerState, readServerPid } from './server.js';
 import type { ResolvedEnv } from './types.js';
+import type { WorkloadKey } from './workloadRuntime.js';
 
 /**
  * OpenAI-compatible gateway in front of the local llama-server.
@@ -26,10 +27,11 @@ import type { ResolvedEnv } from './types.js';
  * empty list when nothing is tracked.
  */
 export function listOpenAIModels(
+  key: WorkloadKey,
   resolved: ResolvedEnv = resolveEnv(),
 ): ModelListResponse {
-  const state = readServerState(resolved);
-  const pid = readServerPid(resolved);
+  const state = readServerState(key, resolved);
+  const pid = readServerPid(key, resolved);
   const data: ModelInfo[] = [];
   if (state && pid !== null) {
     data.push({
