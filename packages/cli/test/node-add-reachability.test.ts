@@ -60,6 +60,7 @@ beforeEach(async () => {
   agent = startAgentServer({
     bindHost: '127.0.0.1', port: 0, tokenHash: tok.hash,
     tls: { certPath: cert.certPath, keyPath: cert.keyPath },
+    advertiseMdns: false,
   });
 });
 
