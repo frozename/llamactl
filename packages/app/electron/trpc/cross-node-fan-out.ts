@@ -73,7 +73,7 @@ export async function fanOutSurface<T>(opts: FanOutOpts<T>): Promise<FanOutResul
         const result = await opts.perNodeFetch(node, child.signal);
         return { node: node.name, ok: true as const, hits: result };
       } catch (err) {
-        const reason = child.signal.aborted
+        const reason: NodeFailure['reason'] = child.signal.aborted
           ? (opts.signal?.aborted ? 'aborted' : 'timeout')
           : 'rejected';
         return {

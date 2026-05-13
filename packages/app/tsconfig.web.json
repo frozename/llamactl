@@ -23,6 +23,8 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "electron/trpc/router.ts",
-    "electron/trpc/cross-node-fan-out.ts"
+    "electron/trpc/dispatcher.ts",
+    "electron/trpc/cross-node-fan-out.ts",
+    "electron/trpc/node-pinned-fetch.ts"
   ]
 }
