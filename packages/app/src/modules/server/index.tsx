@@ -315,7 +315,7 @@ export default function Server(): React.JSX.Element {
             <Button
               type="submit"
               variant="primary"
-              disabled={busy}
+              disabled={busy || !workload}
               data-testid="server-start"
               style={{ flex: 1 }}
             >
