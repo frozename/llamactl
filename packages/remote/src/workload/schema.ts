@@ -7,10 +7,12 @@ import { z } from 'zod';
  * against the live node, and the optional controller daemon keeps
  * re-reconciling on a timer.
  *
- * Phase D scope uses a single-node workload (spec.node: string).
- * Phase E will widen this to spec.nodes: string[] for tensor-parallel
- * RPC coordinators without breaking v1 manifests (the reconciler
- * will accept either shape).
+ * Phase D used a single-node shape (`spec.node: string`). The
+ * multi-workload runtime keeps that field while letting several
+ * ModelRuns coexist on one node as separate processes, each tracked
+ * by workload name. Phase E still widens this to `spec.nodes: string[]`
+ * for tensor-parallel RPC coordinators without breaking v1 manifests
+ * (the reconciler accepts either shape).
  */
 
 export const ModelRunTargetSchema = z.object({
