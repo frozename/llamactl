@@ -2,6 +2,8 @@ import * as React from 'react';
 import { useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
+import { skipToken } from '@tanstack/react-query';
+import { useActiveWorkload } from '@/hooks/useActiveWorkload';
 import { Button, Input, StatusDot } from '@/ui';
 
 interface LogLine {
@@ -18,7 +20,11 @@ function truncate(lines: LogLine[]): LogLine[] {
 
 export default function Server(): React.JSX.Element {
   const queryClient = useQueryClient();
-  const status = trpc.serverStatus.useQuery(undefined, { refetchInterval: 5000 });
+  const { workload, loading: workloadLoading } = useActiveWorkload();
+  const status = trpc.serverStatus.useQuery(
+    workload ? { workload } : skipToken,
+    { refetchInterval: 5000, enabled: !!workload },
+  );
   const catalog = trpc.catalogList.useQuery('all');
   const env = trpc.env.useQuery();
 
@@ -92,9 +98,11 @@ export default function Server(): React.JSX.Element {
   };
 
   trpc.serverStart.useSubscription(
-    starting ?? { target: '', timeoutSeconds: 60, skipTuned: false },
+    starting && workload
+      ? { ...starting, workload }
+      : skipToken,
     {
-      enabled: starting !== null,
+      enabled: starting !== null && !!workload,
       onData: handleEvent,
       onError: handleError,
     },
@@ -316,15 +324,15 @@ export default function Server(): React.JSX.Element {
             <Button
               type="button"
               variant="destructive"
-              onClick={() => stopMutation.mutate({ graceSeconds: 5 })}
-              disabled={busy || stopMutation.isPending || !isUp}
-              data-testid="server-stop"
-              title={!isUp ? 'Server is not running.' : 'Send SIGTERM, then SIGKILL after a 5s grace.'}
-              style={{ flex: 1 }}
-            >
-              {stopMutation.isPending ? 'Stopping…' : 'Stop'}
-            </Button>
-          </div>
+            onClick={() => workload && stopMutation.mutate({ workload, graceSeconds: 5 })}
+            disabled={busy || stopMutation.isPending || !isUp || !workload}
+            data-testid="server-stop"
+            title={!workload ? 'No active workload is selected.' : !isUp ? 'Server is not running.' : 'Send SIGTERM, then SIGKILL after a 5s grace.'}
+            style={{ flex: 1 }}
+          >
+            {stopMutation.isPending ? 'Stopping…' : 'Stop'}
+          </Button>
+        </div>
         </div>
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
           LLAMA_CPP_HOST={envData?.LLAMA_CPP_HOST ?? '?'}:
@@ -335,6 +343,11 @@ export default function Server(): React.JSX.Element {
       {error && (
         <div style={{ marginBottom: 12, borderRadius: 6, border: '1px solid var(--color-err)', backgroundColor: 'var(--color-surface-1)', padding: '8px 12px', fontSize: 14, color: 'var(--color-err)' }}>
           {error}
+        </div>
+      )}
+      {!workload && !workloadLoading && (
+        <div style={{ marginBottom: 12, borderRadius: 6, border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)', padding: '8px 12px', fontSize: 14, color: 'var(--color-text-secondary)' }}>
+          No active workload. Apply one to enable this view.
         </div>
       )}
 

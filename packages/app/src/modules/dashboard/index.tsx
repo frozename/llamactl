@@ -4,6 +4,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { stringify as yamlStringify } from 'yaml';
 import type { bench, schemas } from '@llamactl/core';
 import { trpc } from '@/lib/trpc';
+import { skipToken } from '@tanstack/react-query';
+import { useActiveWorkload } from '@/hooks/useActiveWorkload';
 import { EditorialHero, StatCard, Button } from '@/ui';
 import { ThemedNodeMap } from './ThemedNodeMap';
 
@@ -221,7 +223,11 @@ function DashboardBody(): React.JSX.Element {
   const envQuery = trpc.env.useQuery();
   const compareQuery = trpc.benchCompare.useQuery();
   const promotionsQuery = trpc.promotions.useQuery();
-  const serverStatusQuery = trpc.serverStatus.useQuery(undefined, { refetchInterval: 5000 });
+  const { workload, loading: workloadLoading } = useActiveWorkload();
+  const serverStatusQuery = trpc.serverStatus.useQuery(
+    workload ? { workload } : skipToken,
+    { refetchInterval: 5000, enabled: !!workload },
+  );
 
   if (envQuery.isLoading || compareQuery.isLoading || promotionsQuery.isLoading) {
     return <div style={{ padding: 24, color: 'var(--color-text-secondary)' }}>Loading…</div>;
@@ -254,6 +260,11 @@ function DashboardBody(): React.JSX.Element {
         ]}
         style={{ marginBottom: 32 }}
       />
+      {!workload && !workloadLoading && (
+        <div style={{ marginBottom: 24, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', background: 'var(--color-surface-1)', padding: 12, color: 'var(--color-text-secondary)' }}>
+          No active workload. Apply one to enable this view.
+        </div>
+      )}
 
       <section style={{ marginBottom: 32 }} data-testid="dashboard-node-map-section">
         <h2 style={{ marginBottom: 12, fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>

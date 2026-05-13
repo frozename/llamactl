@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { useEffect, useRef, useState } from 'react';
+import { skipToken } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
+import { useActiveWorkload } from '@/hooks/useActiveWorkload';
 import { Button, StatusDot } from '@/ui';
 import type { StatusDotTone } from '@/ui';
 
@@ -24,11 +26,15 @@ export default function Logs(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [conn, setConn] = useState<ConnState>('connecting');
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const { workload, loading: workloadLoading } = useActiveWorkload();
 
   // Mirror the Server module's status poll so we can gate tailing when
   // no llama-server is reachable. Without this the subscription keeps
   // retrying a dead endpoint and the UI sits on an opaque empty state.
-  const serverStatus = trpc.serverStatus.useQuery(undefined, { refetchInterval: 5000 });
+  const serverStatus = trpc.serverStatus.useQuery(
+    workload ? { workload } : skipToken,
+    { refetchInterval: 5000, enabled: !!workload },
+  );
   const serverDown = serverStatus.data?.state === 'down';
 
   trpc.serverLogs.useSubscription(
@@ -169,11 +175,15 @@ export default function Logs(): React.JSX.Element {
         ref={scrollRef}
         style={{ flex: 1, overflow: 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-0)', padding: 8, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text)' }}
       >
-        {serverDown ? (
-          <div data-testid="logs-offline" style={{ color: 'var(--color-text-secondary)' }}>
-            No llama-server running. Start one from the Server module first.
-          </div>
-        ) : lines.length === 0 ? (
+      {!workload && !workloadLoading ? (
+        <div data-testid="logs-offline" style={{ color: 'var(--color-text-secondary)' }}>
+          No active workload. Apply one to enable log streaming.
+        </div>
+      ) : serverDown ? (
+        <div data-testid="logs-offline" style={{ color: 'var(--color-text-secondary)' }}>
+          No llama-server running. Start one from the Server module first.
+        </div>
+      ) : lines.length === 0 ? (
           <div style={{ color: 'var(--color-text-secondary)' }}>(no log lines yet)</div>
         ) : (
           lines.map((line, i) => (

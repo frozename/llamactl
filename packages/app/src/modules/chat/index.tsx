@@ -2,7 +2,9 @@ import * as React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { skipToken } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
+import { useActiveWorkload } from '@/hooks/useActiveWorkload';
 import { useTabStore } from '@/stores/tab-store';
 import { Badge, Button } from '@/ui';
 
@@ -484,17 +486,18 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
 function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): React.JSX.Element {
   const utils = trpc.useUtils();
   const catalog = trpc.catalogList.useQuery('all');
+  const { workload, loading: workloadLoading } = useActiveWorkload();
   const [picked, setPicked] = React.useState<string>('');
   const start = trpc.serverStart.useSubscription(
-    picked ? { target: picked } : { target: 'noop' },
+    picked && workload ? { target: picked, workload } : skipToken,
     {
-      enabled: picked !== '',
+      enabled: picked !== '' && !!workload,
       onData: (evt: unknown) => {
         const e = evt as { type?: string; result?: { ok?: boolean } };
         if (e.type === 'done' && e.result?.ok) {
           setPicked('');
           void utils.nodeModels.invalidate();
-          void utils.serverStatus.invalidate();
+          void utils.serverStatus.invalidate(workload ? { workload } : undefined);
           onStarted?.();
         }
       },
@@ -510,53 +513,59 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
   React.useEffect(() => {
     if (!choice && rels.length > 0) setChoice(rels[0]!);
   }, [rels, choice]);
-  const isStarting = picked !== '';
+  const isStarting = picked !== '' && !!workload;
   return (
     <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 12 }}>
       <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--color-text)' }}>
         Start local llama-server
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-        <select
-          value={choice}
-          onChange={(e) => setChoice(e.target.value)}
-          disabled={isStarting}
-          style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text)', opacity: 0.5 }}
-        >
-          {rels.length === 0 ? (
-            <option value="">(no catalog entries)</option>
-          ) : (
-            rels.map((r) => (
-              <option key={r} value={r}>{r}</option>
-            ))
-          )}
-        </select>
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          onClick={() => setPicked(choice)}
-          disabled={isStarting || !choice}
-          loading={isStarting}
-          data-testid="chat-empty-start-local"
-        >
-          {isStarting ? 'Starting…' : 'Start'}
-        </Button>
-        <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
-          or open <button
+      {!workload && !workloadLoading ? (
+        <div style={{ color: 'var(--color-text-secondary)', fontSize: 12, lineHeight: 1.6 }}>
+          No active workload. Apply one to enable this view.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+          <select
+            value={choice}
+            onChange={(e) => setChoice(e.target.value)}
+            disabled={isStarting}
+            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text)', opacity: 0.5 }}
+          >
+            {rels.length === 0 ? (
+              <option value="">(no catalog entries)</option>
+            ) : (
+              rels.map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))
+            )}
+          </select>
+          <Button
             type="button"
-            onClick={() =>
-              useTabStore.getState().open({
-                tabKey: 'module:models.server',
-                title: 'Local Server',
-                kind: 'module',
-                openedAt: Date.now(),
-              })
-            }
-            
-          >Models → Local Server</button> for the full flow.
-        </span>
-      </div>
+            variant="primary"
+            size="sm"
+            onClick={() => setPicked(choice)}
+            disabled={isStarting || !choice}
+            loading={isStarting}
+            data-testid="chat-empty-start-local"
+          >
+            {isStarting ? 'Starting…' : 'Start'}
+          </Button>
+          <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
+            or open <button
+              type="button"
+              onClick={() =>
+                useTabStore.getState().open({
+                  tabKey: 'module:models.server',
+                  title: 'Local Server',
+                  kind: 'module',
+                  openedAt: Date.now(),
+                })
+              }
+              
+            >Models → Local Server</button> for the full flow.
+          </span>
+        </div>
+      )}
     </div>
   );
 }
