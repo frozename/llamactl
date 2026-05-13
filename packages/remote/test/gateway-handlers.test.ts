@@ -16,9 +16,10 @@ function gatewayManifest(node: string, target = 'openai/gpt-4o'): ModelRun {
   return {
     apiVersion: 'llamactl/v1',
     kind: 'ModelRun',
-    metadata: { name: `register-${node}`, labels: {} },
+    metadata: { name: `register-${node}`, labels: {}, annotations: {} },
     spec: {
       node,
+      enabled: true,
       gateway: true,
       target: { kind: 'rel', value: target },
       extraArgs: [],

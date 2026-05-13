@@ -40,6 +40,7 @@ export const ModelRunWorkerSchema = z.object({
 
 export const ModelRunSpecSchema = z.object({
   node: z.string().min(1),
+  enabled: z.boolean().default(true),
   target: ModelRunTargetSchema,
   extraArgs: z.array(z.string()).default([]),
   /**
@@ -58,6 +59,9 @@ export const ModelRunSpecSchema = z.object({
    * server once regardless of this value.
    */
   restartPolicy: z.enum(['Always', 'OnFailure', 'Never']).default('Always'),
+  resources: z.object({
+    expectedMemoryGiB: z.number().positive().optional(),
+  }).optional(),
   /** Optional — informational only in Phase D; carry-through for the
    *  Phase-D-and-beyond controller to prefer a specific endpoint. */
   endpoint: ModelRunEndpointSchema.optional(),
@@ -97,6 +101,7 @@ export const ModelRunMetadataSchema = z.object({
   name: z.string().regex(/^[a-z0-9][-a-z0-9]{0,62}$/,
     'name must be lowercase alphanumeric with dashes, max 63 chars'),
   labels: z.record(z.string(), z.string()).default({}),
+  annotations: z.record(z.string(), z.string()).default({}),
 });
 
 export const ModelRunSchema = z.object({

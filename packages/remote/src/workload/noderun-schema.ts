@@ -46,6 +46,9 @@ export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;
 
 export const NodeRunSpecSchema = z.object({
   node: z.string().min(1),
+  budget: z.object({
+    memoryGiB: z.number().positive(),
+  }).optional(),
   infra: z.array(NodeRunInfraItemSchema).default([]),
 }).refine(
   (spec) => {

@@ -1038,6 +1038,7 @@ describe('applyComposite — gateway upstream threading', () => {
         workloads: [
           {
             node: 'local',
+            enabled: true,
             target: { kind: 'rel', value: 'llama-7b.gguf' },
             extraArgs: [],
             workers: [],

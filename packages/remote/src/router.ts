@@ -1343,7 +1343,7 @@ export const router = t.router({
       const manifest: ModelRun = {
         apiVersion: 'llamactl/v1',
         kind: 'ModelRun',
-        metadata: { name: input.name, labels: {} },
+        metadata: { name: input.name, labels: {}, annotations: {} },
         spec,
       };
       return manifest;

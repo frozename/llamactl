@@ -108,9 +108,10 @@ function manifest(): ModelRun {
   return {
     apiVersion: 'llamactl/v1',
     kind: 'ModelRun',
-    metadata: { name: 'tp-split', labels: {} },
+    metadata: { name: 'tp-split', labels: {}, annotations: {} },
     spec: {
       node: 'coordinator',
+      enabled: true,
       gateway: false,
       target: { kind: 'rel', value: 'tiny.gguf' },
       extraArgs: [],

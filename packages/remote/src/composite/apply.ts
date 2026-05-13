@@ -491,9 +491,10 @@ async function applyGatewayComponent(
   const modelRun: ModelRun = {
     apiVersion: 'llamactl/v1',
     kind: 'ModelRun',
-    metadata: { name: `${manifest.metadata.name}-${entry.name}`, labels: {} },
+    metadata: { name: `${manifest.metadata.name}-${entry.name}`, labels: {}, annotations: {} },
     spec: {
       node: entry.node,
+      enabled: true,
       target: { kind: 'rel', value: '' },
       extraArgs: [],
       workers: [],
@@ -830,7 +831,7 @@ function synthesizeModelRun(spec: ModelRunSpec, compositeName: string): ModelRun
   return {
     apiVersion: 'llamactl/v1',
     kind: 'ModelRun',
-    metadata: { name: spec.node, labels: { 'llamactl.composite': compositeName } },
+    metadata: { name: spec.node, labels: { 'llamactl.composite': compositeName }, annotations: {} },
     spec,
   };
 }

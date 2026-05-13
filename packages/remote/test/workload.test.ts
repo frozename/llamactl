@@ -175,9 +175,10 @@ describe('applyOne gateway branch', () => {
     const manifest: ModelRun = {
       apiVersion: 'llamactl/v1',
       kind: 'ModelRun',
-      metadata: { name: 'register-gpt4o', labels: {} },
+      metadata: { name: 'register-gpt4o', labels: {}, annotations: {} },
       spec: {
         node: 'sirius-primary',
+        enabled: true,
         gateway: true,
         target: { kind: 'rel', value: 'openai/gpt-4o' },
         extraArgs: [],
