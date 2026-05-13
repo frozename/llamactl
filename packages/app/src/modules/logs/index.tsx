@@ -7,7 +7,7 @@ import { Button, StatusDot } from '@/ui';
 import type { StatusDotTone } from '@/ui';
 
 /**
- * Tails `server.log` via the `serverLogs` subscription. Keeps a
+ * Tails the active workload's `llama-server.log` via the `serverLogs` subscription. Keeps a
  * rolling buffer of the last N lines so the UI doesn't explode when
  * llama-server floods output. The "follow" toggle switches between
  * one-shot tail (the last `lines` items) and live streaming.
@@ -38,9 +38,9 @@ export default function Logs(): React.JSX.Element {
   const serverDown = serverStatus.data?.state === 'down';
 
   trpc.serverLogs.useSubscription(
-    { lines: historyLines, follow },
+    workload ? { workload, lines: historyLines, follow } : undefined,
     {
-      enabled: !serverDown,
+      enabled: !!workload && !serverDown,
       onStarted: () => {
         setConn(follow ? 'live' : 'idle');
         setError(null);
@@ -114,7 +114,10 @@ export default function Logs(): React.JSX.Element {
               <span>Server offline</span>
             ) : (
               <>
-                Tailing <span style={{ fontFamily: 'var(--font-mono)' }}>server.log</span>
+                Tailing{' '}
+                <span style={{ fontFamily: 'var(--font-mono)' }}>
+                  {workload}/llama-server.log
+                </span>
               </>
             )}
             {error && (

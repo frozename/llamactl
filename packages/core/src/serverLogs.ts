@@ -3,15 +3,18 @@ import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolveEnv } from './env.js';
 import type { ResolvedEnv } from './types.js';
+import type { WorkloadKey } from './workloadRuntime.js';
+import { workloadRuntimeDir } from './workloadRuntime.js';
 
 /** Absolute path to the llama-server stdout/stderr capture file. */
-export function serverLogFile(resolved: ResolvedEnv = resolveEnv()): string {
-  return join(resolved.LLAMA_CPP_LOGS, 'server.log');
+export function serverLogFile(resolved: ResolvedEnv = resolveEnv(), key: WorkloadKey): string {
+  return join(workloadRuntimeDir(resolved, key), 'llama-server.log');
 }
 
 export type LogLineEvent = { type: 'line'; line: string };
 
 export interface TailOptions {
+  key: WorkloadKey;
   /** How many existing lines from the tail of the file to emit first.
    *  Default 50. Pass 0 to start in follow mode without any backfill. */
   lines?: number;
@@ -37,7 +40,7 @@ export interface TailOptions {
  */
 export async function tailServerLog(opts: TailOptions): Promise<void> {
   const resolved = opts.resolved ?? resolveEnv();
-  const file = serverLogFile(resolved);
+  const file = serverLogFile(resolved, opts.key);
   const follow = opts.follow ?? false;
   const maxBackfill = opts.lines ?? 50;
   const interval = opts.intervalMs ?? 200;

@@ -7,18 +7,16 @@ import { resolveEnv } from '../src/env.js';
 
 let tmp: string;
 let resolved: ReturnType<typeof resolveEnv>;
-let logsDir: string;
 let logPath: string;
 const origEnv = { ...process.env };
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'llamactl-logs-'));
-  logsDir = join(tmp, 'logs', 'llama.cpp');
-  mkdirSync(logsDir, { recursive: true });
   process.env.DEV_STORAGE = tmp;
-  process.env.LLAMA_CPP_LOGS = logsDir;
+  process.env.LOCAL_AI_RUNTIME_DIR = tmp;
   resolved = resolveEnv();
-  logPath = serverLogFile(resolved);
+  mkdirSync(join(tmp, 'workloads', 'test-workload'), { recursive: true });
+  logPath = serverLogFile(resolved, { name: 'test-workload' });
 });
 
 afterEach(() => {
@@ -32,6 +30,7 @@ describe('tailServerLog', () => {
     writeFileSync(logPath, `${lines.join('\n')}\n`, 'utf8');
     const seen: string[] = [];
     await tailServerLog({
+      key: { name: 'test-workload' },
       lines: 5,
       follow: false,
       resolved,
@@ -43,6 +42,7 @@ describe('tailServerLog', () => {
   test('returns early without tailing when the file is absent and follow is off', async () => {
     const seen: string[] = [];
     await tailServerLog({
+      key: { name: 'test-workload' },
       resolved,
       follow: false,
       onLine: (e) => seen.push(e.line),
@@ -55,6 +55,7 @@ describe('tailServerLog', () => {
     const seen: string[] = [];
     const ac = new AbortController();
     const task = tailServerLog({
+      key: { name: 'test-workload' },
       lines: 0,
       follow: true,
       resolved,
@@ -79,6 +80,7 @@ describe('tailServerLog', () => {
     ac.abort();
     const seen: string[] = [];
     await tailServerLog({
+      key: { name: 'test-workload' },
       lines: 10,
       follow: true,
       resolved,
@@ -93,6 +95,7 @@ describe('tailServerLog', () => {
     const seen: string[] = [];
     const ac = new AbortController();
     const task = tailServerLog({
+      key: { name: 'test-workload' },
       lines: 0,
       follow: true,
       resolved,

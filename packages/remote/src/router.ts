@@ -1612,20 +1612,20 @@ export const router = t.router({
 
   serverLogs: t.procedure
     .input(
-      z
-        .object({
-          lines: z.number().int().min(0).max(1000).optional(),
-          follow: z.boolean().optional(),
-        })
-        .optional(),
+      z.object({
+        workload: z.string().min(1),
+        lines: z.number().int().min(0).max(1000).optional(),
+        follow: z.boolean().optional(),
+      }),
     )
     .subscription(async function* ({ input, signal }) {
       yield* bridgeEventStream<serverLogsMod.LogLineEvent>(
         signal as AbortSignal,
         (emit, sig) =>
           serverLogsMod.tailServerLog({
-            lines: input?.lines,
-            follow: input?.follow,
+            key: { name: input.workload },
+            lines: input.lines,
+            follow: input.follow,
             signal: sig,
             onLine: emit,
           }),

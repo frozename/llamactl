@@ -109,6 +109,7 @@ describe('Electron dispatcher router', () => {
     // serverLogs runs tailServerLog against the agent's empty log dir
     // and completes quickly with no lines when follow is false.
     const iterable = (await caller.serverLogs({
+      workload: 'test-workload',
       lines: 0,
       follow: false,
     })) as AsyncIterable<unknown>;

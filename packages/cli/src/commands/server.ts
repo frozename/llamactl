@@ -27,7 +27,7 @@ Subcommands:
       Report whether llama-server is reachable at the configured
       endpoint and what PID (if any) is tracked.
 
-  logs [--follow|-f] [--lines=<N>]
+  logs [--name <workload>] [--follow|-f] [--lines=<N>]
       Print the last N lines (default 50) of the server.log file. With
       --follow, keep streaming new lines until Ctrl-C. Against
       --node <remote>, tails the agent's log file over SSE.
@@ -321,9 +321,24 @@ async function runStatus(args: string[]): Promise<number> {
 async function runLogs(args: string[]): Promise<number> {
   let lines = 50;
   let follow = false;
-  for (const arg of args) {
+  let name: string | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]!;
     if (arg === '--follow' || arg === '-f') follow = true;
-    else if (arg === '-h' || arg === '--help') {
+    else if (arg === '--name') {
+      name = args[i + 1];
+      if (!name) {
+        process.stderr.write('server logs: --name requires a value\n');
+        return 1;
+      }
+      i += 1;
+    } else if (arg.startsWith('--name=')) {
+      name = arg.slice('--name='.length);
+      if (!name) {
+        process.stderr.write('server logs: --name requires a value\n');
+        return 1;
+      }
+    } else if (arg === '-h' || arg === '--help') {
       process.stdout.write(USAGE);
       return 0;
     } else if (arg.startsWith('--lines=')) {
@@ -339,6 +354,14 @@ async function runLogs(args: string[]): Promise<number> {
     }
   }
 
+  let workload: string;
+  try {
+    workload = resolveWorkloadName(name, envMod.resolveEnv());
+  } catch (err) {
+    process.stderr.write(`server logs: ${(err as Error).message}\n`);
+    return 1;
+  }
+
   const onLine = (e: serverLogsMod.LogLineEvent): void => {
     process.stdout.write(`${e.line}\n`);
   };
@@ -350,6 +373,7 @@ async function runLogs(args: string[]): Promise<number> {
     process.once('SIGTERM', abort);
     try {
       await serverLogsMod.tailServerLog({
+        key: { name: workload },
         lines,
         follow,
         signal: ac.signal,
@@ -367,7 +391,7 @@ async function runLogs(args: string[]): Promise<number> {
   // in non-follow mode, or user-initiated abort in follow mode).
   await new Promise<void>((resolve, reject) => {
     const sub = getNodeClient().serverLogs.subscribe(
-      { lines, follow },
+      { workload, lines, follow },
       {
         onData: (e: unknown) => {
           const evt = e as serverLogsMod.LogLineEvent;
