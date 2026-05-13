@@ -186,6 +186,10 @@ async function runApply(args: string[]): Promise<number> {
   }
   try {
     const res = await client().ragPipelineApply.mutate({ manifestYaml });
+    if (!res.ok) {
+      process.stderr.write(`rag pipeline apply: conflict — ${JSON.stringify(res.conflict)}\n`);
+      return 1;
+    }
     process.stdout.write(
       `${res.created ? 'applied' : 'updated'} rag pipeline '${res.name}'\n  path: ${res.path}\n`,
     );
@@ -332,7 +336,12 @@ async function runRemove(args: string[]): Promise<number> {
   }
   try {
     const res = await client().ragPipelineRemove.mutate({ name });
-    if (!res.removed) {
+    if (!res.ok) {
+      process.stderr.write(`rag pipeline rm: conflict — ${JSON.stringify(res.conflict)}\n`);
+      return 1;
+    }
+    const removed = 'removed' in res ? res.removed : res.deleted;
+    if (!removed) {
       process.stderr.write(`rag pipeline rm: '${name}' not found\n`);
       return 1;
     }

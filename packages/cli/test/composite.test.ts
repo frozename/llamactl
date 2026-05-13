@@ -187,6 +187,7 @@ describe('composite list', () => {
             },
           ],
           workloads: [],
+          pipelines: [],
           ragNodes: [],
           gateways: [],
           dependencies: [],
@@ -226,6 +227,7 @@ describe('composite get', () => {
         spec: {
           services: [],
           workloads: [],
+          pipelines: [],
           ragNodes: [],
           gateways: [],
           dependencies: [],
@@ -282,6 +284,7 @@ describe('composite destroy', () => {
             },
           ],
           workloads: [],
+          pipelines: [],
           ragNodes: [
             {
               name: 'kb',

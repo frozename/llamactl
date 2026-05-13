@@ -61,19 +61,19 @@ function parseUb(value: string | undefined): 256 | 512 {
 }
 
 function toolCallingFailures(result: Awaited<ReturnType<typeof runToolCalling>>): ToolCallingFailure[] {
-  return result.prompts.flatMap((prompt) => {
+  return result.prompts.flatMap<ToolCallingFailure>((prompt) => {
     if (prompt.score.score === 1) return [];
-    if (prompt.score.valid_json === false) return [{ name: prompt.name, reason: 'invalid JSON' as const }];
-    if (prompt.expected.should_call && prompt.score.correct_decision === false) return [{ name: prompt.name, reason: 'no tool_calls' as const }];
-    if (prompt.score.correct_tool === false) return [{ name: prompt.name, reason: 'wrong tool' as const }];
-    return [{ name: prompt.name, reason: 'args mismatch' as const }];
+    if (prompt.score.valid_json === false) return [{ name: prompt.name, reason: 'invalid JSON' }];
+    if (prompt.expected.should_call && prompt.score.correct_decision === false) return [{ name: prompt.name, reason: 'no tool_calls' }];
+    if (prompt.score.correct_tool === false) return [{ name: prompt.name, reason: 'wrong tool' }];
+    return [{ name: prompt.name, reason: 'args mismatch' }];
   });
 }
 
 function jsonOutputFailures(result: Awaited<ReturnType<typeof runJsonOutput>>): JsonOutputFailure[] {
-  return result.prompts.flatMap((prompt) => {
+  return result.prompts.flatMap<JsonOutputFailure>((prompt) => {
     if (prompt.valid) return [];
-    return [{ name: prompt.name, reason: prompt.parsed === null ? 'no JSON' : 'schema validation failed' as const }];
+    return [{ name: prompt.name, reason: prompt.parsed === null ? 'no JSON' : 'schema validation failed' }];
   });
 }
 
