@@ -15,6 +15,8 @@ import { runNode } from './commands/node.js';
 import { runRag } from './commands/rag.js';
 import { runCtx } from './commands/ctx.js';
 import { runApply, runDelete, runDescribe, runGet } from './commands/workload.js';
+import { runEnable } from './commands/enable.js';
+import { runDisable } from './commands/disable.js';
 import { runComposite } from './commands/composite.js';
 import { runDoctor } from './commands/doctor.js';
 import { runInit } from './commands/init.js';
@@ -119,6 +121,10 @@ Declarative workloads (Kubernetes-style):
   llamactl delete workload <name>             Stop the server and remove
       [--keep-running]                        the manifest (or just remove
                                               with --keep-running).
+  llamactl enable <workload>                  Flip spec.enabled=true and
+                                              re-apply the manifest.
+  llamactl disable <workload>                 Flip spec.enabled=false and
+                                              re-apply the manifest.
   llamactl controller serve                   Reconcile every manifest on
       [--interval=<s>] [--once]               a timer; restarts servers
                                               that drift from the spec.
@@ -249,6 +255,10 @@ async function main(argv: string[]): Promise<number> {
       return runDescribe(rest);
     case 'delete':
       return runDelete(rest);
+    case 'enable':
+      return runEnable(rest);
+    case 'disable':
+      return runDisable(rest);
     case 'composite':
       return runComposite(rest);
     case 'doctor':
