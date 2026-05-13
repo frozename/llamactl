@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import {
   computeNodeBudget,
+  defaultNodeBudgetGiB,
   estimateWorkloadMemoryGiB,
   sumReservedForNode,
   type AdmissionInput,
@@ -78,6 +79,12 @@ test('admission ok when force-admit set even if over budget', () => {
     forceAdmit: true,
   };
   expect(computeNodeBudget(input).ok).toBe(true);
+});
+
+test('defaultNodeBudgetGiB returns the manifest value when present, else 75% of physical RAM', () => {
+  expect(defaultNodeBudgetGiB(48)).toBe(48);
+  const auto = defaultNodeBudgetGiB();
+  expect(auto).toBeGreaterThan(0);
 });
 
 test('estimateWorkloadMemoryGiB returns null for gateway workloads', () => {

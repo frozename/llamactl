@@ -1,5 +1,7 @@
 import { applyOne, type ApplyEvent, type ApplyResult, type WorkloadClient } from './apply.js';
+import { defaultNodeBudgetGiB } from './admission.js';
 import { listWorkloads, saveWorkload, defaultWorkloadsDir } from './store.js';
+import { listNodeRuns } from './noderun-store.js';
 import type { ModelRun } from './schema.js';
 
 export interface ReconcileNodeReport {
@@ -39,6 +41,12 @@ export interface ReconcileOptions {
 export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileResult> {
   const dir = opts.workloadsDir ?? defaultWorkloadsDir();
   const all = listWorkloads(dir);
+  const nodeBudgetByName = new Map<string, number>(
+    listNodeRuns(dir).map((nodeRun) => [
+      nodeRun.metadata.name,
+      defaultNodeBudgetGiB(nodeRun.spec.budget?.memoryGiB),
+    ]),
+  );
   const manifests = opts.filter ? all.filter(opts.filter) : all;
   const reports: ReconcileNodeReport[] = [];
   let errors = 0;
@@ -52,6 +60,8 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
       }, undefined, {
         workloadsDir: dir,
         ...(opts.resolveNodeIdentity && { resolveNodeIdentity: opts.resolveNodeIdentity }),
+        getNodeBudgetGiB: (nodeName) =>
+          nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
       });
       if (result.error) errors++;
       reports.push({

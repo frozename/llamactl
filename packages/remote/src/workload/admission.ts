@@ -1,3 +1,4 @@
+import { totalmem } from 'node:os';
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ResolvedEnv } from '@llamactl/core';
@@ -23,6 +24,11 @@ export function sumReservedForNode(manifests: ModelRun[], nodeName: string): num
     sum += m.spec.resources?.expectedMemoryGiB ?? 0;
   }
   return sum;
+}
+
+export function defaultNodeBudgetGiB(nodeBudgetFromManifest?: number): number {
+  if (typeof nodeBudgetFromManifest === 'number') return nodeBudgetFromManifest;
+  return (totalmem() / 1024 ** 3) * 0.75;
 }
 
 export function computeNodeBudget(input: AdmissionInput): AdmissionResult {
