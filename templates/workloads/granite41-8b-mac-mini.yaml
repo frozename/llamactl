@@ -31,17 +31,40 @@ metadata:
     role: agentic
 spec:
   node: mac-mini
-  enabled: true
+  # Disabled 2026-05-14 pm: superseded by qwen3-8b-mac-mini.yaml which
+  # serves both this memory-efficacy classifier role AND home-mgmt from
+  # a single -np 2 server. Granite 4.1's tool-call output also doesn't
+  # parse cleanly through claude-agent-acp (project_home_mgmt_long_lived
+  # _flow_2026-05-14), so we'd want to migrate this side off Granite
+  # eventually too — the merge does both at once.
+  # Re-enable if a workload that NEEDS Granite specifically (e.g., a
+  # post-Granite-4.2 quant family or a downstream consumer wired only
+  # to Granite's tokenizer) lands on the roadmap.
+  enabled: false
   resources:
     expectedMemoryGiB: 7
   target:
     kind: rel
     value: granite-4.1-8b-GGUF/granite-4.1-8b-Q4_K_M.gguf
+  # 2026-05-14 pm RAM-budget pass (mac-mini is 16 GB, not 24 GB; verified
+  # via sysctl hw.memsize). Coexistence with the qwen3-8b-home-mgmt-mac-mini
+  # workload (:8091, ~9 GB resident) puts the box at ~17 GB total which dips
+  # into swap. Three changes vs the May-13 config:
+  #   - --ctx-size 16384 (was 32768): memory-efficacy batches are ~700 input
+  #     + ~1000 output tokens; 16k slot has 4× headroom. Saves ~1 GB KV.
+  #   - -np 1 (was 2): frees ~1.5 GB KV. Future bench runs at concurrency>1
+  #     will queue to single slot (~2× wall) instead of overlapping.
+  #     Penumbra production memory-efficacy classifier currently has 0
+  #     jobs/day (parser bug pending); parallelism was anticipatory.
+  #   - --cache-reuse 256: memory-efficacy batches share a stable ~500-token
+  #     prefix (bucket definitions, schema, prompt template); reuse saves
+  #     prompt-eval per request after the first warmup batch. No RAM cost.
+  # Combined savings: ~2.5 GB. Eliminates swap pressure with home-mgmt up.
   extraArgs:
     - --alias
     - local
     - --ctx-size
-    - "32768"
+    - "16384"
     - -b
     - "2048"
     - -ub
@@ -55,7 +78,9 @@ spec:
     - --cache-type-v
     - q8_0
     - -np
-    - "2"
+    - "1"
+    - --cache-reuse
+    - "256"
     - --no-warmup
   restartPolicy: Always
   timeoutSeconds: 180

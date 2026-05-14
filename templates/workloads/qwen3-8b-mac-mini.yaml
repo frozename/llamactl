@@ -1,0 +1,106 @@
+# Qwen 3-8B Q4_K_M on `mac-mini` — UNIFIED workload serving BOTH the
+# penumbra `local` memory-efficacy classifier AND the `home-mgmt`
+# long-lived agent from a single llama-server with -np 2.
+#
+# Why merged (decided 2026-05-14 pm after a same-day RAM stress test):
+# - mac-mini is 16 GB physical RAM (verified via sysctl hw.memsize).
+# - Two separate 8B servers (granite41-8b-mac-mini :8090 + qwen3-8b-home-
+#   mgmt-mac-mini :8091) consume ~14 GB total resident, leaving the box
+#   in active swap (4 GB swap used, 100 MB free). Metal OOM "Compute error"
+#   reproduces under classifier load on the secondary server.
+# - A single Qwen3-8B server with -np 2 holds ONE weight copy in RAM
+#   (~5 GB) and lets each slot serve a workload independently. Estimated
+#   resident: ~7 GB; ~5 GB freed vs the two-server config.
+# - Qwen3-8B validated on both workloads:
+#   - home-mgmt (tool_use via claude-agent-acp): zero tool_call.failed
+#     events across two 50+ tool-call test runs (handoffs 300a00c3,
+#     2413122a).
+#   - memory-efficacy classifier (grammar-constrained, 50-finding slice
+#     2026-05-14): 97.5% bucket_accuracy vs Granite 4.1 8B's 96.0% on
+#     the same slice; recall_miss F1 67% vs Granite's 43% on that
+#     slice. json_valid_rate 80% (4/5 batches; 1 batch failed) — not
+#     yet on parity with Granite's 100% but tractable; run a full-470
+#     bench before declaring the classifier swap durable.
+#
+# Replaces:
+# - templates/workloads/granite41-8b-mac-mini.yaml (Granite 4.1 8B at :8090)
+# - templates/workloads/qwen3-8b-home-mgmt-mac-mini.yaml (Qwen3-8B at :8091)
+# Both should be flipped to `spec.enabled: false` when this one applies.
+#
+# Wire-up after apply:
+# - penumbra memory-efficacy classifier already targets http://mac-mini:8090
+#   (or via the llamactl daemon proxy at https://192.168.68.76:7843); no
+#   client change needed.
+# - home-mgmt: ~/.config/agentchat/agentchat.yaml entry needs
+#     ANTHROPIC_BASE_URL: http://192.168.68.76:8090
+#   (changed from :8091; both endpoints are served from the same port).
+#   Reload daemon + bounce worker after the yaml edit.
+#
+# Slot layout (verified at runtime with `llama-server --help | grep slot`):
+# - -np 2 with --ctx-size 32768 → each slot gets 16k tokens of context.
+# - --jinja enables /v1/messages (Anthropic-compat, claude-agent-acp) AND
+#   /v1/chat/completions (OpenAI-compat, penumbra). Both live on the
+#   same port; llama-server multiplexes by path.
+# - --cache-reuse 256 helps both consumers: memory-efficacy batches share
+#   a stable bucket-definition prefix; home-mgmt ticks share a stable
+#   standing-brief + tool-schema prefix.
+# - -ctk q8_0 -ctv q8_0 halves KV; lossless on Qwen3 for this workload
+#   class per same-day benches.
+# - --reasoning off — Qwen3 thinking mode adds verbose preamble we don't
+#   need for either workload.
+#
+# Apply:
+#   llamactl --node mac-mini apply -f templates/workloads/qwen3-8b-mac-mini.yaml
+#
+# Memory pointer for future sessions:
+# project_home_mgmt_long_lived_flow_2026-05-14 captures the model-selection
+# A/B that picked Qwen3-8B over Granite (claude-agent-acp parser mismatch)
+# and Qwen3.5-4B (failed under load).
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: qwen3-8b-mac-mini
+  labels:
+    family: qwen3
+    role: shared
+    agents: "local,home-mgmt"
+spec:
+  node: mac-mini
+  enabled: true
+  resources:
+    expectedMemoryGiB: 8
+  target:
+    kind: rel
+    value: Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf
+  extraArgs:
+    - --alias
+    - local
+    - --host
+    - 0.0.0.0
+    - --jinja
+    - --ctx-size
+    - "32768"
+    - -ngl
+    - "999"
+    - --flash-attn
+    - "on"
+    - -b
+    - "2048"
+    - -ub
+    - "1024"
+    - -ctk
+    - q8_0
+    - -ctv
+    - q8_0
+    - --cache-reuse
+    - "256"
+    - --reasoning
+    - "off"
+    - --no-warmup
+    - -np
+    - "2"
+  restartPolicy: Always
+  timeoutSeconds: 240
+  endpoint:
+    host: 127.0.0.1
+    port: 8090

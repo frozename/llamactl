@@ -43,7 +43,15 @@ metadata:
     agent: home-mgmt
 spec:
   node: mac-mini
-  enabled: true
+  # Disabled 2026-05-14 pm: superseded by qwen3-8b-mac-mini.yaml which
+  # serves BOTH home-mgmt AND the penumbra `local` memory-efficacy
+  # classifier from a single -np 2 llama-server at :8090. Same Qwen3-8B
+  # weights, one process. Saves ~7 GB resident on the 16 GB mac-mini.
+  # This sibling template kept for forensic reference (the model-
+  # selection A/B that picked Qwen3-8B over Granite/Qwen3.5-4B) and as
+  # a re-enable template if home-mgmt ever needs its own dedicated port
+  # again (e.g., for per-agent rate-limiting or QoS isolation).
+  enabled: false
   resources:
     expectedMemoryGiB: 7
   target:
