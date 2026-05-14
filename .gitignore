@@ -31,3 +31,6 @@ __pycache__/
 # Brainstorming / visual-companion scratch
 .superpowers/
 .claude/worktrees/
+
+# Penumbra runtime state
+.penumbra/
