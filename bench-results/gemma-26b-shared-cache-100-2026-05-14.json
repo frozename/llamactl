@@ -1,0 +1,224 @@
+{
+  "url": "http://127.0.0.1:18888",
+  "model": "local",
+  "started_at": "2026-05-14T13:20:16.361Z",
+  "metadata": {
+    "grammar_file": null,
+    "grammar_sha256": null
+  },
+  "total_wall_s": 607.448,
+  "batches": 10,
+  "findings_attempted": 100,
+  "findings_in_predictions": 20,
+  "findings_graded": 20,
+  "metrics": {
+    "json_valid_rate": 0.2,
+    "schema_valid_rate": 1,
+    "bucket_accuracy": 1,
+    "findings_per_sec": 0.032924628939431856,
+    "batch_p50_ms": 122797,
+    "batch_p95_ms": 143916
+  },
+  "per_bucket": {
+    "missed_registration": {
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "gold_count": 0,
+      "pred_count": 0
+    },
+    "recall_miss": {
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "gold_count": 0,
+      "pred_count": 0
+    },
+    "memory_ignored": {
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "gold_count": 0,
+      "pred_count": 0
+    },
+    "not_memory_related": {
+      "precision": 1,
+      "recall": 1,
+      "f1": 1,
+      "gold_count": 20,
+      "pred_count": 20
+    }
+  },
+  "confusion": {
+    "missed_registration": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 0,
+      "unknown": 0
+    },
+    "recall_miss": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 0,
+      "unknown": 0
+    },
+    "memory_ignored": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 0,
+      "unknown": 0
+    },
+    "not_memory_related": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 20,
+      "unknown": 0
+    }
+  },
+  "predictions": [
+    {
+      "findingId": "b465b1474e613bbd65c36d53bd373204",
+      "classification": "not_memory_related",
+      "reason": "Security vulnerability related to command injection.",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to command injection.\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file access.\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file system access.\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding workflow dispatch logic.\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding scaling and indexing.\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding coupling and abstraction.\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding code duplication.\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue regarding schema validation.\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding blocking runtime behaviors.\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk regarding feature direction and complexity.\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "1283c87db5cb3de8d10e302a4b44485f",
+      "classification": "not_memory_related",
+      "reason": "Security vulnerability related to file access.",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to command injection.\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file access.\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file system access.\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding workflow dispatch logic.\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding scaling and indexing.\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding coupling and abstraction.\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding code duplication.\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue regarding schema validation.\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding blocking runtime behaviors.\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk regarding feature direction and complexity.\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "76d49995494f74b9b0686933a27f8ea0",
+      "classification": "not_memory_related",
+      "reason": "Security vulnerability related to file system access.",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to command injection.\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file access.\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file system access.\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding workflow dispatch logic.\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding scaling and indexing.\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding coupling and abstraction.\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding code duplication.\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue regarding schema validation.\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding blocking runtime behaviors.\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk regarding feature direction and complexity.\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "affbf21180c5a65e64e213072559f9c5",
+      "classification": "not_memory_related",
+      "reason": "Architectural issue regarding workflow dispatch logic.",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to command injection.\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file access.\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file system access.\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding workflow dispatch logic.\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding scaling and indexing.\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding coupling and abstraction.\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding code duplication.\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue regarding schema validation.\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding blocking runtime behaviors.\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk regarding feature direction and complexity.\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "4eccf60fe55c1c93ba999cdea8058169",
+      "classification": "not_memory_related",
+      "reason": "Performance issue regarding scaling and indexing.",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to command injection.\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file access.\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file system access.\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding workflow dispatch logic.\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding scaling and indexing.\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding coupling and abstraction.\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding code duplication.\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue regarding schema validation.\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding blocking runtime behaviors.\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk regarding feature direction and complexity.\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "542db26ab1b2421a6681f964c0154121",
+      "classification": "not_memory_related",
+      "reason": "Architectural issue regarding coupling and abstraction.",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to command injection.\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file access.\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file system access.\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding workflow dispatch logic.\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding scaling and indexing.\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding coupling and abstraction.\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding code duplication.\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue regarding schema validation.\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding blocking runtime behaviors.\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk regarding feature direction and complexity.\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "ee87fda88cde21909dc5357d794e0148",
+      "classification": "not_memory_related",
+      "reason": "Architectural issue regarding code duplication.",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to command injection.\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file access.\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file system access.\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding workflow dispatch logic.\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding scaling and indexing.\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding coupling and abstraction.\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding code duplication.\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue regarding schema validation.\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding blocking runtime behaviors.\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk regarding feature direction and complexity.\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "ca6c1a20d27223facf449b04defe79cc",
+      "classification": "not_memory_related",
+      "reason": "Maintainability issue regarding schema validation.",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to command injection.\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file access.\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file system access.\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding workflow dispatch logic.\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding scaling and indexing.\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding coupling and abstraction.\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding code duplication.\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue regarding schema validation.\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding blocking runtime behaviors.\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk regarding feature direction and complexity.\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "65be0614f01e863699b7307fb84bda99",
+      "classification": "not_memory_related",
+      "reason": "Performance issue regarding blocking runtime behaviors.",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to command injection.\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file access.\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file system access.\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding workflow dispatch logic.\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding scaling and indexing.\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding coupling and abstraction.\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding code duplication.\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue regarding schema validation.\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding blocking runtime behaviors.\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk regarding feature direction and complexity.\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "07061ee27f2a4c9aef040f17d4f7b7fb",
+      "classification": "not_memory_related",
+      "reason": "Architectural risk regarding feature direction and complexity.",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to command injection.\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file access.\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability related to file system access.\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding workflow dispatch logic.\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding scaling and indexing.\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding coupling and abstraction.\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue regarding code duplication.\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue regarding schema validation.\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue regarding blocking runtime behaviors.\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk regarding feature direction and complexity.\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "353d1f7e30dfedadb1e672ca5d482c71",
+      "classification": "not_memory_related",
+      "reason": "Relates to API design and naming clarity.",
+      "raw_batch_response": "[{\"findingId\": \"353d1f7e30dfedadb1e672ca5d482c71\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to API design and naming clarity.\"}, {\"findingId\": \"c8ff7b3d56085e1def38dcfe6580be2c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code redundancy and technical debt.\"}, {\"findingId\": \"c9bc0442ee41116626ec535f52c08c3c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to architectural coupling between workflows.\"}, {\"findingId\": \"96b177f1a340b890cd0fd62d9391adad\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to schema contract mismatches.\"}, {\"findingId\": \"b06a84cd520aa3089f8d7673a58ba89b\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code duplication in security logic.\"}, {\"findingId\": \"81c72d10ad866d9aaa0ed2c2f305207d\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to premature abstraction/scaffolding.\"}, {\"findingId\": \"bebbdffbab95a0b4c0c74bd5f90381f1\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to filesystem security/scope.\"}, {\"findingId\": \"14391fb64fbbab42f24983e8657bee29\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to error reporting and status codes.\"}, {\"findingId\": \"e3d03ed4a3c1c2e65efd3987df83508a\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to redundant logic checks.\"}, {\"findingId\": \"5b8cde60e932edb38fefb66e3419284f\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code extraction and refactoring.\"}]",
+      "batch_index": 4
+    },
+    {
+      "findingId": "c8ff7b3d56085e1def38dcfe6580be2c",
+      "classification": "not_memory_related",
+      "reason": "Relates to code redundancy and technical debt.",
+      "raw_batch_response": "[{\"findingId\": \"353d1f7e30dfedadb1e672ca5d482c71\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to API design and naming clarity.\"}, {\"findingId\": \"c8ff7b3d56085e1def38dcfe6580be2c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code redundancy and technical debt.\"}, {\"findingId\": \"c9bc0442ee41116626ec535f52c08c3c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to architectural coupling between workflows.\"}, {\"findingId\": \"96b177f1a340b890cd0fd62d9391adad\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to schema contract mismatches.\"}, {\"findingId\": \"b06a84cd520aa3089f8d7673a58ba89b\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code duplication in security logic.\"}, {\"findingId\": \"81c72d10ad866d9aaa0ed2c2f305207d\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to premature abstraction/scaffolding.\"}, {\"findingId\": \"bebbdffbab95a0b4c0c74bd5f90381f1\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to filesystem security/scope.\"}, {\"findingId\": \"14391fb64fbbab42f24983e8657bee29\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to error reporting and status codes.\"}, {\"findingId\": \"e3d03ed4a3c1c2e65efd3987df83508a\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to redundant logic checks.\"}, {\"findingId\": \"5b8cde60e932edb38fefb66e3419284f\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code extraction and refactoring.\"}]",
+      "batch_index": 4
+    },
+    {
+      "findingId": "c9bc0442ee41116626ec535f52c08c3c",
+      "classification": "not_memory_related",
+      "reason": "Relates to architectural coupling between workflows.",
+      "raw_batch_response": "[{\"findingId\": \"353d1f7e30dfedadb1e672ca5d482c71\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to API design and naming clarity.\"}, {\"findingId\": \"c8ff7b3d56085e1def38dcfe6580be2c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code redundancy and technical debt.\"}, {\"findingId\": \"c9bc0442ee41116626ec535f52c08c3c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to architectural coupling between workflows.\"}, {\"findingId\": \"96b177f1a340b890cd0fd62d9391adad\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to schema contract mismatches.\"}, {\"findingId\": \"b06a84cd520aa3089f8d7673a58ba89b\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code duplication in security logic.\"}, {\"findingId\": \"81c72d10ad866d9aaa0ed2c2f305207d\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to premature abstraction/scaffolding.\"}, {\"findingId\": \"bebbdffbab95a0b4c0c74bd5f90381f1\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to filesystem security/scope.\"}, {\"findingId\": \"14391fb64fbbab42f24983e8657bee29\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to error reporting and status codes.\"}, {\"findingId\": \"e3d03ed4a3c1c2e65efd3987df83508a\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to redundant logic checks.\"}, {\"findingId\": \"5b8cde60e932edb38fefb66e3419284f\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code extraction and refactoring.\"}]",
+      "batch_index": 4
+    },
+    {
+      "findingId": "96b177f1a340b890cd0fd62d9391adad",
+      "classification": "not_memory_related",
+      "reason": "Relates to schema contract mismatches.",
+      "raw_batch_response": "[{\"findingId\": \"353d1f7e30dfedadb1e672ca5d482c71\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to API design and naming clarity.\"}, {\"findingId\": \"c8ff7b3d56085e1def38dcfe6580be2c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code redundancy and technical debt.\"}, {\"findingId\": \"c9bc0442ee41116626ec535f52c08c3c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to architectural coupling between workflows.\"}, {\"findingId\": \"96b177f1a340b890cd0fd62d9391adad\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to schema contract mismatches.\"}, {\"findingId\": \"b06a84cd520aa3089f8d7673a58ba89b\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code duplication in security logic.\"}, {\"findingId\": \"81c72d10ad866d9aaa0ed2c2f305207d\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to premature abstraction/scaffolding.\"}, {\"findingId\": \"bebbdffbab95a0b4c0c74bd5f90381f1\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to filesystem security/scope.\"}, {\"findingId\": \"14391fb64fbbab42f24983e8657bee29\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to error reporting and status codes.\"}, {\"findingId\": \"e3d03ed4a3c1c2e65efd3987df83508a\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to redundant logic checks.\"}, {\"findingId\": \"5b8cde60e932edb38fefb66e3419284f\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code extraction and refactoring.\"}]",
+      "batch_index": 4
+    },
+    {
+      "findingId": "b06a84cd520aa3089f8d7673a58ba89b",
+      "classification": "not_memory_related",
+      "reason": "Relates to code duplication in security logic.",
+      "raw_batch_response": "[{\"findingId\": \"353d1f7e30dfedadb1e672ca5d482c71\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to API design and naming clarity.\"}, {\"findingId\": \"c8ff7b3d56085e1def38dcfe6580be2c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code redundancy and technical debt.\"}, {\"findingId\": \"c9bc0442ee41116626ec535f52c08c3c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to architectural coupling between workflows.\"}, {\"findingId\": \"96b177f1a340b890cd0fd62d9391adad\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to schema contract mismatches.\"}, {\"findingId\": \"b06a84cd520aa3089f8d7673a58ba89b\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code duplication in security logic.\"}, {\"findingId\": \"81c72d10ad866d9aaa0ed2c2f305207d\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to premature abstraction/scaffolding.\"}, {\"findingId\": \"bebbdffbab95a0b4c0c74bd5f90381f1\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to filesystem security/scope.\"}, {\"findingId\": \"14391fb64fbbab42f24983e8657bee29\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to error reporting and status codes.\"}, {\"findingId\": \"e3d03ed4a3c1c2e65efd3987df83508a\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to redundant logic checks.\"}, {\"findingId\": \"5b8cde60e932edb38fefb66e3419284f\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code extraction and refactoring.\"}]",
+      "batch_index": 4
+    },
+    {
+      "findingId": "81c72d10ad866d9aaa0ed2c2f305207d",
+      "classification": "not_memory_related",
+      "reason": "Relates to premature abstraction/scaffolding.",
+      "raw_batch_response": "[{\"findingId\": \"353d1f7e30dfedadb1e672ca5d482c71\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to API design and naming clarity.\"}, {\"findingId\": \"c8ff7b3d56085e1def38dcfe6580be2c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code redundancy and technical debt.\"}, {\"findingId\": \"c9bc0442ee41116626ec535f52c08c3c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to architectural coupling between workflows.\"}, {\"findingId\": \"96b177f1a340b890cd0fd62d9391adad\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to schema contract mismatches.\"}, {\"findingId\": \"b06a84cd520aa3089f8d7673a58ba89b\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code duplication in security logic.\"}, {\"findingId\": \"81c72d10ad866d9aaa0ed2c2f305207d\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to premature abstraction/scaffolding.\"}, {\"findingId\": \"bebbdffbab95a0b4c0c74bd5f90381f1\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to filesystem security/scope.\"}, {\"findingId\": \"14391fb64fbbab42f24983e8657bee29\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to error reporting and status codes.\"}, {\"findingId\": \"e3d03ed4a3c1c2e65efd3987df83508a\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to redundant logic checks.\"}, {\"findingId\": \"5b8cde60e932edb38fefb66e3419284f\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code extraction and refactoring.\"}]",
+      "batch_index": 4
+    },
+    {
+      "findingId": "bebbdffbab95a0b4c0c74bd5f90381f1",
+      "classification": "not_memory_related",
+      "reason": "Relates to filesystem security/scope.",
+      "raw_batch_response": "[{\"findingId\": \"353d1f7e30dfedadb1e672ca5d482c71\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to API design and naming clarity.\"}, {\"findingId\": \"c8ff7b3d56085e1def38dcfe6580be2c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code redundancy and technical debt.\"}, {\"findingId\": \"c9bc0442ee41116626ec535f52c08c3c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to architectural coupling between workflows.\"}, {\"findingId\": \"96b177f1a340b890cd0fd62d9391adad\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to schema contract mismatches.\"}, {\"findingId\": \"b06a84cd520aa3089f8d7673a58ba89b\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code duplication in security logic.\"}, {\"findingId\": \"81c72d10ad866d9aaa0ed2c2f305207d\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to premature abstraction/scaffolding.\"}, {\"findingId\": \"bebbdffbab95a0b4c0c74bd5f90381f1\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to filesystem security/scope.\"}, {\"findingId\": \"14391fb64fbbab42f24983e8657bee29\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to error reporting and status codes.\"}, {\"findingId\": \"e3d03ed4a3c1c2e65efd3987df83508a\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to redundant logic checks.\"}, {\"findingId\": \"5b8cde60e932edb38fefb66e3419284f\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code extraction and refactoring.\"}]",
+      "batch_index": 4
+    },
+    {
+      "findingId": "14391fb64fbbab42f24983e8657bee29",
+      "classification": "not_memory_related",
+      "reason": "Relates to error reporting and status codes.",
+      "raw_batch_response": "[{\"findingId\": \"353d1f7e30dfedadb1e672ca5d482c71\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to API design and naming clarity.\"}, {\"findingId\": \"c8ff7b3d56085e1def38dcfe6580be2c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code redundancy and technical debt.\"}, {\"findingId\": \"c9bc0442ee41116626ec535f52c08c3c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to architectural coupling between workflows.\"}, {\"findingId\": \"96b177f1a340b890cd0fd62d9391adad\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to schema contract mismatches.\"}, {\"findingId\": \"b06a84cd520aa3089f8d7673a58ba89b\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code duplication in security logic.\"}, {\"findingId\": \"81c72d10ad866d9aaa0ed2c2f305207d\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to premature abstraction/scaffolding.\"}, {\"findingId\": \"bebbdffbab95a0b4c0c74bd5f90381f1\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to filesystem security/scope.\"}, {\"findingId\": \"14391fb64fbbab42f24983e8657bee29\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to error reporting and status codes.\"}, {\"findingId\": \"e3d03ed4a3c1c2e65efd3987df83508a\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to redundant logic checks.\"}, {\"findingId\": \"5b8cde60e932edb38fefb66e3419284f\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code extraction and refactoring.\"}]",
+      "batch_index": 4
+    },
+    {
+      "findingId": "e3d03ed4a3c1c2e65efd3987df83508a",
+      "classification": "not_memory_related",
+      "reason": "Relates to redundant logic checks.",
+      "raw_batch_response": "[{\"findingId\": \"353d1f7e30dfedadb1e672ca5d482c71\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to API design and naming clarity.\"}, {\"findingId\": \"c8ff7b3d56085e1def38dcfe6580be2c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code redundancy and technical debt.\"}, {\"findingId\": \"c9bc0442ee41116626ec535f52c08c3c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to architectural coupling between workflows.\"}, {\"findingId\": \"96b177f1a340b890cd0fd62d9391adad\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to schema contract mismatches.\"}, {\"findingId\": \"b06a84cd520aa3089f8d7673a58ba89b\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code duplication in security logic.\"}, {\"findingId\": \"81c72d10ad866d9aaa0ed2c2f305207d\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to premature abstraction/scaffolding.\"}, {\"findingId\": \"bebbdffbab95a0b4c0c74bd5f90381f1\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to filesystem security/scope.\"}, {\"findingId\": \"14391fb64fbbab42f24983e8657bee29\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to error reporting and status codes.\"}, {\"findingId\": \"e3d03ed4a3c1c2e65efd3987df83508a\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to redundant logic checks.\"}, {\"findingId\": \"5b8cde60e932edb38fefb66e3419284f\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code extraction and refactoring.\"}]",
+      "batch_index": 4
+    },
+    {
+      "findingId": "5b8cde60e932edb38fefb66e3419284f",
+      "classification": "not_memory_related",
+      "reason": "Relates to code extraction and refactoring.",
+      "raw_batch_response": "[{\"findingId\": \"353d1f7e30dfedadb1e672ca5d482c71\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to API design and naming clarity.\"}, {\"findingId\": \"c8ff7b3d56085e1def38dcfe6580be2c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code redundancy and technical debt.\"}, {\"findingId\": \"c9bc0442ee41116626ec535f52c08c3c\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to architectural coupling between workflows.\"}, {\"findingId\": \"96b177f1a340b890cd0fd62d9391adad\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to schema contract mismatches.\"}, {\"findingId\": \"b06a84cd520aa3089f8d7673a58ba89b\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code duplication in security logic.\"}, {\"findingId\": \"81c72d10ad866d9aaa0ed2c2f305207d\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to premature abstraction/scaffolding.\"}, {\"findingId\": \"bebbdffbab95a0b4c0c74bd5f90381f1\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to filesystem security/scope.\"}, {\"findingId\": \"14391fb64fbbab42f24983e8657bee29\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to error reporting and status codes.\"}, {\"findingId\": \"e3d03ed4a3c1c2e65efd3987df83508a\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to redundant logic checks.\"}, {\"findingId\": \"5b8cde60e932edb38fefb66e3419284f\", \"classification\": \"not_memory_related\", \"reason\": \"Relates to code extraction and refactoring.\"}]",
+      "batch_index": 4
+    }
+  ]
+}
