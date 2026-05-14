@@ -282,6 +282,19 @@ async function main() {
     perBucket[bk] = { precision, recall, f1, gold_count: tp + fn, pred_count: tp + fp };
   }
 
+  // Macro-F1 and balanced accuracy give a fairer read than bucket_accuracy
+  // on imbalanced gold sets — the production corpus is ~97% not_memory_related,
+  // so bucket_accuracy is dominated by majority-class collapse. Average over
+  // classes that actually appear in gold so a missing class doesn't drag the
+  // mean to zero.
+  const presentClasses = VALID.filter((bk) => perBucket[bk]!.gold_count > 0);
+  const macroF1 = presentClasses.length > 0
+    ? presentClasses.reduce((s, bk) => s + perBucket[bk]!.f1, 0) / presentClasses.length
+    : 0;
+  const balancedAccuracy = presentClasses.length > 0
+    ? presentClasses.reduce((s, bk) => s + perBucket[bk]!.recall, 0) / presentClasses.length
+    : 0;
+
   batchWalls.sort((a, b) => a - b);
   const p50 = batchWalls[Math.floor(batchWalls.length * 0.5)] ?? 0;
   const p95 = batchWalls[Math.floor(batchWalls.length * 0.95)] ?? 0;
@@ -304,6 +317,8 @@ async function main() {
       json_valid_rate: totalBatches > 0 ? jsonOkBatches / totalBatches : 0,
       schema_valid_rate: totalParseEntries > 0 ? schemaOkEntries / totalParseEntries : 0,
       bucket_accuracy: graded > 0 ? correct / graded : 0,
+      macro_f1: macroF1,
+      balanced_accuracy: balancedAccuracy,
       findings_per_sec: totalFindings > 0 ? totalFindings / totalWall_s : 0,
       batch_p50_ms: p50,
       batch_p95_ms: p95,
@@ -322,6 +337,8 @@ async function main() {
   console.log(`json_valid_rate:  ${(result.metrics.json_valid_rate * 100).toFixed(1)}%`);
   console.log(`schema_valid:     ${schemaOkEntries}/${totalParseEntries} (${(result.metrics.schema_valid_rate * 100).toFixed(1)}%)`);
   console.log(`bucket_accuracy:  ${correct}/${graded} (${(result.metrics.bucket_accuracy * 100).toFixed(1)}%)`);
+  console.log(`macro_f1:         ${(macroF1 * 100).toFixed(1)}%  (mean F1 across ${presentClasses.length} present classes)`);
+  console.log(`balanced_acc:     ${(balancedAccuracy * 100).toFixed(1)}%  (mean recall across present classes)`);
   console.log(`findings/sec:     ${result.metrics.findings_per_sec.toFixed(2)}`);
   console.log(`batch p50/p95 ms: ${p50.toFixed(0)} / ${p95.toFixed(0)}`);
   console.log('per-bucket:');
