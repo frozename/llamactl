@@ -33,7 +33,31 @@ slot 1 speculative counters: n_draft_tokens_total=128, n_draft_tokens_accepted=9
 - Context hits accumulate correctly across slots (lifetime).
 - `n_lookup_dynamic_hits = 0` is **not** evidence the patch fails — the per-slot context cache satisfies every lookup before the strict-threshold dynamic check fires. The shared dynamic only helps when slots see *different* prompts where per-slot context misses.
 
-## Production bench (pending — maestro to execute)
+## Production bench result (executed 2026-05-14)
+
+**Headline: no win on this workload, do not deploy.** Patched binary tested on mac-mini :18888 (atomic-fork branch `fix/shared-ngram-cache-dynamic`, ctx=16384 to share GPU with production :8090, `--spec-type ngram-cache --lookup-cache-dynamic <file> -np 2`).
+
+| Metric | Baseline (vanilla 32k, no -lcd) | Patched (16k, -lcd + ngram-cache) |
+|---|---|---|
+| total wall | 1087s | 1443s (+33%) |
+| findings/sec | 0.28 | 0.21 (-25%) |
+| batch p95 | 34.1s | 89.6s (+163%) |
+| bucket_accuracy | 94.8% | 94.8% |
+
+Server-side counters at shutdown:
+```
+slot 0: n_draft_tokens_total=9113 accepted=167   (acceptance 1.8%)
+slot 1: n_draft_tokens_total=5869 accepted=9     (acceptance 0.15%)
+both: n_lookup_dynamic_hits=0 (per-slot context cache wins every lookup before shared dynamic queried)
+```
+
+**Why no win:** ngram speculation only pays off when draft acceptance is high. Granite's JSON classifier output is template-driven (consistent quotes/keys/strings) which fills the per-slot context cache with structural tokens, but substantive choices (bucket value, reason text) are high-entropy. 98%+ draft rejection means compute spent on losing drafts swamps the speedup on the few accepted drafts. The original M4 Pro `-np 1` +15% reading (commit `9082548`) was a workload artifact for that specific test prompt, not a general result.
+
+**Caveat:** patched ran at ctx=16384 to avoid Metal OOM when sharing GPU with production :8090 (32k). Smaller cache headroom contributes some of the slowdown, but does not change the 98% draft-rejection root cause.
+
+Bench artifact: `bench-results/shared-cache-patched-470-2026-05-14.json` (commit `60878ca`).
+
+## Original bench plan (preserved for reference)
 
 Comparable runs to validate the full +15% claim from commit `9082548 bench(granite): dynamic lookup cache A/B — +15% throughput, -45% p95`:
 
