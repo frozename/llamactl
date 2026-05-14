@@ -48,7 +48,21 @@ metadata:
     agent: home-mgmt
 spec:
   node: mac-mini
-  enabled: true
+  # Disabled 2026-05-14 pm: live test of the long-lived flow on this
+  # endpoint found that Granite 4.1 (both 3B and 8B Q4_K_M) produce tool-
+  # call output that claude-agent-acp's parser rejects — see the run
+  # dispatch_timeline for handoff_ids 034364fb (3B) and ef129fe4 (8B);
+  # both emit agent.tool_call.failed with tool_name=null. Gemma 4
+  # 26B-A4B + MTP via the existing :8181 maestro (ef3e0ddc) runs the
+  # same chain cleanly with zero tool_call.failed events. Re-enable
+  # this template once one of the following is true:
+  #   (a) claude-agent-acp gains a Granite-compatible tool-call parser
+  #   (b) a different ACP adapter is wired for Granite (e.g. openai-acp)
+  #   (c) we hand-roll a non-acp HTTP shim that translates Granite's
+  #       tool-call format to whatever the consumer expects.
+  # Coexistence with :8090 and llama-server bring-up are verified — the
+  # blocker is purely the adapter <-> Granite tool-call grammar.
+  enabled: false
   resources:
     expectedMemoryGiB: 4
   target:

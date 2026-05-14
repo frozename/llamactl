@@ -1,0 +1,90 @@
+# Qwen 3-8B Q4_K_M on `mac-mini` for the penumbra `home-mgmt` long-lived
+# agent. Replaces granite41-3b-home-mgmt-mac-mini (disabled 2026-05-14
+# after Granite's tool-call shape failed claude-agent-acp's parser).
+#
+# Why Qwen3-8B for home-mgmt on mac-mini (2026-05-14 pm decision):
+# - Granite 4.1 3B and 8B both emit tool-call output claude-agent-acp
+#   rejects (null tool_name in agent.tool_call.failed). Granite isn't on
+#   llama.cpp's --jinja known-tool-call list (Hermes, Llama 3, Mistral,
+#   Qwen, Functionary, DeepSeek), so its native format isn't converted to
+#   Anthropic tool_use blocks. See project_home_mgmt_long_lived_flow_2026-05-14.
+# - Qwen3.5-4B emits clean tool_use on the standalone shape probe but
+#   fails under the full home-mgmt multi-tool protocol (7 failed calls
+#   across 5 sessions in a 110s run, handoff 6bd57c1c). Schema-complexity
+#   ceiling.
+# - Qwen3-8B passes both: standalone probe returns valid tool_use block,
+#   AND the full home-mgmt protocol completes with ZERO tool_call.failed
+#   events (handoff 300a00c3, 175s, single clean session, end_turn).
+# - Gemma 4 26B-A4B + MTP (M4 Pro :8181) is the alternative; Qwen3-8B is
+#   chosen for mac-mini coexistence (5GB vs 14GB) so home-mgmt can live
+#   beside the :8090 memory-efficacy classifier inside the 24GB budget.
+#
+# Long-lived-tuned flags match granite41-3b template; same shape, just a
+# bigger model. Verified post-deploy that hostEnvPolicy { claude: true }
+# in ~/.config/agentchat/agentchat.yaml (home-mgmt entry) drops per-tick
+# prefill from 30K → 15.8K tokens (-48%), aligned with the May-13
+# baseline of 17K (project_grammar_classifier_2026-05-14 lineage).
+#
+# Apply:
+#   llamactl --node mac-mini apply -f templates/workloads/qwen3-8b-home-mgmt-mac-mini.yaml
+#
+# After this lands and is healthy, ensure ~/.config/agentchat/agentchat.yaml
+# home-mgmt entry has:
+#   ANTHROPIC_BASE_URL: http://192.168.68.76:8091
+#   ANTHROPIC_MODEL: home-mgmt
+# then reload daemon + bounce the worker.
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: qwen3-8b-home-mgmt-mac-mini
+  labels:
+    family: qwen3
+    role: long-lived
+    agent: home-mgmt
+spec:
+  node: mac-mini
+  enabled: true
+  resources:
+    expectedMemoryGiB: 7
+  target:
+    kind: rel
+    value: Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf
+  extraArgs:
+    - --alias
+    - home-mgmt
+    - --host
+    - 0.0.0.0
+    - --jinja
+    # ctx 16384 (not 32768) is the budget compromise on mac-mini's 16GB
+    # RAM when coexisting with :8090 Granite 8B (-np 2 ctx 32k uses ~8GB).
+    # 16k slot fits the typical home-mgmt tick (~15K prompt with
+    # hostEnvPolicy { claude: true } enabled in agentchat.yaml). If the
+    # working_memory accumulates past 16k, the cache-reuse strategy will
+    # evict older context — acceptable for a stateful agent that writes
+    # working_memory each tick anyway.
+    - --ctx-size
+    - "16384"
+    - -ngl
+    - "999"
+    - --flash-attn
+    - "on"
+    - -b
+    - "2048"
+    - -ub
+    - "1024"
+    - -ctk
+    - q8_0
+    - -ctv
+    - q8_0
+    - --cache-reuse
+    - "256"
+    - --reasoning
+    - "off"
+    - --no-warmup
+    - -np
+    - "1"
+  restartPolicy: Always
+  timeoutSeconds: 240
+  endpoint:
+    host: 127.0.0.1
+    port: 8091
