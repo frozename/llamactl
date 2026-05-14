@@ -1,0 +1,86 @@
+# Granite 4.1 3B Q4_K_M on `mac-mini` for the penumbra `home-mgmt` long-lived
+# agent. Sibling to granite41-8b-mac-mini.yaml (the :8090 memory-efficacy
+# classifier). Coexists with :8090 — multi-workload pattern verified on
+# mac-mini per session 2026-05-13.
+#
+# Why 3B (not 8B) for home-mgmt on mac-mini:
+# - 24GB total budget; :8090 (granite41-8b-mac-mini, -np 2 ctx 32k) holds
+#   ~8-10GB; macOS GUI/kernel ~5-6GB; another 8B at -np 1 ctx 32k would
+#   add ~6GB → ~22GB total, no headroom. 3B at -np 1 ctx 32k adds ~3-4GB
+#   → ~17-18GB total, comfortable headroom for spikes.
+# - Home-mgmt is a router/delegator (cron tick → decide → invoke
+#   downstream tier agents via Home Assistant + penumbra MCP tools).
+#   3B's 88 tps + 12/12 tool-calling on the 2026-05-06 fleet eval
+#   (composite 1.000 on agentic tasks) fits this profile.
+# - Granite 3B's known weakness — blindness to recall_miss in fine-grained
+#   memory-efficacy classification (2026-05-13 bench) — does not apply
+#   here: routing/delegation outputs are gated by grammar-constrained
+#   tool-call shape, not by rare-class recognition.
+#
+# Long-lived-tuned flags (mirrored from granite41-8b-long-lived-local.yaml
+# with mac-mini-budget adjustments):
+# - --jinja: /v1/messages compatibility with claude-agent-acp adapter.
+# - --ctx-size 32768 (vs M4 Pro long-lived's 65536): mac-mini is tighter on
+#   RAM; cron ticks every 10-15 min won't accumulate that much context.
+# - -np 1: predictable per-tick latency; single-stream agent.
+# - -b 2048 -ub 1024: smaller than M4 Pro long-lived because mac-mini has
+#   lower memory bandwidth; smaller ubatch keeps per-token latency tight.
+# - -ctk/-ctv q8_0: KV cache q8_0 is lossless on granite; halves KV footprint.
+# - --cache-reuse 256: KV-shift reuse for stable system+tools+brief prefix
+#   across long-lived ticks (analog of gemma's --swa-full for non-SWA arch).
+# - --reasoning off: cheap insurance; granite 4.1 isn't a reasoning model.
+# - -fa on -ngl 999: full Metal offload, FA reduces KV pressure.
+# - --no-warmup: shaves ~10s off startup; cold mmap of 2GB GGUF is fast.
+#
+# Apply:
+#   llamactl --node mac-mini apply -f templates/workloads/granite41-3b-home-mgmt-mac-mini.yaml
+#
+# After this lands and is healthy, point the penumbra `home-mgmt` agent
+# in ~/.config/agentchat/agentchat.yaml at http://mac-mini:8091/v1/messages
+# (or via the local-granite-3b agent shim).
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: granite41-3b-home-mgmt-mac-mini
+  labels:
+    family: granite41
+    role: long-lived
+    agent: home-mgmt
+spec:
+  node: mac-mini
+  enabled: true
+  resources:
+    expectedMemoryGiB: 4
+  target:
+    kind: rel
+    value: granite-4.1-3b-GGUF/granite-4.1-3b-Q4_K_M.gguf
+  extraArgs:
+    - --alias
+    - home-mgmt
+    - --jinja
+    - --ctx-size
+    - "32768"
+    - -ngl
+    - "999"
+    - --flash-attn
+    - "on"
+    - -b
+    - "2048"
+    - -ub
+    - "1024"
+    - -ctk
+    - q8_0
+    - -ctv
+    - q8_0
+    - --cache-reuse
+    - "256"
+    - --reasoning
+    - "off"
+    - --no-warmup
+    - -np
+    - "1"
+  restartPolicy: Always
+  timeoutSeconds: 180
+  endpoint:
+    host: 127.0.0.1
+    port: 8091
