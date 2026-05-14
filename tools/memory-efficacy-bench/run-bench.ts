@@ -109,6 +109,7 @@ async function main() {
   const OUT = arg('--out');
   const MAX = optionalNumber('--max-findings', Infinity);
   const BATCH = optionalNumber('--batch-size', 10);
+  const CONCURRENCY = optionalNumber('--concurrency', 1);
 
   const corpusAll: CorpusRow[] = JSON.parse(readFileSync(FINDINGS, 'utf8'));
   const goldAll: GoldLabel[] = existsSync(GOLD) ? JSON.parse(readFileSync(GOLD, 'utf8')) : [];
@@ -119,7 +120,7 @@ async function main() {
 
   console.log(`url=${URL} model=${MODEL}`);
   console.log(`findings (with gold): ${corpus.length} / corpus_total=${corpusAll.length} gold_total=${goldAll.length}`);
-  console.log(`batch_size=${BATCH}`);
+  console.log(`batch_size=${BATCH} concurrency=${CONCURRENCY}`);
 
   const predictions: PredictionEntry[] = [];
   const batchWalls: number[] = [];
@@ -128,10 +129,16 @@ async function main() {
   let totalBatches = 0;
   let totalParseEntries = 0;
 
-  const runStart = Date.now();
+  // Pre-compute all batches up front. With concurrency > 1 we send WINDOW
+  // batches in parallel via Promise.all, then walk them in submission order
+  // for stable progress logging. The server's parallel-slot count (-np N)
+  // determines whether the concurrent calls actually overlap on-device.
+  const allBatches: CorpusRow[][] = [];
   for (let i = 0; i < corpus.length; i += BATCH) {
-    totalBatches += 1;
-    const batch = corpus.slice(i, i + BATCH);
+    allBatches.push(corpus.slice(i, i + BATCH));
+  }
+
+  async function dispatchOne(batch: CorpusRow[], batchIdx: number): Promise<void> {
     const prompt = buildPrompt(batch);
     let raw = '';
     let wall_ms = 0;
@@ -140,8 +147,8 @@ async function main() {
       raw = r.text;
       wall_ms = r.wall_ms;
     } catch (err) {
-      console.warn(`batch ${totalBatches} dispatch failed:`, err instanceof Error ? err.message : err);
-      continue;
+      console.warn(`batch ${batchIdx + 1} dispatch failed:`, err instanceof Error ? err.message : err);
+      return;
     }
     batchWalls.push(wall_ms);
 
@@ -176,12 +183,18 @@ async function main() {
         classification,
         reason: String(entry.reason ?? ''),
         raw_batch_response: raw,
-        batch_index: totalBatches,
+        batch_index: batchIdx + 1,
       });
     }
+    totalBatches += 1;
+  }
 
-    if (totalBatches % 5 === 0) {
-      console.log(`progress: batch ${totalBatches}/${Math.ceil(corpus.length / BATCH)} jsonOk=${jsonOkBatches} schemaOk=${schemaOkEntries}/${predictions.length}`);
+  const runStart = Date.now();
+  for (let w = 0; w < allBatches.length; w += CONCURRENCY) {
+    const window = allBatches.slice(w, w + CONCURRENCY);
+    await Promise.all(window.map((b, k) => dispatchOne(b, w + k)));
+    if (totalBatches % 5 === 0 || w + CONCURRENCY >= allBatches.length) {
+      console.log(`progress: batches ${totalBatches}/${allBatches.length} jsonOk=${jsonOkBatches} schemaOk=${schemaOkEntries}/${predictions.length}`);
     }
   }
   const totalWall_s = (Date.now() - runStart) / 1000;

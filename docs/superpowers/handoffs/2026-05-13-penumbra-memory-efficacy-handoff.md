@@ -9,13 +9,14 @@ Status: model side validated; **production pipeline blocked on penumbra-side par
 
 We benchmarked Granite 4.1 8B Q4_K_M on mac-mini :8090 against the production memory-efficacy classifier prompt and it works (94.8% accuracy, 40% F1 on the rare classes that matter). But the production pipeline has **never actually run** because `parseFindings` doesn't match the real adversarial-review synthesis format — `~/.penumbra/db.sqlite` has 0 rows in `memory_efficacy_jobs` and `memory_efficacy_cache`.
 
-Two penumbra-side fixes unblock production:
+Three penumbra-side changes unblock production + give a free throughput win:
 
 1. **`parseFindings` parser format mismatch** — does not match real synthesis output. Highest priority; nothing else matters until this lands.
 2. **Granite 8B drops ~33% of batch entries** because `reason` strings exceed the per-batch token budget. Three options inside `classifyFindings`.
+3. **NEW: parallel-batch dispatch in the job runner** → +34% throughput, zero quality cost. Mac-mini Granite is configured with `-np 2` (two parallel slots) but `buildMemoryEfficacyCache` walks batches sequentially. Wrapping the inner loop in `Promise.all` with concurrency=2 cuts wall from 1091s → 816s on the full corpus.
 
 Plus one memo:
-3. **Class distribution is heavily skewed** (97% `not_memory_related`). Worth knowing for any future eval / threshold work.
+4. **Class distribution is heavily skewed** (97% `not_memory_related`). Worth knowing for any future eval / threshold work.
 
 Full numbers and methodology in `docs/notes/session-summary-2026-05-13-pm-granite-tuning.md` (this repo). Bench harness is at `tools/memory-efficacy-bench/` (corpus extractor, gold labeler, run-bench, sweep.sh).
 
@@ -67,7 +68,65 @@ We didn't pick one — the trade-off depends on whether you'd rather pay round-t
 
 3B variants don't have this drop problem (1-4% drops) but are blind to recall_miss entirely (0% F1 across Q4/Q5/Q6/Q8 vs 8B's 40%) — not a viable swap. **Stay on Granite 8B Q4_K_M.**
 
-## 3. Class distribution is 97% `not_memory_related`
+## 3. Parallel-batch dispatch — free +34% throughput
+
+`buildMemoryEfficacyCache` walks the `toClassify` list sequentially:
+
+```ts
+// packages/core/src/readers/memory-efficacy.ts:222
+const batchSize = 10;
+for (let i = 0; i < toClassify.length; i += batchSize) {
+  const batch = toClassify.slice(i, i + batchSize);
+  const classifications = await classifyFindings(batchFindings, ...);
+  // ... write rows
+}
+```
+
+Mac-mini Granite is configured with `-np 2` (two parallel slots). The job runner only ever uses one. Dispatching pairs of batches concurrently is a one-line change that **doesn't touch model, prompt, classifier, or schema**:
+
+```ts
+const CONCURRENCY = 2;          // match -np on the workload
+for (let i = 0; i < toClassify.length; i += batchSize * CONCURRENCY) {
+  const windowBatches: ToClassifyEntry[][] = [];
+  for (let k = 0; k < CONCURRENCY; k++) {
+    const b = toClassify.slice(i + k * batchSize, i + (k + 1) * batchSize);
+    if (b.length > 0) windowBatches.push(b);
+  }
+  const results = await Promise.all(
+    windowBatches.map((batch) =>
+      classifyFindings(batch.map((e) => ({ ...e.finding, findingId: e.findingId })), {
+        siriusChat: opts.siriusChat,
+        model: opts.model,
+      }).then((cls) => ({ batch, cls })),
+    ),
+  );
+  // sequential write to SQLite (insertStmt is not concurrency-safe per-statement
+  // in bun:sqlite without WAL; the bench-side write was after-the-fact)
+  for (const { batch, cls } of results) {
+    // ... existing per-batch write loop
+  }
+}
+```
+
+Measured on the same mac-mini :8090 production server, full 470-finding corpus, identical Granite output:
+
+| metric | sequential c=1 | parallel c=2 | delta |
+|---|---|---|---|
+| wall_s | 1091 | **816** | **-25%** |
+| findings/s | 0.28 | **0.38** | **+34%** |
+| p50 batch ms | 31766 | 32222 | +1.4% (same) |
+| p95 batch ms | 34281 | 44646 | +30% (slot contention tail) |
+| preds | 309 | 309 | identical |
+| bucket_accuracy | 94.8% | 94.8% | identical |
+| per-bucket F1 | 40 / 40 / 0 | 40 / 40 / 0 | identical |
+
+**Output is bit-identical** — Granite is deterministic at temperature=0; the only thing that changes is dispatch wall. The p95 tail is wider (slot contention) but p50 is flat, so most batches are unaffected.
+
+**Generalizes** to any classifier workload hitting a multi-slot llama-server. Set `CONCURRENCY` to match the workload's `-np`. Read this off the workload manifest if you want a fully dynamic implementation, but a fixed `2` would already cover the current production config.
+
+Bench reference: `tools/memory-efficacy-bench/run-bench.ts` (this repo) — `--concurrency N` flag was added precisely to verify this. Per-run JSON: `bench-results/sweep-parallel-batch.json`.
+
+## 4. Class distribution is 97% `not_memory_related`
 
 Of 470 gold-labeled findings (labeled by codex-acp-spark / Claude Opus 4.7):
 
