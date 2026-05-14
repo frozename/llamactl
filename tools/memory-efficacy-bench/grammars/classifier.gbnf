@@ -1,42 +1,36 @@
 # Memory-efficacy classifier output grammar for llama.cpp
 #
-# This variant matches the CURRENT classifier prompt/schema used by:
-#   - penumbra packages/core/src/services/memory-efficacy-classifier.ts
-#   - llamactl tools/memory-efficacy-bench/run-bench.ts
+# Schema target (live, verified against
+#   penumbra packages/core/src/services/memory-efficacy-classifier.ts
+#   llamactl tools/memory-efficacy-bench/run-bench.ts):
+#     [{ "findingId": "<32-hex|num>", "classification": "<bucket>", "reason": "<string>" }, ...]
 #
-# It enforces:
+# Enforces:
 #   - valid JSON array
 #   - exact object shape + key order
 #   - bucket enum membership
 #   - exactly 10 entries (production bench batch size)
 #
+# Multi-line rule bodies are wrapped in (...) per llama.cpp GBNF parser
+# requirements (see grammars/README.md and chess.gbnf for the canonical
+# multi-line pattern). Without the wrapping parens, the parser truncates
+# the rule at the first newline and silently falls back to unconstrained.
+#
 # NOTE: if batch size changes, regenerate `root` cardinality.
 
 root ::= ws "[" ws entry (ws "," ws entry){9} ws "]" ws
 
-entry ::= "{" ws
-  "\"findingId\"" ws ":" ws finding-id ws "," ws
-  "\"classification\"" ws ":" ws bucket ws "," ws
-  "\"reason\"" ws ":" ws reason
-ws "}"
+entry ::= ( "{" ws "\"findingId\"" ws ":" ws finding-id ws "," ws "\"classification\"" ws ":" ws bucket ws "," ws "\"reason\"" ws ":" ws reason ws "}" )
 
-# Primary form is 32-hex findingId hashes; keep numeric fallback to match
-# run-bench's positional fallback behavior for degraded outputs.
-finding-id ::= "\"" (hex32 | index-id) "\"" ws
+finding-id ::= "\"" (hex32 | index-id) "\""
 hex32 ::= [0-9a-f]{32}
 index-id ::= [1-9] [0-9]{0,2}
 
-bucket ::= (
-  "\"memory_ignored\""
-  | "\"recall_miss\""
-  | "\"missed_registration\""
-  | "\"not_memory_related\""
-) ws
+bucket ::= ( "\"memory_ignored\"" | "\"recall_miss\"" | "\"missed_registration\"" | "\"not_memory_related\"" )
 
-# Keep reason as a short JSON string. Prompt still instructs <= 80 chars;
-# grammar allows extra headroom so valid generations are not over-constrained.
-reason ::= "\"" reason-char{1,200} "\"" ws
-reason-char ::= [^"\\\x7F\x00-\x1F] | "\\" (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+# Reason capped at 200 chars to allow headroom over the 80-char prompt instruction.
+reason ::= "\"" reason-char{1,200} "\""
+reason-char ::= [^"\\] | "\\" (["\\bfnrt/] | "u" [0-9a-fA-F]{4})
 
-# Optional JSON whitespace
-ws ::= | " " | "\n" [ \t]{0,20}
+# JSON whitespace: any run of spaces / tabs / newlines (incl. empty).
+ws ::= [ \t\n]*

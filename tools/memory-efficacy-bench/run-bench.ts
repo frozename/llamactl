@@ -17,6 +17,7 @@
 // then map back; that's a labeler-only concession.
 
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 
 const VALID = ['missed_registration', 'recall_miss', 'memory_ignored', 'not_memory_related'] as const;
@@ -56,6 +57,28 @@ function optionalNumber(flag: string, fallback: number): number {
   if (v !== -1 && process.argv[v + 1]) return Number(process.argv[v + 1]);
   return fallback;
 }
+function optionalArg(flag: string): string | undefined {
+  const i = process.argv.indexOf(flag);
+  if (i !== -1 && process.argv[i + 1]) return process.argv[i + 1];
+  return undefined;
+}
+
+export function loadGrammarFile(grammarFile?: string): {
+  grammar?: string;
+  grammar_file?: string;
+  grammar_sha256?: string;
+} {
+  if (!grammarFile) return {};
+  const grammar = readFileSync(grammarFile, 'utf8');
+  if (grammar.trim().length === 0) {
+    throw new Error(`empty grammar file: ${grammarFile}`);
+  }
+  return {
+    grammar,
+    grammar_file: grammarFile,
+    grammar_sha256: createHash('sha256').update(grammar).digest('hex'),
+  };
+}
 
 function buildPrompt(batch: CorpusRow[]): string {
   const lines = batch.map(
@@ -82,20 +105,44 @@ function extractJsonArray(raw: string): string {
   return t;
 }
 
-async function callChat(url: string, model: string, prompt: string): Promise<{ text: string; wall_ms: number }> {
+export function buildChatRequestBody(model: string, prompt: string, grammar?: string): {
+  model: string;
+  messages: Array<{ role: 'user'; content: string }>;
+  temperature: number;
+  max_tokens: number;
+  grammar?: string;
+} {
+  return {
+    model,
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0,
+    max_tokens: 2048,
+    ...(grammar ? { grammar } : {}),
+  };
+}
+
+export async function callChat(
+  url: string,
+  model: string,
+  prompt: string,
+  grammar?: string,
+): Promise<{ text: string; wall_ms: number }> {
   const start = Date.now();
   const resp = await fetch(`${url.replace(/\/+$/, '')}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0,
-      max_tokens: 2048,
-    }),
+    body: JSON.stringify(buildChatRequestBody(model, prompt, grammar)),
   });
   const wall_ms = Date.now() - start;
-  if (!resp.ok) throw new Error(`chat ${resp.status}: ${await resp.text()}`);
+  if (!resp.ok) {
+    const detail = await resp.text();
+    if (resp.status === 400 && grammar && /grammar[^a-zA-Z0-9]*not supported|unsupported grammar/i.test(detail)) {
+      throw new Error(
+        `chat ${resp.status}: grammar not supported by server while --grammar-file is set (${detail})`,
+      );
+    }
+    throw new Error(`chat ${resp.status}: ${detail}`);
+  }
   const data = (await resp.json()) as { choices: Array<{ message: { content: string } }> };
   const text = data.choices?.[0]?.message?.content ?? '';
   return { text, wall_ms };
@@ -107,9 +154,11 @@ async function main() {
   const FINDINGS = arg('--findings', './tools/memory-efficacy-bench/corpus/findings.json');
   const GOLD = arg('--gold', './tools/memory-efficacy-bench/corpus/gold-labels.json');
   const OUT = arg('--out');
+  const GRAMMAR_FILE = optionalArg('--grammar-file');
   const MAX = optionalNumber('--max-findings', Infinity);
   const BATCH = optionalNumber('--batch-size', 10);
   const CONCURRENCY = optionalNumber('--concurrency', 1);
+  const { grammar, grammar_file, grammar_sha256 } = loadGrammarFile(GRAMMAR_FILE);
 
   const corpusAll: CorpusRow[] = JSON.parse(readFileSync(FINDINGS, 'utf8'));
   const goldAll: GoldLabel[] = existsSync(GOLD) ? JSON.parse(readFileSync(GOLD, 'utf8')) : [];
@@ -121,6 +170,9 @@ async function main() {
   console.log(`url=${URL} model=${MODEL}`);
   console.log(`findings (with gold): ${corpus.length} / corpus_total=${corpusAll.length} gold_total=${goldAll.length}`);
   console.log(`batch_size=${BATCH} concurrency=${CONCURRENCY}`);
+  if (grammar_file) {
+    console.log(`grammar_file=${grammar_file} grammar_sha256=${grammar_sha256}`);
+  }
 
   const predictions: PredictionEntry[] = [];
   const batchWalls: number[] = [];
@@ -143,7 +195,7 @@ async function main() {
     let raw = '';
     let wall_ms = 0;
     try {
-      const r = await callChat(URL, MODEL, prompt);
+      const r = await callChat(URL, MODEL, prompt, grammar);
       raw = r.text;
       wall_ms = r.wall_ms;
     } catch (err) {
@@ -239,6 +291,10 @@ async function main() {
     url: URL,
     model: MODEL,
     started_at: new Date(runStart).toISOString(),
+    metadata: {
+      grammar_file: grammar_file ?? null,
+      grammar_sha256: grammar_sha256 ?? null,
+    },
     total_wall_s: totalWall_s,
     batches: totalBatches,
     findings_attempted: corpus.length,
@@ -275,4 +331,6 @@ async function main() {
   console.log(`wrote ${OUT}`);
 }
 
-main();
+if (import.meta.main) {
+  await main();
+}

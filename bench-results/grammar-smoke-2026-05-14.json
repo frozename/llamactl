@@ -1,0 +1,154 @@
+{
+  "url": "http://127.0.0.1:18090",
+  "model": "local",
+  "started_at": "2026-05-14T03:36:56.219Z",
+  "metadata": {
+    "grammar_file": "tools/memory-efficacy-bench/grammars/classifier.gbnf",
+    "grammar_sha256": "aac8736cbe028a6d398fd0a1674b115492d9a71e8cc7d94e547cf9c6dae2b878"
+  },
+  "total_wall_s": 25.143,
+  "batches": 1,
+  "findings_attempted": 10,
+  "findings_in_predictions": 10,
+  "findings_graded": 10,
+  "metrics": {
+    "json_valid_rate": 1,
+    "schema_valid_rate": 1,
+    "bucket_accuracy": 1,
+    "findings_per_sec": 0.3977250129260629,
+    "batch_p50_ms": 25141,
+    "batch_p95_ms": 25141
+  },
+  "per_bucket": {
+    "missed_registration": {
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "gold_count": 0,
+      "pred_count": 0
+    },
+    "recall_miss": {
+      "precision": 1,
+      "recall": 1,
+      "f1": 1,
+      "gold_count": 1,
+      "pred_count": 1
+    },
+    "memory_ignored": {
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "gold_count": 0,
+      "pred_count": 0
+    },
+    "not_memory_related": {
+      "precision": 1,
+      "recall": 1,
+      "f1": 1,
+      "gold_count": 9,
+      "pred_count": 9
+    }
+  },
+  "confusion": {
+    "missed_registration": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 0,
+      "unknown": 0
+    },
+    "recall_miss": {
+      "missed_registration": 0,
+      "recall_miss": 1,
+      "memory_ignored": 0,
+      "not_memory_related": 0,
+      "unknown": 0
+    },
+    "memory_ignored": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 0,
+      "unknown": 0
+    },
+    "not_memory_related": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 9,
+      "unknown": 0
+    }
+  },
+  "predictions": [
+    {
+      "findingId": "f9972587258f55574c58ec3ad9c60a49",
+      "classification": "not_memory_related",
+      "reason": "Security/architectural issue, unrelated to memory",
+      "raw_batch_response": "[\n  {\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Security/architectural issue, unrelated to memory\"},\n  {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Configuration coupling, not memory-related\"},\n  {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Optional input treated as unconditional recall source, likely missed relevant memory\"},\n  {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Type coercion issue, not memory-related\"},\n  {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability, unrelated to memory\"},\n  {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue, not memory-related\"},\n  {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Duplication issue, not memory-related\"},\n  {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"},\n  {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Redundancy issue, not memory-related\"}\n  \n  , {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"}\n]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "c68b6d7eb42d1d604c7ee09b2a8a6074",
+      "classification": "not_memory_related",
+      "reason": "Configuration coupling, not memory-related",
+      "raw_batch_response": "[\n  {\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Security/architectural issue, unrelated to memory\"},\n  {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Configuration coupling, not memory-related\"},\n  {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Optional input treated as unconditional recall source, likely missed relevant memory\"},\n  {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Type coercion issue, not memory-related\"},\n  {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability, unrelated to memory\"},\n  {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue, not memory-related\"},\n  {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Duplication issue, not memory-related\"},\n  {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"},\n  {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Redundancy issue, not memory-related\"}\n  \n  , {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"}\n]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "75e25037f50141ab9b1b80dfd1525962",
+      "classification": "recall_miss",
+      "reason": "Optional input treated as unconditional recall source, likely missed relevant memory",
+      "raw_batch_response": "[\n  {\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Security/architectural issue, unrelated to memory\"},\n  {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Configuration coupling, not memory-related\"},\n  {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Optional input treated as unconditional recall source, likely missed relevant memory\"},\n  {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Type coercion issue, not memory-related\"},\n  {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability, unrelated to memory\"},\n  {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue, not memory-related\"},\n  {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Duplication issue, not memory-related\"},\n  {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"},\n  {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Redundancy issue, not memory-related\"}\n  \n  , {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"}\n]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "19c4d69f6aa882180ff306ae8906a42b",
+      "classification": "not_memory_related",
+      "reason": "Type coercion issue, not memory-related",
+      "raw_batch_response": "[\n  {\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Security/architectural issue, unrelated to memory\"},\n  {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Configuration coupling, not memory-related\"},\n  {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Optional input treated as unconditional recall source, likely missed relevant memory\"},\n  {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Type coercion issue, not memory-related\"},\n  {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability, unrelated to memory\"},\n  {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue, not memory-related\"},\n  {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Duplication issue, not memory-related\"},\n  {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"},\n  {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Redundancy issue, not memory-related\"}\n  \n  , {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"}\n]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "a35121ffe7d67a0017d91f474f8fca36",
+      "classification": "not_memory_related",
+      "reason": "Security vulnerability, unrelated to memory",
+      "raw_batch_response": "[\n  {\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Security/architectural issue, unrelated to memory\"},\n  {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Configuration coupling, not memory-related\"},\n  {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Optional input treated as unconditional recall source, likely missed relevant memory\"},\n  {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Type coercion issue, not memory-related\"},\n  {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability, unrelated to memory\"},\n  {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue, not memory-related\"},\n  {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Duplication issue, not memory-related\"},\n  {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"},\n  {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Redundancy issue, not memory-related\"}\n  \n  , {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"}\n]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "9eb7e4a258b8b7633318cf317fc49c9f",
+      "classification": "not_memory_related",
+      "reason": "Performance issue, not memory-related",
+      "raw_batch_response": "[\n  {\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Security/architectural issue, unrelated to memory\"},\n  {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Configuration coupling, not memory-related\"},\n  {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Optional input treated as unconditional recall source, likely missed relevant memory\"},\n  {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Type coercion issue, not memory-related\"},\n  {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability, unrelated to memory\"},\n  {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue, not memory-related\"},\n  {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Duplication issue, not memory-related\"},\n  {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"},\n  {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Redundancy issue, not memory-related\"}\n  \n  , {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"}\n]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "4383b85187ab16eb602096d09ca8b632",
+      "classification": "not_memory_related",
+      "reason": "Duplication issue, not memory-related",
+      "raw_batch_response": "[\n  {\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Security/architectural issue, unrelated to memory\"},\n  {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Configuration coupling, not memory-related\"},\n  {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Optional input treated as unconditional recall source, likely missed relevant memory\"},\n  {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Type coercion issue, not memory-related\"},\n  {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability, unrelated to memory\"},\n  {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue, not memory-related\"},\n  {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Duplication issue, not memory-related\"},\n  {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"},\n  {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Redundancy issue, not memory-related\"}\n  \n  , {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"}\n]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "290cfd1c9cff451cd7ccc2d9fd54fb45",
+      "classification": "not_memory_related",
+      "reason": "Performance optimization, not memory-related",
+      "raw_batch_response": "[\n  {\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Security/architectural issue, unrelated to memory\"},\n  {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Configuration coupling, not memory-related\"},\n  {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Optional input treated as unconditional recall source, likely missed relevant memory\"},\n  {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Type coercion issue, not memory-related\"},\n  {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability, unrelated to memory\"},\n  {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue, not memory-related\"},\n  {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Duplication issue, not memory-related\"},\n  {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"},\n  {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Redundancy issue, not memory-related\"}\n  \n  , {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"}\n]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "84f1feb8b781af629668bbddd578f784",
+      "classification": "not_memory_related",
+      "reason": "Redundancy issue, not memory-related",
+      "raw_batch_response": "[\n  {\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Security/architectural issue, unrelated to memory\"},\n  {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Configuration coupling, not memory-related\"},\n  {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Optional input treated as unconditional recall source, likely missed relevant memory\"},\n  {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Type coercion issue, not memory-related\"},\n  {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability, unrelated to memory\"},\n  {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue, not memory-related\"},\n  {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Duplication issue, not memory-related\"},\n  {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"},\n  {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Redundancy issue, not memory-related\"}\n  \n  , {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"}\n]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "d190108e1a63507bfd31417aa4577b88",
+      "classification": "not_memory_related",
+      "reason": "Performance optimization, not memory-related",
+      "raw_batch_response": "[\n  {\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Security/architectural issue, unrelated to memory\"},\n  {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Configuration coupling, not memory-related\"},\n  {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Optional input treated as unconditional recall source, likely missed relevant memory\"},\n  {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Type coercion issue, not memory-related\"},\n  {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability, unrelated to memory\"},\n  {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue, not memory-related\"},\n  {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Duplication issue, not memory-related\"},\n  {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"},\n  {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Redundancy issue, not memory-related\"}\n  \n  , {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Performance optimization, not memory-related\"}\n]",
+      "batch_index": 1
+    }
+  ]
+}
