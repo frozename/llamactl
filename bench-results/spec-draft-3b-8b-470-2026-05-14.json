@@ -1,0 +1,83 @@
+{
+  "url": "http://127.0.0.1:18889",
+  "model": "local",
+  "started_at": "2026-05-14T12:18:58.978Z",
+  "metadata": {
+    "grammar_file": null,
+    "grammar_sha256": null
+  },
+  "total_wall_s": 17.916,
+  "batches": 1,
+  "findings_attempted": 470,
+  "findings_in_predictions": 0,
+  "findings_graded": 0,
+  "metrics": {
+    "json_valid_rate": 1,
+    "schema_valid_rate": 0,
+    "bucket_accuracy": 0,
+    "findings_per_sec": 0,
+    "batch_p50_ms": 8794,
+    "batch_p95_ms": 8794
+  },
+  "per_bucket": {
+    "missed_registration": {
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "gold_count": 0,
+      "pred_count": 0
+    },
+    "recall_miss": {
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "gold_count": 0,
+      "pred_count": 0
+    },
+    "memory_ignored": {
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "gold_count": 0,
+      "pred_count": 0
+    },
+    "not_memory_related": {
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "gold_count": 0,
+      "pred_count": 0
+    }
+  },
+  "confusion": {
+    "missed_registration": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 0,
+      "unknown": 0
+    },
+    "recall_miss": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 0,
+      "unknown": 0
+    },
+    "memory_ignored": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 0,
+      "unknown": 0
+    },
+    "not_memory_related": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 0,
+      "unknown": 0
+    }
+  },
+  "predictions": []
+}
