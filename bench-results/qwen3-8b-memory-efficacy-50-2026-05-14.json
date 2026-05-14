@@ -1,0 +1,364 @@
+{
+  "url": "http://127.0.0.1:18091",
+  "model": "local",
+  "started_at": "2026-05-14T16:53:13.341Z",
+  "metadata": {
+    "grammar_file": "tools/memory-efficacy-bench/grammars/classifier.gbnf",
+    "grammar_sha256": "aac8736cbe028a6d398fd0a1674b115492d9a71e8cc7d94e547cf9c6dae2b878"
+  },
+  "total_wall_s": 292.596,
+  "batches": 5,
+  "findings_attempted": 50,
+  "findings_in_predictions": 40,
+  "findings_graded": 40,
+  "metrics": {
+    "json_valid_rate": 0.8,
+    "schema_valid_rate": 1,
+    "bucket_accuracy": 0.975,
+    "findings_per_sec": 0.13670726872547814,
+    "batch_p50_ms": 40388,
+    "batch_p95_ms": 122595
+  },
+  "per_bucket": {
+    "missed_registration": {
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "gold_count": 0,
+      "pred_count": 0
+    },
+    "recall_miss": {
+      "precision": 1,
+      "recall": 0.5,
+      "f1": 0.6666666666666666,
+      "gold_count": 2,
+      "pred_count": 1
+    },
+    "memory_ignored": {
+      "precision": 0,
+      "recall": 0,
+      "f1": 0,
+      "gold_count": 0,
+      "pred_count": 0
+    },
+    "not_memory_related": {
+      "precision": 0.9743589743589743,
+      "recall": 1,
+      "f1": 0.9870129870129869,
+      "gold_count": 38,
+      "pred_count": 39
+    }
+  },
+  "confusion": {
+    "missed_registration": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 0,
+      "unknown": 0
+    },
+    "recall_miss": {
+      "missed_registration": 0,
+      "recall_miss": 1,
+      "memory_ignored": 0,
+      "not_memory_related": 1,
+      "unknown": 0
+    },
+    "memory_ignored": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 0,
+      "unknown": 0
+    },
+    "not_memory_related": {
+      "missed_registration": 0,
+      "recall_miss": 0,
+      "memory_ignored": 0,
+      "not_memory_related": 38,
+      "unknown": 0
+    }
+  },
+  "predictions": [
+    {
+      "findingId": "f9972587258f55574c58ec3ad9c60a49",
+      "classification": "not_memory_related",
+      "reason": "Not related to memory efficacy",
+      "raw_batch_response": "[{\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Relevant memory not recalled\"}, {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "c68b6d7eb42d1d604c7ee09b2a8a6074",
+      "classification": "not_memory_related",
+      "reason": "Not related to memory efficacy",
+      "raw_batch_response": "[{\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Relevant memory not recalled\"}, {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "75e25037f50141ab9b1b80dfd1525962",
+      "classification": "recall_miss",
+      "reason": "Relevant memory not recalled",
+      "raw_batch_response": "[{\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Relevant memory not recalled\"}, {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "19c4d69f6aa882180ff306ae8906a42b",
+      "classification": "not_memory_related",
+      "reason": "Not related to memory efficacy",
+      "raw_batch_response": "[{\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Relevant memory not recalled\"}, {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "a35121ffe7d67a0017d91f474f8fca36",
+      "classification": "not_memory_related",
+      "reason": "Not related to memory efficacy",
+      "raw_batch_response": "[{\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Relevant memory not recalled\"}, {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "9eb7e4a258b8b7633318cf317fc49c9f",
+      "classification": "not_memory_related",
+      "reason": "Not related to memory efficacy",
+      "raw_batch_response": "[{\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Relevant memory not recalled\"}, {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "4383b85187ab16eb602096d09ca8b632",
+      "classification": "not_memory_related",
+      "reason": "Not related to memory efficacy",
+      "raw_batch_response": "[{\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Relevant memory not recalled\"}, {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "290cfd1c9cff451cd7ccc2d9fd54fb45",
+      "classification": "not_memory_related",
+      "reason": "Not related to memory efficacy",
+      "raw_batch_response": "[{\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Relevant memory not recalled\"}, {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "d190108e1a63507bfd31417aa4577b88",
+      "classification": "not_memory_related",
+      "reason": "Not related to memory efficacy",
+      "raw_batch_response": "[{\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Relevant memory not recalled\"}, {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "84f1feb8b781af629668bbddd578f784",
+      "classification": "not_memory_related",
+      "reason": "Not related to memory efficacy",
+      "raw_batch_response": "[{\"findingId\": \"f9972587258f55574c58ec3ad9c60a49\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"c68b6d7eb42d1d604c7ee09b2a8a6074\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"75e25037f50141ab9b1b80dfd1525962\", \"classification\": \"recall_miss\", \"reason\": \"Relevant memory not recalled\"}, {\"findingId\": \"19c4d69f6aa882180ff306ae8906a42b\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"a35121ffe7d67a0017d91f474f8fca36\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"9eb7e4a258b8b7633318cf317fc49c9f\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"4383b85187ab16eb602096d09ca8b632\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"290cfd1c9cff451cd7ccc2d9fd54fb45\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"d190108e1a63507bfd31417aa4577b88\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}, {\"findingId\": \"84f1feb8b781af629668bbddd578f784\", \"classification\": \"not_memory_related\", \"reason\": \"Not related to memory efficacy\"}]",
+      "batch_index": 1
+    },
+    {
+      "findingId": "65acfb65608114aaa2550c5daac5a5a0",
+      "classification": "not_memory_related",
+      "reason": "simplicity issue",
+      "raw_batch_response": "[{\"findingId\": \"65acfb65608114aaa2550c5daac5a5a0\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"5de66674f91f31dce088b2f6ccff966b\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"9be775553f945860b980e3e17cadfa61\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"8566b08f52889890fdba8d6be12e7977\", \"classification\": \"not_memory_related\", \"reason\": \"devils_advocate issue\"}, {\"findingId\": \"4b2e8ceed9d22957fc40e054a001298a\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"e73913631b4e3f6a37c98e3622fab063\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"1a624efa7e1678b37e1a497dbbb97fcd\", \"classification\": \"not_memory_related\", \"reason\": \"performance issue\"}, {\"findingId\": \"b6144f240b81ffef5e12c63bf6dc7ae4\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"5806da8b2c12d255839c49c430f93bf7\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"ea0775a382515c43225e63f371accbf9\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}]",
+      "batch_index": 2
+    },
+    {
+      "findingId": "5de66674f91f31dce088b2f6ccff966b",
+      "classification": "not_memory_related",
+      "reason": "simplicity issue",
+      "raw_batch_response": "[{\"findingId\": \"65acfb65608114aaa2550c5daac5a5a0\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"5de66674f91f31dce088b2f6ccff966b\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"9be775553f945860b980e3e17cadfa61\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"8566b08f52889890fdba8d6be12e7977\", \"classification\": \"not_memory_related\", \"reason\": \"devils_advocate issue\"}, {\"findingId\": \"4b2e8ceed9d22957fc40e054a001298a\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"e73913631b4e3f6a37c98e3622fab063\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"1a624efa7e1678b37e1a497dbbb97fcd\", \"classification\": \"not_memory_related\", \"reason\": \"performance issue\"}, {\"findingId\": \"b6144f240b81ffef5e12c63bf6dc7ae4\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"5806da8b2c12d255839c49c430f93bf7\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"ea0775a382515c43225e63f371accbf9\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}]",
+      "batch_index": 2
+    },
+    {
+      "findingId": "9be775553f945860b980e3e17cadfa61",
+      "classification": "not_memory_related",
+      "reason": "simplicity issue",
+      "raw_batch_response": "[{\"findingId\": \"65acfb65608114aaa2550c5daac5a5a0\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"5de66674f91f31dce088b2f6ccff966b\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"9be775553f945860b980e3e17cadfa61\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"8566b08f52889890fdba8d6be12e7977\", \"classification\": \"not_memory_related\", \"reason\": \"devils_advocate issue\"}, {\"findingId\": \"4b2e8ceed9d22957fc40e054a001298a\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"e73913631b4e3f6a37c98e3622fab063\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"1a624efa7e1678b37e1a497dbbb97fcd\", \"classification\": \"not_memory_related\", \"reason\": \"performance issue\"}, {\"findingId\": \"b6144f240b81ffef5e12c63bf6dc7ae4\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"5806da8b2c12d255839c49c430f93bf7\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"ea0775a382515c43225e63f371accbf9\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}]",
+      "batch_index": 2
+    },
+    {
+      "findingId": "8566b08f52889890fdba8d6be12e7977",
+      "classification": "not_memory_related",
+      "reason": "devils_advocate issue",
+      "raw_batch_response": "[{\"findingId\": \"65acfb65608114aaa2550c5daac5a5a0\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"5de66674f91f31dce088b2f6ccff966b\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"9be775553f945860b980e3e17cadfa61\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"8566b08f52889890fdba8d6be12e7977\", \"classification\": \"not_memory_related\", \"reason\": \"devils_advocate issue\"}, {\"findingId\": \"4b2e8ceed9d22957fc40e054a001298a\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"e73913631b4e3f6a37c98e3622fab063\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"1a624efa7e1678b37e1a497dbbb97fcd\", \"classification\": \"not_memory_related\", \"reason\": \"performance issue\"}, {\"findingId\": \"b6144f240b81ffef5e12c63bf6dc7ae4\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"5806da8b2c12d255839c49c430f93bf7\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"ea0775a382515c43225e63f371accbf9\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}]",
+      "batch_index": 2
+    },
+    {
+      "findingId": "4b2e8ceed9d22957fc40e054a001298a",
+      "classification": "not_memory_related",
+      "reason": "simplicity issue",
+      "raw_batch_response": "[{\"findingId\": \"65acfb65608114aaa2550c5daac5a5a0\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"5de66674f91f31dce088b2f6ccff966b\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"9be775553f945860b980e3e17cadfa61\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"8566b08f52889890fdba8d6be12e7977\", \"classification\": \"not_memory_related\", \"reason\": \"devils_advocate issue\"}, {\"findingId\": \"4b2e8ceed9d22957fc40e054a001298a\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"e73913631b4e3f6a37c98e3622fab063\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"1a624efa7e1678b37e1a497dbbb97fcd\", \"classification\": \"not_memory_related\", \"reason\": \"performance issue\"}, {\"findingId\": \"b6144f240b81ffef5e12c63bf6dc7ae4\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"5806da8b2c12d255839c49c430f93bf7\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"ea0775a382515c43225e63f371accbf9\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}]",
+      "batch_index": 2
+    },
+    {
+      "findingId": "e73913631b4e3f6a37c98e3622fab063",
+      "classification": "not_memory_related",
+      "reason": "simplicity issue",
+      "raw_batch_response": "[{\"findingId\": \"65acfb65608114aaa2550c5daac5a5a0\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"5de66674f91f31dce088b2f6ccff966b\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"9be775553f945860b980e3e17cadfa61\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"8566b08f52889890fdba8d6be12e7977\", \"classification\": \"not_memory_related\", \"reason\": \"devils_advocate issue\"}, {\"findingId\": \"4b2e8ceed9d22957fc40e054a001298a\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"e73913631b4e3f6a37c98e3622fab063\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"1a624efa7e1678b37e1a497dbbb97fcd\", \"classification\": \"not_memory_related\", \"reason\": \"performance issue\"}, {\"findingId\": \"b6144f240b81ffef5e12c63bf6dc7ae4\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"5806da8b2c12d255839c49c430f93bf7\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"ea0775a382515c43225e63f371accbf9\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}]",
+      "batch_index": 2
+    },
+    {
+      "findingId": "1a624efa7e1678b37e1a497dbbb97fcd",
+      "classification": "not_memory_related",
+      "reason": "performance issue",
+      "raw_batch_response": "[{\"findingId\": \"65acfb65608114aaa2550c5daac5a5a0\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"5de66674f91f31dce088b2f6ccff966b\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"9be775553f945860b980e3e17cadfa61\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"8566b08f52889890fdba8d6be12e7977\", \"classification\": \"not_memory_related\", \"reason\": \"devils_advocate issue\"}, {\"findingId\": \"4b2e8ceed9d22957fc40e054a001298a\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"e73913631b4e3f6a37c98e3622fab063\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"1a624efa7e1678b37e1a497dbbb97fcd\", \"classification\": \"not_memory_related\", \"reason\": \"performance issue\"}, {\"findingId\": \"b6144f240b81ffef5e12c63bf6dc7ae4\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"5806da8b2c12d255839c49c430f93bf7\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"ea0775a382515c43225e63f371accbf9\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}]",
+      "batch_index": 2
+    },
+    {
+      "findingId": "b6144f240b81ffef5e12c63bf6dc7ae4",
+      "classification": "not_memory_related",
+      "reason": "persona: architect issue",
+      "raw_batch_response": "[{\"findingId\": \"65acfb65608114aaa2550c5daac5a5a0\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"5de66674f91f31dce088b2f6ccff966b\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"9be775553f945860b980e3e17cadfa61\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"8566b08f52889890fdba8d6be12e7977\", \"classification\": \"not_memory_related\", \"reason\": \"devils_advocate issue\"}, {\"findingId\": \"4b2e8ceed9d22957fc40e054a001298a\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"e73913631b4e3f6a37c98e3622fab063\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"1a624efa7e1678b37e1a497dbbb97fcd\", \"classification\": \"not_memory_related\", \"reason\": \"performance issue\"}, {\"findingId\": \"b6144f240b81ffef5e12c63bf6dc7ae4\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"5806da8b2c12d255839c49c430f93bf7\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"ea0775a382515c43225e63f371accbf9\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}]",
+      "batch_index": 2
+    },
+    {
+      "findingId": "5806da8b2c12d255839c49c430f93bf7",
+      "classification": "not_memory_related",
+      "reason": "persona: architect issue",
+      "raw_batch_response": "[{\"findingId\": \"65acfb65608114aaa2550c5daac5a5a0\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"5de66674f91f31dce088b2f6ccff966b\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"9be775553f945860b980e3e17cadfa61\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"8566b08f52889890fdba8d6be12e7977\", \"classification\": \"not_memory_related\", \"reason\": \"devils_advocate issue\"}, {\"findingId\": \"4b2e8ceed9d22957fc40e054a001298a\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"e73913631b4e3f6a37c98e3622fab063\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"1a624efa7e1678b37e1a497dbbb97fcd\", \"classification\": \"not_memory_related\", \"reason\": \"performance issue\"}, {\"findingId\": \"b6144f240b81ffef5e12c63bf6dc7ae4\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"5806da8b2c12d255839c49c430f93bf7\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"ea0775a382515c43225e63f371accbf9\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}]",
+      "batch_index": 2
+    },
+    {
+      "findingId": "ea0775a382515c43225e63f371accbf9",
+      "classification": "not_memory_related",
+      "reason": "persona: architect issue",
+      "raw_batch_response": "[{\"findingId\": \"65acfb65608114aaa2550c5daac5a5a0\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"5de66674f91f31dce088b2f6ccff966b\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"9be775553f945860b980e3e17cadfa61\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"8566b08f52889890fdba8d6be12e7977\", \"classification\": \"not_memory_related\", \"reason\": \"devils_advocate issue\"}, {\"findingId\": \"4b2e8ceed9d22957fc40e054a001298a\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"e73913631b4e3f6a37c98e3622fab063\", \"classification\": \"not_memory_related\", \"reason\": \"simplicity issue\"}, {\"findingId\": \"1a624efa7e1678b37e1a497dbbb97fcd\", \"classification\": \"not_memory_related\", \"reason\": \"performance issue\"}, {\"findingId\": \"b6144f240b81ffef5e12c63bf6dc7ae4\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"5806da8b2c12d255839c49c430f93bf7\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}, {\"findingId\": \"ea0775a382515c43225e63f371accbf9\", \"classification\": \"not_memory_related\", \"reason\": \"persona: architect issue\"}]",
+      "batch_index": 2
+    },
+    {
+      "findingId": "b465b1474e613bbd65c36d53bd373204",
+      "classification": "not_memory_related",
+      "reason": "Security vulnerability unrelated to memory systems",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk unrelated to memory systems\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "1283c87db5cb3de8d10e302a4b44485f",
+      "classification": "not_memory_related",
+      "reason": "Security vulnerability unrelated to memory systems",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk unrelated to memory systems\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "76d49995494f74b9b0686933a27f8ea0",
+      "classification": "not_memory_related",
+      "reason": "Security vulnerability unrelated to memory systems",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk unrelated to memory systems\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "affbf21180c5a65e64e213072559f9c5",
+      "classification": "not_memory_related",
+      "reason": "Architectural issue unrelated to memory systems",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk unrelated to memory systems\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "4eccf60fe55c1c93ba999cdea8058169",
+      "classification": "not_memory_related",
+      "reason": "Performance issue unrelated to memory systems",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk unrelated to memory systems\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "542db26ab1b2421a6681f964c0154121",
+      "classification": "not_memory_related",
+      "reason": "Architectural issue unrelated to memory systems",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk unrelated to memory systems\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "ee87fda88cde21909dc5357d794e0148",
+      "classification": "not_memory_related",
+      "reason": "Architectural issue unrelated to memory systems",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk unrelated to memory systems\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "ca6c1a20d27223facf449b04defe79cc",
+      "classification": "not_memory_related",
+      "reason": "Architectural issue unrelated to memory systems",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk unrelated to memory systems\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "65be0614f01e863699b7307fb84bda99",
+      "classification": "not_memory_related",
+      "reason": "Performance issue unrelated to memory systems",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk unrelated to memory systems\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "07061ee27f2a4c9aef040f17d4f7b7fb",
+      "classification": "not_memory_related",
+      "reason": "Architectural risk unrelated to memory systems",
+      "raw_batch_response": "[{\"findingId\": \"b465b1474e613bbd65c36d53bd373204\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"1283c87db5cb3de8d10e302a4b44485f\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"76d49995494f74b9b0686933a27f8ea0\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability unrelated to memory systems\"}, {\"findingId\": \"affbf21180c5a65e64e213072559f9c5\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"4eccf60fe55c1c93ba999cdea8058169\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"542db26ab1b2421a6681f964c0154121\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ee87fda88cde21909dc5357d794e0148\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"ca6c1a20d27223facf449b04defe79cc\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue unrelated to memory systems\"}, {\"findingId\": \"65be0614f01e863699b7307fb84bda99\", \"classification\": \"not_memory_related\", \"reason\": \"Performance issue unrelated to memory systems\"}, {\"findingId\": \"07061ee27f2a4c9aef040f17d4f7b7fb\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural risk unrelated to memory systems\"}]",
+      "batch_index": 3
+    },
+    {
+      "findingId": "6d207436c1a68b43cde39bd836db0cda",
+      "classification": "not_memory_related",
+      "reason": "Code duplication or unused constant",
+      "raw_batch_response": "[{\"findingId\": \"6d207436c1a68b43cde39bd836db0cda\", \"classification\": \"not_memory_related\", \"reason\": \"Code duplication or unused constant\"}  \n,{\"findingId\": \"c310dc3a969fd29aee73f3a651b21a1d\", \"classification\": \"not_memory_related\", \"reason\": \"Unused schema configuration\"}  \n,{\"findingId\": \"068bf63e812a5e74e4fe39094e2cd7c1\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"b98a2caf84b3c86eaa7c97f78d5567ea\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"96a6c61ec3b48d890bfce33c9698612f\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"b168a978eb4ab8dc6747fca2e89222d0\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"964b0430b8d4630f4b099f3418861e71\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"e102131017bbdbd18c981d253979f9a0\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"6d99f1e784f330302ccc3985d77b2feb\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"455b42298f3a5e5a093a8732bfc93762\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue\"}]",
+      "batch_index": 5
+    },
+    {
+      "findingId": "c310dc3a969fd29aee73f3a651b21a1d",
+      "classification": "not_memory_related",
+      "reason": "Unused schema configuration",
+      "raw_batch_response": "[{\"findingId\": \"6d207436c1a68b43cde39bd836db0cda\", \"classification\": \"not_memory_related\", \"reason\": \"Code duplication or unused constant\"}  \n,{\"findingId\": \"c310dc3a969fd29aee73f3a651b21a1d\", \"classification\": \"not_memory_related\", \"reason\": \"Unused schema configuration\"}  \n,{\"findingId\": \"068bf63e812a5e74e4fe39094e2cd7c1\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"b98a2caf84b3c86eaa7c97f78d5567ea\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"96a6c61ec3b48d890bfce33c9698612f\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"b168a978eb4ab8dc6747fca2e89222d0\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"964b0430b8d4630f4b099f3418861e71\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"e102131017bbdbd18c981d253979f9a0\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"6d99f1e784f330302ccc3985d77b2feb\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"455b42298f3a5e5a093a8732bfc93762\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue\"}]",
+      "batch_index": 5
+    },
+    {
+      "findingId": "068bf63e812a5e74e4fe39094e2cd7c1",
+      "classification": "not_memory_related",
+      "reason": "Security vulnerability",
+      "raw_batch_response": "[{\"findingId\": \"6d207436c1a68b43cde39bd836db0cda\", \"classification\": \"not_memory_related\", \"reason\": \"Code duplication or unused constant\"}  \n,{\"findingId\": \"c310dc3a969fd29aee73f3a651b21a1d\", \"classification\": \"not_memory_related\", \"reason\": \"Unused schema configuration\"}  \n,{\"findingId\": \"068bf63e812a5e74e4fe39094e2cd7c1\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"b98a2caf84b3c86eaa7c97f78d5567ea\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"96a6c61ec3b48d890bfce33c9698612f\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"b168a978eb4ab8dc6747fca2e89222d0\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"964b0430b8d4630f4b099f3418861e71\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"e102131017bbdbd18c981d253979f9a0\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"6d99f1e784f330302ccc3985d77b2feb\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"455b42298f3a5e5a093a8732bfc93762\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue\"}]",
+      "batch_index": 5
+    },
+    {
+      "findingId": "b98a2caf84b3c86eaa7c97f78d5567ea",
+      "classification": "not_memory_related",
+      "reason": "Security vulnerability",
+      "raw_batch_response": "[{\"findingId\": \"6d207436c1a68b43cde39bd836db0cda\", \"classification\": \"not_memory_related\", \"reason\": \"Code duplication or unused constant\"}  \n,{\"findingId\": \"c310dc3a969fd29aee73f3a651b21a1d\", \"classification\": \"not_memory_related\", \"reason\": \"Unused schema configuration\"}  \n,{\"findingId\": \"068bf63e812a5e74e4fe39094e2cd7c1\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"b98a2caf84b3c86eaa7c97f78d5567ea\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"96a6c61ec3b48d890bfce33c9698612f\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"b168a978eb4ab8dc6747fca2e89222d0\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"964b0430b8d4630f4b099f3418861e71\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"e102131017bbdbd18c981d253979f9a0\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"6d99f1e784f330302ccc3985d77b2feb\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"455b42298f3a5e5a093a8732bfc93762\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue\"}]",
+      "batch_index": 5
+    },
+    {
+      "findingId": "96a6c61ec3b48d890bfce33c9698612f",
+      "classification": "not_memory_related",
+      "reason": "Architectural issue",
+      "raw_batch_response": "[{\"findingId\": \"6d207436c1a68b43cde39bd836db0cda\", \"classification\": \"not_memory_related\", \"reason\": \"Code duplication or unused constant\"}  \n,{\"findingId\": \"c310dc3a969fd29aee73f3a651b21a1d\", \"classification\": \"not_memory_related\", \"reason\": \"Unused schema configuration\"}  \n,{\"findingId\": \"068bf63e812a5e74e4fe39094e2cd7c1\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"b98a2caf84b3c86eaa7c97f78d5567ea\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"96a6c61ec3b48d890bfce33c9698612f\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"b168a978eb4ab8dc6747fca2e89222d0\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"964b0430b8d4630f4b099f3418861e71\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"e102131017bbdbd18c981d253979f9a0\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"6d99f1e784f330302ccc3985d77b2feb\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"455b42298f3a5e5a093a8732bfc93762\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue\"}]",
+      "batch_index": 5
+    },
+    {
+      "findingId": "b168a978eb4ab8dc6747fca2e89222d0",
+      "classification": "not_memory_related",
+      "reason": "Architectural issue",
+      "raw_batch_response": "[{\"findingId\": \"6d207436c1a68b43cde39bd836db0cda\", \"classification\": \"not_memory_related\", \"reason\": \"Code duplication or unused constant\"}  \n,{\"findingId\": \"c310dc3a969fd29aee73f3a651b21a1d\", \"classification\": \"not_memory_related\", \"reason\": \"Unused schema configuration\"}  \n,{\"findingId\": \"068bf63e812a5e74e4fe39094e2cd7c1\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"b98a2caf84b3c86eaa7c97f78d5567ea\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"96a6c61ec3b48d890bfce33c9698612f\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"b168a978eb4ab8dc6747fca2e89222d0\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"964b0430b8d4630f4b099f3418861e71\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"e102131017bbdbd18c981d253979f9a0\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"6d99f1e784f330302ccc3985d77b2feb\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"455b42298f3a5e5a093a8732bfc93762\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue\"}]",
+      "batch_index": 5
+    },
+    {
+      "findingId": "964b0430b8d4630f4b099f3418861e71",
+      "classification": "not_memory_related",
+      "reason": "Architectural issue",
+      "raw_batch_response": "[{\"findingId\": \"6d207436c1a68b43cde39bd836db0cda\", \"classification\": \"not_memory_related\", \"reason\": \"Code duplication or unused constant\"}  \n,{\"findingId\": \"c310dc3a969fd29aee73f3a651b21a1d\", \"classification\": \"not_memory_related\", \"reason\": \"Unused schema configuration\"}  \n,{\"findingId\": \"068bf63e812a5e74e4fe39094e2cd7c1\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"b98a2caf84b3c86eaa7c97f78d5567ea\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"96a6c61ec3b48d890bfce33c9698612f\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"b168a978eb4ab8dc6747fca2e89222d0\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"964b0430b8d4630f4b099f3418861e71\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"e102131017bbdbd18c981d253979f9a0\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"6d99f1e784f330302ccc3985d77b2feb\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"455b42298f3a5e5a093a8732bfc93762\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue\"}]",
+      "batch_index": 5
+    },
+    {
+      "findingId": "e102131017bbdbd18c981d253979f9a0",
+      "classification": "not_memory_related",
+      "reason": "Devil's advocate risk",
+      "raw_batch_response": "[{\"findingId\": \"6d207436c1a68b43cde39bd836db0cda\", \"classification\": \"not_memory_related\", \"reason\": \"Code duplication or unused constant\"}  \n,{\"findingId\": \"c310dc3a969fd29aee73f3a651b21a1d\", \"classification\": \"not_memory_related\", \"reason\": \"Unused schema configuration\"}  \n,{\"findingId\": \"068bf63e812a5e74e4fe39094e2cd7c1\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"b98a2caf84b3c86eaa7c97f78d5567ea\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"96a6c61ec3b48d890bfce33c9698612f\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"b168a978eb4ab8dc6747fca2e89222d0\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"964b0430b8d4630f4b099f3418861e71\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"e102131017bbdbd18c981d253979f9a0\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"6d99f1e784f330302ccc3985d77b2feb\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"455b42298f3a5e5a093a8732bfc93762\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue\"}]",
+      "batch_index": 5
+    },
+    {
+      "findingId": "6d99f1e784f330302ccc3985d77b2feb",
+      "classification": "not_memory_related",
+      "reason": "Devil's advocate risk",
+      "raw_batch_response": "[{\"findingId\": \"6d207436c1a68b43cde39bd836db0cda\", \"classification\": \"not_memory_related\", \"reason\": \"Code duplication or unused constant\"}  \n,{\"findingId\": \"c310dc3a969fd29aee73f3a651b21a1d\", \"classification\": \"not_memory_related\", \"reason\": \"Unused schema configuration\"}  \n,{\"findingId\": \"068bf63e812a5e74e4fe39094e2cd7c1\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"b98a2caf84b3c86eaa7c97f78d5567ea\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"96a6c61ec3b48d890bfce33c9698612f\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"b168a978eb4ab8dc6747fca2e89222d0\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"964b0430b8d4630f4b099f3418861e71\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"e102131017bbdbd18c981d253979f9a0\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"6d99f1e784f330302ccc3985d77b2feb\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"455b42298f3a5e5a093a8732bfc93762\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue\"}]",
+      "batch_index": 5
+    },
+    {
+      "findingId": "455b42298f3a5e5a093a8732bfc93762",
+      "classification": "not_memory_related",
+      "reason": "Maintainability issue",
+      "raw_batch_response": "[{\"findingId\": \"6d207436c1a68b43cde39bd836db0cda\", \"classification\": \"not_memory_related\", \"reason\": \"Code duplication or unused constant\"}  \n,{\"findingId\": \"c310dc3a969fd29aee73f3a651b21a1d\", \"classification\": \"not_memory_related\", \"reason\": \"Unused schema configuration\"}  \n,{\"findingId\": \"068bf63e812a5e74e4fe39094e2cd7c1\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"b98a2caf84b3c86eaa7c97f78d5567ea\", \"classification\": \"not_memory_related\", \"reason\": \"Security vulnerability\"}  \n,{\"findingId\": \"96a6c61ec3b48d890bfce33c9698612f\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"b168a978eb4ab8dc6747fca2e89222d0\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"964b0430b8d4630f4b099f3418861e71\", \"classification\": \"not_memory_related\", \"reason\": \"Architectural issue\"}  \n,{\"findingId\": \"e102131017bbdbd18c981d253979f9a0\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"6d99f1e784f330302ccc3985d77b2feb\", \"classification\": \"not_memory_related\", \"reason\": \"Devil's advocate risk\"}  \n,{\"findingId\": \"455b42298f3a5e5a093a8732bfc93762\", \"classification\": \"not_memory_related\", \"reason\": \"Maintainability issue\"}]",
+      "batch_index": 5
+    }
+  ]
+}
