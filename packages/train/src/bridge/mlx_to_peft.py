@@ -25,6 +25,24 @@ def rename(mlx_key: str) -> str | None:
     return None
 
 
+def normalize_target_modules(value: object) -> list[str]:
+    # PEFT expects target_modules to be a list of module-name suffixes. MLX-LM
+    # writes them under lora_parameters.keys as a list of dotted paths.
+    if not isinstance(value, list):
+        raise ValueError(
+            f"target_modules must be a list (got {type(value).__name__}); "
+            "MLX-LM versions that emit a string for lora_parameters.keys are not supported."
+        )
+    suffixes = [str(m).split(".")[-1] for m in value]
+    # Preserve a stable order; PEFT itself does not require uniqueness, but
+    # duplicates are pointless. If two distinct dotted paths collide on the
+    # same suffix the collapse is intentional — PEFT applies by suffix anyway.
+    seen: dict[str, None] = {}
+    for suffix in suffixes:
+        seen.setdefault(suffix, None)
+    return list(seen.keys())
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("input", type=Path, help="MLX adapter dir")
@@ -33,8 +51,9 @@ def main() -> int:
 
     mlx_adapter = args.input / "adapters.safetensors"
     mlx_config = args.input / "adapter_config.json"
-    if not mlx_adapter.exists() or not mlx_config.exists():
-        print(f"missing inputs in {args.input}")
+    missing = [p.name for p in (mlx_adapter, mlx_config) if not p.exists()]
+    if missing:
+        print(f"missing required input files in {args.input}: {', '.join(missing)}")
         return 2
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -55,11 +74,20 @@ def main() -> int:
             new_tensors[peft_key] = converted
             rename_table.append((mlx_key, t.shape, peft_key, converted.shape))
 
+    if not new_tensors:
+        # Without this guard we'd write an empty adapter_model.safetensors and
+        # exit 0; downstream convert_lora_to_gguf.py would then fail with an
+        # inscrutable error. Surface it here instead.
+        print(
+            f"no MLX LoRA tensors matched .lora_a/.lora_b in {mlx_adapter}; "
+            "MLX-LM may have changed its key suffix convention. Update rename()."
+        )
+        return 3
+
     save_file(new_tensors, str(args.output / "adapter_model.safetensors"))
 
-    target_modules = lora_params.get("keys") or lora_params.get("target_modules") or ["q_proj", "v_proj"]
-    if isinstance(target_modules, list):
-        target_modules = sorted({m.split(".")[-1] for m in target_modules})
+    target_modules_raw = lora_params.get("keys") or lora_params.get("target_modules") or ["q_proj", "v_proj"]
+    target_modules = normalize_target_modules(target_modules_raw)
 
     peft_config = {
         "base_model_name_or_path": config.get("base_model") or config.get("model") or "",
