@@ -1,5 +1,6 @@
 .venv/
 vendor/
+.spike-work/
 *.gguf
 *.safetensors
 *.bin
