@@ -5,6 +5,8 @@ import * as childProcess from 'node:child_process';
 import {
   advertisedEndpoint,
   endpoint,
+  filterProfileArgs,
+  hasFlag,
   readServerPid,
   serverStatus,
   startServer,
@@ -371,5 +373,42 @@ describe('server per-workload isolation', () => {
     // Sanity-check that the directories land where we expect.
     expect(workloadRuntimeDir(resolved, A)).toBe(join(temp.runtimeDir, 'workloads', 'a'));
     expect(workloadRuntimeDir(resolved, B)).toBe(join(temp.runtimeDir, 'workloads', 'b'));
+  });
+});
+
+describe('server.hasFlag', () => {
+  test('matches an exact long flag', () => {
+    expect(hasFlag(['--host', '0.0.0.0'], '--host')).toBe(true);
+  });
+  test('matches a short flag alias', () => {
+    expect(hasFlag(['-fa', 'on'], '-fa', '--flash-attn')).toBe(true);
+    expect(hasFlag(['--flash-attn', 'on'], '-fa', '--flash-attn')).toBe(true);
+  });
+  test('matches the flag=value form', () => {
+    expect(hasFlag(['--host=0.0.0.0'], '--host')).toBe(true);
+  });
+  test('returns false when no flag matches', () => {
+    expect(hasFlag(['--alias', 'local', '-ngl', '999'], '--host')).toBe(false);
+  });
+});
+
+describe('server.filterProfileArgs', () => {
+  test('keeps profile args when user has none of them', () => {
+    expect(filterProfileArgs(['-fa', 'on', '-b', '2048', '-ub', '512'], []))
+      .toEqual(['-fa', 'on', '-b', '2048', '-ub', '512']);
+  });
+  test('drops -ub from profile when user supplies it', () => {
+    expect(filterProfileArgs(['-fa', 'on', '-b', '2048', '-ub', '512'], ['-ub', '1024']))
+      .toEqual(['-fa', 'on', '-b', '2048']);
+  });
+  test('drops profile flags when user supplies the long-form alias', () => {
+    expect(filterProfileArgs(['-fa', 'on', '-b', '2048', '-ub', '512'], ['--flash-attn', 'off', '--batch-size', '4096']))
+      .toEqual(['-ub', '512']);
+  });
+  test('drops everything when user overrides all three profile flags', () => {
+    expect(filterProfileArgs(
+      ['-fa', 'on', '-b', '2048', '-ub', '512'],
+      ['--flash-attn', 'off', '-b', '4096', '--ubatch-size', '1024'],
+    )).toEqual([]);
   });
 });

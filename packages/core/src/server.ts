@@ -47,6 +47,49 @@ function serverLog(resolved: ResolvedEnv, key: WorkloadKey): string {
   return join(workloadRuntimeDir(resolved, key), 'llama-server.log');
 }
 
+/**
+ * Return true if `args` already contains any of the given flag tokens.
+ * Used to skip prepending daemon defaults the user already specified
+ * in `spec.extraArgs`. Matches exact tokens and `flag=value` forms;
+ * positional-value awareness isn't needed because the caller always
+ * passes the flag itself, never a value.
+ */
+export function hasFlag(args: readonly string[], ...flags: string[]): boolean {
+  return args.some((tok) =>
+    flags.some((f) => tok === f || tok.startsWith(f + '=')),
+  );
+}
+
+/**
+ * Take a flat profile-args string like `-fa on -b 2048 -ub 512` and
+ * drop any flag+value pair that collides with the user's extraArgs.
+ * Aliases (`-fa` ↔ `--flash-attn`, `-b` ↔ `--batch-size`,
+ * `-ub` ↔ `--ubatch-size`) are treated as equivalent.
+ *
+ * Profile args from `serverProfileArgs()` are always flag+value pairs,
+ * so the iterator can assume a 2-token stride.
+ */
+export function filterProfileArgs(
+  profileArgs: readonly string[],
+  userArgs: readonly string[],
+): string[] {
+  const aliasGroups: Record<string, string[]> = {
+    '-fa': ['-fa', '--flash-attn'],
+    '-b': ['-b', '--batch-size'],
+    '-ub': ['-ub', '--ubatch-size'],
+  };
+  const out: string[] = [];
+  for (let i = 0; i < profileArgs.length; i += 2) {
+    const flag = profileArgs[i]!;
+    const value = profileArgs[i + 1];
+    const conflicts = aliasGroups[flag] ?? [flag];
+    if (hasFlag(userArgs, ...conflicts)) continue;
+    out.push(flag);
+    if (value !== undefined) out.push(value);
+  }
+  return out;
+}
+
 function serverStateFile(resolved: ResolvedEnv, key: WorkloadKey): string {
   return join(workloadRuntimeDir(resolved, key), 'llama-server.state');
 }
@@ -520,10 +563,13 @@ export async function startServer(
   mkdirSync(resolved.LLAMA_CPP_CACHE, { recursive: true });
   mkdirSync(resolved.LLAMA_CPP_LOGS, { recursive: true });
 
-  // Tuned-profile lookup.
+  // Tuned-profile lookup. Profile args are skipped when the user has
+  // already specified the same flag in extraArgs, so a manifest that
+  // sets e.g. `-ub 1024` isn't doubled up with the profile's `-ub 512`.
   let tunedProfile: string | null = null;
   const extra = opts.extraArgs ?? [];
   const launchArgs: string[] = [];
+  let profileArgs: string[] = [];
   if (!opts.skipTuned && useTunedArgsEnabled(env)) {
     const mode = hasMmprojArg(extra) ? 'vision' : defaultModeForRel(rel, resolved);
     const ctx = ctxForModel(rel, resolved);
@@ -533,13 +579,14 @@ export async function startServer(
     const hit = findLatestProfile(rows, { machine, rel, mode, ctx, build });
     if (hit) {
       tunedProfile = hit.profile;
-      launchArgs.push(...serverProfileArgs(hit.profile).split(/\s+/).filter(Boolean));
+      profileArgs = serverProfileArgs(hit.profile).split(/\s+/).filter(Boolean);
     } else {
-      launchArgs.push(...serverProfileArgs('default').split(/\s+/).filter(Boolean));
+      profileArgs = serverProfileArgs('default').split(/\s+/).filter(Boolean);
     }
   } else {
-    launchArgs.push(...serverProfileArgs('default').split(/\s+/).filter(Boolean));
+    profileArgs = serverProfileArgs('default').split(/\s+/).filter(Boolean);
   }
+  launchArgs.push(...filterProfileArgs(profileArgs, extra));
   launchArgs.push(...extra);
 
   const pid = await launchBackground({
@@ -712,12 +759,26 @@ async function launchBackground(opts: LaunchArgs): Promise<number> {
   const { openSync, closeSync } = await import('node:fs');
   ensureWorkloadRuntimeDir(opts.resolved, opts.key);
   const logFd = openSync(serverLog(opts.resolved, opts.key), 'a');
+  // Daemon-injected defaults: only prepended when the user's args don't
+  // already specify them, so a manifest's `--host 0.0.0.0` overrides the
+  // env-default `--host 127.0.0.1` instead of producing a duplicate that
+  // some llama-server versions reject. `-m` is always set from the
+  // resolved model path; user-side overrides for the model path aren't
+  // a supported pattern.
   const fullArgs: string[] = [
     '-m', opts.modelPath,
-    '--alias', opts.resolved.LLAMA_CPP_SERVER_ALIAS,
-    '--host', opts.host ?? opts.resolved.LLAMA_CPP_HOST,
-    '--port', String(opts.port ?? opts.resolved.LLAMA_CPP_PORT),
-    '-ngl', '999',
+    ...(hasFlag(opts.args, '--alias', '-a')
+      ? []
+      : ['--alias', opts.resolved.LLAMA_CPP_SERVER_ALIAS]),
+    ...(hasFlag(opts.args, '--host')
+      ? []
+      : ['--host', opts.host ?? opts.resolved.LLAMA_CPP_HOST]),
+    ...(hasFlag(opts.args, '--port')
+      ? []
+      : ['--port', String(opts.port ?? opts.resolved.LLAMA_CPP_PORT)]),
+    ...(hasFlag(opts.args, '-ngl', '--n-gpu-layers', '--gpu-layers')
+      ? []
+      : ['-ngl', '999']),
     ...opts.args,
   ];
   const child = spawn(opts.bin, fullArgs, {
