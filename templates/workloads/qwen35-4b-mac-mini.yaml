@@ -1,0 +1,48 @@
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: qwen35-4b-mac-mini
+  labels:
+    family: qwen35
+    role: shared-bench
+    agents: "local,home-mgmt"
+spec:
+  node: mac-mini
+  enabled: false
+  resources:
+    expectedMemoryGiB: 6
+  target:
+    kind: rel
+    value: Qwen3.5-4B-GGUF/Qwen3.5-4B-UD-Q4_K_XL.gguf
+  extraArgs:
+    - --alias
+    - local
+    - --host
+    - 0.0.0.0
+    - --jinja
+    - --ctx-size
+    - "32768"
+    - -ngl
+    - "999"
+    - --flash-attn
+    - "on"
+    - -b
+    - "2048"
+    - -ub
+    - "1024"
+    - -ctk
+    - q8_0
+    - -ctv
+    - q8_0
+    - --cache-reuse
+    - "256"
+    - --reasoning
+    - "off"
+    - --no-warmup
+    - -np
+    - "2"
+  restartPolicy: Always
+  timeoutSeconds: 240
+  endpoint:
+    host: 127.0.0.1
+    port: 8090

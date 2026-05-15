@@ -433,7 +433,21 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   const listenPort = server.port ?? port;
 
   let mdns: PublishedAgent | null = null;
-  const shouldAdvertise = opts.advertiseMdns ?? Boolean(opts.tls);
+  // LLAMACTL_DISABLE_MDNS=1 forces mDNS off even when tls=true. Needed
+  // when bonjour-service v1.3.0 hits a probe collision against a stale
+  // cached announcement on the LAN and synchronously emits
+  // `console.log(new Error("Service name is already in use"))` — Bun
+  // turns that into an unrecoverable async error that wedges the
+  // event loop, leaving the HTTP server listening on its TCP port but
+  // never serving requests. The try-catch below only covers the
+  // synchronous publish call; the dgram-side collision fires later and
+  // bypasses it. Until bonjour-service is replaced, the env-var
+  // escape hatch keeps long-lived launchd-managed agents stable.
+  const mdnsDisabledByEnv =
+    process.env.LLAMACTL_DISABLE_MDNS === '1' ||
+    process.env.LLAMACTL_DISABLE_MDNS === 'true';
+  const shouldAdvertise =
+    !mdnsDisabledByEnv && (opts.advertiseMdns ?? Boolean(opts.tls));
   if (shouldAdvertise) {
     try {
       mdns = publishAgentMdns({
