@@ -37,7 +37,12 @@
 #   Reload daemon + bounce worker after the yaml edit.
 #
 # Slot layout (verified at runtime with `llama-server --help | grep slot`):
-# - -np 2 with --ctx-size 32768 → each slot gets 16k tokens of context.
+# - -np 2 with --ctx-size 65536 → each slot gets 32k tokens of context.
+#   (Tried 131072 and 81920 on 2026-05-15 to accommodate a 32,819-token
+#   home-mgmt prefill overflow — both Metal-OOM'd under load. Real fix
+#   was reducing prefill via `claudeCodeAllowedTools` in agentchat.yaml,
+#   which filters ha-mcp's 83-tool schema dump at the SDK boundary.
+#   See memory entry project_qwen_tool_grammar_2026-05-15.md.)
 # - --jinja enables /v1/messages (Anthropic-compat, claude-agent-acp) AND
 #   /v1/chat/completions (OpenAI-compat, penumbra). Both live on the
 #   same port; llama-server multiplexes by path.
