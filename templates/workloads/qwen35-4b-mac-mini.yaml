@@ -8,7 +8,8 @@ metadata:
     agents: "local,home-mgmt"
 spec:
   node: mac-mini
-  enabled: false
+  enabled: true
+  binary: /Volumes/AI-DATA/src/llama.cpp-atomic/build-shared-cache/bin/llama-server
   resources:
     expectedMemoryGiB: 6
   target:
@@ -21,7 +22,7 @@ spec:
     - 0.0.0.0
     - --jinja
     - --ctx-size
-    - "32768"
+    - "131072"
     - -ngl
     - "999"
     - --flash-attn
