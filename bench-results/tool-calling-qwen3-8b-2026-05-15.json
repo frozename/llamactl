@@ -1,0 +1,224 @@
+{
+  "url": "http://127.0.0.1:8093",
+  "label": "qwen3-8b",
+  "wall_s": 13.98,
+  "prompts": [
+    {
+      "name": "find_llama_bin_mtp",
+      "prompt": "Find references to LLAMA_CPP_BIN_MTP in the codebase.",
+      "expected": {
+        "should_call": true,
+        "tool": "fs_grep",
+        "args_predicate": {
+          "kind": "string_contains",
+          "field": "pattern",
+          "value": "LLAMA_CPP_BIN_MTP"
+        }
+      },
+      "score": {
+        "valid_json": true,
+        "correct_decision": true,
+        "correct_tool": true,
+        "args_match": true,
+        "score": 1
+      }
+    },
+    {
+      "name": "mtp_gate_criteria",
+      "prompt": "What did we decide about MTP gate criteria?",
+      "expected": {
+        "should_call": true,
+        "tool": "memory_search",
+        "args_predicate": {
+          "kind": "string_contains",
+          "field": "query",
+          "value": "gate criteria"
+        }
+      },
+      "score": {
+        "valid_json": true,
+        "correct_decision": true,
+        "correct_tool": true,
+        "args_match": true,
+        "score": 1
+      }
+    },
+    {
+      "name": "approve_handoff",
+      "prompt": "Approve handoff 8337e3c8-bef1-4f55-8326-89879833ac6d.",
+      "expected": {
+        "should_call": true,
+        "tool": "handoff_approve",
+        "args_predicate": {
+          "kind": "string_eq",
+          "field": "handoff_id",
+          "value": "8337e3c8-bef1-4f55-8326-89879833ac6d"
+        }
+      },
+      "score": {
+        "valid_json": true,
+        "correct_decision": true,
+        "correct_tool": true,
+        "args_match": true,
+        "score": 1
+      }
+    },
+    {
+      "name": "task_status",
+      "prompt": "Get me the status of task 5.",
+      "expected": {
+        "should_call": true,
+        "tool": "task_get",
+        "args_predicate": {
+          "kind": "string_eq",
+          "field": "task_id",
+          "value": "5"
+        }
+      },
+      "score": {
+        "valid_json": true,
+        "correct_decision": true,
+        "correct_tool": true,
+        "args_match": true,
+        "score": 1
+      }
+    },
+    {
+      "name": "start_chain",
+      "prompt": "Start a chain for a small implementation task with the codex agent.",
+      "expected": {
+        "should_call": true,
+        "tool": "chain_start",
+        "args_predicate": {
+          "kind": "string_eq",
+          "field": "initial_agent",
+          "value": "codex"
+        }
+      },
+      "score": {
+        "valid_json": true,
+        "correct_decision": true,
+        "correct_tool": true,
+        "args_match": true,
+        "score": 1
+      }
+    },
+    {
+      "name": "search_docs",
+      "prompt": "Search the docs folder for mention of eval report cards.",
+      "expected": {
+        "should_call": true,
+        "tool": "fs_grep",
+        "args_predicate": {
+          "kind": "string_contains",
+          "field": "path",
+          "value": "docs"
+        }
+      },
+      "score": {
+        "valid_json": true,
+        "correct_decision": true,
+        "correct_tool": true,
+        "args_match": true,
+        "score": 1
+      }
+    },
+    {
+      "name": "search_memory_project",
+      "prompt": "Look up the eval framework decision in memory for project llamactl.",
+      "expected": {
+        "should_call": true,
+        "tool": "memory_search",
+        "args_predicate": {
+          "kind": "string_eq",
+          "field": "project_id",
+          "value": "llamactl"
+        }
+      },
+      "score": {
+        "valid_json": true,
+        "correct_decision": true,
+        "correct_tool": true,
+        "args_match": true,
+        "score": 1
+      }
+    },
+    {
+      "name": "approve_another_handoff",
+      "prompt": "Approve handoff 11111111-2222-3333-4444-555555555555.",
+      "expected": {
+        "should_call": true,
+        "tool": "handoff_approve",
+        "args_predicate": {
+          "kind": "string_eq",
+          "field": "handoff_id",
+          "value": "11111111-2222-3333-4444-555555555555"
+        }
+      },
+      "score": {
+        "valid_json": true,
+        "correct_decision": true,
+        "correct_tool": true,
+        "args_match": true,
+        "score": 1
+      }
+    },
+    {
+      "name": "haiku_no_tool",
+      "prompt": "Write a haiku about the moon.",
+      "expected": {
+        "should_call": false
+      },
+      "score": {
+        "valid_json": true,
+        "correct_decision": true,
+        "correct_tool": true,
+        "args_match": true,
+        "score": 1
+      }
+    },
+    {
+      "name": "summarize_no_tool",
+      "prompt": "Summarize the benefits of clean code in one paragraph.",
+      "expected": {
+        "should_call": false
+      },
+      "score": {
+        "valid_json": true,
+        "correct_decision": true,
+        "correct_tool": true,
+        "args_match": true,
+        "score": 1
+      }
+    },
+    {
+      "name": "translate_no_tool",
+      "prompt": "Translate hello world into French.",
+      "expected": {
+        "should_call": false
+      },
+      "score": {
+        "valid_json": true,
+        "correct_decision": true,
+        "correct_tool": true,
+        "args_match": true,
+        "score": 1
+      }
+    },
+    {
+      "name": "brainstorm_no_tool",
+      "prompt": "Brainstorm names for a coffee shop.",
+      "expected": {
+        "should_call": false
+      },
+      "score": {
+        "valid_json": true,
+        "correct_decision": true,
+        "correct_tool": true,
+        "args_match": true,
+        "score": 1
+      }
+    }
+  ],
+  "tool_call_score": 1
+}
