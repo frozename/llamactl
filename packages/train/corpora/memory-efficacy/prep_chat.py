@@ -6,8 +6,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-INPUT_DIR = ROOT / "binary"
-OUTPUT_DIR = ROOT / "binary-chat"
 SPLITS = ("train", "valid", "test")
 
 
@@ -50,16 +48,25 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
 
 
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--framing", choices=("binary", "4way"), default="binary")
+    args = parser.parse_args()
+
+    input_dir = ROOT / args.framing
+    output_dir = ROOT / f"{args.framing}-chat"
+
     total_counts: dict[str, int] = {}
     for split in SPLITS:
-        input_path = INPUT_DIR / f"{split}.jsonl"
-        output_path = OUTPUT_DIR / f"{split}.jsonl"
+        input_path = input_dir / f"{split}.jsonl"
+        output_path = output_dir / f"{split}.jsonl"
         input_rows = _read_jsonl(input_path)
         output_rows = [_convert_row(row) for row in input_rows]
         _write_jsonl(output_path, output_rows)
         total_counts[split] = len(output_rows)
 
-    print(f"Wrote chat corpus to: {OUTPUT_DIR}")
+    print(f"Wrote chat corpus to: {output_dir}")
     for split in SPLITS:
         print(f"{split}: {total_counts[split]} rows")
 
