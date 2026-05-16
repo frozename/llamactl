@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -79,8 +80,10 @@ def _build_splits(
 
     for source_class in CLASS_ORDER:
         rows = sorted(rows_by_class.get(source_class, []), key=lambda row: row["findingId"])
-        for idx, row in enumerate(rows):
-            split = _split_name(idx)
+        for row in rows:
+            # Hash the stable findingId so synthetic rows do not cluster after sorting.
+            bucket = int(hashlib.md5(row["findingId"].encode()).hexdigest()[:8], 16) % 10
+            split = _split_name(bucket)
             if completion_key == "memory_related":
                 completion_obj = {
                     "memory_related": source_class != "not_memory_related",
