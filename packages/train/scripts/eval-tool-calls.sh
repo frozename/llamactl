@@ -105,7 +105,6 @@ if positive:
             return args.strip()
 
     # Strict success: predicted matches gold exactly in length, names, and args.
-    args_ok = len(tool_calls) == len(gold_calls)
     success = len(tool_calls) == len(gold_calls)
     if success:
         for predicted_call, gold_call in zip(tool_calls, gold_calls):
@@ -113,11 +112,9 @@ if positive:
             gold_function = gold_call.get("function", {})
             if predicted_function.get("name") != gold_function.get("name"):
                 success = False
-                args_ok = False
                 break
             if canonicalize(predicted_function.get("arguments", "")) != canonicalize(gold_function.get("arguments", "")):
                 success = False
-                args_ok = False
                 break
 
     # Prefix success: predicted (length 1..N) is an exact prefix of gold.
@@ -136,13 +133,14 @@ if positive:
         prefix_success = prefix_ok
 
     # Name-first match: first predicted tool name equals first gold tool name.
+    # Only defined on positive rows (gold has tool_calls); undefined on no-tool rows.
     if tool_calls:
         pf0 = tool_calls[0].get("function", {})
         gf0 = gold_calls[0].get("function", {})
         name_first_match = pf0.get("name") == gf0.get("name") and bool(gf0.get("name"))
 else:
+    # Negative row: success = "don't call a tool AND say something useful".
     success = not tool_calls and bool(content.strip())
-    args_ok = False
     prefix_success = success
 
 predicted_name = tool_calls[0].get("function", {}).get("name") if tool_calls else ""
@@ -155,7 +153,6 @@ print(json.dumps({
     "success": success,
     "prefix_success": prefix_success,
     "name_first_match": name_first_match,
-    "args_ok": args_ok,
     "predicted_name": predicted_name,
     "predicted_args": predicted_args,
     "predicted_content": content,
@@ -252,7 +249,9 @@ PY
     if [[ "$(printf '%s' "$score" | jq -r '.prefix_success')" == "true" ]]; then
       prefix_successes=$((prefix_successes + 1))
     fi
-    if [[ "$(printf '%s' "$score" | jq -r '.name_first_match')" == "true" ]]; then
+    # name-first match is only defined on positive rows; tracker counts hits, not denominator.
+    if [[ "$(printf '%s' "$score" | jq -r '.name_first_match')" == "true" ]] \
+       && [[ "$(printf '%s' "$score" | jq -r '.positive')" == "true" ]]; then
       name_matches=$((name_matches + 1))
     fi
   done
@@ -269,7 +268,7 @@ total = int(sys.argv[2])
 print(f"{(succ / total * 100.0) if total else 0.0:.1f}")
 PY
 )"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$successes" "$total" "$positive_total" "$negative_total" "$prefix_successes" "$name_matches" >> "$OUT_DIR/.summary.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$successes" "$total" "$positive_total" "$negative_total" "$prefix_successes" "$name_matches" "$negative_successes" >> "$OUT_DIR/.summary.tsv"
   printf '%s\t%s\n' "$label" "$rate" >> "$OUT_DIR/.rates.tsv"
   trap - RETURN
   cleanup
@@ -308,13 +307,22 @@ for line in path.read_text().splitlines():
     if not line.strip():
         continue
     parts = line.split("\t")
-    # Back-compat: legacy summaries have 5 columns (no prefix/name-match).
+    # Back-compat: legacy summaries had 5 columns (no prefix/name-match/neg-succ).
     label, succ, total, pos, neg = parts[:5]
     pref = int(parts[5]) if len(parts) > 5 else int(succ)
     nm = int(parts[6]) if len(parts) > 6 else int(succ)
-    rows.append((label, int(succ), int(total), int(pos), int(neg), pref, nm))
-for label, succ, total, pos, neg, pref, nm in rows:
-    print(f"- {label}: strict {succ}/{total} | prefix {pref}/{total} | name-first {nm}/{total} (positive={pos}, negative={neg})")
+    neg_succ = int(parts[7]) if len(parts) > 7 else 0
+    rows.append((label, int(succ), int(total), int(pos), int(neg), pref, nm, neg_succ))
+for label, succ, total, pos, neg, pref, nm, neg_succ in rows:
+    # name-first denominator is positives only (undefined on no-tool-expected rows).
+    nm_denom = pos if pos else 1
+    no_tool_denom = neg if neg else 1
+    print(
+        f"- {label}: strict {succ}/{total} ({100*succ/total:.1f}%) "
+        f"| prefix {pref}/{total} ({100*pref/total:.1f}%) "
+        f"| name-first {nm}/{pos} ({100*nm/nm_denom:.1f}% of positives) "
+        f"| no-tool {neg_succ}/{neg} ({100*neg_succ/no_tool_denom:.1f}% of negatives)"
+    )
 PY
   echo
   echo "### Row Debug Table"
@@ -331,7 +339,7 @@ for line in path.read_text().splitlines():
     row = json.loads(line)
     score = row["score"]
     if score["positive"]:
-        print(f"- {score['gold_name']} | {score['predicted_name']} | {'Y' if score['args_ok'] else 'N'}")
+        print(f"- {score['gold_name']} | {score['predicted_name']} | {'Y' if score['success'] else 'N'}")
     else:
         print(f"- - | - | {'Y' if score['success'] else 'N'}")
 PY
