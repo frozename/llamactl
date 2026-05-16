@@ -192,7 +192,7 @@ body = {
     "model": "local",
     "messages": messages,
     "tools": row["tools"],
-    "tool_choice": row["tool_choice"],
+    "tool_choice": row.get("tool_choice", "auto"),
     "max_tokens": 256,
     "temperature": 0.0,
     "chat_template_kwargs": {"enable_thinking": False},
