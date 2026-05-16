@@ -120,7 +120,9 @@ import sys
 
 row = json.loads(sys.argv[1])
 resp = json.loads(sys.argv[2])
-gold_calls = row.get("expected_tool_calls") or []
+gold_turn = (row.get("messages") or [{}])[-1]
+gold_calls = gold_turn.get("tool_calls") or []
+gold_content = gold_turn.get("content") or ""
 message = resp.get("choices", [{}])[0].get("message", {})
 tool_calls = message.get("tool_calls") or []
 content = message.get("content") or ""
@@ -261,7 +263,7 @@ adapter_rate="$(run_config adapter "$BASE_GGUF" "$ADAPTER_GGUF")"
   echo
   echo "## Per-Row Results"
   echo
-  echo "See `eval-raw.jsonl` for raw responses."
+  echo "See base.jsonl / adapter.jsonl for raw responses."
   echo
   python3 - "$OUT_DIR/.summary.tsv" <<'PY'
 import pathlib
