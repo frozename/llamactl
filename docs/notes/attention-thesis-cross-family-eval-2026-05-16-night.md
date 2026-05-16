@@ -33,6 +33,7 @@ smaller models with the same few-shot prompt should reach comparable macro-F1.
 | **Gemma 4 E4B**         | ~4B eff | UD-Q4_K_XL | **0.8931** | **0.00 pp** | 0 |
 | Granite-4.1-3B          | 3B  | Q4_K_M | 0.8734 | -1.97 pp | 0 |
 | **Gemma 3n E2B**        | ~2B eff | Q8_0 | 0.8469 | -4.62 pp | 0 |
+| **Gemma 4 E2B**         | ~2B eff | Q8_0 | 0.8386 | -5.45 pp | 0 |
 | Gemma 3 4B-it           | 4B  | Q4_K_M | 0.8400 | -5.31 pp | 0 |
 | Phi-4-mini-instruct     | 3.8B | Q4_K_M | 0.8181 | -7.50 pp | 0 |
 | Qwen3-1.7B (within-fam) | 1.7B | Q8_0 | 0.5830 | -31.01 pp | 0 |
@@ -131,5 +132,5 @@ effective; Qwen3-1.7B sits far below at 1.7B.
 ## Artifacts
 
 - Harness: `packages/train/scripts/eval-base-only.sh`
-- Predictions + per-model reports: `/tmp/attn-thesis/{qwen3-8b,qwen35-9b,gemma4-e4b,granite-3b,gemma3n-e2b,gemma3-4b,phi4-mini,qwen3-1.7b,phi4-reasoning}/`
+- Predictions + per-model reports: `/tmp/attn-thesis/{qwen3-8b,qwen35-9b,gemma4-e4b,granite-3b,gemma3n-e2b,gemma4-e2b,gemma3-4b,phi4-mini,qwen3-1.7b,phi4-reasoning}/`
 - Source prompt + corpus: `penumbra@2a57160` + `packages/train/corpora/memory-efficacy/4way-chat-fewshot/`
