@@ -95,6 +95,8 @@ tool_calls = message.get("tool_calls") or []
 content = message.get("content") or ""
 
 positive = bool(gold_calls)
+prefix_success = False
+name_first_match = False
 if positive:
     def canonicalize(args: str) -> str:
         try:
@@ -102,6 +104,7 @@ if positive:
         except Exception:
             return args.strip()
 
+    # Strict success: predicted matches gold exactly in length, names, and args.
     args_ok = len(tool_calls) == len(gold_calls)
     success = len(tool_calls) == len(gold_calls)
     if success:
@@ -116,9 +119,31 @@ if positive:
                 success = False
                 args_ok = False
                 break
+
+    # Prefix success: predicted (length 1..N) is an exact prefix of gold.
+    # Treats sequential tool emission (one call per turn) as correct partial output.
+    if tool_calls and len(tool_calls) <= len(gold_calls):
+        prefix_ok = True
+        for predicted_call, gold_call in zip(tool_calls, gold_calls):
+            pf = predicted_call.get("function", {})
+            gf = gold_call.get("function", {})
+            if pf.get("name") != gf.get("name"):
+                prefix_ok = False
+                break
+            if canonicalize(pf.get("arguments", "")) != canonicalize(gf.get("arguments", "")):
+                prefix_ok = False
+                break
+        prefix_success = prefix_ok
+
+    # Name-first match: first predicted tool name equals first gold tool name.
+    if tool_calls:
+        pf0 = tool_calls[0].get("function", {})
+        gf0 = gold_calls[0].get("function", {})
+        name_first_match = pf0.get("name") == gf0.get("name") and bool(gf0.get("name"))
 else:
     success = not tool_calls and bool(content.strip())
     args_ok = False
+    prefix_success = success
 
 predicted_name = tool_calls[0].get("function", {}).get("name") if tool_calls else ""
 predicted_args = tool_calls[0].get("function", {}).get("arguments", "") if tool_calls else ""
@@ -128,12 +153,16 @@ gold_args = gold_calls[0].get("function", {}).get("arguments", "") if gold_calls
 print(json.dumps({
     "positive": positive,
     "success": success,
+    "prefix_success": prefix_success,
+    "name_first_match": name_first_match,
     "args_ok": args_ok,
     "predicted_name": predicted_name,
     "predicted_args": predicted_args,
     "predicted_content": content,
     "gold_name": gold_name,
     "gold_args": gold_args,
+    "predicted_count": len(tool_calls),
+    "gold_count": len(gold_calls),
 }))
 PY
 }
@@ -175,6 +204,8 @@ run_config() {
 
   local idx=0
   local successes=0
+  local prefix_successes=0
+  local name_matches=0
   local positives=0
   local negative_successes=0
   local row
@@ -218,6 +249,12 @@ PY
         negative_successes=$((negative_successes + 1))
       fi
     fi
+    if [[ "$(printf '%s' "$score" | jq -r '.prefix_success')" == "true" ]]; then
+      prefix_successes=$((prefix_successes + 1))
+    fi
+    if [[ "$(printf '%s' "$score" | jq -r '.name_first_match')" == "true" ]]; then
+      name_matches=$((name_matches + 1))
+    fi
   done
 
   end_ts=$(date +%s)
@@ -232,7 +269,7 @@ total = int(sys.argv[2])
 print(f"{(succ / total * 100.0) if total else 0.0:.1f}")
 PY
 )"
-  printf '%s\t%s\t%s\t%s\t%s\n' "$label" "$successes" "$total" "$positive_total" "$negative_total" >> "$OUT_DIR/.summary.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$successes" "$total" "$positive_total" "$negative_total" "$prefix_successes" "$name_matches" >> "$OUT_DIR/.summary.tsv"
   printf '%s\t%s\n' "$label" "$rate" >> "$OUT_DIR/.rates.tsv"
   trap - RETURN
   cleanup
@@ -270,10 +307,14 @@ rows = []
 for line in path.read_text().splitlines():
     if not line.strip():
         continue
-    label, succ, total, pos, neg = line.split("\t")
-    rows.append((label, int(succ), int(total), int(pos), int(neg)))
-for label, succ, total, pos, neg in rows:
-    print(f"- {label}: {succ}/{total} successes (positive={pos}, negative={neg})")
+    parts = line.split("\t")
+    # Back-compat: legacy summaries have 5 columns (no prefix/name-match).
+    label, succ, total, pos, neg = parts[:5]
+    pref = int(parts[5]) if len(parts) > 5 else int(succ)
+    nm = int(parts[6]) if len(parts) > 6 else int(succ)
+    rows.append((label, int(succ), int(total), int(pos), int(neg), pref, nm))
+for label, succ, total, pos, neg, pref, nm in rows:
+    print(f"- {label}: strict {succ}/{total} | prefix {pref}/{total} | name-first {nm}/{total} (positive={pos}, negative={neg})")
 PY
   echo
   echo "### Row Debug Table"
