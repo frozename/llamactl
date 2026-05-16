@@ -10,6 +10,7 @@ import { applyOne } from '../src/workload/apply.js';
 import {
   defaultWorkloadsDir,
   deleteWorkload,
+  interpolateEnvRefs,
   listWorkloadNames,
   listWorkloads,
   loadWorkload,
@@ -287,5 +288,41 @@ describe('workload store', () => {
     const m = parseWorkload(minimalYaml);
     const parsed = ModelRunSchema.parse(m);
     expect(parsed).toEqual(m);
+  });
+});
+
+describe('interpolateEnvRefs', () => {
+  test('substitutes ${env:VAR} against the supplied env', () => {
+    const out = interpolateEnvRefs('binary: ${env:LLAMA_SERVER_BIN}', {
+      LLAMA_SERVER_BIN: '/opt/llama/llama-server',
+    });
+    expect(out).toBe('binary: /opt/llama/llama-server');
+  });
+
+  test('throws when a referenced variable is not set', () => {
+    expect(() =>
+      interpolateEnvRefs('binary: ${env:NOT_SET_VAR}', {}),
+    ).toThrow(/env:NOT_SET_VAR/);
+  });
+
+  test('leaves text without env refs untouched', () => {
+    const raw = 'binary: /usr/local/bin/llama-server\nport: 8080\n';
+    expect(interpolateEnvRefs(raw, {})).toBe(raw);
+  });
+
+  test('parseWorkload interpolates env refs before YAML parse', () => {
+    const tmpl = sampleYaml.replace(
+      'spec:',
+      'spec:\n  binary: ${env:LLAMA_SERVER_BIN}',
+    );
+    const prior = process.env.LLAMA_SERVER_BIN;
+    process.env.LLAMA_SERVER_BIN = '/opt/llama/llama-server';
+    try {
+      const m = parseWorkload(tmpl);
+      expect(m.spec.binary).toBe('/opt/llama/llama-server');
+    } finally {
+      if (prior === undefined) delete process.env.LLAMA_SERVER_BIN;
+      else process.env.LLAMA_SERVER_BIN = prior;
+    }
   });
 });

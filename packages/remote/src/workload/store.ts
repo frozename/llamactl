@@ -29,12 +29,32 @@ export function workloadPath(
 }
 
 /**
+ * Substitute `${env:VAR_NAME}` references in raw manifest text against
+ * `env`. Throws on any unset variable so a missing binding is surfaced
+ * at apply time rather than silently producing a literal `${env:...}`
+ * string in the parsed manifest. Variable names must match
+ * `[A-Z_][A-Z0-9_]*` to avoid matching unrelated shell-style tokens.
+ */
+export function interpolateEnvRefs(
+  raw: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return raw.replace(/\$\{env:([A-Z_][A-Z0-9_]*)\}/g, (_match, name: string) => {
+    const value = env[name];
+    if (value === undefined) {
+      throw new Error(`workload manifest references env:${name} but it is not set`);
+    }
+    return value;
+  });
+}
+
+/**
  * Parse + validate a manifest from YAML text. Used by `apply -f` where
  * the file might live outside the workloads dir (typical kubectl flow
  * is to edit a manifest in a git repo, then apply it).
  */
 export function parseWorkload(raw: string): ModelRun {
-  const parsed = parseYaml(raw);
+  const parsed = parseYaml(interpolateEnvRefs(raw));
   return ModelRunSchema.parse(parsed);
 }
 
