@@ -762,13 +762,14 @@ EOF
     echo "| class | base P | base R | base F1 | adapter P | adapter R | adapter F1 |"
     echo "|-------|--------|--------|---------|-----------|-----------|------------|"
     paste "$OUT_DIR/base-class-metrics.tsv" "$OUT_DIR/adapter-class-metrics.tsv" | while IFS=$'\t' read -r base_line adapter_line; do
+      # Emit shape (line 625): class|tp|fp|fn|prec|rec|f1 → fields 5/6/7 are P/R/F1.
       base_class="$(printf '%s' "$base_line" | cut -d'|' -f1)"
-      base_prec="$(printf '%s' "$base_line" | cut -d'|' -f4)"
-      base_rec="$(printf '%s' "$base_line" | cut -d'|' -f5)"
-      base_f1="$(printf '%s' "$base_line" | cut -d'|' -f6)"
-      adapter_prec="$(printf '%s' "$adapter_line" | cut -d'|' -f4)"
-      adapter_rec="$(printf '%s' "$adapter_line" | cut -d'|' -f5)"
-      adapter_f1="$(printf '%s' "$adapter_line" | cut -d'|' -f6)"
+      base_prec="$(printf '%s' "$base_line" | cut -d'|' -f5)"
+      base_rec="$(printf '%s' "$base_line" | cut -d'|' -f6)"
+      base_f1="$(printf '%s' "$base_line" | cut -d'|' -f7)"
+      adapter_prec="$(printf '%s' "$adapter_line" | cut -d'|' -f5)"
+      adapter_rec="$(printf '%s' "$adapter_line" | cut -d'|' -f6)"
+      adapter_f1="$(printf '%s' "$adapter_line" | cut -d'|' -f7)"
       echo "| $base_class | $base_prec | $base_rec | $base_f1 | $adapter_prec | $adapter_rec | $adapter_f1 |"
     done
   } >>"$EVAL_REPORT"
