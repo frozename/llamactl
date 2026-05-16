@@ -4206,5 +4206,373 @@
     "index": 45,
     "severity": "Medium",
     "text": "Memory registration requires provenance fields not populated by one adapter path, so those findings never persist despite successful upstream review completion (architect, maintainability)."
+  },
+  {
+    "findingId": "syn-rm-016",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 46,
+    "severity": "High",
+    "text": "The recall index only keys on the first query token, so the matching memory never makes it into candidates."
+  },
+  {
+    "findingId": "syn-rm-017",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 47,
+    "severity": "High",
+    "text": "The dispatcher queries the wrong tenant shard, so the memory stays in another store and never surfaces."
+  },
+  {
+    "findingId": "syn-rm-018",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 48,
+    "severity": "High",
+    "text": "The recall path reads a stale cache snapshot, hiding a freshly written memory from selection."
+  },
+  {
+    "findingId": "syn-rm-019",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 49,
+    "severity": "High",
+    "text": "Project prefix normalization strips the lookup key, so the stored memory cannot be matched."
+  },
+  {
+    "findingId": "syn-rm-020",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 50,
+    "severity": "High",
+    "text": "A hard ranker cutoff drops the only relevant candidate before prompt assembly."
+  },
+  {
+    "findingId": "syn-rm-021",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 51,
+    "severity": "High",
+    "text": "The retrieval path searches only the last session window, leaving an older relevant memory unreached."
+  },
+  {
+    "findingId": "syn-rm-022",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 52,
+    "severity": "High",
+    "text": "A tool-name alias mismatch sends recall through a dead branch, so the worker never sees the request."
+  },
+  {
+    "findingId": "syn-rm-023",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 53,
+    "severity": "High",
+    "text": "The fallback retriever is disabled, so the first failed query stops before the backend can return the item."
+  },
+  {
+    "findingId": "syn-mi-016",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 54,
+    "severity": "High",
+    "text": "The recalled memory lands in a low-priority preamble that gets trimmed from final context."
+  },
+  {
+    "findingId": "syn-mi-017",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 55,
+    "severity": "High",
+    "text": "Normalization rewrites concrete advice into a vague placeholder the model cannot use."
+  },
+  {
+    "findingId": "syn-mi-018",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 56,
+    "severity": "High",
+    "text": "A conflicting system default overrides the recalled guidance even though it reaches the prompt."
+  },
+  {
+    "findingId": "syn-mi-019",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 57,
+    "severity": "High",
+    "text": "Downstream code reads only metadata fields and never consumes the instruction body."
+  },
+  {
+    "findingId": "syn-mi-020",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 58,
+    "severity": "High",
+    "text": "The memory arrives after the planner response, too late to influence action."
+  },
+  {
+    "findingId": "syn-mi-021",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 59,
+    "severity": "High",
+    "text": "Redaction keeps the memory visible but strips the decisive path names, leaving unusable context."
+  },
+  {
+    "findingId": "syn-mi-022",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 60,
+    "severity": "High",
+    "text": "The recalled item is quoted as example text, so the model treats it as inert."
+  },
+  {
+    "findingId": "syn-mi-023",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 61,
+    "severity": "High",
+    "text": "Dedup preserves the header but drops the actionable delta, so behavior does not change."
+  },
+  {
+    "findingId": "syn-mi-024",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 62,
+    "severity": "High",
+    "text": "A merge with unrelated boilerplate buries the actionable part of the recalled memory."
+  },
+  {
+    "findingId": "syn-mi-025",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 63,
+    "severity": "High",
+    "text": "A higher-level instruction explicitly tells the agent to skip that guidance this turn."
+  },
+  {
+    "findingId": "syn-mi-026",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 64,
+    "severity": "High",
+    "text": "The recall result stays collapsed in UI payload form and never expands into the live prompt."
+  },
+  {
+    "findingId": "syn-mi-027",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 65,
+    "severity": "High",
+    "text": "The memory is logged and displayed, but the runtime prompt builder drops it from context."
+  },
+  {
+    "findingId": "syn-mi-028",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 66,
+    "severity": "High",
+    "text": "Safety scrubbing converts specifics into generic warnings that no longer direct the model."
+  },
+  {
+    "findingId": "syn-mi-029",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 67,
+    "severity": "High",
+    "text": "A routing rule sends the recalled memory to a non-executed branch, so it never affects the plan."
+  },
+  {
+    "findingId": "syn-mi-030",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 68,
+    "severity": "High",
+    "text": "Token budgeting trims the only sentence carrying the recommendation."
+  },
+  {
+    "findingId": "syn-mi-031",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 69,
+    "severity": "High",
+    "text": "Presentation code buries the advice behind a long unrelated stack trace."
+  },
+  {
+    "findingId": "syn-mi-032",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 70,
+    "severity": "High",
+    "text": "The executor swaps in a cached prompt template that omits the recalled block."
+  },
+  {
+    "findingId": "syn-mi-033",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 71,
+    "severity": "High",
+    "text": "A formatting bug wraps the instruction in quotes, so the model treats it as reported speech."
+  },
+  {
+    "findingId": "syn-mi-034",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 72,
+    "severity": "High",
+    "text": "Rank merging keeps a less relevant item dominant and relegates the recall to background."
+  },
+  {
+    "findingId": "syn-mi-035",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 73,
+    "severity": "High",
+    "text": "The executor only honors memories for a different mode, so this one is consciously skipped."
+  },
+  {
+    "findingId": "syn-mr-016",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 74,
+    "severity": "High",
+    "text": "Pre-save validation aborts before the event reaches the memory journal, so nothing durable is created."
+  },
+  {
+    "findingId": "syn-mr-017",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 75,
+    "severity": "High",
+    "text": "The write path reports success even though the persistence hook never fires."
+  },
+  {
+    "findingId": "syn-mr-018",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 76,
+    "severity": "High",
+    "text": "An early return on missing optional metadata stops the finding from being serialized."
+  },
+  {
+    "findingId": "syn-mr-019",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 77,
+    "severity": "High",
+    "text": "A transport stub omits the memory payload before the write call."
+  },
+  {
+    "findingId": "syn-mr-020",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 78,
+    "severity": "High",
+    "text": "A transaction rollback discards the insert after audit, so the memory never survives commit."
+  },
+  {
+    "findingId": "syn-mr-021",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 79,
+    "severity": "High",
+    "text": "The recorder is wired to the wrong lifecycle hook, so the finding never reaches registration."
+  },
+  {
+    "findingId": "syn-mr-022",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 80,
+    "severity": "High",
+    "text": "A schema migration drops the target column, so the write is rejected before storage."
+  },
+  {
+    "findingId": "syn-mr-023",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 81,
+    "severity": "High",
+    "text": "The persistence layer filters out records lacking a preview field and discards this finding."
+  },
+  {
+    "findingId": "syn-mr-024",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 82,
+    "severity": "High",
+    "text": "An exception handler swallows the save error, so the missing write is never retried."
+  },
+  {
+    "findingId": "syn-mr-025",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 83,
+    "severity": "High",
+    "text": "A dedupe guard misclassifies the finding as a duplicate and suppresses registration."
+  },
+  {
+    "findingId": "syn-mr-026",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 84,
+    "severity": "High",
+    "text": "The ingestion queue drops the item on timeout, so the event never persists downstream."
+  },
+  {
+    "findingId": "syn-mr-027",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 85,
+    "severity": "High",
+    "text": "A malformed timestamp fails validation, preventing the memory from ever being created."
+  },
+  {
+    "findingId": "syn-mr-028",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 86,
+    "severity": "High",
+    "text": "A disabled feature flag means the finding is observed but not stored."
+  },
+  {
+    "findingId": "syn-mr-029",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 87,
+    "severity": "High",
+    "text": "The write adapter points at a read-only endpoint, so the memory cannot be persisted."
+  },
+  {
+    "findingId": "syn-mr-030",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 88,
+    "severity": "High",
+    "text": "A partial parse drops the payload needed for registration, so no memory row is emitted."
+  },
+  {
+    "findingId": "syn-mr-031",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 89,
+    "severity": "High",
+    "text": "The buffer flush runs after shutdown, leaving the finding stranded before any write."
+  },
+  {
+    "findingId": "syn-mr-032",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 90,
+    "severity": "High",
+    "text": "A minimum-confidence gate rejects the item even though it belongs in memory."
+  },
+  {
+    "findingId": "syn-mr-033",
+    "sourceReview": "synthetic-2026-05-16-batch2",
+    "ts": "2026-05-16T00:00:00Z",
+    "index": 91,
+    "severity": "High",
+    "text": "A namespace lookup failure prevents the event from entering the store."
   }
 ]

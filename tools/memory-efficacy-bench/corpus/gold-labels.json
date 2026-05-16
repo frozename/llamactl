@@ -4429,8 +4429,8 @@
   },
   {
     "findingId": "syn-mi-008",
-    "classification": "memory_ignored",
-    "reason": "Recall appears in preview but is absent in actual worker prompt, meaning fetched memory is ignored.",
+    "classification": "recall_miss",
+    "reason": "The reason says the worker never sees the memory in the executed prompt.",
     "labelerAgent": "codex-acp-deep-synth-2026-05-16",
     "batchNum": 1,
     "raw_response": null,
@@ -4447,8 +4447,8 @@
   },
   {
     "findingId": "syn-mi-010",
-    "classification": "memory_ignored",
-    "reason": "The recalled block is dropped during adapter conversion, so retrieved memory never reaches inference.",
+    "classification": "recall_miss",
+    "reason": "Adapter conversion failure prevents the model from ever seeing the recalled block.",
     "labelerAgent": "codex-acp-deep-synth-2026-05-16",
     "batchNum": 1,
     "raw_response": null,
@@ -4465,8 +4465,8 @@
   },
   {
     "findingId": "syn-mi-012",
-    "classification": "memory_ignored",
-    "reason": "Transport metadata shows recall happened, but payload narrowing drops the recalled body before execution.",
+    "classification": "recall_miss",
+    "reason": "The executed payload never includes the recalled body.",
     "labelerAgent": "codex-acp-deep-synth-2026-05-16",
     "batchNum": 1,
     "raw_response": null,
@@ -4492,8 +4492,8 @@
   },
   {
     "findingId": "syn-mi-015",
-    "classification": "memory_ignored",
-    "reason": "Prompt delimiters place recalled memory in a segment excluded from model-consumed input.",
+    "classification": "recall_miss",
+    "reason": "The boundary prevents the model from consuming the recalled segment at all.",
     "labelerAgent": "codex-acp-deep-synth-2026-05-16",
     "batchNum": 1,
     "raw_response": null,
@@ -4630,6 +4630,420 @@
     "classification": "missed_registration",
     "reason": "Required provenance omissions block inserts on one path, so those memories are never written.",
     "labelerAgent": "codex-acp-deep-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-rm-016",
+    "classification": "recall_miss",
+    "reason": "A recall index filter only keys on the first token of the query, so the matching memory never enters the candidate set.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-rm-017",
+    "classification": "recall_miss",
+    "reason": "The dispatcher asks the wrong tenant shard for recall, so the relevant memory stays in another store and is never surfaced.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-rm-018",
+    "classification": "recall_miss",
+    "reason": "A stale cache snapshot is consulted instead of the live recall index, which hides recently written memories from selection.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-rm-019",
+    "classification": "recall_miss",
+    "reason": "Namespace normalization strips the project prefix before lookup, so the relevant memory key no longer matches storage.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-rm-020",
+    "classification": "recall_miss",
+    "reason": "A ranker cutoff rejects all candidates below a hard threshold, causing the only relevant memory to be dropped before prompt assembly.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-rm-021",
+    "classification": "recall_miss",
+    "reason": "The retrieval path only searches the last session window, so older but still relevant memory is never reached.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-rm-022",
+    "classification": "recall_miss",
+    "reason": "A tool-name alias mismatch sends the query through a dead branch, so the recall worker never sees the intended memory request.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-rm-023",
+    "classification": "recall_miss",
+    "reason": "The fallback retriever is disabled on error, so the first failed query stops before the memory backend can return the relevant item.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-016",
+    "classification": "memory_ignored",
+    "reason": "The recalled memory is injected into a low-priority preamble that the prompt assembler trims away before the model context is finalized.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-017",
+    "classification": "memory_ignored",
+    "reason": "The memory is surfaced, but a later normalization pass rewrites its concrete advice into a vague placeholder that the model cannot act on.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-018",
+    "classification": "memory_ignored",
+    "reason": "The memory reaches the prompt, but a conflicting system default immediately overrides it, so the model effectively ignores the recalled guidance.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-019",
+    "classification": "memory_ignored",
+    "reason": "The recall payload is present, but the downstream consumer only reads metadata fields and never consumes the actual instruction body.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-020",
+    "classification": "memory_ignored",
+    "reason": "The memory is injected after the planner has already produced a response, so the recall exists but arrives too late to influence action.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-021",
+    "classification": "memory_ignored",
+    "reason": "A redaction pass keeps the memory visible but strips the decisive path names, leaving the agent with unusable context.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-022",
+    "classification": "memory_ignored",
+    "reason": "The recalled item is quoted inside an example block rather than the active instruction block, so the model treats it as inert text.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-023",
+    "classification": "memory_ignored",
+    "reason": "A later dedup pass preserves the memory header but drops the actionable delta, so the retained record no longer changes behavior.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-024",
+    "classification": "memory_ignored",
+    "reason": "The recalled memory is merged with an unrelated template, and the merge outcome buries the actionable part under boilerplate.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-025",
+    "classification": "memory_ignored",
+    "reason": "The agent sees the memory, but a higher-level instruction explicitly tells it to skip that class of guidance for this turn.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-026",
+    "classification": "memory_ignored",
+    "reason": "The recall result is surfaced in a collapsed UI payload, but the execution layer never expands it into the live prompt.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-027",
+    "classification": "memory_ignored",
+    "reason": "The memory is retrieved and displayed in logs, yet the runtime prompt builder drops the displayed copy from the actual context.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-028",
+    "classification": "memory_ignored",
+    "reason": "A safety scrub converts the recalled specifics into generic warnings, and the softened message no longer directs the model.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-029",
+    "classification": "memory_ignored",
+    "reason": "The memory is recalled for review, but a later routing rule assigns it to a non-executed branch, so it never affects the chosen plan.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-030",
+    "classification": "memory_ignored",
+    "reason": "The prompt includes the memory, but a token budget squeeze trims the only sentence that carried the actual recommendation.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-031",
+    "classification": "memory_ignored",
+    "reason": "The retriever surfaces the right memory, but presentation code reorders it behind a long unrelated stack trace that buries the advice.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-032",
+    "classification": "memory_ignored",
+    "reason": "The memory is injected into a draft prompt, but the executor later swaps in a cached prompt template that omits the recalled block.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-033",
+    "classification": "memory_ignored",
+    "reason": "A formatting bug wraps the recalled instruction in quotes, making the model treat it as reported speech instead of guidance.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-034",
+    "classification": "memory_ignored",
+    "reason": "The memory survives retrieval, but a downstream rank merge keeps a less relevant item in the dominant slot and relegates the recall to background.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mi-035",
+    "classification": "memory_ignored",
+    "reason": "The recalled item is present, but the executor only honors memories flagged for a different mode, so this one is consciously skipped.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-016",
+    "classification": "missed_registration",
+    "reason": "A pre-save validation aborts before the event enters the memory journal, so no durable record is created.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-017",
+    "classification": "missed_registration",
+    "reason": "The write path returns success to the caller even though the persistence hook never fires, leaving the finding unregistered.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-018",
+    "classification": "missed_registration",
+    "reason": "An early return on missing optional metadata prevents the finding from being serialized into the memory store.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-019",
+    "classification": "missed_registration",
+    "reason": "The event is converted to a transport stub, but the stub omits the memory payload entirely before the write call.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-020",
+    "classification": "missed_registration",
+    "reason": "A transaction rollback discards the insert after the audit step, so the memory never survives commit.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-021",
+    "classification": "missed_registration",
+    "reason": "The recorder is wired to the wrong lifecycle hook, so the observed finding never reaches the registration callback.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-022",
+    "classification": "missed_registration",
+    "reason": "A schema migration dropped the target column, causing the registration write to be rejected before any row is stored.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-023",
+    "classification": "missed_registration",
+    "reason": "The persistence layer filters out records lacking a preview field, and this finding is discarded before it can be written.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-024",
+    "classification": "missed_registration",
+    "reason": "The event hits an exception handler that swallows the save error, so the caller never retries the missing write.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-025",
+    "classification": "missed_registration",
+    "reason": "A dedupe guard treats the finding as a duplicate of a prior row and suppresses the new registration entirely.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-026",
+    "classification": "missed_registration",
+    "reason": "The ingestion queue drops the item when the worker times out, so the memory event never gets persisted downstream.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-027",
+    "classification": "missed_registration",
+    "reason": "A malformed timestamp causes the save request to fail validation, preventing the memory from ever being created.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-028",
+    "classification": "missed_registration",
+    "reason": "The registration code path is gated behind a feature flag that is off, so the finding is observed but not stored.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-029",
+    "classification": "missed_registration",
+    "reason": "The write adapter is pointed at a read-only endpoint, so the observed memory cannot be persisted.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-030",
+    "classification": "missed_registration",
+    "reason": "A partial parse extracts the summary but drops the payload needed for registration, so no memory row is emitted.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-031",
+    "classification": "missed_registration",
+    "reason": "The buffer flush runs after process shutdown, leaving the current finding stranded before any memory write happens.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-032",
+    "classification": "missed_registration",
+    "reason": "The writer enforces a minimum confidence gate that rejects the item even though the finding clearly belongs in memory.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
+    "batchNum": 1,
+    "raw_response": null,
+    "source": "synthetic"
+  },
+  {
+    "findingId": "syn-mr-033",
+    "classification": "missed_registration",
+    "reason": "A namespace lookup failure means the registration target cannot be resolved, so the event never enters the store.",
+    "labelerAgent": "codex-acp-fast-synth-2026-05-16",
     "batchNum": 1,
     "raw_response": null,
     "source": "synthetic"
