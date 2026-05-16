@@ -65,7 +65,7 @@ The validation slice itself has a budget: **4 hours** of human attention. If A a
 These do not block the validation slice but must be resolved before any *new* corpus row is added or any *new* adapter is trained:
 
 - **Label provenance**: pin the Qwen3-8B-Instruct teacher to a HF revision SHA and a code-versioned prompt template. Dual-label disagreement check against a different model (Granite 4.1 or Gemma 4 26B-A4B). Sampled human adjudication on 10% of rows.
-- **Corpus naming**: rename `adversarial-v0` to `hand-crafted-v0` or `uncommon-v0` — "adversarial" is overloaded and misleading per naming_clarity persona.
+- ~~**Corpus naming**~~: ✓ renamed `adversarial-v0` → `uncommon-v0` (2026-05-16, same day as contract; see `FROZEN.md`).
 - **Data governance**: when production traces feed back into the corpus, run PII + secret redaction (matching the patterns in `packages/secret-redact/` if it exists; otherwise a new shared module).
 - **Lineage**: stop claiming "three independent datasets" until the K.4 and K.5 row overlap is quantified and called out explicitly.
 
