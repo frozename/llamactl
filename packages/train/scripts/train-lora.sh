@@ -123,9 +123,27 @@ fi
 
 log "fetch HF model $MODEL_REPO ${MODEL_REVISION:+@ $MODEL_REVISION}"
 REUSE_HF_BASE="${REUSE_HF_BASE:-0}"
-if [[ "$REUSE_HF_BASE" == "1" && -f "$HF_BASE_DIR/config.json" ]]; then
-  log "REUSE_HF_BASE=1 and $HF_BASE_DIR/config.json exists; skipping fetch"
-else
+hf_reuse_ok=0
+if [[ "$REUSE_HF_BASE" == "1" ]]; then
+  if [[ -z "$MODEL_REVISION" ]]; then
+    log "REUSE_HF_BASE=1 requires a pinned revision (MODEL@rev); falling through to fetch"
+  elif [[ ! -f "$HF_BASE_DIR/config.json" ]]; then
+    log "REUSE_HF_BASE=1 but $HF_BASE_DIR/config.json missing; falling through to fetch"
+  else
+    cached_rev=""
+    meta_file="$HF_BASE_DIR/.cache/huggingface/download/config.json.metadata"
+    if [[ -f "$meta_file" ]]; then
+      cached_rev="$(head -n1 "$meta_file" | tr -d '[:space:]')"
+    fi
+    if [[ "$cached_rev" == "$MODEL_REVISION" ]]; then
+      log "REUSE_HF_BASE=1; cache identity OK (rev $cached_rev); skipping fetch"
+      hf_reuse_ok=1
+    else
+      log "REUSE_HF_BASE=1 but cache rev '$cached_rev' != requested '$MODEL_REVISION'; falling through to fetch"
+    fi
+  fi
+fi
+if [[ "$hf_reuse_ok" != "1" ]]; then
   rm -rf "$HF_BASE_DIR"
 fi
 if [ ! -f "$CORPUS_DIR/train.jsonl" ] || [ ! -f "$CORPUS_DIR/valid.jsonl" ]; then
@@ -160,8 +178,8 @@ if [ ! -f "$CORPUS_DIR/train.jsonl" ] || [ ! -f "$CORPUS_DIR/valid.jsonl" ]; the
 fi
 
 hf_exit_code=0
-if [[ "$REUSE_HF_BASE" == "1" && -f "$HF_BASE_DIR/config.json" ]]; then
-  log "skipping hf download (REUSE_HF_BASE=1)"
+if [[ "$hf_reuse_ok" == "1" ]]; then
+  log "skipping hf download (cached identity verified)"
 elif [ -n "$MODEL_REVISION" ]; then
   "$VENV_DIR/bin/hf" download "$MODEL_REPO" --revision "$MODEL_REVISION" --local-dir "$HF_BASE_DIR" \
     > "$LOG_DIR/hf-download.log" 2>&1 || hf_exit_code=$?
