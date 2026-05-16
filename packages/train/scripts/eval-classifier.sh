@@ -48,6 +48,7 @@ SERVER_LOG_ADAPTER="$OUT_DIR/server-adapter.log"
 SERVER_PORT=18099
 N_PREDICT=${N_PREDICT:-250}
 TEMPERATURE=0.0
+WRAP_CHAT_TEMPLATE=${WRAP_CHAT_TEMPLATE:-0}
 MAX_WAIT_SECONDS=180
 
 SERVER_PID=
@@ -230,6 +231,22 @@ normalize_bool() {
   esac
 }
 
+wrap_chat_template() {
+  local prompt=$1
+  python3 - "$prompt" <<'PY'
+import sys
+
+prompt = sys.argv[1]
+sys.stdout.write(
+    "<|im_start|>user\n"
+    f"{prompt}<|im_end|>\n"
+    "<|im_start|>assistant\n"
+    "<think>\n\n"
+    "</think>\n\n"
+)
+PY
+}
+
 extract_gold() {
   printf '%s\n' "$1" | jq -r '.memory_related // .gold // .label // (try (.completion | fromjson | .memory_related) catch empty) // empty'
 }
@@ -357,6 +374,9 @@ run_completion_eval() {
     prompt="$(printf '%s\n' "$row" | jq -r '.prompt // .input // empty')"
     if [[ -z "$prompt" ]]; then
       prompt="$(printf '%s\n' "$row" | jq -r '.text // empty')"
+    fi
+    if [[ "$WRAP_CHAT_TEMPLATE" == "1" ]]; then
+      prompt="$(wrap_chat_template "$prompt")"
     fi
 
     gold="$(extract_gold "$row")"
@@ -534,6 +554,7 @@ cat >"$EVAL_REPORT" <<EOF
 - Test rows: $BASE_TOTAL (${POSITIVE_COUNT:-0} positive / ${NEGATIVE_COUNT:-0} negative)
 - llama-server: $LLAMA_SERVER_BIN
 - n_predict: $N_PREDICT, temperature: $TEMPERATURE
+- WRAP_CHAT_TEMPLATE: $WRAP_CHAT_TEMPLATE
 
 ## Results
 |        | accuracy | precision (T) | recall (T) | F1 (T) | parse rate |
