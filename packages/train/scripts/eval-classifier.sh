@@ -2,16 +2,13 @@
 
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 usage() {
   cat <<'EOF'
 Usage:
   bash packages/train/scripts/eval-classifier.sh <BASE_GGUF> <ADAPTER_GGUF> <TEST_JSONL> <OUT_DIR>
 EOF
-}
-
-die() {
-  echo "error: $*" >&2
-  exit 1
 }
 
 if [[ "$#" -ne 4 ]]; then
@@ -74,64 +71,6 @@ canonical_or_fallback() {
   else
     echo "$target"
   fi
-}
-
-kill_port() {
-  local pids
-  pids="$(lsof -ti ":$SERVER_PORT" || true)"
-  if [[ -n "$pids" ]]; then
-    printf '%s\n' "$pids" | xargs -r kill -TERM
-    for _ in $(seq 1 20); do
-      if ! lsof -ti ":$SERVER_PORT" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 0.25
-    done
-    if lsof -ti ":$SERVER_PORT" >/dev/null 2>&1; then
-      pids="$(lsof -ti ":$SERVER_PORT" || true)"
-      if [[ -n "$pids" ]]; then
-        printf '%s\n' "$pids" | xargs -r kill -9
-      fi
-    fi
-  fi
-
-  wait_port_bindable
-}
-
-wait_port_bindable() {
-  local tries=0
-  local max_tries=60
-
-  until python3 -c "
-import socket
-import sys
-
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-try:
-    s.bind(('127.0.0.1', $SERVER_PORT))
-    s.close()
-except OSError:
-    sys.exit(1)
-" 2>/dev/null; do
-    tries=$((tries + 1))
-    if [[ "$tries" -ge "$max_tries" ]]; then
-      die "port ${SERVER_PORT} did not become bindable after ${max_tries}s"
-    fi
-    sleep 1
-  done
-}
-
-wait_for_health() {
-  local tries=0
-  local max_tries=$((MAX_WAIT_SECONDS))
-
-  until curl -fsS "http://127.0.0.1:${SERVER_PORT}/health" >/dev/null; do
-    tries=$((tries + 1))
-    if [[ "$tries" -ge "$max_tries" ]]; then
-      die "llama-server did not become healthy for ${CURRENT_LABEL} run"
-    fi
-    sleep 1
-  done
 }
 
 verify_server_model() {
@@ -410,7 +349,7 @@ run_completion_eval() {
   SERVER_PID=$!
 
   sleep 1
-  wait_for_health
+  wait_for_health "$SERVER_PORT" "$MAX_WAIT_SECONDS"
   verify_port_owner "$SERVER_PID" "$log_file"
   verify_server_model "$model" "$log_file"
 

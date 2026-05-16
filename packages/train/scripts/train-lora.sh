@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 MODEL="${1:-}"
 CORPUS_DIR="${2:-}"
 ADAPTER_OUT="${3:-}"

@@ -9,7 +9,7 @@ metadata:
 spec:
   node: mac-mini
   enabled: true
-  binary: /Volumes/AI-DATA/src/llama.cpp-atomic/build-shared-cache/bin/llama-server
+  binary: ${env:LLAMA_SERVER_BIN}
   resources:
     expectedMemoryGiB: 6
   target:

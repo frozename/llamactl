@@ -2,16 +2,13 @@
 
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
 usage() {
   cat <<'EOF'
 Usage:
   bash packages/train/scripts/eval-tool-calls.sh
 EOF
-}
-
-die() {
-  echo "error: $*" >&2
-  exit 1
 }
 
 BASE_GGUF="${BASE_GGUF:-}"
@@ -43,44 +40,6 @@ fi
 
 REPORT_FILE="$OUT_DIR/EVAL_REPORT.md"
 RAW_FILE="$OUT_DIR/eval-raw.jsonl"
-
-kill_port() {
-  local pids
-  pids="$(lsof -ti ":$PORT" || true)"
-  if [[ -n "$pids" ]]; then
-    while IFS= read -r pid; do
-      [[ -n "$pid" ]] || continue
-      local comm
-      comm="$(ps -p "$pid" -o comm= 2>/dev/null | tr -d ' ' || true)"
-      if [[ "$comm" != *llama* && "$comm" != llama-server* ]]; then
-        die "refusing to kill non-llama-server pid $pid on port $PORT (comm=$comm)"
-      fi
-      kill -TERM "$pid"
-    done <<< "$pids"
-    for _ in $(seq 1 20); do
-      if ! lsof -ti ":$PORT" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 0.25
-    done
-    if lsof -ti ":$PORT" >/dev/null 2>&1; then
-      pids="$(lsof -ti ":$PORT" || true)"
-      if [[ -n "$pids" ]]; then
-        printf '%s\n' "$pids" | xargs -r kill -9
-      fi
-    fi
-  fi
-}
-
-wait_for_health() {
-  for _ in $(seq 1 60); do
-    if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
-  die "llama-server did not become healthy on port $PORT"
-}
 
 verify_server_model() {
   local expected=$1
@@ -205,7 +164,7 @@ run_config() {
   }
   trap cleanup RETURN
 
-  wait_for_health
+  wait_for_health "$PORT" 60
   verify_server_model "$model"
 
   mapfile -t rows < "$TEST_JSONL"
