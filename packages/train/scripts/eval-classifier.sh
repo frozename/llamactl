@@ -49,6 +49,7 @@ SERVER_PORT=18099
 N_PREDICT=${N_PREDICT:-250}
 TEMPERATURE=0.0
 WRAP_CHAT_TEMPLATE=${WRAP_CHAT_TEMPLATE:-0}
+FRAMING=${FRAMING:-binary}
 MAX_WAIT_SECONDS=180
 
 SERVER_PID=
@@ -264,6 +265,18 @@ extract_gold() {
   '
 }
 
+extract_gold_4way() {
+  printf '%s\n' "$1" | jq -r '
+    if has("classification") then .classification
+    elif has("gold") then .gold
+    elif has("label") then .label
+    elif (.completion | type) == "string" then (try (.completion | fromjson | if has("classification") then .classification else empty end) catch empty)
+    elif (.messages | type) == "array" then (try (.messages | map(select(.role == "assistant")) | .[0].content | fromjson | if has("classification") then .classification else empty end) catch empty)
+    else empty
+    end
+  '
+}
+
 extract_pred_from_response_obj() {
   local response_obj=$1
 
@@ -315,6 +328,64 @@ print(match.group(0) if match else "")
   printf '%s' "$pred_raw"
 }
 
+extract_pred_4way_from_response_obj() {
+  local response_obj=$1
+
+  local pred_raw=""
+  local outer=""
+  local content=""
+  local inner=""
+
+  outer="$(printf '%s' "$response_obj" | jq -c . 2>/dev/null || true)"
+  if [[ -n "$outer" ]]; then
+    pred_raw="$(printf '%s' "$outer" | jq -r '
+      (if has("classification") then .classification else empty end) //
+      (try (.completion | fromjson | if has("classification") then .classification else empty end) catch empty) //
+      empty
+    ' 2>/dev/null || true)"
+    if [[ -n "$pred_raw" ]]; then
+      printf '%s' "$pred_raw"
+      return 0
+    fi
+
+    content="$(printf '%s' "$outer" | jq -r '.content // ""' 2>/dev/null || true)"
+    if [[ -n "$content" ]]; then
+      inner="$(printf '%s' "$content" | python3 -c '
+import re
+import sys
+
+text = sys.stdin.read()
+match = re.search(r"\{(?:[^{}\"]|\"(?:\\.|[^\"])*\")*\}", text, re.S)
+print(match.group(0) if match else "")
+')"
+      if [[ -n "$inner" ]]; then
+        pred_raw="$(printf '%s' "$inner" | jq -r 'if has("classification") then .classification else empty end' 2>/dev/null || true)"
+        if [[ -n "$pred_raw" ]]; then
+          printf '%s' "$pred_raw"
+          return 0
+        fi
+      fi
+    fi
+  fi
+
+  pred_raw="$(printf '%s' "$response_obj" | jq -r '
+    (if has("classification") then .classification else empty end) //
+    (try (.completion | fromjson | if has("classification") then .classification else empty end) catch empty) //
+    (try (.content | fromjson | if has("classification") then .classification else empty end) catch empty) //
+    (try (fromjson | if has("classification") then .classification else empty end) catch empty) //
+    empty
+  ' 2>/dev/null || true)"
+
+  printf '%s' "$pred_raw"
+}
+
+normalize_classification() {
+  case "${1:-}" in
+    missed_registration|recall_miss|memory_ignored|not_memory_related) echo "$1" ;;
+    *) echo "" ;;
+  esac
+}
+
 run_completion_eval() {
   local model=$1
   local lora=$2
@@ -323,9 +394,11 @@ run_completion_eval() {
 
   CURRENT_LABEL=$label
   local log_file="$OUT_DIR/server-${label}.log"
+  local class_metrics_file="$OUT_DIR/${label}-class-metrics.tsv"
   SERVER_LOG_FILE=$log_file
 
   rm -f "$out_file"
+  rm -f "$class_metrics_file"
 
   kill_port
   rm -f "$log_file"
@@ -358,6 +431,10 @@ run_completion_eval() {
   local fp=0
   local fn=0
   local tn=0
+  local classes=(missed_registration recall_miss memory_ignored not_memory_related)
+  local -A class_tp=()
+  local -A class_fp=()
+  local -A class_fn=()
   local rows
   local row
   local row_index=0
@@ -388,12 +465,20 @@ run_completion_eval() {
     if [[ -z "$prompt" ]]; then
       prompt="$(printf '%s\n' "$row" | jq -r '.text // empty')"
     fi
+    if [[ -z "$prompt" ]]; then
+      prompt="$(printf '%s\n' "$row" | jq -r '.messages // [] | map(select(.role == "user")) | .[0].content // empty')"
+    fi
     if [[ "$WRAP_CHAT_TEMPLATE" == "1" ]]; then
       prompt="$(wrap_chat_template "$prompt")"
     fi
 
-    gold="$(extract_gold "$row")"
-    gold_norm="$(normalize_bool "$gold")"
+    if [[ "$FRAMING" == "4way" ]]; then
+      gold="$(extract_gold_4way "$row")"
+      gold_norm="$(normalize_classification "$gold")"
+    else
+      gold="$(extract_gold "$row")"
+      gold_norm="$(normalize_bool "$gold")"
+    fi
 
     payload="$(jq -n --arg p "$prompt" --argjson n "$N_PREDICT" --argjson t "$TEMPERATURE" '{prompt: $p, n_predict: $n, temperature: $t, cache_prompt: true}')"
 
@@ -428,12 +513,20 @@ run_completion_eval() {
 
     response_obj="$(extract_first_json_object "$response")"
     if [[ -n "$response_obj" ]]; then
-      pred_raw="$(extract_pred_from_response_obj "$response_obj")"
+      if [[ "$FRAMING" == "4way" ]]; then
+        pred_raw="$(extract_pred_4way_from_response_obj "$response_obj")"
+      else
+        pred_raw="$(extract_pred_from_response_obj "$response_obj")"
+      fi
       model_text="$(printf '%s' "$response_obj" | jq -r '
         .content // .completion // empty
       ' 2>/dev/null || true)"
     fi
-    pred_norm="$(normalize_bool "$pred_raw")"
+    if [[ "$FRAMING" == "4way" ]]; then
+      pred_norm="$(normalize_classification "$pred_raw")"
+    else
+      pred_norm="$(normalize_bool "$pred_raw")"
+    fi
 
     if [[ -n "$pred_norm" ]]; then
       parsed=true
@@ -445,27 +538,51 @@ run_completion_eval() {
         correct=$((correct + 1))
       fi
 
-      if [[ "$pred_norm" == "true" && "$gold_norm" == "true" ]]; then
-        tp=$((tp + 1))
-      elif [[ "$pred_norm" == "true" && "$gold_norm" == "false" ]]; then
-        fp=$((fp + 1))
-      elif [[ "$pred_norm" == "false" && "$gold_norm" == "true" ]]; then
-        fn=$((fn + 1))
+      if [[ "$FRAMING" == "4way" ]]; then
+        for class in "${classes[@]}"; do
+          if [[ "$pred_norm" == "$class" && "$gold_norm" == "$class" ]]; then
+            class_tp["$class"]=$(( ${class_tp["$class"]:-0} + 1 ))
+          elif [[ "$pred_norm" == "$class" && "$gold_norm" != "$class" ]]; then
+            class_fp["$class"]=$(( ${class_fp["$class"]:-0} + 1 ))
+          elif [[ "$pred_norm" != "$class" && "$gold_norm" == "$class" ]]; then
+            class_fn["$class"]=$(( ${class_fn["$class"]:-0} + 1 ))
+          fi
+        done
       else
-        tn=$((tn + 1))
+        if [[ "$pred_norm" == "true" && "$gold_norm" == "true" ]]; then
+          tp=$((tp + 1))
+        elif [[ "$pred_norm" == "true" && "$gold_norm" == "false" ]]; then
+          fp=$((fp + 1))
+        elif [[ "$pred_norm" == "false" && "$gold_norm" == "true" ]]; then
+          fn=$((fn + 1))
+        else
+          tn=$((tn + 1))
+        fi
       fi
     fi
 
     local pred_json
-    pred_json="$(jq -nc \
-      --argjson i "$idx" \
-      --arg gold "$gold_norm" \
-      --arg parsed "$parsed" \
-      --arg pred "$pred_norm" \
-      --arg http_code "$http_code" \
-      --arg model_text "$model_text" \
-      --arg raw_response "$raw_response" \
-      '{idx: $i, gold: (if $gold == "true" then true elif $gold == "false" then false else null end), parsed: ($parsed == "true"), pred: (if $pred == "true" then true elif $pred == "false" then false else null end), http_code: $http_code, model_text: $model_text, raw_response: $raw_response}')"
+    if [[ "$FRAMING" == "4way" ]]; then
+      pred_json="$(jq -nc \
+        --argjson i "$idx" \
+        --arg gold "$gold_norm" \
+        --arg parsed "$parsed" \
+        --arg pred "$pred_norm" \
+        --arg http_code "$http_code" \
+        --arg model_text "$model_text" \
+        --arg raw_response "$raw_response" \
+        '{idx: $i, gold: $gold, parsed: ($parsed == "true"), pred: $pred, http_code: $http_code, model_text: $model_text, raw_response: $raw_response}')"
+    else
+      pred_json="$(jq -nc \
+        --argjson i "$idx" \
+        --arg gold "$gold_norm" \
+        --arg parsed "$parsed" \
+        --arg pred "$pred_norm" \
+        --arg http_code "$http_code" \
+        --arg model_text "$model_text" \
+        --arg raw_response "$raw_response" \
+        '{idx: $i, gold: (if $gold == "true" then true elif $gold == "false" then false else null end), parsed: ($parsed == "true"), pred: (if $pred == "true" then true elif $pred == "false" then false else null end), http_code: $http_code, model_text: $model_text, raw_response: $raw_response}')"
+    fi
     printf '%s\n' "$pred_json" >>"$out_file"
   done
 
@@ -476,33 +593,74 @@ run_completion_eval() {
   kill -9 "$SERVER_PID" >/dev/null 2>&1 || true
   SERVER_PID=
 
-  local accuracy precision recall f1 parse_rate
+  local accuracy precision recall f1 parse_rate macro_f1
   local pos_count
   local pos_in_gold
-  pos_count=$((tp + fn))
-  if [[ "$total" -eq 0 ]]; then
-    accuracy="0.0000"
-  else
+  if [[ "$FRAMING" == "4way" ]]; then
     accuracy="$(awk -v c="$correct" -v t="$total" 'BEGIN { printf "%.4f", c / t }')"
-  fi
-  if [[ "$tp" -eq 0 && "$fp" -eq 0 ]]; then
-    precision="0.0000"
+    macro_f1="0.0000"
+    local class_lines=()
+    local class
+    for class in "${classes[@]}"; do
+      local ctp cfp cfn cprec crec cf1
+      ctp=${class_tp["$class"]:-0}
+      cfp=${class_fp["$class"]:-0}
+      cfn=${class_fn["$class"]:-0}
+      if [[ "$ctp" -eq 0 && "$cfp" -eq 0 ]]; then
+        cprec="0.0000"
+      else
+        cprec="$(awk -v tp="$ctp" -v fp="$cfp" 'BEGIN { printf "%.4f", tp / (tp + fp) }')"
+      fi
+      if [[ "$ctp" -eq 0 && "$cfn" -eq 0 ]]; then
+        crec="0.0000"
+      else
+        crec="$(awk -v tp="$ctp" -v fn="$cfn" 'BEGIN { printf "%.4f", tp / (tp + fn) }')"
+      fi
+      if [[ "$(awk -v p="$cprec" -v r="$crec" 'BEGIN { if ((p + r) == 0) print "1"; else print "0" }')" == "1" ]]; then
+        cf1="0.0000"
+      else
+        cf1="$(awk -v p="$cprec" -v r="$crec" 'BEGIN { printf "%.4f", (2 * p * r) / (p + r) }')"
+      fi
+      macro_f1="$(awk -v a="$macro_f1" -v b="$cf1" 'BEGIN { printf "%.4f", a + b }')"
+      class_lines+=("$class|$ctp|$cfp|$cfn|$cprec|$crec|$cf1")
+    done
+    macro_f1="$(awk -v s="$macro_f1" 'BEGIN { printf "%.4f", s / 4 }')"
+    printf '%s\n' "${class_lines[@]}" >"$class_metrics_file"
+    precision="$macro_f1"
+    recall="$macro_f1"
+    f1="$macro_f1"
+    pos_count=0
   else
-    precision="$(awk -v tp="$tp" -v fp="$fp" 'BEGIN { printf "%.4f", tp / (tp + fp) }')"
-  fi
-  if [[ "$tp" -eq 0 && "$fn" -eq 0 ]]; then
-    recall="0.0000"
-  else
-    recall="$(awk -v tp="$tp" -v fn="$fn" 'BEGIN { printf "%.4f", tp / (tp + fn) }')"
-  fi
-  if [[ "$(awk -v p="$precision" -v r="$recall" 'BEGIN { if ((p + r) == 0) print "1"; else print "0" }')" == "1" ]]; then
-    f1="0.0000"
-  else
-    f1="$(awk -v p="$precision" -v r="$recall" 'BEGIN { printf "%.4f", (2 * p * r) / (p + r) }')"
+    pos_count=$((tp + fn))
+    if [[ "$total" -eq 0 ]]; then
+      accuracy="0.0000"
+    else
+      accuracy="$(awk -v c="$correct" -v t="$total" 'BEGIN { printf "%.4f", c / t }')"
+    fi
+    if [[ "$tp" -eq 0 && "$fp" -eq 0 ]]; then
+      precision="0.0000"
+    else
+      precision="$(awk -v tp="$tp" -v fp="$fp" 'BEGIN { printf "%.4f", tp / (tp + fp) }')"
+    fi
+    if [[ "$tp" -eq 0 && "$fn" -eq 0 ]]; then
+      recall="0.0000"
+    else
+      recall="$(awk -v tp="$tp" -v fn="$fn" 'BEGIN { printf "%.4f", tp / (tp + fn) }')"
+    fi
+    if [[ "$(awk -v p="$precision" -v r="$recall" 'BEGIN { if ((p + r) == 0) print "1"; else print "0" }')" == "1" ]]; then
+      f1="0.0000"
+    else
+      f1="$(awk -v p="$precision" -v r="$recall" 'BEGIN { printf "%.4f", (2 * p * r) / (p + r) }')"
+    fi
+    macro_f1="$f1"
   fi
   parse_rate="$(awk -v p="$parsed_count" -v t="$total" 'BEGIN { printf "%.4f", p / t }')"
 
-  printf '%s\n' "$parsed_count|$correct|$tp|$fp|$fn|$accuracy|$precision|$recall|$f1|$parse_rate|$total|$idx|$pos_count"
+  if [[ "$FRAMING" == "4way" ]]; then
+    printf '%s\n' "$parsed_count|$correct|$accuracy|$macro_f1|$parse_rate|$total|$idx|${class_lines[*]}"
+  else
+    printf '%s\n' "$parsed_count|$correct|$tp|$fp|$fn|$accuracy|$precision|$recall|$f1|$parse_rate|$total|$idx|$pos_count"
+  fi
 }
 
 collect_disagreements() {
@@ -544,21 +702,33 @@ read -r ADAPTER_METRICS <<<"$(run_completion_eval "$BASE_GGUF" "$ADAPTER_GGUF" "
 
 read -r BASE_METRICS <<<"$(run_completion_eval "$BASE_GGUF" "" "$PREDICTIONS_BASE" base)"
 
-IFS='|' read -r ADP_PARSED ADP_CORRECT ADP_TP ADP_FP ADP_FN ADP_ACC ADP_PREC ADP_RECALL ADP_F1 ADP_PARSE_RATE ADP_TOTAL ADP_IDX ADP_POS <<<"$ADAPTER_METRICS"
-IFS='|' read -r BASE_PARSED BASE_CORRECT BASE_TP BASE_FP BASE_FN BASE_ACC BASE_PREC BASE_RECALL BASE_F1 BASE_PARSE_RATE BASE_TOTAL BASE_IDX BASE_POS <<<"$BASE_METRICS"
+if [[ "$FRAMING" == "4way" ]]; then
+  IFS='|' read -r ADP_PARSED ADP_CORRECT ADP_ACC ADP_F1 ADP_PARSE_RATE ADP_TOTAL ADP_IDX ADP_CLASSES <<<"$ADAPTER_METRICS"
+  IFS='|' read -r BASE_PARSED BASE_CORRECT BASE_ACC BASE_F1 BASE_PARSE_RATE BASE_TOTAL BASE_IDX BASE_CLASSES <<<"$BASE_METRICS"
+else
+  IFS='|' read -r ADP_PARSED ADP_CORRECT ADP_TP ADP_FP ADP_FN ADP_ACC ADP_PREC ADP_RECALL ADP_F1 ADP_PARSE_RATE ADP_TOTAL ADP_IDX ADP_POS <<<"$ADAPTER_METRICS"
+  IFS='|' read -r BASE_PARSED BASE_CORRECT BASE_TP BASE_FP BASE_FN BASE_ACC BASE_PREC BASE_RECALL BASE_F1 BASE_PARSE_RATE BASE_TOTAL BASE_IDX BASE_POS <<<"$BASE_METRICS"
+fi
 
 if [[ "$ADP_TOTAL" -ne "$BASE_TOTAL" ]]; then
   die "row count mismatch between runs: adapter=$ADP_TOTAL base=$BASE_TOTAL"
 fi
 
 DELTA_ACC="$(awk -v a="$ADP_ACC" -v b="$BASE_ACC" 'BEGIN { printf "%.4f", a - b }')"
-DELTA_PREC="$(awk -v a="$ADP_PREC" -v b="$BASE_PREC" 'BEGIN { printf "%.4f", a - b }')"
-DELTA_RECALL="$(awk -v a="$ADP_RECALL" -v b="$BASE_RECALL" 'BEGIN { printf "%.4f", a - b }')"
 DELTA_F1="$(awk -v a="$ADP_F1" -v b="$BASE_F1" 'BEGIN { printf "%.4f", a - b }')"
 DELTA_PARSE="$(awk -v a="$ADP_PARSE_RATE" -v b="$BASE_PARSE_RATE" 'BEGIN { printf "%.4f", a - b }')"
+if [[ "$FRAMING" != "4way" ]]; then
+  DELTA_PREC="$(awk -v a="$ADP_PREC" -v b="$BASE_PREC" 'BEGIN { printf "%.4f", a - b }')"
+  DELTA_RECALL="$(awk -v a="$ADP_RECALL" -v b="$BASE_RECALL" 'BEGIN { printf "%.4f", a - b }')"
+fi
 
-POSITIVE_COUNT="$(jq -r 'if has("memory_related") then .memory_related elif has("gold") then .gold elif has("label") then .label elif (.completion | type) == "string" then (try (.completion | fromjson | if has("memory_related") then .memory_related else empty end) catch empty) else empty end' "$TEST_JSONL" | awk 'tolower($0)=="true"{p++} END {print p+0}')"
-NEGATIVE_COUNT="$(jq -r 'if has("memory_related") then .memory_related elif has("gold") then .gold elif has("label") then .label elif (.completion | type) == "string" then (try (.completion | fromjson | if has("memory_related") then .memory_related else empty end) catch empty) else empty end' "$TEST_JSONL" | awk 'tolower($0)=="false"{n++} END {print n+0}')"
+if [[ "$FRAMING" == "4way" ]]; then
+  POSITIVE_COUNT="$(jq -r 'if has("classification") then .classification elif has("gold") then .gold elif has("label") then .label elif (.completion | type) == "string" then (try (.completion | fromjson | if has("classification") then .classification else empty end) catch empty) else empty end' "$TEST_JSONL" | awk 'NF{p++} END {print p+0}')"
+  NEGATIVE_COUNT="0"
+else
+  POSITIVE_COUNT="$(jq -r 'if has("memory_related") then .memory_related elif has("gold") then .gold elif has("label") then .label elif (.completion | type) == "string" then (try (.completion | fromjson | if has("memory_related") then .memory_related else empty end) catch empty) else empty end' "$TEST_JSONL" | awk 'tolower($0)=="true"{p++} END {print p+0}')"
+  NEGATIVE_COUNT="$(jq -r 'if has("memory_related") then .memory_related elif has("gold") then .gold elif has("label") then .label elif (.completion | type) == "string" then (try (.completion | fromjson | if has("memory_related") then .memory_related else empty end) catch empty) else empty end' "$TEST_JSONL" | awk 'tolower($0)=="false"{n++} END {print n+0}')"
+fi
 
 BASE_SIZE=$(stat -f %z "$BASE_GGUF")
 BASE_MTIME=$(stat -f '%Sm' "$BASE_GGUF")
@@ -566,7 +736,7 @@ ADAPTER_SIZE=$(stat -f %z "$ADAPTER_GGUF")
 ADAPTER_MTIME=$(stat -f '%Sm' "$ADAPTER_GGUF")
 
 cat >"$EVAL_REPORT" <<EOF
-# Memory-efficacy binary classifier eval
+# Memory-efficacy ${FRAMING} classifier eval
 
 ## Setup
 - Base GGUF: $BASE_GGUF
@@ -577,17 +747,48 @@ cat >"$EVAL_REPORT" <<EOF
 - WRAP_CHAT_TEMPLATE: $WRAP_CHAT_TEMPLATE
 
 ## Results
+EOF
+if [[ "$FRAMING" == "4way" ]]; then
+cat >>"$EVAL_REPORT" <<EOF
+|        | accuracy | macro-F1 | parse rate |
+|--------|----------|----------|------------|
+| base   | $BASE_ACC | $BASE_F1 | $BASE_PARSE_RATE |
+| adapter| $ADP_ACC | $ADP_F1 | $ADP_PARSE_RATE |
+| delta  | $DELTA_ACC | $DELTA_F1 | $DELTA_PARSE |
+
+## Per-class metrics
+EOF
+  {
+    echo "| class | base P | base R | base F1 | adapter P | adapter R | adapter F1 |"
+    echo "|-------|--------|--------|---------|-----------|-----------|------------|"
+    paste "$OUT_DIR/base-class-metrics.tsv" "$OUT_DIR/adapter-class-metrics.tsv" | while IFS=$'\t' read -r base_line adapter_line; do
+      base_class="$(printf '%s' "$base_line" | cut -d'|' -f1)"
+      base_prec="$(printf '%s' "$base_line" | cut -d'|' -f4)"
+      base_rec="$(printf '%s' "$base_line" | cut -d'|' -f5)"
+      base_f1="$(printf '%s' "$base_line" | cut -d'|' -f6)"
+      adapter_prec="$(printf '%s' "$adapter_line" | cut -d'|' -f4)"
+      adapter_rec="$(printf '%s' "$adapter_line" | cut -d'|' -f5)"
+      adapter_f1="$(printf '%s' "$adapter_line" | cut -d'|' -f6)"
+      echo "| $base_class | $base_prec | $base_rec | $base_f1 | $adapter_prec | $adapter_rec | $adapter_f1 |"
+    done
+  } >>"$EVAL_REPORT"
+else
+cat >>"$EVAL_REPORT" <<EOF
 |        | accuracy | precision (T) | recall (T) | F1 (T) | parse rate |
 |--------|----------|---------------|------------|--------|------------|
 | base   | $BASE_ACC | $BASE_PREC | $BASE_RECALL | $BASE_F1 | $BASE_PARSE_RATE |
 | adapter| $ADP_ACC | $ADP_PREC | $ADP_RECALL | $ADP_F1 | $ADP_PARSE_RATE |
 | delta  | $DELTA_ACC | $DELTA_PREC | $DELTA_RECALL | $DELTA_F1 | $DELTA_PARSE |
-
-## Sample disagreements (first 5 rows where adapter ≠ base)
-[$(
-  collect_disagreements "$PREDICTIONS_BASE" "$PREDICTIONS_ADAPTER" | sed -n '1,5p'
-)]
 EOF
+fi
+
+{
+  echo
+  echo "## Sample disagreements (first 5 rows where adapter ≠ base)"
+  echo '```'
+  collect_disagreements "$PREDICTIONS_BASE" "$PREDICTIONS_ADAPTER" | sed -n '1,5p'
+  echo '```'
+} >>"$EVAL_REPORT"
 
 echo "Wrote $EVAL_REPORT"
 cat "$EVAL_REPORT"
