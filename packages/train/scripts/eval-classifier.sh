@@ -79,13 +79,19 @@ kill_port() {
   local pids
   pids="$(lsof -ti ":$SERVER_PORT" || true)"
   if [[ -n "$pids" ]]; then
-    printf '%s\n' "$pids" | xargs -r kill -9
+    printf '%s\n' "$pids" | xargs -r kill -TERM
     for _ in $(seq 1 20); do
       if ! lsof -ti ":$SERVER_PORT" >/dev/null 2>&1; then
         break
       fi
       sleep 0.25
     done
+    if lsof -ti ":$SERVER_PORT" >/dev/null 2>&1; then
+      pids="$(lsof -ti ":$SERVER_PORT" || true)"
+      if [[ -n "$pids" ]]; then
+        printf '%s\n' "$pids" | xargs -r kill -9
+      fi
+    fi
   fi
 
   wait_port_bindable
@@ -393,7 +399,8 @@ run_completion_eval() {
 
     response=""
     http_code=""
-    for _ in $(seq 1 60); do
+    delay=1
+    for _ in $(seq 1 6); do
       response_file="$(mktemp)"
       http_code="$(curl -sS -w '%{http_code}' -o "$response_file" -H 'Content-Type: application/json' -d "$payload" "http://127.0.0.1:${SERVER_PORT}/completion")"
       response="$(cat "$response_file")"
@@ -402,7 +409,13 @@ run_completion_eval() {
         break
       fi
       if [[ "$http_code" == "503" ]]; then
-        sleep 0.5
+        sleep "$delay"
+        if [[ "$delay" -lt 8 ]]; then
+          delay=$(( delay * 2 ))
+          if [[ "$delay" -gt 8 ]]; then
+            delay=8
+          fi
+        fi
         continue
       fi
       break

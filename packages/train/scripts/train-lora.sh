@@ -344,6 +344,7 @@ for prompt in prompts:
     "messages": [{"role": "user", "content": prompt}],
     "max_tokens": 120,
     "temperature": 0.0,
+    "chat_template_kwargs": {"enable_thinking": False},
   }).encode("utf-8")
 
   raw = ""
