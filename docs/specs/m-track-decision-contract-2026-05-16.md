@@ -114,6 +114,19 @@ Updated validation slice priority:
 - If few-shot lifts minority recall ≥ +10 pp: ship the prompt; retire the LoRA half of the track.
 - If few-shot doesn't move the needle: run two-stage classifier (part C2, ~2 hours). If that also fails, then larger-config LoRA (part C3, ~3-4 hours).
 
+### Part C outcome (2026-05-16)
+
+See `docs/notes/m-track-fewshot-result-2026-05-16.md`. Few-shot prompting **passed by a 4× margin**:
+
+- Macro-F1: 0.6868 → 0.8931 (+20.6 pp, vs +5 pp bar)
+- `missed_registration` recall: 0.75 → 1.00
+- `recall_miss` recall: 0.50 → 0.75
+- `memory_ignored` recall: 0.25 → 0.75
+
+The adapter is still byte-identical to base under few-shot. **The LoRA half of the M-track is now frozen by the contract's part-C decision rule.** Part C2 (two-stage) and C3 (larger LoRA) are NOT triggered.
+
+Open ship item: wire the 3-exemplar prompt into penumbra's `memory_efficacy_*` codepath. This is a separate dispatch in the penumbra repo, not llamactl.
+
 ## How this contract gets revised
 
 Edit this file with a `## Revision YYYY-MM-DD` block at the bottom. Do not delete prior text — the audit trail matters more than the cleanliness of the document.
