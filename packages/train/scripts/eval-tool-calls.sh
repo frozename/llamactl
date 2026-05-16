@@ -48,7 +48,15 @@ kill_port() {
   local pids
   pids="$(lsof -ti ":$PORT" || true)"
   if [[ -n "$pids" ]]; then
-    printf '%s\n' "$pids" | xargs -r kill -TERM
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] || continue
+      local comm
+      comm="$(ps -p "$pid" -o comm= 2>/dev/null | tr -d ' ' || true)"
+      if [[ "$comm" != *llama* && "$comm" != llama-server* ]]; then
+        die "refusing to kill non-llama-server pid $pid on port $PORT (comm=$comm)"
+      fi
+      kill -TERM "$pid"
+    done <<< "$pids"
     for _ in $(seq 1 20); do
       if ! lsof -ti ":$PORT" >/dev/null 2>&1; then
         break
@@ -129,16 +137,44 @@ content = message.get("content") or ""
 
 positive = bool(gold_calls)
 if positive:
-    success = bool(tool_calls) and tool_calls[0].get("function", {}).get("name") == gold_calls[0].get("function", {}).get("name")
+    def canonicalize(args: str) -> str:
+        try:
+            return json.dumps(json.loads(args), sort_keys=True, separators=(",", ":"))
+        except Exception:
+            return args.strip()
+
+    args_ok = len(tool_calls) == len(gold_calls)
+    success = len(tool_calls) == len(gold_calls)
+    if success:
+        for predicted_call, gold_call in zip(tool_calls, gold_calls):
+            predicted_function = predicted_call.get("function", {})
+            gold_function = gold_call.get("function", {})
+            if predicted_function.get("name") != gold_function.get("name"):
+                success = False
+                args_ok = False
+                break
+            if canonicalize(predicted_function.get("arguments", "")) != canonicalize(gold_function.get("arguments", "")):
+                success = False
+                args_ok = False
+                break
 else:
     success = not tool_calls and bool(content.strip())
+    args_ok = False
+
+predicted_name = tool_calls[0].get("function", {}).get("name") if tool_calls else ""
+predicted_args = tool_calls[0].get("function", {}).get("arguments", "") if tool_calls else ""
+gold_name = gold_calls[0].get("function", {}).get("name") if gold_calls else ""
+gold_args = gold_calls[0].get("function", {}).get("arguments", "") if gold_calls else ""
 
 print(json.dumps({
     "positive": positive,
     "success": success,
-    "predicted_name": tool_calls[0].get("function", {}).get("name") if tool_calls else "",
+    "args_ok": args_ok,
+    "predicted_name": predicted_name,
+    "predicted_args": predicted_args,
     "predicted_content": content,
-    "gold_name": gold_calls[0].get("function", {}).get("name") if gold_calls else "",
+    "gold_name": gold_name,
+    "gold_args": gold_args,
 }))
 PY
 }
@@ -278,6 +314,25 @@ for line in path.read_text().splitlines():
     rows.append((label, int(succ), int(total), int(pos), int(neg)))
 for label, succ, total, pos, neg in rows:
     print(f"- {label}: {succ}/{total} successes (positive={pos}, negative={neg})")
+PY
+  echo
+  echo "### Row Debug Table"
+  echo
+  python3 - "$OUT_DIR/base.jsonl" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+for line in path.read_text().splitlines():
+    if not line.strip():
+        continue
+    row = json.loads(line)
+    score = row["score"]
+    if score["positive"]:
+        print(f"- {score['gold_name']} | {score['predicted_name']} | {'Y' if score['args_ok'] else 'N'}")
+    else:
+        print(f"- - | - | {'Y' if score['success'] else 'N'}")
 PY
   echo
   echo "## Wall Time"

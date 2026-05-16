@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from collections import Counter
 from pathlib import Path
 
@@ -67,8 +68,12 @@ def _assistant_turn(row: dict[str, object]) -> dict[str, object]:
     return {"role": "assistant", "content": content}
 
 
-def _split_name(index: int) -> str:
-    bucket = index % 10
+def bucket(fid: str) -> int:
+    return int(hashlib.md5(fid.encode()).hexdigest()[:8], 16) % 10
+
+
+def _split_name(bucket_value: int) -> str:
+    bucket = bucket_value
     if bucket < 8:
         return "train"
     if bucket == 8:
@@ -81,9 +86,11 @@ def main() -> None:
     split_rows: dict[str, list[dict[str, object]]] = {split: [] for split in SPLITS}
     split_counts: Counter[str] = Counter()
     class_counts: dict[str, Counter[str]] = {split: Counter() for split in SPLITS}
+    negative_rows: list[tuple[int, dict[str, object], dict[str, object]]] = []
 
-    for index, row in enumerate(rows):
-        split = _split_name(index)
+    for row in rows:
+        row_id = str(row.get("id", ""))
+        split = _split_name(bucket(row_id))
         messages = row.get("messages")
         tools = row.get("tools")
         tool_choice = row.get("tool_choice")
@@ -97,7 +104,28 @@ def main() -> None:
         }
         split_rows[split].append(prepared)
         split_counts[split] += 1
-        class_counts[split]["positive" if row.get("expected_tool_calls") else "negative"] += 1
+        is_positive = bool(row.get("expected_tool_calls"))
+        class_counts[split]["positive" if is_positive else "negative"] += 1
+        if not is_positive:
+            negative_rows.append((bucket(row_id), row, prepared))
+
+    # Keep at least one negative example in valid/test even when hash bucketing
+    # sends the tiny negative set to train.
+    for target_split, rank in (("test", 1), ("valid", 2)):
+        if class_counts[target_split]["negative"] > 0:
+            continue
+        if len(negative_rows) < rank:
+            continue
+        chosen_bucket, source_row, prepared = sorted(negative_rows, key=lambda item: item[0], reverse=True)[rank - 1]
+        for split in SPLITS:
+            if prepared in split_rows[split]:
+                split_rows[split].remove(prepared)
+                split_counts[split] -= 1
+                class_counts[split]["negative"] -= 1
+                break
+        split_rows[target_split].append(prepared)
+        split_counts[target_split] += 1
+        class_counts[target_split]["negative"] += 1
 
     for split in SPLITS:
         _write_jsonl(ROOT / f"{split}.jsonl", split_rows[split])
