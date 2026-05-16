@@ -122,7 +122,12 @@ else
 fi
 
 log "fetch HF model $MODEL_REPO ${MODEL_REVISION:+@ $MODEL_REVISION}"
-rm -rf "$HF_BASE_DIR"
+REUSE_HF_BASE="${REUSE_HF_BASE:-0}"
+if [[ "$REUSE_HF_BASE" == "1" && -f "$HF_BASE_DIR/config.json" ]]; then
+  log "REUSE_HF_BASE=1 and $HF_BASE_DIR/config.json exists; skipping fetch"
+else
+  rm -rf "$HF_BASE_DIR"
+fi
 if [ ! -f "$CORPUS_DIR/train.jsonl" ] || [ ! -f "$CORPUS_DIR/valid.jsonl" ]; then
   status="FAIL"
   status_reason="corpus missing train.jsonl or valid.jsonl"
@@ -155,7 +160,9 @@ if [ ! -f "$CORPUS_DIR/train.jsonl" ] || [ ! -f "$CORPUS_DIR/valid.jsonl" ]; the
 fi
 
 hf_exit_code=0
-if [ -n "$MODEL_REVISION" ]; then
+if [[ "$REUSE_HF_BASE" == "1" && -f "$HF_BASE_DIR/config.json" ]]; then
+  log "skipping hf download (REUSE_HF_BASE=1)"
+elif [ -n "$MODEL_REVISION" ]; then
   "$VENV_DIR/bin/hf" download "$MODEL_REPO" --revision "$MODEL_REVISION" --local-dir "$HF_BASE_DIR" \
     > "$LOG_DIR/hf-download.log" 2>&1 || hf_exit_code=$?
 else
