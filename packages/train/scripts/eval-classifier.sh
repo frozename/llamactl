@@ -187,9 +187,6 @@ verify_port_owner() {
     die "port ${SERVER_PORT} bound by zombie process ${bound_pid} for ${CURRENT_LABEL} run"
   fi
 
-  if ! grep -qF "$expected_pid" "$log_file"; then
-    :
-  fi
 }
 
 extract_first_json_object() {

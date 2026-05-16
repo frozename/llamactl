@@ -145,7 +145,7 @@ def main() -> None:
             continue
         classification = label.get("classification")
         if classification not in rows_by_class:
-            continue
+            raise ValueError(f"Unknown classification {classification!r} for findingId {finding_id}")
         rows_by_class[classification].append(
             {
                 "findingId": finding_id,
