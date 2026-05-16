@@ -3,16 +3,17 @@
 Seed set for the tool-call grammar corpus focused on cases where base Qwen3 + `--jinja` is not enough.
 
 Distribution:
-- 5 multi-tool rows
-- 5 name-collision rows
-- 5 ambiguous-intent rows
-- 10 schema-edge rows
+- 9 multi-tool rows
+- 13 name-collision rows
+- 8 ambiguous-intent rows
+- 20 schema-edge rows
 
 Purpose:
 - Stress sequential tool planning.
 - Stress tool-name disambiguation.
 - Stress tool-vs-chat judgment on fresh or authoritative facts.
 - Stress schema forms that are likely to shake out grammar generation bugs.
+- The scorer currently accepts prefix match for sequential tool emission, so a correct first-N tool sequence is enough for multi-tool rows.
 
 How to extend:
 - Add hand-written rows only.
