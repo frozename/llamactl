@@ -214,6 +214,108 @@ describe('server.startServer (error paths)', () => {
     }
   });
 
+  test('refuses a non-loopback host bind without allowExternalBind', async () => {
+    const modelDir = join(temp.modelsDir, 'Demo');
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(join(modelDir, 'demo.gguf'), '');
+    const binDir = join(temp.devStorage, 'fake-bin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, 'llama-server'), '#!/bin/sh\nexit 0\n');
+    process.env.LLAMA_CPP_BIN = binDir;
+
+    await expect(startServer({
+      key: TEST_KEY,
+      target: 'Demo/demo.gguf',
+      extraArgs: ['--host', '0.0.0.0'],
+    })).rejects.toThrow('refusing to bind llama-server to 0.0.0.0');
+  });
+
+  test('allows a non-loopback host bind when allowExternalBind is set', async () => {
+    const modelDir = join(temp.modelsDir, 'Demo');
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(join(modelDir, 'demo.gguf'), '');
+    const binDir = join(temp.devStorage, 'fake-bin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, 'llama-server'), '#!/bin/sh\nexit 0\n');
+    process.env.LLAMA_CPP_BIN = binDir;
+    process.env.LLAMA_CPP_HOST = '127.0.0.1';
+    process.env.LLAMA_CPP_PORT = '8080';
+
+    const spawnSpy = spyOn(childProcess, 'spawn')
+      .mockImplementation((() =>
+        ({
+          pid: process.pid,
+          unref() {},
+        }) as any));
+    let fetchCalls = 0;
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      fetchCalls += 1;
+      if (fetchCalls === 1) {
+        throw new Error('connection refused');
+      }
+      return new Response('ok', { status: 200 }) as any;
+    }) as any);
+
+    try {
+      const result = await startServer({
+        key: TEST_KEY,
+        target: 'Demo/demo.gguf',
+        extraArgs: ['--host', '0.0.0.0'],
+        allowExternalBind: true,
+      });
+      expect(result.ok).toBe(true);
+      expect(spawnSpy).toHaveBeenCalled();
+      const fullArgs = spawnSpy.mock.calls[0]?.[1] ?? [];
+      expect(fullArgs).toContain('--host');
+      expect(fullArgs).toContain('0.0.0.0');
+    } finally {
+      spawnSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test('allows loopback host binds without allowExternalBind', async () => {
+    const modelDir = join(temp.modelsDir, 'Demo');
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(join(modelDir, 'demo.gguf'), '');
+    const binDir = join(temp.devStorage, 'fake-bin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, 'llama-server'), '#!/bin/sh\nexit 0\n');
+    process.env.LLAMA_CPP_BIN = binDir;
+    process.env.LLAMA_CPP_HOST = '127.0.0.1';
+    process.env.LLAMA_CPP_PORT = '8080';
+
+    const spawnSpy = spyOn(childProcess, 'spawn')
+      .mockImplementation((() =>
+        ({
+          pid: process.pid,
+          unref() {},
+        }) as any));
+    let fetchCalls = 0;
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      fetchCalls += 1;
+      if (fetchCalls === 1) {
+        throw new Error('connection refused');
+      }
+      return new Response('ok', { status: 200 }) as any;
+    }) as any);
+
+    try {
+      const result = await startServer({
+        key: TEST_KEY,
+        target: 'Demo/demo.gguf',
+        extraArgs: ['--host=127.0.0.1'],
+      });
+      expect(result.ok).toBe(true);
+      expect(spawnSpy).toHaveBeenCalled();
+      const fullArgs = spawnSpy.mock.calls[0]?.[1] ?? [];
+      expect(fullArgs).toContain('--host=127.0.0.1');
+    } finally {
+      spawnSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+  });
+
   test('reports the launched endpoint from serverStatus after a start with an endpoint override', async () => {
     const modelDir = join(temp.modelsDir, 'Demo');
     mkdirSync(modelDir, { recursive: true });

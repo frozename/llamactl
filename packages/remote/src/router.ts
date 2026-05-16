@@ -1652,6 +1652,7 @@ export const router = t.router({
         workload: z.string().min(1),
         target: z.string().min(1),
         extraArgs: z.array(z.string()).optional(),
+        allowExternalBind: z.boolean().optional(),
         endpoint: z.object({
           host: z.string().optional(),
           port: z.number().int().min(1).max(65535).optional(),
@@ -1669,6 +1670,7 @@ export const router = t.router({
             key: { name: input.workload },
             target: input.target,
             extraArgs: input.extraArgs,
+            allowExternalBind: input.allowExternalBind,
             endpoint: input.endpoint,
             binary: input.binary,
             timeoutSeconds: input.timeoutSeconds,

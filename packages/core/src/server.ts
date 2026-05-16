@@ -343,6 +343,7 @@ export interface StartServerOptions {
   target: string;
   /** Additional arguments appended to the llama-server invocation. */
   extraArgs?: string[];
+  allowExternalBind?: boolean;
   /** Optional endpoint override from the workload manifest. */
   endpoint?: { host?: string; port?: number };
   /** Optional absolute path to the llama-server binary. */
@@ -589,12 +590,14 @@ export async function startServer(
   launchArgs.push(...filterProfileArgs(profileArgs, extra));
   launchArgs.push(...extra);
 
+  validateHostBind(launchArgs, opts.allowExternalBind);
   const pid = await launchBackground({
     bin,
     modelPath,
     args: launchArgs,
     resolved,
     key,
+    allowExternalBind: opts.allowExternalBind,
     host: launchHost,
     port: launchPort,
     onEvent: opts.onEvent,
@@ -668,6 +671,7 @@ export async function startServer(
       args: retryArgs,
       resolved,
       key,
+      allowExternalBind: opts.allowExternalBind,
       host: launchHost,
       port: launchPort,
       onEvent: opts.onEvent,
@@ -749,10 +753,29 @@ interface LaunchArgs {
   args: string[];
   resolved: ResolvedEnv;
   key: WorkloadKey;
+  allowExternalBind?: boolean;
   host?: string;
   port?: number | string;
   binary?: string;
   onEvent?: (e: ServerEvent) => void;
+}
+
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+
+function findArgValue(args: readonly string[], flag: string): string | null {
+  for (let i = 0; i < args.length; i += 1) {
+    const tok = args[i]!;
+    if (tok === flag) return args[i + 1] ?? null;
+    if (tok.startsWith(flag + '=')) return tok.slice(flag.length + 1);
+  }
+  return null;
+}
+
+function validateHostBind(args: readonly string[], allowExternalBind: boolean | undefined): void {
+  const host = findArgValue(args, '--host');
+  if (host === null || LOOPBACK_HOSTS.has(host)) return;
+  if (allowExternalBind === true) return;
+  throw new Error(`refusing to bind llama-server to ${host} without \`allowExternalBind: true\` in the workload spec`);
 }
 
 async function launchBackground(opts: LaunchArgs): Promise<number> {
@@ -781,6 +804,7 @@ async function launchBackground(opts: LaunchArgs): Promise<number> {
       : ['-ngl', '999']),
     ...opts.args,
   ];
+  validateHostBind(fullArgs, opts.allowExternalBind);
   const child = spawn(opts.bin, fullArgs, {
     stdio: ['ignore', logFd, logFd],
     detached: true,

@@ -39,6 +39,7 @@ export interface WorkloadClient {
         workload: string;
         target: string;
         extraArgs?: string[];
+        allowExternalBind?: boolean;
         endpoint?: { host?: string; port?: number };
         binary?: string;
         timeoutSeconds?: number;
@@ -560,6 +561,7 @@ export async function applyOne(
           workload: manifest.metadata.name,
           target: desiredRel,
           ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
+          ...(manifest.spec.allowExternalBind ? { allowExternalBind: true } : {}),
           ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
           ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
           timeoutSeconds: manifest.spec.timeoutSeconds,

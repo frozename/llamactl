@@ -81,6 +81,12 @@ export const ModelRunSpecSchema = z.object({
    * visible and manifests validate cleanly.
    */
   gateway: z.boolean().default(false),
+  /**
+   * Opt-in for binds outside the loopback set. Without this, the core
+   * launch boundary refuses `--host` values that would expose the
+   * server beyond localhost.
+   */
+  allowExternalBind: z.boolean().default(false),
 });
 
 export const ModelRunConditionSchema = z.object({
