@@ -86,6 +86,31 @@ kill_port() {
       sleep 0.25
     done
   fi
+
+  wait_port_bindable
+}
+
+wait_port_bindable() {
+  local tries=0
+  local max_tries=60
+
+  until python3 -c "
+import socket
+import sys
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    s.bind(('127.0.0.1', $SERVER_PORT))
+    s.close()
+except OSError:
+    sys.exit(1)
+" 2>/dev/null; do
+    tries=$((tries + 1))
+    if [[ "$tries" -ge "$max_tries" ]]; then
+      die "port ${SERVER_PORT} did not become bindable after ${max_tries}s"
+    fi
+    sleep 1
+  done
 }
 
 wait_for_health() {
