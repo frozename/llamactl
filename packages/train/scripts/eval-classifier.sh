@@ -46,7 +46,7 @@ EVAL_REPORT="$OUT_DIR/EVAL_REPORT.md"
 SERVER_LOG_BASE="$OUT_DIR/server-base.log"
 SERVER_LOG_ADAPTER="$OUT_DIR/server-adapter.log"
 SERVER_PORT=18099
-N_PREDICT=150
+N_PREDICT=${N_PREDICT:-250}
 TEMPERATURE=0.0
 MAX_WAIT_SECONDS=180
 
@@ -160,27 +160,41 @@ verify_port_owner() {
 }
 
 extract_first_json_object() {
-  printf '%s' "$1" | awk '
-    {
-      for (i = 1; i <= length($0); i++) {
-        ch = substr($0, i, 1)
-        if (ch == "{") {
-          depth++
-        }
-        if (depth > 0) {
-          obj = obj ch
-        }
-        if (ch == "}") {
-          if (depth > 0) {
-            depth--
-          }
-          if (depth == 0) {
-            print obj
-            exit 0
-          }
-        }
-      }
-    }'
+  printf '%s' "$1" | python3 -c '
+import sys
+
+text = sys.stdin.read()
+start = None
+depth = 0
+in_string = False
+escape = False
+
+for i, ch in enumerate(text):
+    if start is None:
+        if ch == "{":
+            start = i
+            depth = 1
+        continue
+
+    if in_string:
+        if escape:
+            escape = False
+        elif ch == "\\":
+            escape = True
+        elif ch == "\"":
+            in_string = False
+        continue
+
+    if ch == "\"":
+        in_string = True
+    elif ch == "{":
+        depth += 1
+    elif ch == "}":
+        depth -= 1
+        if depth == 0:
+            print(text[start : i + 1])
+            raise SystemExit(0)
+'
 }
 
 normalize_bool() {
@@ -199,11 +213,47 @@ extract_pred_from_response_obj() {
   local response_obj=$1
 
   local pred_raw=""
+  local outer=""
+  local content=""
+  local inner=""
+
+  outer="$(printf '%s' "$response_obj" | jq -c . 2>/dev/null || true)"
+  if [[ -n "$outer" ]]; then
+    pred_raw="$(printf '%s' "$outer" | jq -r '
+      .memory_related //
+      (try (.completion | fromjson | .memory_related) catch empty) //
+      empty
+    ' 2>/dev/null || true)"
+    if [[ -n "$pred_raw" ]]; then
+      printf '%s' "$pred_raw"
+      return 0
+    fi
+
+    content="$(printf '%s' "$outer" | jq -r '.content // ""' 2>/dev/null || true)"
+    if [[ -n "$content" ]]; then
+      inner="$(printf '%s' "$content" | python3 -c '
+import re
+import sys
+
+text = sys.stdin.read()
+match = re.search(r"\{(?:[^{}\"]|\"(?:\\.|[^\"])*\")*\}", text, re.S)
+print(match.group(0) if match else "")
+')"
+      if [[ -n "$inner" ]]; then
+        pred_raw="$(printf '%s' "$inner" | jq -r '.memory_related // empty' 2>/dev/null || true)"
+        if [[ -n "$pred_raw" ]]; then
+          printf '%s' "$pred_raw"
+          return 0
+        fi
+      fi
+    fi
+  fi
+
   pred_raw="$(printf '%s' "$response_obj" | jq -r '
     .memory_related //
     (try (.completion | fromjson | .memory_related) catch empty) //
-    (try (fromjson | .memory_related) catch empty) //
     (try (.content | fromjson | .memory_related) catch empty) //
+    (try (fromjson | .memory_related) catch empty) //
     empty
   ' 2>/dev/null || true)"
 
@@ -274,7 +324,8 @@ run_completion_eval() {
     local response
     local response_file
     local http_code
-    local response_head
+    local model_text=""
+    local raw_response=""
     local payload
     local response_obj
 
@@ -308,11 +359,14 @@ run_completion_eval() {
       response=""
     fi
 
-    response_head="$(printf '%s' "$response" | tr '\n' ' ' | cut -c 1-180)"
+    raw_response="$response"
 
     response_obj="$(extract_first_json_object "$response")"
     if [[ -n "$response_obj" ]]; then
       pred_raw="$(extract_pred_from_response_obj "$response_obj")"
+      model_text="$(printf '%s' "$response_obj" | jq -r '
+        .content // .completion // empty
+      ' 2>/dev/null || true)"
     fi
     pred_norm="$(normalize_bool "$pred_raw")"
 
@@ -343,8 +397,10 @@ run_completion_eval() {
       --arg gold "$gold_norm" \
       --arg parsed "$parsed" \
       --arg pred "$pred_norm" \
-      --arg head "$response_head" \
-      '{idx: $i, gold: (if $gold == "true" then true elif $gold == "false" then false else null end), parsed: ($parsed == "true"), pred: (if $pred == "true" then true elif $pred == "false" then false else null end), response_head: $head}')"
+      --arg http_code "$http_code" \
+      --arg model_text "$model_text" \
+      --arg raw_response "$raw_response" \
+      '{idx: $i, gold: (if $gold == "true" then true elif $gold == "false" then false else null end), parsed: ($parsed == "true"), pred: (if $pred == "true" then true elif $pred == "false" then false else null end), http_code: $http_code, model_text: $model_text, raw_response: $raw_response}')"
     printf '%s\n' "$pred_json" >>"$out_file"
   done
 
@@ -395,21 +451,21 @@ collect_disagreements() {
     local gold
     local base_pred
     local adapter_pred
-    local base_head
-    local adapter_head
-    local base_head_json
-    local adapter_head_json
+    local base_model_text
+    local adapter_model_text
+    local base_model_text_json
+    local adapter_model_text_json
     idx="$(printf '%s' "$base_line" | jq -r '.idx')"
     gold="$(printf '%s' "$base_line" | jq -r '.gold // null')"
     base_pred="$(printf '%s' "$base_line" | jq -r '.pred // null')"
     adapter_pred="$(printf '%s' "$adapter_line" | jq -r '.pred // null')"
-    base_head="$(printf '%s' "$base_line" | jq -r '.response_head // ""')"
-    adapter_head="$(printf '%s' "$adapter_line" | jq -r '.response_head // ""')"
-    base_head_json="$(printf '%s' "$base_head" | jq -R .)"
-    adapter_head_json="$(printf '%s' "$adapter_head" | jq -R .)"
+    base_model_text="$(printf '%s' "$base_line" | jq -r '.model_text // ""')"
+    adapter_model_text="$(printf '%s' "$adapter_line" | jq -r '.model_text // ""')"
+    base_model_text_json="$(printf '%s' "$base_model_text" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()[:300]))')"
+    adapter_model_text_json="$(printf '%s' "$adapter_model_text" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()[:300]))')"
 
     if [[ "$base_pred" != "$adapter_pred" ]]; then
-      printf '%s\n' "[$idx, $gold, $base_pred, $adapter_pred, $base_head_json, $adapter_head_json]"
+      printf '%s\n' "[$idx, $gold, $base_pred, $adapter_pred, $base_model_text_json, $adapter_model_text_json]"
       count=$((count + 1))
       if [[ "$count" -ge "$max_items" ]]; then
         break
