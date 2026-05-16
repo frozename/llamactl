@@ -1,0 +1,66 @@
+# Qwen 3-8B Q4_K_M on `local` (M4 Pro) — dedicated memory-efficacy judge.
+#
+# Stood up 2026-05-16 pm to validate the few-shot prompt landed at
+# penumbra@2a57160 against the same model the offline eval used.
+# The mac-mini Qwen3-8B at :8090 is shared with home-mgmt (-np 2) and
+# timed out every classifier batch under concurrency=4 (120/120 batch
+# failures in the rebuild run at 21:20 UTC). A dedicated local server
+# eliminates slot contention.
+#
+# Port selection: :8085 — free vs the existing local workloads
+# (gemma4-26b-a4b-mtp-b-1024-local :8181, granite41-8b-long-lived-local :8083).
+#
+# Wire-up: set `PENUMBRA_JUDGE_BASE_URL=http://127.0.0.1:8085` in the
+# daemon plist or via `launchctl setenv`, then reload the daemon. The
+# new `resolveJudgeConfig()` helper (penumbra@cdbe013) will log the
+# resolved baseUrl + usedDefault* at runner construction.
+#
+# Apply:
+#   llamactl --node local apply -f templates/workloads/qwen3-8b-local.yaml
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: qwen3-8b-local
+  labels:
+    family: qwen3
+    role: judge
+    agents: "memory-efficacy"
+spec:
+  node: local
+  enabled: true
+  binary: /Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server
+  resources:
+    expectedMemoryGiB: 8
+  target:
+    kind: rel
+    value: Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf
+  extraArgs:
+    - --alias
+    - local
+    - --jinja
+    - --ctx-size
+    - "32768"
+    - -ngl
+    - "999"
+    - --flash-attn
+    - "on"
+    - -b
+    - "2048"
+    - -ub
+    - "1024"
+    - -ctk
+    - q8_0
+    - -ctv
+    - q8_0
+    - --cache-reuse
+    - "256"
+    - --reasoning
+    - "off"
+    - --no-warmup
+    - -np
+    - "4"
+  restartPolicy: Always
+  timeoutSeconds: 240
+  endpoint:
+    host: 127.0.0.1
+    port: 8085
