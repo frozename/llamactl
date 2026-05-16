@@ -146,7 +146,8 @@ run_config() {
   local server_pid=""
   local results_file="$OUT_DIR/${label}.jsonl"
 
-  kill_port
+  kill_port "$PORT"
+  wait_port_bindable "$PORT" 30
   rm -f "$log_file" "$results_file"
 
   local cmd=("$LLAMA_SERVER_BIN" --model "$model" --jinja --port "$PORT" --no-webui)

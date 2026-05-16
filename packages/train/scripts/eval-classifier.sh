@@ -336,7 +336,8 @@ run_completion_eval() {
   rm -f "$out_file"
   rm -f "$class_metrics_file"
 
-  kill_port
+  kill_port "$SERVER_PORT"
+  wait_port_bindable "$SERVER_PORT" 30
   rm -f "$log_file"
 
   local lora_args=()
