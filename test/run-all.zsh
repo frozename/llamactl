@@ -12,16 +12,19 @@ print "\n=========================================="
 print "  llamactl test suite"
 print "=========================================="
 
-print "\n[1/3] core unit + integration"
+print "\n[1/4] core unit + integration"
 (cd packages/core && bun test)
 
-print "\n[2/3] cli e2e"
+print "\n[2/4] train static syntax"
+(cd packages/train && bash scripts/check-syntax.sh)
+
+print "\n[3/4] cli e2e"
 (cd packages/cli && bun test)
 
-print "\n[3/3] shell smoke (against live \$DEV_STORAGE)"
+print "\n[4/4] shell smoke (against live \$DEV_STORAGE)"
 zsh "$ROOT/test/shell-smoke.zsh"
 
-print "\n[4/4] multi-workload smoke"
+print "\n[5/5] multi-workload smoke"
 zsh "$ROOT/test/multi-workload.zsh"
 
 print "\n=========================================="
