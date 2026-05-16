@@ -248,7 +248,14 @@ PY
 }
 
 extract_gold() {
-  printf '%s\n' "$1" | jq -r '.memory_related // .gold // .label // (try (.completion | fromjson | .memory_related) catch empty) // empty'
+  printf '%s\n' "$1" | jq -r '
+    if has("memory_related") then .memory_related
+    elif has("gold") then .gold
+    elif has("label") then .label
+    elif (.completion | type) == "string" then (try (.completion | fromjson | if has("memory_related") then .memory_related else empty end) catch empty)
+    else empty
+    end
+  '
 }
 
 extract_pred_from_response_obj() {
@@ -262,8 +269,8 @@ extract_pred_from_response_obj() {
   outer="$(printf '%s' "$response_obj" | jq -c . 2>/dev/null || true)"
   if [[ -n "$outer" ]]; then
     pred_raw="$(printf '%s' "$outer" | jq -r '
-      .memory_related //
-      (try (.completion | fromjson | .memory_related) catch empty) //
+      (if has("memory_related") then .memory_related else empty end) //
+      (try (.completion | fromjson | if has("memory_related") then .memory_related else empty end) catch empty) //
       empty
     ' 2>/dev/null || true)"
     if [[ -n "$pred_raw" ]]; then
@@ -282,7 +289,7 @@ match = re.search(r"\{(?:[^{}\"]|\"(?:\\.|[^\"])*\")*\}", text, re.S)
 print(match.group(0) if match else "")
 ')"
       if [[ -n "$inner" ]]; then
-        pred_raw="$(printf '%s' "$inner" | jq -r '.memory_related // empty' 2>/dev/null || true)"
+        pred_raw="$(printf '%s' "$inner" | jq -r 'if has("memory_related") then .memory_related else empty end' 2>/dev/null || true)"
         if [[ -n "$pred_raw" ]]; then
           printf '%s' "$pred_raw"
           return 0
@@ -292,10 +299,10 @@ print(match.group(0) if match else "")
   fi
 
   pred_raw="$(printf '%s' "$response_obj" | jq -r '
-    .memory_related //
-    (try (.completion | fromjson | .memory_related) catch empty) //
-    (try (.content | fromjson | .memory_related) catch empty) //
-    (try (fromjson | .memory_related) catch empty) //
+    (if has("memory_related") then .memory_related else empty end) //
+    (try (.completion | fromjson | if has("memory_related") then .memory_related else empty end) catch empty) //
+    (try (.content | fromjson | if has("memory_related") then .memory_related else empty end) catch empty) //
+    (try (fromjson | if has("memory_related") then .memory_related else empty end) catch empty) //
     empty
   ' 2>/dev/null || true)"
 
@@ -537,8 +544,8 @@ DELTA_RECALL="$(awk -v a="$ADP_RECALL" -v b="$BASE_RECALL" 'BEGIN { printf "%.4f
 DELTA_F1="$(awk -v a="$ADP_F1" -v b="$BASE_F1" 'BEGIN { printf "%.4f", a - b }')"
 DELTA_PARSE="$(awk -v a="$ADP_PARSE_RATE" -v b="$BASE_PARSE_RATE" 'BEGIN { printf "%.4f", a - b }')"
 
-POSITIVE_COUNT="$(jq -r '.memory_related // .gold // .label // (try (.completion | fromjson | .memory_related) catch empty)' "$TEST_JSONL" | awk 'tolower($0)=="true"{p++} END {print p+0}')"
-NEGATIVE_COUNT="$(jq -r '.memory_related // .gold // .label // (try (.completion | fromjson | .memory_related) catch empty)' "$TEST_JSONL" | awk 'tolower($0)=="false"{n++} END {print n+0}')"
+POSITIVE_COUNT="$(jq -r 'if has("memory_related") then .memory_related elif has("gold") then .gold elif has("label") then .label elif (.completion | type) == "string" then (try (.completion | fromjson | if has("memory_related") then .memory_related else empty end) catch empty) else empty end' "$TEST_JSONL" | awk 'tolower($0)=="true"{p++} END {print p+0}')"
+NEGATIVE_COUNT="$(jq -r 'if has("memory_related") then .memory_related elif has("gold") then .gold elif has("label") then .label elif (.completion | type) == "string" then (try (.completion | fromjson | if has("memory_related") then .memory_related else empty end) catch empty) else empty end' "$TEST_JSONL" | awk 'tolower($0)=="false"{n++} END {print n+0}')"
 
 BASE_SIZE=$(stat -f %z "$BASE_GGUF")
 BASE_MTIME=$(stat -f '%Sm' "$BASE_GGUF")
