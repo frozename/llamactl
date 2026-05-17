@@ -1,10 +1,12 @@
 import { Database } from 'bun:sqlite';
 import type { CellRow } from './types.js';
 
+/** Idempotent and safe to call on every operation; v1 may memoize per-Database instance. */
 export function ensureMatrixSchema(db: Database): void {
   db.run(`
     CREATE TABLE IF NOT EXISTS matrix_runs (
       run_id TEXT NOT NULL,
+      runner_version INTEGER NOT NULL DEFAULT 0,
       model_name TEXT NOT NULL,
       workload_name TEXT NOT NULL,
       model_spec_json TEXT NOT NULL,
@@ -30,18 +32,19 @@ export function insertCellRow(db: Database, row: CellRow): void {
     .query(
       `
       INSERT INTO matrix_runs (
-        run_id, model_name, workload_name, model_spec_json, n_rows,
+        run_id, runner_version, model_name, workload_name, model_spec_json, n_rows,
         primary_metric_name, primary_metric_value, per_class_metrics_json,
         latency_p50_ms, latency_p95_ms, throughput_tps, errors,
         started_at, finished_at, host_machine
       ) VALUES (
-        $run_id, $model_name, $workload_name, $model_spec_json, $n_rows,
+        $run_id, $runner_version, $model_name, $workload_name, $model_spec_json, $n_rows,
         $primary_metric_name, $primary_metric_value, $per_class_metrics_json,
         $latency_p50_ms, $latency_p95_ms, $throughput_tps, $errors,
         $started_at, $finished_at, $host_machine
       )
       ON CONFLICT(run_id, model_name, workload_name) DO UPDATE SET
         model_spec_json=excluded.model_spec_json,
+        runner_version=excluded.runner_version,
         n_rows=excluded.n_rows,
         primary_metric_name=excluded.primary_metric_name,
         primary_metric_value=excluded.primary_metric_value,
@@ -57,6 +60,7 @@ export function insertCellRow(db: Database, row: CellRow): void {
     )
     .run({
       $run_id: row.run_id,
+      $runner_version: row.runner_version,
       $model_name: row.model_name,
       $workload_name: row.workload_name,
       $model_spec_json: row.model_spec_json,
@@ -91,7 +95,7 @@ export function listCellRows(
   }
   return db
     .query(
-      `SELECT run_id, model_name, workload_name, model_spec_json, n_rows, primary_metric_name, primary_metric_value, per_class_metrics_json, latency_p50_ms, latency_p95_ms, throughput_tps, errors, started_at, finished_at, host_machine
+      `SELECT run_id, runner_version, model_name, workload_name, model_spec_json, n_rows, primary_metric_name, primary_metric_value, per_class_metrics_json, latency_p50_ms, latency_p95_ms, throughput_tps, errors, started_at, finished_at, host_machine
        FROM matrix_runs
        ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
        ORDER BY run_id ASC, model_name ASC, workload_name ASC`,

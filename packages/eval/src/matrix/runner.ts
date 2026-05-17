@@ -1,4 +1,5 @@
 import { Database } from 'bun:sqlite';
+import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import { ensureMatrixSchema, insertCellRow } from './store.js';
 import type { ModelSpec, WorkloadEval } from './types.js';
@@ -14,7 +15,7 @@ export async function runMatrix(
   opts: RunMatrixOpts,
 ): Promise<{ runId: string; cellsWritten: number }> {
   ensureMatrixSchema(opts.db);
-  const runId = opts.runId ?? new Date().toISOString();
+  const runId = opts.runId ?? `${new Date().toISOString()}-${randomUUID().slice(0, 8)}`;
   const now = new Date().toISOString();
   let cellsWritten = 0;
 
@@ -24,8 +25,10 @@ export async function runMatrix(
         opts.db,
         {
           run_id: runId,
+          runner_version: 0,
           model_name: model.name,
           workload_name: workload.name,
+          // NOTE: stores model spec verbatim incl. extra_args; do not put secrets in extra_args.
           model_spec_json: JSON.stringify(model),
           n_rows: 0,
           primary_metric_name: workload.primary_metric_name ?? 'primary',

@@ -15,6 +15,10 @@ export interface ModelSpec {
 export interface WorkloadEval {
   name: string;
   corpus_path: string;
+  /**
+   * Returns the body shape passed to llama-server: string for `/completion`,
+   * `{messages: ...}` for `/chat/completions`. Concrete typing lands in v1.
+   */
   prompt_builder: (row: unknown) => unknown;
   scorer: (
     row: unknown,
@@ -26,6 +30,7 @@ export interface WorkloadEval {
 
 export interface CellRow {
   run_id: string;
+  runner_version: number;
   model_name: string;
   workload_name: string;
   model_spec_json: string;

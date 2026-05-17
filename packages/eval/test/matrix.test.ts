@@ -42,6 +42,7 @@ describe('matrix store', () => {
 
     const row: CellRow = {
       run_id: 'run-1',
+      runner_version: 0,
       model_name: 'model-a',
       workload_name: 'workload-a',
       model_spec_json: JSON.stringify({ name: 'model-a' }),
@@ -87,5 +88,17 @@ describe('runMatrix', () => {
 
     expect(run.cellsWritten).toBe(6);
     expect(listCellRows(db, { run_id: run.runId })).toHaveLength(6);
+  });
+
+  test('omits runId with a uuid suffix', async () => {
+    const db = new Database(':memory:');
+    const run = await runMatrix({
+      models: [makeModel('model-a')],
+      workloads: [makeWorkload('workload-a')],
+      db,
+    });
+
+    expect(run.runId).toMatch(/^\d{4}-\d{2}-\d{2}T.+-[0-9a-f]{8}$/);
+    expect(run.runId).toContain('-');
   });
 });
