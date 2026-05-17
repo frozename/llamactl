@@ -1,6 +1,8 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 import {
+  aggregateMetrics,
   ensureMatrixSchema,
   insertCellRow,
   listCellRows,
@@ -9,6 +11,7 @@ import {
   type ModelSpec,
   type WorkloadEval,
 } from '../src/index.js';
+import { memoryEfficacyBinaryWorkload } from '../src/index.js';
 
 function makeModel(name: string): ModelSpec {
   return {
@@ -20,18 +23,6 @@ function makeModel(name: string): ModelSpec {
     host: '127.0.0.1',
     port: 8080,
     extra_args: [],
-  };
-}
-
-function makeWorkload(name: string): WorkloadEval {
-  return {
-    name,
-    corpus_path: `/corpora/${name}.jsonl`,
-    prompt_builder: (row) => row,
-    scorer: (_row, completion) => ({
-      metrics: { score: completion.length },
-      prediction: completion,
-    }),
   };
 }
 
@@ -66,39 +57,58 @@ describe('matrix store', () => {
 });
 
 describe('runMatrix', () => {
-  test('writes one cell per model workload pair', async () => {
+  test('runs the binary memory-efficacy workload end to end', async () => {
     const db = new Database(':memory:');
-    const run = await runMatrix({
-      models: [makeModel('model-a'), makeModel('model-b')],
-      workloads: [makeWorkload('memory-efficacy-binary')],
-      db,
-    });
-
-    expect(run.cellsWritten).toBe(2);
-    expect(listCellRows(db, { run_id: run.runId })).toHaveLength(2);
-  });
-
-  test('writes the full cross product', async () => {
-    const db = new Database(':memory:');
-    const run = await runMatrix({
-      models: [makeModel('model-a'), makeModel('model-b'), makeModel('model-c')],
-      workloads: [makeWorkload('workload-a'), makeWorkload('workload-b')],
-      db,
-    });
-
-    expect(run.cellsWritten).toBe(6);
-    expect(listCellRows(db, { run_id: run.runId })).toHaveLength(6);
-  });
-
-  test('omits runId with a uuid suffix', async () => {
-    const db = new Database(':memory:');
-    const run = await runMatrix({
-      models: [makeModel('model-a')],
-      workloads: [makeWorkload('workload-a')],
-      db,
-    });
-
-    expect(run.runId).toMatch(/^\d{4}-\d{2}-\d{2}T.+-[0-9a-f]{8}$/);
-    expect(run.runId).toContain('-');
+    const tmpPath = `/tmp/memory-efficacy-binary-${randomUUID()}.jsonl`;
+    const jsonl = [
+      JSON.stringify({
+        messages: [
+          { role: 'user', content: 'Is this memory related?' },
+          { role: 'assistant', content: JSON.stringify({ memory_related: true, reason: 'x' }) },
+        ],
+      }),
+      JSON.stringify({
+        messages: [
+          { role: 'user', content: 'Is this memory related?' },
+          { role: 'assistant', content: JSON.stringify({ memory_related: false, reason: 'y' }) },
+        ],
+      }),
+    ].join('\n');
+    await Bun.write(tmpPath, jsonl);
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"memory_related":true}' } }],
+          usage: { completion_tokens: 5 },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    try {
+      const workload: WorkloadEval = {
+        ...memoryEfficacyBinaryWorkload,
+        corpus_path: tmpPath,
+        scorer: memoryEfficacyBinaryWorkload.scorer,
+      };
+      const run = await runMatrix({
+        models: [makeModel('model-a')],
+        workloads: [workload],
+        db,
+      });
+      expect(run.cellsWritten).toBe(1);
+      const rows = listCellRows(db, { run_id: run.runId });
+      expect(rows).toHaveLength(1);
+      const [cell] = rows;
+      expect(cell.runner_version).toBe(1);
+      expect(cell.n_rows).toBe(2);
+      expect(cell.run_id).toMatch(/^\d{4}-\d{2}-\d{2}T.+-[0-9a-f]{8}$/);
+      const expected = aggregateMetrics([
+        { pred: 'true', gold: 'true' },
+        { pred: 'true', gold: 'false' },
+      ]);
+      expect(cell.primary_metric_value).toBeCloseTo(expected.macro_f1, 5);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   });
 });

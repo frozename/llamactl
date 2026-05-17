@@ -1,5 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { runMatrix } from './runner.js';
+import { memoryEfficacyBinaryWorkload } from './workloads/memory-efficacy-binary.js';
 import type { ModelSpec, WorkloadEval } from './types.js';
 
 function getArg(flag: string): string | undefined {
@@ -38,16 +39,7 @@ function validateModelSpec(value: unknown): ModelSpec {
 }
 
 function getKnownWorkloads(): Record<string, WorkloadEval> {
-  return {
-    'memory-efficacy-binary': {
-      name: 'memory-efficacy-binary',
-      corpus_path: 'TODO_v1_resolve_from_registry',
-      prompt_builder: (row) => row,
-      scorer: () => {
-        throw new Error('v0 stub: workload corpus resolution lands in v1');
-      },
-    },
-  };
+  return { 'memory-efficacy-binary': memoryEfficacyBinaryWorkload };
 }
 
 async function main(): Promise<void> {
