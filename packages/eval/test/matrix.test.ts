@@ -58,6 +58,19 @@ describe('matrix store', () => {
 });
 
 describe('runMatrix', () => {
+  test('strips markdown code fences before parsing binary memory-efficacy predictions', () => {
+    const row = {
+      messages: [
+        { role: 'user', content: 'Is this memory related?' },
+        { role: 'assistant', content: JSON.stringify({ memory_related: true, reason: 'x' }) },
+      ],
+    };
+
+    const result = memoryEfficacyBinaryWorkload.scorer(row, '```json\n{"memory_related":true}\n```');
+
+    expect(result.prediction).toBe('true');
+  });
+
   test('runs the binary memory-efficacy workload end to end', async () => {
     const db = new Database(':memory:');
     const tmpPath = `/tmp/memory-efficacy-binary-${randomUUID()}.jsonl`;

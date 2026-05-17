@@ -18,17 +18,31 @@ export interface JsonClassifierOpts {
 export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadEval {
   const normalize = opts.normalizeLabel ?? ((v: unknown) => String(v));
   const accept = (label: string): boolean => !opts.validLabels || opts.validLabels.has(label);
-  function extract(content: string): string {
+  function stripCodeFences(s: string): string {
+    const m = s.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
+    if (m) return m[1];
+    return s;
+  }
+  function tryParseJson(s: string): Record<string, unknown> | null {
+    const stripped = stripCodeFences(s);
     try {
-      const parsed = JSON.parse(content) as Record<string, unknown>;
-      if (!(opts.labelField in parsed)) return 'parse_error';
-      const raw = parsed[opts.labelField];
-      if (raw === undefined || raw === null) return 'parse_error';
-      const label = normalize(raw);
-      return accept(label) ? label : 'parse_error';
-    } catch {
-      return 'parse_error';
+      return JSON.parse(stripped) as Record<string, unknown>;
+    } catch {}
+    const m = stripped.match(/\{[\s\S]*\}/);
+    if (m) {
+      try {
+        return JSON.parse(m[0]) as Record<string, unknown>;
+      } catch {}
     }
+    return null;
+  }
+  function extract(content: string): string {
+    const parsed = tryParseJson(content);
+    if (!parsed || !(opts.labelField in parsed)) return 'parse_error';
+    const raw = parsed[opts.labelField];
+    if (raw === undefined || raw === null) return 'parse_error';
+    const label = normalize(raw);
+    return accept(label) ? label : 'parse_error';
   }
   return {
     name: opts.name,
