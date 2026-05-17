@@ -1,8 +1,8 @@
 import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
-import { resolve as pathResolve } from 'node:path';
 import { aggregateMetrics, percentile } from './scoring.js';
+import { resolveCorpusPath } from './repo-root.js';
 import { ensureMatrixSchema, insertCellRow } from './store.js';
 import { buildCompletionRequest, completeChat } from '../client.js';
 import type { ModelSpec, WorkloadEval } from './types.js';
@@ -32,10 +32,20 @@ export async function runMatrix(
       let nRows = 0;
       let rows: unknown[] = [];
       try {
-        const abs = pathResolve(workload.corpus_path);
+        const abs = resolveCorpusPath(workload.corpus_path);
         const text = await Bun.file(abs).text();
-        rows = text.split('\n').filter(Boolean).map((line) => JSON.parse(line));
-      } catch {
+        const lines = text.split('\n').filter(Boolean);
+        rows = [];
+        for (const line of lines) {
+          try {
+            rows.push(JSON.parse(line));
+          } catch {
+            errors += 1;
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[matrix] corpus load failed for ${workload.name}: ${message}`);
         errors += 1;
       }
       for (const row of rows) {
@@ -50,8 +60,10 @@ export async function runMatrix(
           const completion = resp.choices[0]?.message?.content ?? '';
           const { prediction, gold } = workload.scorer(row, completion);
           predictions.push({ pred: prediction, gold });
-        } catch {
+        } catch (err) {
           errors += 1;
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[matrix] inference failed for ${workload.name} row ${nRows}: ${message}`);
         }
       }
       const finished = new Date().toISOString();

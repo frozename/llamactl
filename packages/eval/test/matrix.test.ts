@@ -1,5 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
+import { rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import {
   aggregateMetrics,
@@ -85,11 +86,10 @@ describe('runMatrix', () => {
         { headers: { 'Content-Type': 'application/json' } },
       );
     try {
-      const workload: WorkloadEval = {
-        ...memoryEfficacyBinaryWorkload,
-        corpus_path: tmpPath,
-        scorer: memoryEfficacyBinaryWorkload.scorer,
-      };
+    const workload: WorkloadEval = {
+      ...memoryEfficacyBinaryWorkload,
+      corpus_path: tmpPath,
+    };
       const run = await runMatrix({
         models: [makeModel('model-a')],
         workloads: [workload],
@@ -109,6 +109,9 @@ describe('runMatrix', () => {
       expect(cell.primary_metric_value).toBeCloseTo(expected.macro_f1, 5);
     } finally {
       globalThis.fetch = origFetch;
+      try {
+        rmSync(tmpPath);
+      } catch {}
     }
   });
 });
