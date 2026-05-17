@@ -1,7 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { workloadRuntime, openaiProxy } from '@llamactl/core';
 import { generateToken } from '../src/server/auth.js';
 import { startAgentServer, type RunningAgent } from '../src/server/serve.js';
 import { generateSelfSignedCert } from '../src/server/tls.js';
@@ -26,10 +27,6 @@ import { generateSelfSignedCert } from '../src/server/tls.js';
  * non-empty `/v1/models` response.
  */
 
-const ENV_LLAMA_PORT = 28840;
-const WORKLOAD_A_PORT = 28841;
-const WORKLOAD_B_PORT = 28842;
-
 type UpstreamRequest = {
   path: string;
   method: string;
@@ -52,6 +49,9 @@ let runtimeDir = '';
 let agentToken = '';
 let caPem = '';
 let fingerprint = '';
+const ENV_LLAMA_PORT = 52001;
+const WORKLOAD_A_PORT = 52002;
+const WORKLOAD_B_PORT = 52003;
 
 const originalEnv = { ...process.env };
 
@@ -62,51 +62,59 @@ beforeAll(async () => {
 
   const startFakeUpstream = (label: string, port: number): FakeUpstream => {
     const requests: UpstreamRequest[] = [];
-    const server = Bun.serve({
-      port,
-      hostname: '127.0.0.1',
-      async fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname === '/health') return new Response('ok', { status: 200 });
-        if (url.pathname.startsWith('/v1/')) {
-          const body = req.method === 'POST' ? await req.text() : '';
-          requests.push({
-            path: url.pathname,
-            method: req.method,
-            body,
-            contentType: req.headers.get('content-type'),
-            hasAuth: req.headers.has('authorization'),
-          });
-          // Simulate SSE for streaming chat/completions.
-          if (req.method === 'POST' && body.includes('"stream":true')) {
-            const stream = new ReadableStream({
-              start(controller) {
-                const enc = new TextEncoder();
-                controller.enqueue(enc.encode(`data: {"label":"${label}","choices":[{"delta":{"content":"hi"}}]}\n\n`));
-                controller.enqueue(enc.encode('data: [DONE]\n\n'));
-                controller.close();
-              },
-            });
-            return new Response(stream, {
-              status: 200,
-              headers: { 'content-type': 'text/event-stream' },
-            });
-          }
-          return Response.json({
-            echoed: {
-              label,
-              path: url.pathname,
-              method: req.method,
-              body,
-              contentType: req.headers.get('content-type'),
-              hasAuth: req.headers.has('authorization'),
-            },
-          });
-        }
-        return new Response('not found', { status: 404 });
-      },
-    });
-    return { label, port, server, requests };
+    const ports = Array.from({ length: 200 }, (_, i) => port + i);
+    for (const candidate of ports) {
+      try {
+        const server = Bun.serve({
+          port: candidate,
+          hostname: '127.0.0.1',
+          async fetch(req) {
+            const url = new URL(req.url);
+            if (url.pathname === '/health') return new Response('ok', { status: 200 });
+            if (url.pathname.startsWith('/v1/')) {
+              const body = req.method === 'POST' ? await req.text() : '';
+              requests.push({
+                path: url.pathname,
+                method: req.method,
+                body,
+                contentType: req.headers.get('content-type'),
+                hasAuth: req.headers.has('authorization'),
+              });
+              // Simulate SSE for streaming chat/completions.
+              if (req.method === 'POST' && body.includes('"stream":true')) {
+                const stream = new ReadableStream({
+                  start(controller) {
+                    const enc = new TextEncoder();
+                    controller.enqueue(enc.encode(`data: {"label":"${label}","choices":[{"delta":{"content":"hi"}}]}\n\n`));
+                    controller.enqueue(enc.encode('data: [DONE]\n\n'));
+                    controller.close();
+                  },
+                });
+                return new Response(stream, {
+                  status: 200,
+                  headers: { 'content-type': 'text/event-stream' },
+                });
+              }
+              return Response.json({
+                echoed: {
+                  label,
+                  path: url.pathname,
+                  method: req.method,
+                  body,
+                  contentType: req.headers.get('content-type'),
+                  hasAuth: req.headers.has('authorization'),
+                },
+              });
+            }
+            return new Response('not found', { status: 404 });
+          },
+        });
+        return { label, port: server.port, server, requests };
+      } catch {
+        continue;
+      }
+    }
+    throw new Error(`failed to bind fake upstream ${label}`);
   };
 
   // Stand up stub llama-servers. The proxy should route JSON requests
@@ -208,6 +216,111 @@ function pinnedFetch(path: string, init?: RequestInit): Promise<Response> {
 }
 
 describe('agent OpenAI proxy', () => {
+  test('POST /v1/chat/completions rejects JSON bodies larger than 10MB by content-length', async () => {
+    const fetchSpy = spyOn(globalThis, 'fetch');
+    const res = await pinnedFetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'content-length': '11000000',
+      },
+      body: JSON.stringify({
+        model: 'granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    });
+    expect(res.status).toBe(413);
+    expect(await res.text()).toContain('Payload Too Large');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  test('POST /v1/chat/completions rejects JSON bodies larger than 10MB after read', async () => {
+    const fetchSpy = spyOn(globalThis, 'fetch');
+    const res = await pinnedFetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf',
+        prompt: 'x'.repeat(11 * 1024 * 1024),
+      }),
+    });
+    expect(res.status).toBe(413);
+    expect(await res.text()).toContain('Payload Too Large');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  test('POST /v1/chat/completions reuses the route map for repeated requests', async () => {
+    const workloadSpy = spyOn(workloadRuntime, 'listLocalWorkloads');
+    const first = await pinnedFetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf',
+        messages: [{ role: 'user', content: 'hi A' }],
+      }),
+    });
+    expect(first.status).toBe(200);
+
+    const second = await pinnedFetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'qwen3-8b-GGUF/qwen3-8b-Q8_0.gguf',
+        messages: [{ role: 'user', content: 'hi B' }],
+      }),
+    });
+    expect(second.status).toBe(200);
+    expect(workloadSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('POST /v1/chat/completions rebuilds the route map when the workloads root mtime changes', async () => {
+    const workloadC = join(runtimeDir, 'workloads', 'workload-c');
+    mkdirSync(workloadC, { recursive: true });
+    writeFileSync(join(workloadC, 'llama-server.pid'), String(process.pid));
+    writeFileSync(
+      join(workloadC, 'llama-server.state'),
+      JSON.stringify({
+        rel: 'mistral-7b-GGUF/mistral-7b-Q4_K_M.gguf',
+        extraArgs: [],
+        host: '127.0.0.1',
+        port: String(WORKLOAD_A_PORT),
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        tunedProfile: null,
+      }),
+    );
+
+    openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
+    const first = await pinnedFetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf',
+        messages: [{ role: 'user', content: 'hi A' }],
+      }),
+    });
+    expect(first.status).toBe(200);
+
+    const root = join(runtimeDir, 'workloads');
+    const now = new Date();
+    const later = new Date(now.getTime() + 1000);
+    utimesSync(root, later, later);
+
+    const second = await pinnedFetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'mistral-7b-GGUF/mistral-7b-Q4_K_M.gguf',
+        messages: [{ role: 'user', content: 'hi C' }],
+      }),
+    });
+    expect(second.status).toBe(200);
+    const body = (await second.json()) as {
+      echoed: { label: string };
+    };
+    expect(body.echoed.label).toBe('workload-a');
+  });
+
   test('GET /v1/models lists the tracked rel', async () => {
     const res = await pinnedFetch('/v1/models');
     expect(res.status).toBe(200);

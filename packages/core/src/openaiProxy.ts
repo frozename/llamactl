@@ -1,8 +1,11 @@
 import type { ModelInfo, ModelListResponse } from '@nova/contracts';
+import { statSync } from 'node:fs';
 import { resolveEnv } from './env.js';
 import { endpoint as llamaEndpoint, readServerState, readServerPid } from './server.js';
 import type { ResolvedEnv } from './types.js';
-import { listLocalWorkloads, type WorkloadKey } from './workloadRuntime.js';
+import { listLocalWorkloads, type WorkloadKey, workloadRuntimeRoot } from './workloadRuntime.js';
+
+const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
 
 /**
  * OpenAI-compatible gateway in front of the local llama-server.
@@ -66,13 +69,41 @@ function routedEndpointForModel(
   resolved: ResolvedEnv,
 ): string | null {
   const url = new URL(req.url);
+  const routeMap = getRouteMap(resolved);
+  const entry = routeMap.get(model);
+  if (!entry) return null;
+  return `http://${entry.host}:${entry.port}${url.pathname}${url.search}`;
+}
+
+type RouteEntry = { host: string; port: number };
+
+let routeMapCache: { mtimeNs: bigint; map: Map<string, RouteEntry> } | null = null;
+
+function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
+  const out = new Map<string, RouteEntry>();
   for (const entry of listLocalWorkloads(resolved)) {
     if (!entry.alive) continue;
     const state = readServerState({ name: entry.name }, resolved);
-    if (state?.rel !== model || !state.host || state.port == null) continue;
-    return `http://${state.host}:${state.port}${url.pathname}${url.search}`;
+    if (!state?.rel || !state.host || state.port == null) continue;
+    out.set(state.rel, { host: state.host, port: state.port });
   }
-  return null;
+  return out;
+}
+
+function getRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
+  try {
+    const mtimeNs = statSync(workloadRuntimeRoot(resolved), { bigint: true }).mtimeNs;
+    if (routeMapCache && routeMapCache.mtimeNs === mtimeNs) return routeMapCache.map;
+    const map = buildRouteMap(resolved);
+    routeMapCache = { mtimeNs, map };
+    return map;
+  } catch {
+    return buildRouteMap(resolved);
+  }
+}
+
+export function __resetOpenAIProxyRouteMapCacheForTests(): void {
+  routeMapCache = null;
 }
 
 /**
@@ -113,7 +144,17 @@ export async function proxyOpenAI(
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     const contentType = req.headers.get('content-type');
     if (isJsonContentType(contentType)) {
+      const contentLength = req.headers.get('content-length');
+      if (contentLength) {
+        const parsedContentLength = Number.parseInt(contentLength, 10);
+        if (Number.isFinite(parsedContentLength) && parsedContentLength > MAX_JSON_BODY_BYTES) {
+          return new Response('Payload Too Large', { status: 413 });
+        }
+      }
       const bodyText = await req.text();
+      if (bodyText.length > MAX_JSON_BODY_BYTES) {
+        return new Response('Payload Too Large', { status: 413 });
+      }
       const model = requestedModelFromBody(bodyText);
       init.body = bodyText;
       if (model) {
