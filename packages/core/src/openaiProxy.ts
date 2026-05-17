@@ -2,7 +2,7 @@ import type { ModelInfo, ModelListResponse } from '@nova/contracts';
 import { resolveEnv } from './env.js';
 import { endpoint as llamaEndpoint, readServerState, readServerPid } from './server.js';
 import type { ResolvedEnv } from './types.js';
-import type { WorkloadKey } from './workloadRuntime.js';
+import { listLocalWorkloads, type WorkloadKey } from './workloadRuntime.js';
 
 /**
  * OpenAI-compatible gateway in front of the local llama-server.
@@ -15,10 +15,10 @@ import type { WorkloadKey } from './workloadRuntime.js';
  * `listOpenAIModels` returns `nova.ModelListResponse` — the
  * canonical shape every AI provider in this family publishes.
  *
- * Scope today: one workload per node — the proxy targets whichever
- * server is started via `llamactl server start` (or a workload
- * manifest). Multi-workload routing by `model` is a follow-up that
- * needs multi-server orchestration on a single node.
+ * JSON requests can route by request-body `model` across live
+ * workloads on the node. When no model matches, or the body is not
+ * parseable JSON, the proxy falls back to the node's default endpoint
+ * for back-compat.
  */
 
 /**
@@ -45,18 +45,49 @@ export function listOpenAIModels(
   return { object: 'list', data };
 }
 
+function isJsonContentType(contentType: string | null): boolean {
+  if (!contentType) return false;
+  const lower = contentType.toLowerCase();
+  return lower.includes('application/json') || lower.includes('+json');
+}
+
+function requestedModelFromBody(bodyText: string): string | undefined {
+  try {
+    const parsed = JSON.parse(bodyText) as { model?: unknown };
+    return typeof parsed.model === 'string' ? parsed.model : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function routedEndpointForModel(
+  model: string,
+  req: Request,
+  resolved: ResolvedEnv,
+): string | null {
+  const url = new URL(req.url);
+  for (const entry of listLocalWorkloads(resolved)) {
+    if (!entry.alive) continue;
+    const state = readServerState({ name: entry.name }, resolved);
+    if (state?.rel !== model || !state.host || state.port == null) continue;
+    return `http://${state.host}:${state.port}${url.pathname}${url.search}`;
+  }
+  return null;
+}
+
 /**
  * Proxy an OpenAI-style request (chat/completions, completions,
- * embeddings, etc.) to the local llama-server. Bun/Node fetch returns
- * a ReadableStream body; we pipe that back unchanged so SSE streams
- * work out of the box.
+ * embeddings, etc.) to the local llama-server. JSON bodies can route
+ * by `model` across live workloads, and Bun/Node fetch responses are
+ * returned as a fresh ReadableStream so SSE streams work out of the box.
  */
 export async function proxyOpenAI(
   req: Request,
   resolved: ResolvedEnv = resolveEnv(),
 ): Promise<Response> {
   const url = new URL(req.url);
-  const target = `${llamaEndpoint(resolved)}${url.pathname}${url.search}`;
+  const fallbackTarget = `${llamaEndpoint(resolved)}${url.pathname}${url.search}`;
+  let target = fallbackTarget;
 
   // Strip hop-by-hop headers llama-server wouldn't like. We also drop
   // the agent's own `authorization` — llama-server has no bearer auth
@@ -80,9 +111,20 @@ export async function proxyOpenAI(
     headers,
   };
   if (req.method !== 'GET' && req.method !== 'HEAD') {
-    init.body = req.body;
-    // Streaming bodies in Node/Bun fetch require the duplex hint.
-    (init as unknown as { duplex: string }).duplex = 'half';
+    const contentType = req.headers.get('content-type');
+    if (isJsonContentType(contentType)) {
+      const bodyText = await req.text();
+      const model = requestedModelFromBody(bodyText);
+      init.body = bodyText;
+      if (model) {
+        const routedTarget = routedEndpointForModel(model, req, resolved);
+        if (routedTarget) target = routedTarget;
+      }
+    } else {
+      init.body = req.body;
+      // Streaming bodies in Node/Bun fetch require the duplex hint.
+      (init as unknown as { duplex: string }).duplex = 'half';
+    }
   }
 
   let upstream: Response;
