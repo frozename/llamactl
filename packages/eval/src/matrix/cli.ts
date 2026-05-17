@@ -1,6 +1,8 @@
 import { Database } from 'bun:sqlite';
 import { runMatrix } from './runner.js';
+import { listCellRows } from './store.js';
 import { memoryEfficacyBinaryWorkload } from './workloads/memory-efficacy-binary.js';
+import { renderCsvReport, renderMarkdownReport } from './report.js';
 import type { ModelSpec, WorkloadEval } from './types.js';
 
 function getArg(flag: string): string | undefined {
@@ -44,7 +46,7 @@ function getKnownWorkloads(): Record<string, WorkloadEval> {
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
-    console.log('usage: --models <json> --workloads <names> --out-db <path>');
+    console.log('usage: --models <json> --workloads <names> --out-db <path> [--report md|csv|both] [--report-out <path>]');
     return;
   }
   const modelsPath = getArg('--models');
@@ -63,9 +65,27 @@ async function main(): Promise<void> {
     }
     return workload;
   });
+  const report = getArg('--report');
+  const reportOut = getArg('--report-out');
 
   const db = new Database(outDb);
   const result = await runMatrix({ models, workloads, db });
+  if (report) {
+    if (!reportOut) {
+      throw new Error('--report-out is required when --report is set');
+    }
+    const cells = listCellRows(db, { run_id: result.runId });
+    if (report === 'md') {
+      await Bun.write(reportOut, renderMarkdownReport(cells, { runId: result.runId }));
+    } else if (report === 'csv') {
+      await Bun.write(reportOut, renderCsvReport(cells, { runId: result.runId }));
+    } else if (report === 'both') {
+      await Bun.write(`${reportOut}.md`, renderMarkdownReport(cells, { runId: result.runId }));
+      await Bun.write(`${reportOut}.csv`, renderCsvReport(cells, { runId: result.runId }));
+    } else {
+      throw new Error(`unknown report format: ${report}`);
+    }
+  }
   console.log(`runId=${result.runId} cellsWritten=${result.cellsWritten}`);
 }
 
