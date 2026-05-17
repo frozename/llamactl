@@ -28,16 +28,30 @@ smaller models with the same few-shot prompt should reach comparable macro-F1.
 
 | Model | Params | Quant | macro-F1 | Δ Qwen3-8B | Parse failures |
 |---|---|---|---|---|---|
-| Qwen3.5-9B              | 9B  | UD-Q4_K_XL | **0.8941** | +0.10 pp | 0 |
-| Qwen3-8B (anchor)       | 8B  | Q4_K_M | **0.8931** | — | 0 |
-| **Gemma 4 E4B**         | ~4B eff | UD-Q4_K_XL | **0.8931** | **0.00 pp** | 0 |
+| **Granite-4.1-3B**      | 3B  | **Q8_0** | **0.9235** | **+3.04 pp** | 0 |
+| Qwen3.5-9B              | 9B  | UD-Q4_K_XL | 0.8941 | +0.10 pp | 0 |
+| Qwen3-8B (anchor)       | 8B  | Q4_K_M | 0.8931 | — | 0 |
+| **Gemma 4 E4B**         | ~4B eff | UD-Q4_K_XL | 0.8931 | 0.00 pp | 0 |
 | Granite-4.1-3B          | 3B  | Q4_K_M | 0.8734 | -1.97 pp | 0 |
+| Gemma 4 E4B             | ~4B eff | Q8_0 | 0.8682 | -2.49 pp | 0 |
 | **Gemma 3n E2B**        | ~2B eff | Q8_0 | 0.8469 | -4.62 pp | 0 |
-| **Gemma 4 E2B**         | ~2B eff | Q8_0 | 0.8386 | -5.45 pp | 0 |
 | Gemma 3 4B-it           | 4B  | Q4_K_M | 0.8400 | -5.31 pp | 0 |
+| **Gemma 4 E2B**         | ~2B eff | Q8_0 | 0.8386 | -5.45 pp | 0 |
 | Phi-4-mini-instruct     | 3.8B | Q4_K_M | 0.8181 | -7.50 pp | 0 |
 | Qwen3-1.7B (within-fam) | 1.7B | Q8_0 | 0.5830 | -31.01 pp | 0 |
 | Phi-4-reasoning-plus    | 14B | Q4_K_M | 0.4471 | -44.60 pp | 20 (think-budget) |
+
+**Headline shifts with quant:** Granite-4.1-3B at **Q8_0** beats the 8B anchor
+by +3.04 pp. At Q4_K_M the same model trails by -1.97 pp. **5 pp of macro-F1
+hides in the quant choice for this 3B model** — Q4 → Q8 changed memory_ignored
+recall 2/4 → 3/4, eliminated 1 missed_registration FP, eliminated 1
+not_memory_related FP.
+
+**Asymmetric quant×architecture interaction:** Gemma 4 E4B prefers
+UD-Q4_K_XL (0.8931) over Q8_0 (0.8682) — likely because MatFormer
+architectures are designed for selective per-tensor precision and a "smart
+Q4" quant matches the architectural intent. Granite-4.1-3B (conventional
+hybrid attention) prefers Q8_0 over Q4_K_M monotonically.
 
 Anchor sanity: the Qwen3-8B 0.8931 result matches the prior offline measurement
 in pm-3 exactly. Harness is methodology-compatible with the original +20.6 pp
@@ -93,21 +107,33 @@ Predictions, server logs, per-class reports live under `/tmp/attn-thesis/*/`.
 
 ## What this changes about the fleet
 
-**Production candidate swap:** the `qwen3-8b-local.yaml` workload at `:8085`
-serving the memory-efficacy judge can be replaced with
-`gemma-4-E4B-it-UD-Q4_K_XL.gguf`:
-- Same macro-F1 (0.8931 on the 4-way corpus)
-- ~3 GB RAM vs ~5-6 GB
-- ~2x faster decode at the same context length (E4B vs Q8 8B)
-- Gemma 4 family is already the local maestro winner (per
-  `project_bench_2026-05-11_post-evolution`).
+**Production candidate swap (updated post-quant-sweep):** the `qwen3-8b-local.yaml`
+workload at `:8085` serving the memory-efficacy judge should be replaced with
+**`granite-4.1-3b-Q8_0.gguf`** as primary, **`gemma-4-E4B-it-UD-Q4_K_XL.gguf`**
+as a secondary option.
 
-Two pre-conditions before swapping in production:
+| Candidate | macro-F1 | Disk | vs Qwen3-8B Q4_K_M |
+|---|---|---|---|
+| Granite-4.1-3B Q8_0 | **0.9235** | ~3.3 GB | better F1, ~33% less disk |
+| Gemma 4 E4B UD-Q4_K_XL | 0.8931 | ~2.6 GB | tied F1, ~47% less disk |
+| Qwen3-8B Q4_K_M (current) | 0.8931 | ~4.9 GB | baseline |
+
+Granite-3B Q8 dominates on this corpus: best F1, smaller than the 8B, fits
+the home-mgmt fleet pattern (Granite was already the home-mgmt model). Gemma
+4 E4B UD-Q4_K_XL is the smallest viable swap if disk/RAM is the binding
+constraint.
+
+Three pre-conditions before swapping in production:
 1. Auto-fire corpus accumulates labels; re-run the experiment on the larger
-   labeled set to control for the n=60 noise.
+   labeled set to control for the n=60 noise (especially the n=4-per-minority
+   class fragility).
 2. Test the same prompt under the daemon's `resolveJudgeConfig` path (the
    model alias and chat-template handling differ between raw llama-server
    and what the runner uses).
+3. Verify decode throughput at the production batch size — F1 wins don't
+   matter if a 3B Q8 doesn't keep up with the dispatch volume the 8B Q4
+   handles. (Likely fine: smaller model + higher quant ≈ same memory
+   bandwidth budget.)
 
 ## Decision rule going forward
 
@@ -132,5 +158,5 @@ effective; Qwen3-1.7B sits far below at 1.7B.
 ## Artifacts
 
 - Harness: `packages/train/scripts/eval-base-only.sh`
-- Predictions + per-model reports: `/tmp/attn-thesis/{qwen3-8b,qwen35-9b,gemma4-e4b,granite-3b,gemma3n-e2b,gemma4-e2b,gemma3-4b,phi4-mini,qwen3-1.7b,phi4-reasoning}/`
+- Predictions + per-model reports: `/tmp/attn-thesis/{qwen3-8b,qwen35-9b,gemma4-e4b,gemma4-e4b-q8,granite-3b,granite-3b-q8,gemma3n-e2b,gemma4-e2b,gemma3-4b,phi4-mini,qwen3-1.7b,phi4-reasoning}/`
 - Source prompt + corpus: `penumbra@2a57160` + `packages/train/corpora/memory-efficacy/4way-chat-fewshot/`
