@@ -3,6 +3,7 @@ export * from './matrix/scoring.js';
 export * from './matrix/runner.js';
 export * from './matrix/report.js';
 export * from './matrix/store.js';
+export * from './matrix/workloads/common.js';
 export * from './matrix/workloads/memory-efficacy-binary.js';
 export * from './matrix/workloads/memory-efficacy-4way.js';
 export * from './matrix/types.js';
