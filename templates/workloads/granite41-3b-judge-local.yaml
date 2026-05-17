@@ -1,0 +1,58 @@
+# Granite 4.1 3B Q8_0 on `local` (M4 Pro) — dedicated memory-efficacy judge.
+#
+# Replaces qwen3-8b-local.yaml at :8085 per the cross-family attention-thesis
+# eval (2026-05-16 night): macro-F1 0.9235 vs Qwen3-8B-Q4_K_M 0.8931, at
+# 2.6x fewer parameters and ~33% less disk. Full writeup at
+# docs/notes/attention-thesis-cross-family-eval-2026-05-16-night.md.
+#
+# Same port as the prior workload (8085) so the daemon plist's
+# PENUMBRA_JUDGE_BASE_URL=http://127.0.0.1:8085 keeps working unchanged.
+#
+# Apply:
+#   bring the YAML into ~/DevStorage/workloads/ and either let the
+#   reconciler pick it up or invoke llamactl-side apply.
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: granite41-3b-judge-local
+  labels:
+    family: granite41
+    role: judge
+    agents: "memory-efficacy"
+spec:
+  node: local
+  enabled: true
+  binary: /Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server
+  resources:
+    expectedMemoryGiB: 4
+  target:
+    kind: rel
+    value: granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf
+  extraArgs:
+    - --alias
+    - local
+    - --jinja
+    - --ctx-size
+    - "32768"
+    - -ngl
+    - "999"
+    - --flash-attn
+    - "on"
+    - -b
+    - "2048"
+    - -ub
+    - "1024"
+    - -ctk
+    - q8_0
+    - -ctv
+    - q8_0
+    - --cache-reuse
+    - "256"
+    - --no-warmup
+    - -np
+    - "4"
+  restartPolicy: Always
+  timeoutSeconds: 240
+  endpoint:
+    host: 127.0.0.1
+    port: 8085
