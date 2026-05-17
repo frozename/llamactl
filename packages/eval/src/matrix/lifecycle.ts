@@ -4,10 +4,37 @@ import type { ModelSpec } from './types.js';
 
 const HEALTH_POLL_INTERVAL_MS = 1000;
 const HEALTH_TIMEOUT_MS = 120_000;
+const STDERR_BUFFER_LINES = 50;
+
+const ownedProcs = new Set<ChildProcess>();
+let exitHookInstalled = false;
 
 export interface BootResult {
   owned: boolean;
   proc: ChildProcess | null;
+}
+
+function installExitHook() {
+  if (exitHookInstalled) return;
+  exitHookInstalled = true;
+  const cleanup = () => {
+    for (const p of ownedProcs) {
+      if (p.exitCode === null) {
+        try {
+          p.kill('SIGTERM');
+        } catch {}
+      }
+    }
+  };
+  process.on('exit', cleanup);
+  process.on('SIGINT', () => {
+    cleanup();
+    process.exit(130);
+  });
+  process.on('SIGTERM', () => {
+    cleanup();
+    process.exit(143);
+  });
 }
 
 async function pingHealth(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
@@ -43,28 +70,52 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
     ...(model.extra_args ?? []),
   ];
   const proc = spawn(model.binary, args, { stdio: 'pipe', detached: false });
+  const stderrTail: string[] = [];
+  function pushStderr(chunk: Buffer | string) {
+    const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+    for (const line of text.split('\n')) {
+      if (!line) continue;
+      stderrTail.push(line);
+      while (stderrTail.length > STDERR_BUFFER_LINES) stderrTail.shift();
+    }
+  }
   proc.stdout?.on('data', () => {});
-  proc.stderr?.on('data', () => {});
+  proc.stderr?.on('data', pushStderr);
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (proc.exitCode !== null) {
-      throw new Error(`llama-server for ${model.name} exited before /health came up (code=${proc.exitCode})`);
+      throw new Error(
+        `llama-server for ${model.name} exited before /health came up (code=${proc.exitCode})\n--- stderr tail ---\n${stderrTail.join('\n')}`,
+      );
     }
     if (await pingHealth(model.host, model.port)) {
+      installExitHook();
+      ownedProcs.add(proc);
       return { owned: true, proc };
     }
     await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
   }
   proc.kill('SIGTERM');
-  throw new Error(`llama-server for ${model.name} health timeout after ${HEALTH_TIMEOUT_MS}ms`);
+  throw new Error(
+    `llama-server for ${model.name} health timeout after ${HEALTH_TIMEOUT_MS}ms\n--- stderr tail ---\n${stderrTail.join('\n')}`,
+  );
 }
 
 export async function teardownIfOwned(boot: BootResult): Promise<void> {
   if (!boot.owned || !boot.proc || boot.proc.exitCode !== null) return;
+  ownedProcs.delete(boot.proc);
   boot.proc.kill('SIGTERM');
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline && boot.proc.exitCode === null) {
     await new Promise((r) => setTimeout(r, 100));
   }
   if (boot.proc.exitCode === null) boot.proc.kill('SIGKILL');
+}
+
+export function __ownedProcsForTests(): ReadonlySet<ChildProcess> {
+  return ownedProcs;
+}
+
+export function __seedOwnedProcForTests(proc: ChildProcess): void {
+  ownedProcs.add(proc);
 }

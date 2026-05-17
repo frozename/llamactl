@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { ensureModelServing, teardownIfOwned, type ModelSpec } from '../src/index.js';
+import {
+  __ownedProcsForTests,
+  __seedOwnedProcForTests,
+  ensureModelServing,
+  teardownIfOwned,
+  type ModelSpec,
+} from '../src/index.js';
 
 function baseModel(overrides: Partial<ModelSpec>): ModelSpec {
   return {
@@ -62,5 +68,19 @@ describe('teardownIfOwned', () => {
 
   test('no-op when proc already exited', async () => {
     await teardownIfOwned({ owned: true, proc: { exitCode: 0, kill: () => false } as any });
+  });
+
+  test('removes owned proc from the tracked set', async () => {
+    const proc = {
+      exitCode: null,
+      kill: () => {
+        proc.exitCode = 0;
+        return true;
+      },
+    } as any;
+    __seedOwnedProcForTests(proc);
+    expect(__ownedProcsForTests().has(proc)).toBe(true);
+    await teardownIfOwned({ owned: true, proc });
+    expect(__ownedProcsForTests().has(proc)).toBe(false);
   });
 });
