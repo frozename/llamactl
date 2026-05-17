@@ -6,6 +6,10 @@ export interface ReportOpts {
 
 type Section = 'primary_metric' | 'latency_p50_ms' | 'latency_p95_ms' | 'throughput_tps' | 'errors';
 
+function cellKey(model: string, workload: string): string {
+  return `${model}\u0000${workload}`;
+}
+
 function filteredCells(cells: CellRow[], opts: ReportOpts): CellRow[] {
   return opts.runId ? cells.filter((cell) => cell.run_id === opts.runId) : cells;
 }
@@ -17,7 +21,7 @@ function uniqueSorted(values: Iterable<string>): string[] {
 function latestCellByModelWorkload(cells: CellRow[]): Map<string, CellRow> {
   const map = new Map<string, CellRow>();
   for (const cell of cells) {
-    const key = `${cell.model_name}\u0000${cell.workload_name}`;
+    const key = cellKey(cell.model_name, cell.workload_name);
     const existing = map.get(key);
     if (!existing || existing.finished_at < cell.finished_at) {
       map.set(key, cell);
@@ -36,6 +40,17 @@ function fmtMs(value: number): string {
 
 function fmtTps(value: number): string {
   return value.toFixed(2);
+}
+
+function mdField(value: string): string {
+  return value.replace(/\|/g, '\\|');
+}
+
+function csvField(value: string): string {
+  if (/[,\"\n\r]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
 }
 
 function pivotValue(section: Section, cell?: CellRow): string {
@@ -79,7 +94,7 @@ function renderWinnerList(workloads: string[], lookup: Map<string, CellRow>): st
       }
     }
     if (!winner) return `- ${workload}: -`;
-    return `- ${workload}: **${winner.model_name}** (${fmtMetric(winner.primary_metric_value)})`;
+    return `- ${mdField(workload)}: **${mdField(winner.model_name)}** (${mdField(fmtMetric(winner.primary_metric_value))})`;
   });
   return ['## Per-workload winner', '', ...lines, ''].join('\n');
 }
@@ -90,8 +105,8 @@ export function renderMarkdownReport(cells: CellRow[], opts: ReportOpts = {}): s
   const primaryMetricName = getPrimaryMetricName(filtered);
   const sectionRows = (section: Section, mapper: (cell?: CellRow) => string) =>
     models.map((model) => {
-      const values = workloads.map((workload) => mapper(lookup.get(`${model}\u0000${workload}`)) || '-');
-      return `| ${[model, ...values].join(' | ')} |`;
+      const values = workloads.map((workload) => mdField(mapper(lookup.get(cellKey(model, workload))) || '-'));
+      return `| ${[mdField(model), ...values].join(' | ')} |`;
     });
   const sections: string[] = [
     '# Matrix report',
@@ -101,44 +116,44 @@ export function renderMarkdownReport(cells: CellRow[], opts: ReportOpts = {}): s
     '',
     `## Primary metric (${primaryMetricName})`,
     '',
-    `| ${['Model', ...workloads].join(' | ')} |`,
+    `| ${['Model', ...workloads.map(mdField)].join(' | ')} |`,
     `| ${['--', ...workloads.map(() => '--')].join(' | ')} |`,
     ...sectionRows('primary_metric', (cell) => pivotValue('primary_metric', cell)),
     '',
     `## Latency (p50 / p95, ms)`,
     '',
-    `| ${['Model', ...workloads].join(' | ')} |`,
+    `| ${['Model', ...workloads.map(mdField)].join(' | ')} |`,
     `| ${['--', ...workloads.map(() => '--')].join(' | ')} |`,
     ...models.map((model) => {
       const values = workloads.map((workload) => {
-        const cell = lookup.get(`${model}\u0000${workload}`);
-        return cell ? `${fmtMs(cell.latency_p50_ms)} / ${fmtMs(cell.latency_p95_ms)}` : '-';
+        const cell = lookup.get(cellKey(model, workload));
+        return cell ? mdField(`${fmtMs(cell.latency_p50_ms)} / ${fmtMs(cell.latency_p95_ms)}`) : '-';
       });
-      return `| ${[model, ...values].join(' | ')} |`;
+      return `| ${[mdField(model), ...values].join(' | ')} |`;
     }),
     '',
     `## Throughput (tps)`,
     '',
-    `| ${['Model', ...workloads].join(' | ')} |`,
+    `| ${['Model', ...workloads.map(mdField)].join(' | ')} |`,
     `| ${['--', ...workloads.map(() => '--')].join(' | ')} |`,
     ...models.map((model) => {
       const values = workloads.map((workload) => {
-        const value = pivotValue('throughput_tps', lookup.get(`${model}\u0000${workload}`));
-        return value || '-';
+        const value = pivotValue('throughput_tps', lookup.get(cellKey(model, workload)));
+        return value ? mdField(value) : '-';
       });
-      return `| ${[model, ...values].join(' | ')} |`;
+      return `| ${[mdField(model), ...values].join(' | ')} |`;
     }),
     '',
     `## Errors`,
     '',
-    `| ${['Model', ...workloads].join(' | ')} |`,
+    `| ${['Model', ...workloads.map(mdField)].join(' | ')} |`,
     `| ${['--', ...workloads.map(() => '--')].join(' | ')} |`,
     ...models.map((model) => {
       const values = workloads.map((workload) => {
-        const cell = lookup.get(`${model}\u0000${workload}`);
-        return cell ? String(cell.errors) : '-';
+        const cell = lookup.get(cellKey(model, workload));
+        return cell ? mdField(String(cell.errors)) : '-';
       });
-      return `| ${[model, ...values].join(' | ')} |`;
+      return `| ${[mdField(model), ...values].join(' | ')} |`;
     }),
     '',
     renderWinnerList(workloads, lookup),
@@ -160,8 +175,8 @@ export function renderCsvReport(cells: CellRow[], opts: ReportOpts = {}): string
   for (const [section, formatter] of sections) {
     for (const model of models) {
       for (const workload of workloads) {
-        const cell = lookup.get(`${model}\u0000${workload}`);
-        lines.push([section, model, workload, formatter(cell)].join(','));
+        const cell = lookup.get(cellKey(model, workload));
+        lines.push([section, model, workload, formatter(cell)].map(csvField).join(','));
       }
     }
   }

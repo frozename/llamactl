@@ -14,10 +14,6 @@ function makeCell(row: Partial<CellRow> & Pick<CellRow, 'run_id' | 'model_name' 
     started_at: '2026-05-17T00:00:00.000Z',
     host_machine: 'host-a',
     ...row,
-    latency_p50_ms: row.latency_p50_ms ?? 100,
-    latency_p95_ms: row.latency_p95_ms ?? 200,
-    throughput_tps: row.throughput_tps ?? 10,
-    errors: row.errors ?? 0,
   };
 }
 
@@ -95,6 +91,22 @@ describe('matrix report', () => {
     expect(primary).toHaveLength(4);
     expect(primary).toContain('primary_metric,model-a,workload-a,0.7500');
     expect(primary).toContain('primary_metric,model-b,workload-b,0.6543');
+  });
+
+  test('csv escapes fields with commas and quotes', () => {
+    const cells = [
+      makeCell({
+        run_id: 'run-1',
+        model_name: 'foo, bar',
+        workload_name: 'work"load',
+        primary_metric_name: 'accuracy',
+        primary_metric_value: 0.5,
+        finished_at: '2026-05-17T00:01:00.000Z',
+      }),
+    ];
+
+    const csv = renderCsvReport(cells);
+    expect(csv).toContain('primary_metric,"foo, bar","work""load",0.5000');
   });
 
   test('missing cell shows dash in markdown', () => {
