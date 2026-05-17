@@ -3,6 +3,7 @@ import { runMatrix } from './runner.js';
 import { listCellRows } from './store.js';
 import { memoryEfficacyBinaryWorkload } from './workloads/memory-efficacy-binary.js';
 import { memoryEfficacy4wayWorkload } from './workloads/memory-efficacy-4way.js';
+import { memoryEfficacy4wayBalancedWorkload } from './workloads/memory-efficacy-4way-balanced.js';
 import { renderCsvReport, renderMarkdownReport } from './report.js';
 import type { ModelSpec, WorkloadEval } from './types.js';
 
@@ -45,6 +46,7 @@ function getKnownWorkloads(): Record<string, WorkloadEval> {
   return {
     'memory-efficacy-binary': memoryEfficacyBinaryWorkload,
     'memory-efficacy-4way': memoryEfficacy4wayWorkload,
+    'memory-efficacy-4way-balanced': memoryEfficacy4wayBalancedWorkload,
   };
 }
 
