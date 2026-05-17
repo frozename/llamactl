@@ -8,6 +8,7 @@ export * from './matrix/workloads/common.js';
 export * from './matrix/workloads/memory-efficacy-binary.js';
 export * from './matrix/workloads/memory-efficacy-4way.js';
 export * from './matrix/workloads/memory-efficacy-4way-balanced.js';
+export * from './matrix/workloads/task-refiner-rubric.js';
 export * from './matrix/types.js';
 export * from './report/render-card.js';
 export * from './runners/context-retrieval.js';

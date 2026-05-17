@@ -26,9 +26,12 @@ export interface WorkloadEval {
   scorer: (
     row: unknown,
     completion: string,
-  ) => { metrics: Record<string, number>; prediction: string; gold: string };
+  ) =>
+    | { metrics: Record<string, number>; prediction: string; gold: string }
+    | Promise<{ metrics: Record<string, number>; prediction: string; gold: string }>;
   framing?: string;
   primary_metric_name?: string;
+  judge_model?: ModelSpec;
 }
 
 export interface CellRow {
