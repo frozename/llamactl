@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { runMatrix } from './runner.js';
 import { listCellRows } from './store.js';
 import { memoryEfficacyBinaryWorkload } from './workloads/memory-efficacy-binary.js';
+import { memoryEfficacy4wayWorkload } from './workloads/memory-efficacy-4way.js';
 import { renderCsvReport, renderMarkdownReport } from './report.js';
 import type { ModelSpec, WorkloadEval } from './types.js';
 
@@ -41,7 +42,10 @@ function validateModelSpec(value: unknown): ModelSpec {
 }
 
 function getKnownWorkloads(): Record<string, WorkloadEval> {
-  return { 'memory-efficacy-binary': memoryEfficacyBinaryWorkload };
+  return {
+    'memory-efficacy-binary': memoryEfficacyBinaryWorkload,
+    'memory-efficacy-4way': memoryEfficacy4wayWorkload,
+  };
 }
 
 async function main(): Promise<void> {

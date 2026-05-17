@@ -12,7 +12,7 @@ import {
   type ModelSpec,
   type WorkloadEval,
 } from '../src/index.js';
-import { memoryEfficacyBinaryWorkload } from '../src/index.js';
+import { memoryEfficacy4wayWorkload, memoryEfficacyBinaryWorkload } from '../src/index.js';
 
 function makeModel(name: string): ModelSpec {
   return {
@@ -105,6 +105,63 @@ describe('runMatrix', () => {
       const expected = aggregateMetrics([
         { pred: 'true', gold: 'true' },
         { pred: 'true', gold: 'false' },
+      ]);
+      expect(cell.primary_metric_value).toBeCloseTo(expected.macro_f1, 5);
+    } finally {
+      globalThis.fetch = origFetch;
+      try {
+        rmSync(tmpPath);
+      } catch {}
+    }
+  });
+
+  test('runs the 4way memory-efficacy workload end to end', async () => {
+    const db = new Database(':memory:');
+    const tmpPath = `/tmp/memory-efficacy-4way-${randomUUID()}.jsonl`;
+    const jsonl = [
+      JSON.stringify({
+        messages: [
+          { role: 'user', content: 'Is this memory related?' },
+          { role: 'assistant', content: JSON.stringify({ classification: 'missed_registration', reason: 'x' }) },
+        ],
+      }),
+      JSON.stringify({
+        messages: [
+          { role: 'user', content: 'Is this memory related?' },
+          { role: 'assistant', content: JSON.stringify({ classification: 'not_memory_related', reason: 'y' }) },
+        ],
+      }),
+    ].join('\n');
+    await Bun.write(tmpPath, jsonl);
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"classification":"missed_registration","reason":"x"}' } }],
+          usage: { completion_tokens: 5 },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    try {
+      const workload: WorkloadEval = {
+        ...memoryEfficacy4wayWorkload,
+        corpus_path: tmpPath,
+      };
+      const run = await runMatrix({
+        models: [makeModel('model-a')],
+        workloads: [workload],
+        db,
+      });
+      expect(run.cellsWritten).toBe(1);
+      const rows = listCellRows(db, { run_id: run.runId });
+      expect(rows).toHaveLength(1);
+      const [cell] = rows;
+      expect(cell.runner_version).toBe(1);
+      expect(cell.n_rows).toBe(2);
+      expect(cell.run_id).toMatch(/^\d{4}-\d{2}-\d{2}T.+-[0-9a-f]{8}$/);
+      const expected = aggregateMetrics([
+        { pred: 'missed_registration', gold: 'missed_registration' },
+        { pred: 'missed_registration', gold: 'not_memory_related' },
       ]);
       expect(cell.primary_metric_value).toBeCloseTo(expected.macro_f1, 5);
     } finally {
