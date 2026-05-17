@@ -147,6 +147,47 @@ the `all` target.
   `*ReloadFailed`, upstream absent → Pending with an actionable
   reason. See handler JSDoc for the wire contract.
 
+## Model selection preferences (bench + workload picks)
+
+When picking a model variant for a bench cell, a workload manifest,
+or a production swap, default to these in order:
+
+1. **MTP variant when one exists for the family.** Gemma 4 → atomic
+   fork + `--mtp-head` assistant GGUF (`gemma-4-*-assistant-*.gguf`).
+   Qwen 3.6 → `Qwen3.6-*-MTP-GGUF/*-mtp.gguf` on the qwen atomic fork
+   (`b1-mtp-qwen-rebase` branch). MTP draft acceleration is in the
+   30-85% accept-rate range on M-series Metal — it gives the same
+   accuracy as the base model at 1.5-3× throughput. Skip MTP only
+   when (a) the variant is not built for the chosen quant, or
+   (b) the workload's prompt is too short for draft amortization
+   to win (under ~30 prompt tokens).
+2. **Quant ladder, by architecture.** Conventional dense + hybrid
+   attention (Granite 4.1, Llama 3.x, Qwen 3.x non-MoE) ranks
+   Q8_0 > Q6_K > Q5_K_M > Q4_K_M monotonically on retrieval/
+   classify tasks. MatFormer / MoE families (Gemma 4 26B-A4B,
+   Gemma 4 E4B, Qwen 3.6 27B/35B MoE) prefer `UD-Q4_K_XL` over
+   Q8_0 — the per-tensor imatrix schedule matches the architecture.
+3. **KV cache.** Default `-ctk q8_0 -ctv q8_0` for any model >4B
+   on M4 Pro (saves ~7 GB on 32K ctx vs f16). f16 only when the
+   workload requires it (e.g. Gemma 4 26B-A4B + MTP draft head,
+   per the workload yaml).
+4. **Context size.** Match the workload's actual prompt + completion
+   budget, not a round number. 32K is the default; 65K only for
+   long-context workloads or when the model's `--swa-full` + cache
+   reuse fix needs it for steady-state throughput.
+5. **Builds.** Gemma 4 + Qwen 3.6 must use the atomic forks (per
+   `reference_llamacpp_mtp_binaries`). Granite + Llama + Phi use
+   upstream `llama.cpp`. Verify branch with
+   `git -C <fork> branch --show-current` before benching — the
+   atomic fork has historically drifted onto negative-result
+   branches.
+
+When extending the fleet-eval matrix at
+`packages/eval/src/matrix/`, encode these preferences into the
+`ModelSpec` defaults: a missing `binary` for a Gemma 4 or Qwen 3.6
+family entry should resolve to the atomic fork; a missing quant for
+a MoE family should resolve to `UD-Q4_K_XL`.
+
 ## Ops Chat dispatch (N.4)
 
 `packages/remote/src/ops-chat/` maps 16 llamactl.* MCP tools onto
