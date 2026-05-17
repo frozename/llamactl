@@ -1,4 +1,7 @@
 export * from './client.js';
+export * from './matrix/runner.js';
+export * from './matrix/store.js';
+export * from './matrix/types.js';
 export * from './report/render-card.js';
 export * from './runners/context-retrieval.js';
 export * from './runners/json-output.js';
