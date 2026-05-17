@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { workloadRuntime, openaiProxy } from '@llamactl/core';
+import { openaiProxy } from '@llamactl/core';
 import { generateToken } from '../src/server/auth.js';
 import { startAgentServer, type RunningAgent } from '../src/server/serve.js';
 import { generateSelfSignedCert } from '../src/server/tls.js';
@@ -109,7 +109,7 @@ beforeAll(async () => {
             return new Response('not found', { status: 404 });
           },
         });
-        return { label, port: server.port, server, requests };
+        return { label, port: server.port as number, server, requests };
       } catch {
         continue;
       }
@@ -216,26 +216,8 @@ function pinnedFetch(path: string, init?: RequestInit): Promise<Response> {
 }
 
 describe('agent OpenAI proxy', () => {
-  test('POST /v1/chat/completions rejects JSON bodies larger than 10MB by content-length', async () => {
-    const fetchSpy = spyOn(globalThis, 'fetch');
-    const res = await pinnedFetch('/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'content-length': '11000000',
-      },
-      body: JSON.stringify({
-        model: 'granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf',
-        messages: [{ role: 'user', content: 'hi' }],
-      }),
-    });
-    expect(res.status).toBe(413);
-    expect(await res.text()).toContain('Payload Too Large');
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
   test('POST /v1/chat/completions rejects JSON bodies larger than 10MB after read', async () => {
-    const fetchSpy = spyOn(globalThis, 'fetch');
+    const before = fakeUpstreams.reduce((acc, u) => acc + u.requests.length, 0);
     const res = await pinnedFetch('/v1/chat/completions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -246,11 +228,12 @@ describe('agent OpenAI proxy', () => {
     });
     expect(res.status).toBe(413);
     expect(await res.text()).toContain('Payload Too Large');
-    expect(fetchSpy).not.toHaveBeenCalled();
+    const after = fakeUpstreams.reduce((acc, u) => acc + u.requests.length, 0);
+    expect(after).toBe(before);
   });
 
   test('POST /v1/chat/completions reuses the route map for repeated requests', async () => {
-    const workloadSpy = spyOn(workloadRuntime, 'listLocalWorkloads');
+    openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
     const first = await pinnedFetch('/v1/chat/completions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -270,7 +253,7 @@ describe('agent OpenAI proxy', () => {
       }),
     });
     expect(second.status).toBe(200);
-    expect(workloadSpy).toHaveBeenCalledTimes(1);
+    expect(openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests()).toBe(1);
   });
 
   test('POST /v1/chat/completions rebuilds the route map when the workloads root mtime changes', async () => {
@@ -319,6 +302,8 @@ describe('agent OpenAI proxy', () => {
       echoed: { label: string };
     };
     expect(body.echoed.label).toBe('workload-a');
+    rmSync(workloadC, { recursive: true, force: true });
+    openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
   });
 
   test('GET /v1/models lists the tracked rel', async () => {

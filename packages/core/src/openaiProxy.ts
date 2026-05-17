@@ -3,7 +3,8 @@ import { statSync } from 'node:fs';
 import { resolveEnv } from './env.js';
 import { endpoint as llamaEndpoint, readServerState, readServerPid } from './server.js';
 import type { ResolvedEnv } from './types.js';
-import { listLocalWorkloads, type WorkloadKey, workloadRuntimeRoot } from './workloadRuntime.js';
+import * as workloadRuntime from './workloadRuntime.js';
+import type { WorkloadKey } from './workloadRuntime.js';
 
 const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
 
@@ -78,21 +79,23 @@ function routedEndpointForModel(
 type RouteEntry = { host: string; port: number };
 
 let routeMapCache: { mtimeNs: bigint; map: Map<string, RouteEntry> } | null = null;
+let routeMapBuildCount = 0;
 
 function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
+  routeMapBuildCount += 1;
   const out = new Map<string, RouteEntry>();
-  for (const entry of listLocalWorkloads(resolved)) {
+  for (const entry of workloadRuntime.listLocalWorkloads(resolved)) {
     if (!entry.alive) continue;
     const state = readServerState({ name: entry.name }, resolved);
     if (!state?.rel || !state.host || state.port == null) continue;
-    out.set(state.rel, { host: state.host, port: state.port });
+    out.set(state.rel, { host: state.host, port: Number(state.port) });
   }
   return out;
 }
 
 function getRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
   try {
-    const mtimeNs = statSync(workloadRuntimeRoot(resolved), { bigint: true }).mtimeNs;
+    const mtimeNs = statSync(workloadRuntime.workloadRuntimeRoot(resolved), { bigint: true }).mtimeNs;
     if (routeMapCache && routeMapCache.mtimeNs === mtimeNs) return routeMapCache.map;
     const map = buildRouteMap(resolved);
     routeMapCache = { mtimeNs, map };
@@ -104,6 +107,11 @@ function getRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
 
 export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   routeMapCache = null;
+  routeMapBuildCount = 0;
+}
+
+export function __getOpenAIProxyRouteMapBuildCountForTests(): number {
+  return routeMapBuildCount;
 }
 
 /**
