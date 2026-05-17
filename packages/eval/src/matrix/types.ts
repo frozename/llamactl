@@ -7,6 +7,9 @@ export interface ModelSpec {
   host: string;
   port: number;
   extra_args: string[];
+  binary?: string;
+  start_args?: string[];
+  managed?: boolean;
   lora_path?: string;
   prompt_template?: 'chat-format' | 'bare-instruct' | 'bare-base';
   inference_toggles?: Record<string, unknown>;

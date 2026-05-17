@@ -39,6 +39,23 @@ function validateModelSpec(value: unknown): ModelSpec {
       throw new Error(`invalid ModelSpec: missing/bad field ${String(field)}`);
     }
   }
+  const optional: Array<keyof Pick<ModelSpec, 'binary' | 'start_args' | 'managed'>> = [
+    'binary',
+    'start_args',
+    'managed',
+  ];
+  for (const field of optional) {
+    const fieldValue = spec[field];
+    const ok =
+      field === 'binary'
+        ? fieldValue === undefined || typeof fieldValue === 'string'
+        : field === 'start_args'
+          ? fieldValue === undefined || (Array.isArray(fieldValue) && fieldValue.every((item) => typeof item === 'string'))
+          : fieldValue === undefined || typeof fieldValue === 'boolean';
+    if (!ok) {
+      throw new Error(`invalid ModelSpec: missing/bad field ${String(field)}`);
+    }
+  }
   return spec as ModelSpec;
 }
 

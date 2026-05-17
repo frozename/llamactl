@@ -2,6 +2,7 @@ export * from './client.js';
 export * from './matrix/scoring.js';
 export * from './matrix/runner.js';
 export * from './matrix/report.js';
+export * from './matrix/lifecycle.js';
 export * from './matrix/store.js';
 export * from './matrix/workloads/common.js';
 export * from './matrix/workloads/memory-efficacy-binary.js';
