@@ -7,5 +7,11 @@ export const ENGINES: Record<EngineName, EngineAdapter> = {
   omlx: omlxEngine,
 };
 
-export type { EngineAdapter, EngineName, ModelHostSpecForEngine, ModelHostHostedModel } from './types.js';
+export type {
+  EngineAdapter,
+  EngineBootEnv,
+  EngineName,
+  ModelHostSpecForEngine,
+  ModelHostHostedModel,
+} from './types.js';
 export { matchHostedModel } from './omlx.js';

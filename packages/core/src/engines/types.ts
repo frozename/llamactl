@@ -2,6 +2,11 @@ import type { ResolvedEnv } from '../types.js';
 
 export type EngineName = 'llamacpp' | 'omlx';
 
+export interface EngineBootEnv {
+  LLAMACTL_MODELS_DIR?: string;
+  LLAMA_CPP_MODELS?: string;
+}
+
 export interface ModelHostHostedModel {
   rel: string;
 }
@@ -21,7 +26,7 @@ export interface EngineAdapter {
   validateSpec(spec: ModelHostSpecForEngine): { ok: true } | { ok: false; error: string };
   buildBootCommand(
     spec: ModelHostSpecForEngine,
-    env: ResolvedEnv,
+    env: EngineBootEnv,
   ): { binary: string; args: string[]; envOverrides?: Record<string, string> };
   /**
    * Resolves when the engine is serving at least one model (not just process-alive).

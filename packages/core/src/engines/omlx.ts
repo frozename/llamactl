@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs';
 import { basename, resolve, sep } from 'node:path';
-import type { ResolvedEnv } from '../types.js';
-import type { EngineAdapter, ModelHostSpecForEngine } from './types.js';
+import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from './types.js';
 import { gracefulShutdown, pollUntilModelIds } from './lifecycle.js';
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost', '0.0.0.0']);
@@ -31,12 +30,13 @@ export const omlxEngine: EngineAdapter = {
     return { ok: true };
   },
 
-  buildBootCommand(spec: ModelHostSpecForEngine, env: ResolvedEnv) {
-    const modelsDir =
-      (env as Record<string, string>).LLAMACTL_MODELS_DIR ??
-      (env as Record<string, string>).LLAMA_CPP_MODELS ??
-      '/tmp/models';
-    const sanitizedModelRel = spec.hostedModels[0].rel;
+  buildBootCommand(spec: ModelHostSpecForEngine, env: EngineBootEnv) {
+    const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS ?? '/tmp/models';
+    const hostedModel = spec.hostedModels[0];
+    if (!hostedModel) {
+      throw new Error('hostedModels must have exactly one entry');
+    }
+    const sanitizedModelRel = hostedModel.rel;
     const normalizedModelPath = resolve(modelsDir, sanitizedModelRel);
     if (!normalizedModelPath.startsWith(`${resolve(modelsDir)}${sep}`)) {
       throw new Error(`hostedModel rel escapes models dir: ${sanitizedModelRel}`);

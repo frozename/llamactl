@@ -1,5 +1,4 @@
-import type { ResolvedEnv } from '../types.js';
-import type { EngineAdapter, ModelHostSpecForEngine } from './types.js';
+import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from './types.js';
 import { gracefulShutdown, pollUntilModelIds } from './lifecycle.js';
 import { resolve, sep } from 'node:path';
 
@@ -24,12 +23,13 @@ export const llamacppEngine: EngineAdapter = {
     return { ok: true };
   },
 
-  buildBootCommand(spec: ModelHostSpecForEngine, env: ResolvedEnv) {
-    const modelRel = spec.hostedModels[0].rel;
-    const modelsDir =
-      (env as Record<string, string>).LLAMACTL_MODELS_DIR ??
-      (env as Record<string, string>).LLAMA_CPP_MODELS ??
-      '/tmp/models';
+  buildBootCommand(spec: ModelHostSpecForEngine, env: EngineBootEnv) {
+    const hostedModel = spec.hostedModels[0];
+    if (!hostedModel) {
+      throw new Error('hostedModels must have exactly one entry');
+    }
+    const modelRel = hostedModel.rel;
+    const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS ?? '/tmp/models';
     const fullModelPath = resolve(modelsDir, modelRel);
     if (!fullModelPath.startsWith(`${resolve(modelsDir)}${sep}`)) {
       throw new Error(`hostedModel rel escapes models dir: ${modelRel}`);

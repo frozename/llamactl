@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
 import { ENGINES } from '../../../core/src/engines/index.js';
-import type { ModelHostSpecForEngine } from '../../../core/src/engines/types.js';
+import type { EngineBootEnv, ModelHostSpecForEngine } from '../../../core/src/engines/index.js';
 import type { ModelSpec } from './types.js';
 
 const HEALTH_POLL_INTERVAL_MS = 1000;
@@ -108,9 +108,9 @@ export function buildBootCommandForModelSpec(model: ModelSpec): { binary: string
       extraArgs: model.extra_args ?? [],
       timeoutSeconds: 60,
     };
-    return ENGINES.omlx.buildBootCommand(spec, {
-      LLAMACTL_MODELS_DIR: model.mlx_model_dir ?? '',
-    } as any);
+    const env: EngineBootEnv = {};
+    if (model.mlx_model_dir) env.LLAMACTL_MODELS_DIR = model.mlx_model_dir;
+    return ENGINES.omlx.buildBootCommand(spec, env);
   }
   return buildLlamaCppBootCommand(model);
 }

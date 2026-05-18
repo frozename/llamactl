@@ -25,9 +25,10 @@ function baseModel(overrides: Partial<ModelSpec>): ModelSpec {
 
 describe('matrix lifecycle - engine dispatch', () => {
   test('omlx ModelSpec routes to ENGINES.omlx.buildBootCommand', () => {
-    const spec = {
+    const spec: ModelSpec = {
       name: 'qwen3-8b-mlx-4bit',
       engine: 'omlx',
+      gguf_path: '/tmp/unused.gguf',
       family: 'qwen-3',
       quant: 'MLX-4bit',
       size_params: '8B',
@@ -35,20 +36,37 @@ describe('matrix lifecycle - engine dispatch', () => {
       port: 8094,
       binary: '/usr/bin/true',
       mlx_model_dir: '/tmp/mlx',
-      managed: true,
       extra_args: ['--max-concurrent-requests', '1'],
       start_args: [],
-      gguf_path: '/tmp/unused.gguf',
-      hostedModels: [{ rel: 'qwen3-8b-mlx-4bit.gguf' }],
     };
-    const built = buildBootCommandForModelSpec(spec as any);
+    const built = buildBootCommandForModelSpec(spec);
     expect(built.args[0]).toBe('serve');
     expect(built.args).toContain('--model-dir');
     expect(built.args).toContain('/tmp/mlx');
   });
 
+  test('omlx ModelSpec without mlx_model_dir falls through to LLAMA_CPP_MODELS', () => {
+    const spec: ModelSpec = {
+      name: 'qwen3-8b-mlx-4bit',
+      engine: 'omlx',
+      gguf_path: '/tmp/unused.gguf',
+      family: 'qwen-3',
+      quant: 'MLX-4bit',
+      size_params: '8B',
+      host: '127.0.0.1',
+      port: 8094,
+      binary: '/usr/bin/true',
+      extra_args: ['--max-concurrent-requests', '1'],
+      start_args: [],
+    };
+    const built = buildBootCommandForModelSpec(spec);
+    const modelDirIdx = built.args.indexOf('--model-dir');
+    expect(modelDirIdx).toBeGreaterThan(-1);
+    expect(built.args[modelDirIdx + 1]).not.toBe('');
+  });
+
   test('default engine (undefined) routes to llama.cpp path (back-compat)', () => {
-    const spec = {
+    const spec: ModelSpec = {
       name: 'granite-3b-Q8',
       family: 'granite',
       quant: 'Q8_0',
@@ -57,11 +75,10 @@ describe('matrix lifecycle - engine dispatch', () => {
       port: 8085,
       binary: '/usr/bin/true',
       gguf_path: '/tmp/granite-3b-Q8.gguf',
-      managed: true,
       extra_args: [],
       start_args: [],
     };
-    const built = buildBootCommandForModelSpec(spec as any);
+    const built = buildBootCommandForModelSpec(spec);
     expect(built.binary).toBe('/usr/bin/true');
     expect(built.args).toContain('--port');
   });
