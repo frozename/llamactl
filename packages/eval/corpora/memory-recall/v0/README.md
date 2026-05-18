@@ -1,6 +1,6 @@
 # memory-recall / v0 (matrix eval)
 
-`test.jsonl` (n=55) is the matrix-eval evaluation set for the
+`test.jsonl` (n=105) is the matrix-eval evaluation set for the
 `memory-recall` workload. Scoring shape and NDCG@5 metric defined in
 `packages/eval/src/matrix/workloads/memory-recall.ts` and the spec at
 `docs/specs/2026-05-18-memory-recall-workload.md`.
@@ -10,9 +10,13 @@
 - `seed.jsonl` (n=5) — hand-built smoke rows. Strong gold (1-5 ids).
 - `mined.jsonl` (n=50) — mined from real penumbra t0 `memory_search`
   tool-call queries. Weak gold (BM25-top-1 self-label, single id).
+- `synth.jsonl` (n=50) — labeler-generated questions over random t2
+  bodies. Strong gold (seed memory_id, single id) — accepted only when
+  the BM25 search for the labeler's question returns the seed memory
+  in its top-10.
 
-`test.jsonl` is just `cat seed.jsonl mined.jsonl`; rebuild by re-running
-`mine_t0.py` and concatenating.
+`test.jsonl` is just `cat seed.jsonl mined.jsonl synth.jsonl`; rebuild
+by re-running `mine_t0.py` + `synth_t2.py` and concatenating.
 
 ## Mining (`mine_t0.py`)
 
@@ -38,10 +42,11 @@ The script is deterministic for a fixed `--seed` (default 2026_05_18).
   collapses to a binary "did the right id land in position 1?" with a
   log-discounted partial credit for positions 2-5. With richer gold
   (the seed half has up to 5), NDCG@5 spreads more.
-- **Synthetic half is not yet built.** Per spec §"Synthetic half (n=50)",
-  the next step is to label 50 t2 bodies with an LLM to generate
-  question + near-miss pairs, then BM25 for candidates. That doubles
-  corpus size and adds questions the agent population never asked.
+- **Synth labeler is granite-4.1-8b-Q4_K_M.** It's a single labeler;
+  the corpus inherits its phrasing biases. Spot-check before treating
+  per-model differences smaller than ±0.05 NDCG@5 as meaningful.
+  Future work: re-label with Qwen3.5-9B-MTP (pulled 2026-05-18-pm,
+  bench-pending) and diff agreement.
 
 ## Bench plan
 
@@ -59,9 +64,10 @@ Candidate models (per `project_a3b_beats_mtp_dense_2026-05-18.md`):
 
 - gemma4-26b-a4b-mtp (last seen 0.974 on the n=5 seed)
 - qwen3.6-35b-A3B-UDQ4KXL (last seen 0.971 on the n=5 seed)
-- granite-4.1-8b-Q4_K_M
+- granite-4.1-8b-Q4_K_M (also the synth labeler — bench separately to spot self-bias)
 - granite-4.1-3b-Q8_0
 - qwen3-8b-Q4_K_M
+- qwen3.5-9b-mtp (new candidate — pulled 2026-05-18, no workload yet)
 - gemma4-e4b-vanilla
 - gemma4-26b-a4b-mtp-q4km
 
