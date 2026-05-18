@@ -52,6 +52,33 @@ export function resolveHfToken(): string | undefined {
   }
 }
 
+export type RepoFormat = 'gguf' | 'mlx';
+
+export function classifyRepoFormat(
+  repo: string,
+  files: string[],
+  opts: { override?: RepoFormat } = {},
+): { format: RepoFormat } | { error: string } {
+  if (opts.override) return { format: opts.override };
+
+  const hasGguf = files.some((f) => f.endsWith('.gguf'));
+  if (hasGguf) return { format: 'gguf' };
+
+  const hasConfig = files.includes('config.json');
+  const hasTokenizer = files.includes('tokenizer.json') || files.includes('tokenizer.model');
+  const hasSafetensors = files.some(
+    (f) => f === 'model.safetensors' || f === 'model.safetensors.index.json' || /\.safetensors$/.test(f),
+  );
+  if (hasConfig && hasTokenizer && hasSafetensors) return { format: 'mlx' };
+
+  if (repo.startsWith('mlx-community/')) {
+    return {
+      error: `repo ${repo} looks like an MLX repo by namespace but is missing required files (need config.json + tokenizer + safetensors)`,
+    };
+  }
+  return { error: `no gguf files and no MLX format signature in ${repo}` };
+}
+
 /**
  * Progress + lifecycle events emitted by a pull. Consumers shape these
  * into shell output (stderr passthrough) or tRPC observables (Electron

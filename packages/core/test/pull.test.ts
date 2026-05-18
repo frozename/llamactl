@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  classifyRepoFormat,
   pickCandidateFile,
   pullCandidate,
   pullRepo,
@@ -11,6 +12,44 @@ import {
   type RunHf,
 } from '../src/pull.js';
 import { envForTemp, makeTempRuntime } from './helpers.js';
+
+describe('classifyRepoFormat', () => {
+  test('classifies a gguf-bearing repo as gguf', () => {
+    const files = ['Qwen3-8B-Q4_K_M.gguf', 'README.md', 'config.json'];
+    expect(classifyRepoFormat('Qwen3-8B-GGUF', files)).toEqual({ format: 'gguf' });
+  });
+
+  test('classifies an mlx-community repo with safetensors + config + tokenizer as mlx', () => {
+    const files = ['model.safetensors', 'config.json', 'tokenizer.json', 'README.md'];
+    expect(classifyRepoFormat('mlx-community/Qwen3-8B-MLX-4bit', files)).toEqual({ format: 'mlx' });
+  });
+
+  test('classifies a sharded mlx repo (safetensors.index.json) as mlx', () => {
+    const files = [
+      'model.safetensors.index.json',
+      'model-00001-of-00003.safetensors',
+      'config.json',
+      'tokenizer.model',
+    ];
+    expect(classifyRepoFormat('mlx-community/Llama-3.1-8B-MLX', files)).toEqual({ format: 'mlx' });
+  });
+
+  test('returns error when neither gguf nor mlx signatures present', () => {
+    const files = ['README.md'];
+    const result = classifyRepoFormat('foo/bar', files);
+    expect('error' in result).toBe(true);
+  });
+
+  test('prefers gguf when both gguf and mlx markers exist (back-compat)', () => {
+    const files = ['model.gguf', 'model.safetensors', 'config.json', 'tokenizer.json'];
+    expect(classifyRepoFormat('mixed/repo', files)).toEqual({ format: 'gguf' });
+  });
+
+  test('--format=mlx override picks mlx even when gguf exists', () => {
+    const files = ['model.gguf', 'model.safetensors', 'config.json', 'tokenizer.json'];
+    expect(classifyRepoFormat('mixed/repo', files, { override: 'mlx' })).toEqual({ format: 'mlx' });
+  });
+});
 
 describe('pull.pickCandidateFile', () => {
   test('returns the caller-supplied file without hitting HF', async () => {
