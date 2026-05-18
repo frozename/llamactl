@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import fs, { existsSync, mkdirSync } from 'node:fs';
+import os from 'node:os';
 import { delimiter, join } from 'node:path';
 import { relFromRepoAndFile } from './catalog.js';
 import { eligibleGgufSiblings, pickFile } from './discovery.js';
@@ -33,6 +34,22 @@ export function resolveHfBin(env: NodeJS.ProcessEnv = process.env): string {
     }
   }
   return 'hf';
+}
+
+export function resolveHfToken(): string | undefined {
+  const direct = process.env.HF_TOKEN;
+  if (direct && direct.length > 0) return direct;
+
+  const legacy = process.env.HUGGING_FACE_HUB_TOKEN;
+  if (legacy && legacy.length > 0) return legacy;
+
+  try {
+    const home = process.env.HF_HOME ?? join(os.homedir(), '.cache/huggingface');
+    const token = fs.readFileSync(join(home, 'token'), 'utf8').trim();
+    return token.length > 0 ? token : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -95,7 +112,10 @@ function drainLines(
 export const defaultRunHf: RunHf = (args, onEvent, signal) => {
   return new Promise((resolve, reject) => {
     const bin = resolveHfBin();
-    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const env = { ...process.env };
+    const token = resolveHfToken();
+    if (token) env.HF_TOKEN = token;
+    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
     const forward = (
       stream: NodeJS.ReadableStream,
       kind: 'stdout' | 'stderr',

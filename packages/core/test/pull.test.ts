@@ -6,6 +6,7 @@ import {
   pullCandidate,
   pullRepo,
   pullRepoFile,
+  resolveHfToken,
   type PullEvent,
   type RunHf,
 } from '../src/pull.js';
@@ -34,6 +35,19 @@ describe('pull.pickCandidateFile', () => {
       profile: 'mbp',
     });
     expect(result?.profile).toBe('macbook-pro-48g');
+  });
+});
+
+describe('pull.resolveHfToken', () => {
+  test('returns HF_TOKEN when set', () => {
+    const original = process.env.HF_TOKEN;
+    process.env.HF_TOKEN = 'test-token';
+    try {
+      expect(resolveHfToken()).toBe('test-token');
+    } finally {
+      if (original === undefined) delete process.env.HF_TOKEN;
+      else process.env.HF_TOKEN = original;
+    }
   });
 });
 
