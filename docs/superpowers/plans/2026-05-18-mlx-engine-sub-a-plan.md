@@ -1981,6 +1981,38 @@ EOF
 
 Sub A is done when all six manual steps succeed.
 
+## Execution scheduling — maximum-parallelism wave order
+
+The phase-by-phase dispatch graphs above show within-phase parallelism;
+this section flattens dependencies across phases so plan-runtime (or a
+maestro driving `chain_start` fan-outs manually) can schedule the
+absolute-minimum number of waves.
+
+Six waves total (five dispatched + one manual). Each wave is a
+`chain_start` fan-out; the next wave triggers after the prior wave's
+tasks all reach terminal-success and any maestro-review gates pass.
+
+| Wave | Tasks (parallel) | Bottleneck task | Gated on |
+|------|------------------|-----------------|----------|
+| 1 | `1.1`, `1.2`, `3.1`, `5.2`, `6.3` | `3.1` (substantial) | nothing |
+| 2 | `2.1`, `2.2`, `2.3`, `3.2` | `2.1`/`2.2`/`3.2` (substantial) | Wave 1 ⊇ `{1.1, 3.1}` |
+| 3 | `4.1`, `4.3` | `4.1` (substantial) | Wave 2 ⊇ `{2.1, 2.2, 2.3}` |
+| 4 | `4.2`, `6.1`, `6.2` | none (all small) | Wave 3 ⊇ `{4.1, 4.3}` |
+| 5 | `5.1` | `5.1` (substantial) | Wave 4 ⊇ `{4.2}` |
+| 6 | `6.4` (manual on M4 Pro) | n/a | all prior waves green |
+
+Critical path (sequential, cannot be parallelized): `1.1 → 2.1 → 4.1 → 4.2 → 5.1` — five substantial dispatches end-to-end. Everything else fits in their shadow.
+
+Cross-phase wins this schedule captures:
+- `3.1`/`3.2` (catalog + pull MLX) form a self-contained chain in Waves 1–2 that never blocks the engine-registry critical path.
+- `5.2` (AGENTS.md) and `6.3` (smoke script) have zero deps, so they land in Wave 1 instead of waiting for Phase 5/6 calendar time.
+- `4.3` (matrix engine dispatch) finishes one wave early (Wave 3) because it doesn't need the ModelHost schema `2.3` — only the engine adapters `2.1`/`2.2`.
+
+Driver notes for next session:
+- Set `use_worktree: false` and prepend `cd /Volumes/WorkSSD/repos/personal/llamactl` to every `chain_start` prompt (per `reference_penumbra_dispatch_routing`).
+- For each dispatch include the spec path (`docs/superpowers/specs/2026-05-18-mlx-engine-sub-a-design.md`) and the plan path (`docs/superpowers/plans/2026-05-18-mlx-engine-sub-a-plan.md`) so the agent can re-read context.
+- After every wave: run `bun test packages/core packages/remote packages/eval` from the integration agent branch before merging. Phase-by-phase integration notes already list the smaller verification commands.
+
 ## Self-review notes
 
 - **Spec coverage**: §1 (scope) maps to Phase 6 (pilot). §2.1 (engine registry) → Task 1.1. §2.2 (ModelHost kind) → Tasks 2.3 + 4.1. §2.3 (openaiProxy) → Task 5.1. §3 (yaml schema) → Task 2.3. §4 (oMLX adapter) → Task 2.2. §5 (pull-path) → Tasks 3.1 + 3.2. §6 (openaiProxy) → Task 5.1. §7 (matrix bench) → Task 4.3. §8 (testing) → embedded in every implementation task. §9 (migration) → AGENTS.md update + the `engine` field's careful absence on ModelRun is enforced in Task 2.3 schema (`.strict()`). §10 (open questions) explicitly deferred; nothing to plan. §11 (file touch list) cross-checked against tasks' Files sections — every path appears in at least one task.
