@@ -45,14 +45,16 @@ The script is deterministic for a fixed `--seed` (default 2026_05_18).
 - **Synth labeler is granite-4.1-8b-Q4_K_M.** It's a single labeler;
   the corpus inherits its phrasing biases. Spot-check before treating
   per-model differences smaller than ±0.05 NDCG@5 as meaningful.
-  Future work: re-label with Qwen3.5-9B-MTP (pulled 2026-05-18-pm,
-  bench-pending) and diff agreement.
   - Concrete bias observed in v0 synth: question openers concentrate
     on "What ..." (top-10 openers are all interrogatives like "What
     is the", "What changes were", "What must be", etc.). A model that
     keys on interrogative→answer pairing may outperform one that keys
     on entity/term overlap, independent of true ranking quality.
-    Diff vs an alternate labeler is the right control.
+  - **Qwen-relabel control ran 2026-05-18** — `synth-qwen.jsonl` is the
+    Qwen3.5-9B-MTP relabel of the same workload. Re-bench on the Qwen
+    corpus preserved rankings (gemma4 0.9027 vs 0.7419 on strong-gold;
+    granite-corpus delta was -0.5 to -3.6 pp). No labeler self-bias
+    detected. Full write-up: `packages/eval/results/2026-05-18-relabel-qwen-control.md`.
 
 ## Bench plan
 
