@@ -1,0 +1,76 @@
+# Granite 4.1 3B Q8_0 on `local` (M4 Pro) — long-lived agent worker.
+#
+# Replaces granite41-8b-long-lived-local.yaml at :8083 per the
+# 2026-05-18 Q8-small > Q4-large evidence:
+# - memory-recall (NDCG@5):     3b-Q8 ties 8b-Q4 strong-gold, beats by +15pp on n=105
+# - memory-efficacy (4way):     3b-Q8 wins +3.04 pp at 2.6x fewer params
+# - tool-call-grammar (single): 3b-Q8 wins 0.8485 vs 8b-Q4 ~0.74
+#
+# At ~3.4 GiB weights + ~2 GiB KV (q8_0 @ 65k ctx) the 3B fits comfortably
+# alongside other locals where the 8B (~9 GiB) crowded.
+#
+# Differences vs granite41-8b-long-lived-local.yaml:
+# - target -> granite-4.1-3b-Q8_0
+# - binary -> /Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server
+#   (matches the working granite41-3b-judge-local config; the 8b yaml uses
+#   the daemon-default binary which has been fine for granite 8b)
+# - -ub 1024 (was 2048) — 3B has less to prefill in parallel; keep batches small
+# - -b 2048 (was 4096) — paired with -ub
+# - expectedMemoryGiB 5 (was 9)
+# - --alias local — explicit, so /v1 routing keys cleanly
+#
+# Kept identical: --jinja, --ctx-size 65536, -ngl 999, --flash-attn on,
+# -ctk/-ctv q8_0, --cache-reuse 256, --reasoning off, --no-warmup, -np 1,
+# restartPolicy Always, endpoint :8083.
+#
+# Apply:
+#   llamactl apply -f templates/workloads/granite41-3b-long-lived-local.yaml
+#
+# Rollback:
+#   llamactl disable granite41-3b-long-lived-local && \
+#     llamactl enable granite41-8b-long-lived-local
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: granite41-3b-long-lived-local
+  labels:
+    family: granite41
+    role: long-lived
+spec:
+  node: local
+  enabled: true
+  binary: /Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server
+  resources:
+    expectedMemoryGiB: 5
+  target:
+    kind: rel
+    value: granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf
+  extraArgs:
+    - --alias
+    - local
+    - --jinja
+    - --ctx-size
+    - "65536"
+    - -ngl
+    - "999"
+    - --flash-attn
+    - "on"
+    - -b
+    - "2048"
+    - -ub
+    - "1024"
+    - -ctk
+    - q8_0
+    - -ctv
+    - q8_0
+    - --cache-reuse
+    - "256"
+    - --reasoning
+    - "off"
+    - --no-warmup
+    - -np
+    - "1"
+  restartPolicy: Always
+  endpoint:
+    host: 127.0.0.1
+    port: 8083
