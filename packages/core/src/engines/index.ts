@@ -1,4 +1,5 @@
 import type { EngineAdapter, EngineName } from './types.js';
+import { llamacppEngine } from './llamacpp.js';
 
 const placeholder = (name: EngineName): EngineAdapter => ({
   name,
@@ -11,7 +12,7 @@ const placeholder = (name: EngineName): EngineAdapter => ({
 });
 
 export const ENGINES: Record<EngineName, EngineAdapter> = {
-  llamacpp: placeholder('llamacpp'),
+  llamacpp: llamacppEngine,
   omlx: placeholder('omlx'),
 };
 
