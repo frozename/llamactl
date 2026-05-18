@@ -1,0 +1,40 @@
+# Sub A pilot: one MLX model hosted by oMLX on local (M4 Pro).
+# Coexists with granite41-3b-long-lived-local on :8083.
+#
+# Pre-reqs:
+# 1. tools/install-omlx-from-source.sh has been run on this node
+#    (creates /Volumes/WorkSSD/src/omlx/.venv/bin/omlx).
+# 2. llamactl pull mlx-community/Qwen3-8B-MLX-4bit has been run.
+#
+# Apply:
+#   llamactl apply -f templates/workloads/mlx-host-local.yaml
+#
+# Verify:
+#   curl http://127.0.0.1:8094/v1/models  # Qwen3-8B-MLX-4bit listed
+#   tools/smoke-modelhost-omlx.sh         # full smoke
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: mlx-host-local
+  labels:
+    family: mlx
+    role: inference-host
+spec:
+  engine: omlx
+  node: local
+  enabled: true
+  binary: /Volumes/WorkSSD/src/omlx/.venv/bin/omlx
+  resources:
+    expectedMemoryGiB: 12
+  endpoint:
+    host: 127.0.0.1
+    port: 8094
+  hostedModels:
+    - rel: mlx-community/Qwen3-8B-MLX-4bit
+  extraArgs:
+    - --max-concurrent-requests
+    - "4"
+    - --paged-ssd-cache-dir
+    - /Volumes/WorkSSD/cache/omlx
+  restartPolicy: Always
+  timeoutSeconds: 60
