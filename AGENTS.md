@@ -152,15 +152,22 @@ the `all` target.
 When picking a model variant for a bench cell, a workload manifest,
 or a production swap, default to these in order:
 
-1. **MTP variant when one exists for the family.** Gemma 4 → atomic
-   fork + `--mtp-head` assistant GGUF (`gemma-4-*-assistant-*.gguf`).
-   Qwen 3.6 → `Qwen3.6-*-MTP-GGUF/*-mtp.gguf` on the qwen atomic fork
-   (`b1-mtp-qwen-rebase` branch). MTP draft acceleration is in the
-   30-85% accept-rate range on M-series Metal — it gives the same
-   accuracy as the base model at 1.5-3× throughput. Skip MTP only
-   when (a) the variant is not built for the chosen quant, or
-   (b) the workload's prompt is too short for draft amortization
-   to win (under ~30 prompt tokens).
+1. **MTP variant when one exists for the family — with a workload
+   qualifier.** Gemma 4 → atomic fork + `--mtp-head` assistant GGUF
+   (`gemma-4-*-assistant-*.gguf`). Qwen 3.6 → `Qwen3.6-*-MTP-GGUF/*-mtp.gguf`
+   on the qwen atomic fork (`b1-mtp-qwen-rebase` branch). MTP draft
+   acceleration is in the 30-85% accept-rate range on M-series Metal.
+   The throughput win is real (1.5-3×) but the quality impact is
+   workload-dependent:
+   - **Prefer MTP** for generative + ranking workloads. Direct evidence:
+     memory-recall (NDCG@5) +3.4 pp on gemma4-26b-a4b-mtp vs non-MTP;
+     task-refiner rubric 0.8711 top score on Qwen3.6-35B-A3B-MTP.
+   - **Skip MTP** for classification / rubric-in-prompt / fixed-label
+     output. Direct evidence: memory-efficacy 4way −7.9 pp on
+     Qwen3.6-35B-A3B-MTP vs the same model without MTP (`project_mtp_35b_atomicchat_2026-05-18`).
+   - Also skip when (a) the variant isn't built for the chosen quant,
+     (b) the prompt is too short for draft amortization to win
+     (under ~30 prompt tokens).
 2. **Quant ladder, by architecture.** Conventional dense + hybrid
    attention (Granite 4.1, Llama 3.x, Qwen 3.x non-MoE) ranks
    Q8_0 > Q6_K > Q5_K_M > Q4_K_M monotonically on retrieval/
