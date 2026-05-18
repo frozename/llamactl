@@ -6,6 +6,7 @@ import { memoryEfficacy4wayWorkload } from './workloads/memory-efficacy-4way.js'
 import { memoryEfficacy4wayBalancedWorkload } from './workloads/memory-efficacy-4way-balanced.js';
 import { taskRefinerRubricWorkload } from './workloads/task-refiner-rubric.js';
 import { toolCallGrammarWorkload } from './workloads/tool-call-grammar.js';
+import { memoryRecallWorkload } from './workloads/memory-recall.js';
 import { renderCsvReport, renderMarkdownReport } from './report.js';
 import type { ModelSpec, WorkloadEval } from './types.js';
 
@@ -94,6 +95,7 @@ function getKnownWorkloads(): Record<string, WorkloadEval> {
     'memory-efficacy-4way-balanced': memoryEfficacy4wayBalancedWorkload,
     'task-refiner-rubric': taskRefinerRubricWorkload,
     'tool-call-grammar': toolCallGrammarWorkload,
+    'memory-recall': memoryRecallWorkload,
   };
 }
 
