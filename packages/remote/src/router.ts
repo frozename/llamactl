@@ -1122,7 +1122,8 @@ export const router = t.router({
   workloadApply: t.procedure
     .input(z.object({ yaml: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const manifest: ModelRun = workloadStoreMod.parseWorkload(input.yaml);
+      const { parse: parseYaml } = await import('yaml');
+      const manifest = parseYaml(input.yaml) as Record<string, unknown>;
       const cfg = kubecfg.loadConfig();
       const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
       // applyOne's NodeClient type pulls AppRouter → NodeClient → AppRouter
@@ -1138,33 +1139,38 @@ export const router = t.router({
       // port-collision preflight and both write. Cross-process callers
       // (`acquireLock`) are coordinated separately by the file lock.
       return await workloadStoreMod.withWorkloadsMutex(workloadsDir, async () => {
-        const result = await workloadApplyMod.applyOne(
+        const result = await workloadApplyMod.applyManifest({
           manifest,
-          (nodeName) => clientForNode(cfg, nodeName),
-          undefined,
-          undefined,
-          {
-            workloadsDir,
-            resolveNodeIdentity: (nodeName) => {
-              try {
-                return kubecfg.resolveNode(cfg, nodeName).node.endpoint || null;
-              } catch {
-                return null;
-              }
-            },
-          },
-        );
-        if (result.error) {
+          getClient: (nodeName) => clientForNode(cfg, nodeName),
+        });
+        if (!result.ok) {
           throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
         }
-        const persisted: ModelRun = { ...manifest, status: result.statusSection };
-        const savedPath = workloadStoreMod.saveWorkload(persisted, workloadsDir);
+        if (result.kind === 'ModelRun') {
+          const persisted: ModelRun = { ...result.manifest, status: result.result.statusSection };
+          const savedPath = workloadStoreMod.saveWorkload(persisted, workloadsDir);
+          return {
+            action: result.result.action,
+            path: savedPath,
+            status: result.result.statusSection,
+            name: result.manifest.metadata.name,
+            node: result.manifest.spec.node,
+          };
+        }
         return {
-          action: result.action,
-          path: savedPath,
-          status: result.statusSection,
-          name: manifest.metadata.name,
-          node: manifest.spec.node,
+          action: 'started',
+          path: null,
+          status: {
+            phase: 'Running',
+            serverPid: result.pid,
+            endpoint: result.endpoint,
+            lastTransitionTime: new Date().toISOString(),
+            conditions: [
+              { type: 'Applied', status: 'True', reason: 'started', lastTransitionTime: new Date().toISOString() },
+            ],
+          },
+          name: result.manifest.metadata.name,
+          node: result.manifest.spec.node,
         };
       });
     }),

@@ -1,4 +1,9 @@
+import { spawn as nodeSpawn } from 'node:child_process';
+import { ENGINES } from '../../../core/src/engines/index.js';
+import { resolveEnv } from '../../../core/src/env.js';
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
+import { ModelRunSchema } from './schema.js';
+import { ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
 import type { GatewayDispatch } from './gateway-handlers/types.js';
 import { computeNodeBudget } from './admission.js';
 import { defaultWorkloadsDir, listWorkloads } from './store.js';
@@ -90,6 +95,18 @@ export interface ApplyResult {
   error?: string;
 }
 
+export interface ApplyManifestOptions {
+  manifest: unknown;
+  getClient?: (nodeName: string) => WorkloadClient;
+  spawn?: typeof nodeSpawn;
+  env?: NodeJS.ProcessEnv;
+}
+
+export type ApplyManifestOutcome =
+  | { ok: true; kind: 'ModelRun'; manifest: ModelRun; result: ApplyResult }
+  | { ok: true; kind: 'ModelHost'; manifest: ModelHostManifest; pid: number; endpoint: string }
+  | { ok: false; error: string };
+
 function sameExtraArgs(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
@@ -98,6 +115,55 @@ function sameExtraArgs(a: readonly string[], b: readonly string[]): boolean {
 
 function normalizeLoopbackHost(host: string | undefined): string {
   return host === '::1' ? '127.0.0.1' : host ?? '127.0.0.1';
+}
+
+function manifestKind(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const kind = (raw as { kind?: unknown }).kind;
+  return typeof kind === 'string' ? kind : null;
+}
+
+async function applyModelHostManifest(
+  manifest: ModelHostManifest,
+  opts: ApplyManifestOptions,
+): Promise<ApplyManifestOutcome> {
+  const engine = ENGINES[manifest.spec.engine];
+  const validation = engine.validateSpec({
+    engine: manifest.spec.engine,
+    binary: manifest.spec.binary,
+    endpoint: manifest.spec.endpoint,
+    hostedModels: manifest.spec.hostedModels,
+    resources: manifest.spec.resources,
+    extraArgs: manifest.spec.extraArgs,
+    timeoutSeconds: manifest.spec.timeoutSeconds,
+  });
+  if (!validation.ok) {
+    return { ok: false, error: validation.error };
+  }
+
+  const resolved = resolveEnv(opts.env);
+  const built = engine.buildBootCommand(
+    {
+      engine: manifest.spec.engine,
+      binary: manifest.spec.binary,
+      endpoint: manifest.spec.endpoint,
+      hostedModels: manifest.spec.hostedModels,
+      resources: manifest.spec.resources,
+      extraArgs: manifest.spec.extraArgs,
+      timeoutSeconds: manifest.spec.timeoutSeconds,
+    },
+    resolved,
+  );
+
+  const spawn = opts.spawn ?? nodeSpawn;
+  const proc = spawn(built.binary, built.args, { env: { ...process.env, ...built.envOverrides } });
+  return {
+    ok: true,
+    kind: 'ModelHost',
+    manifest,
+    pid: proc.pid,
+    endpoint: `http://${manifest.spec.endpoint.host}:${manifest.spec.endpoint.port}`,
+  };
 }
 
 interface StartDone {
@@ -626,4 +692,32 @@ export async function applyOne(
       },
     };
   });
+}
+
+export async function applyManifest(
+  opts: ApplyManifestOptions,
+): Promise<ApplyManifestOutcome> {
+  const kind = manifestKind(opts.manifest);
+  if (kind === 'ModelRun') {
+    const parsed = ModelRunSchema.safeParse(opts.manifest);
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error.message };
+    }
+    if (!opts.getClient) {
+      return { ok: false, error: 'applyManifest requires getClient for ModelRun manifests' };
+    }
+    const result = await applyOne(parsed.data, opts.getClient);
+    if (result.error) {
+      return { ok: false, error: result.error };
+    }
+    return { ok: true, kind: 'ModelRun', manifest: parsed.data, result };
+  }
+  if (kind === 'ModelHost') {
+    const parsed = ModelHostManifestSchema.safeParse(opts.manifest);
+    if (!parsed.success) {
+      return { ok: false, error: parsed.error.message };
+    }
+    return await applyModelHostManifest(parsed.data, opts);
+  }
+  return { ok: false, error: `unsupported manifest kind: ${kind ?? 'unknown'}` };
 }
