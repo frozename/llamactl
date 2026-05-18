@@ -11,6 +11,9 @@ Recent t2 observations (promoted from this session's t0 events). Conventional-co
 ## Commits this session
 
 ```
+cdaa920 docs(notes): maestro continuation 2026-05-18 night — matrix workloads + 26 commits shipped
+dede87c docs(notes): accumulate session summaries + continuation notes 2026-05-14 → 2026-05-18
+136aef2 feat(eval/matrix): memory-recall workload scaffold (NDCG@5)
 976681f feat(eval/matrix): mean_exact_match aggregator for small-corpus workloads
 d727a88 feat(eval/matrix): tool-call-grammar workload (set-equality of name + arg keys)
 9d3f0d0 fix(core/pull): propagate HF token to hf-cli child so authenticated downloads resume properly
