@@ -1,0 +1,30 @@
+[
+  {
+    "name": "gemma4-e4b-vanilla",
+    "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf",
+    "quant": "UD-Q4_K_XL",
+    "family": "gemma-4",
+    "size_params": "E4B",
+    "host": "127.0.0.1",
+    "port": 8182,
+    "extra_args": [],
+    "binary": "/Volumes/WorkSSD/src/llama.cpp-atomic/build/bin/llama-server",
+    "start_args": [
+      "--alias", "local",
+      "-ngl", "999",
+      "-ctk", "f16",
+      "-ctv", "f16",
+      "--flash-attn", "on",
+      "--ctx-size", "32768",
+      "--no-warmup",
+      "-np", "1",
+      "--jinja",
+      "-b", "2048",
+      "-ub", "1024",
+      "--reasoning", "off",
+      "--swa-full",
+      "--cache-reuse", "256"
+    ],
+    "managed": true
+  }
+]
