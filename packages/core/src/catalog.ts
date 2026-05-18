@@ -165,12 +165,16 @@ export function readCustomCatalog(file: string): CuratedModel[] {
     if (trimmed === '' || trimmed.startsWith('#')) continue;
 
     const cols = splitTsvRow(line);
-    if (cols.length < curatedTsvFields.length) continue;
+    if (cols.length < curatedTsvFields.length - 1) continue;
 
     const record: Record<string, string> = {};
     for (let j = 0; j < curatedTsvFields.length; j += 1) {
       const field = curatedTsvFields[j];
       if (field === undefined) continue;
+      if (field === 'format' && cols[j] === undefined) {
+        record[field] = 'gguf';
+        continue;
+      }
       record[field] = cols[j] ?? '';
     }
 
@@ -213,7 +217,8 @@ export function listCatalog(
 
 /** Serialise an entry as a TSV row using the canonical column order. */
 export function formatCatalogRow(entry: CuratedModel): string {
-  return formatTsvRow(curatedTsvFields, entry as unknown as Record<string, unknown>);
+  const normalized = { ...entry, format: entry.format ?? 'gguf' };
+  return formatTsvRow(curatedTsvFields, normalized as unknown as Record<string, unknown>);
 }
 
 /** Serialise a list of entries as a TSV block (one row per line). */

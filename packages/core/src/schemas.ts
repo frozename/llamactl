@@ -20,6 +20,7 @@ export const CuratedModel = z.object({
   scope: z.string().min(1),
   rel: z.string().min(1),
   repo: z.string().min(1),
+  format: z.enum(['gguf', 'mlx']).optional().default('gguf'),
 });
 export type CuratedModel = z.infer<typeof CuratedModel>;
 
@@ -31,6 +32,7 @@ export const curatedTsvFields = [
   'scope',
   'rel',
   'repo',
+  'format',
 ] as const;
 
 // ---- preset-overrides.tsv ----------------------------------------------

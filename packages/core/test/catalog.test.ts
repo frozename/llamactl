@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   BUILTIN_CATALOG,
   curatedStatusForRepoFile,
@@ -30,6 +32,24 @@ describe('catalog.BUILTIN_CATALOG', () => {
 });
 
 describe('catalog.readCustomCatalog', () => {
+  test('appends format=gguf for legacy rows missing the column', () => {
+    const rows = readCustomCatalog(join(FIXTURE_DIR, 'curated-custom.tsv'));
+
+    expect(rows[0]?.format).toBe('gguf');
+  });
+
+  test('parses format=mlx when explicitly present', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llamactl-catalog-'));
+    const file = join(dir, 'mlx.tsv');
+    writeFileSync(
+      file,
+      'test-mlx\tTest MLX\tqwen\tcustom\tcandidate\tmlx-community/Qwen3-8B-MLX-4bit\tmlx-community/Qwen3-8B-MLX-4bit\tmlx\n',
+    );
+
+    const rows = readCustomCatalog(file);
+    expect(rows[0]?.format).toBe('mlx');
+  });
+
   test('parses valid rows + skips comments + blanks', () => {
     const rows = readCustomCatalog(join(FIXTURE_DIR, 'curated-custom.tsv'));
     expect(rows.length).toBe(2);
@@ -138,11 +158,30 @@ describe('catalog.relFromRepoAndFile + curatedStatusForRepoFile', () => {
 });
 
 describe('catalog TSV formatters', () => {
+  test('writes format=mlx round-trips', () => {
+    const written = formatCatalogTsv([
+      {
+        id: 'mlx-host',
+        label: 'qwen3-8b-mlx',
+        family: 'qwen',
+        class: 'custom',
+        scope: 'candidate',
+        rel: 'mlx-community/Qwen3-8B-MLX-4bit',
+        repo: 'mlx-community/Qwen3-8B-MLX-4bit',
+        format: 'mlx',
+      },
+    ]);
+
+    expect(written.split('\t')).toHaveLength(8);
+    expect(written.endsWith('\tmlx')).toBe(true);
+  });
+
   test('roundtrips column order', () => {
     const row = BUILTIN_CATALOG[0];
     expect(row).toBeDefined();
     if (!row) return;
-    expect(formatCatalogRow(row).split('\t').length).toBe(7);
+    expect(formatCatalogRow(row).split('\t').length).toBe(8);
+    expect(formatCatalogRow(row).split('\t')[7]).toBe('gguf');
     expect(formatCatalogTsv(BUILTIN_CATALOG).split('\n').length).toBe(
       BUILTIN_CATALOG.length,
     );

@@ -92,10 +92,11 @@ export async function addCurated(
   const klass = await resolveClass(repo, input.class);
   const scope = input.scope && input.scope.length > 0 ? input.scope : 'candidate';
   const id = deriveEntryId(repoBase, rel);
+  const format = rel.toLowerCase().includes('.gguf') ? 'gguf' : 'mlx';
 
   const resolved = resolveEnv();
   const file = resolved.LOCAL_AI_CUSTOM_CATALOG_FILE;
-  appendLine(file, [id, label, family, klass, scope, rel, repo].join('\t'));
+  appendLine(file, [id, label, family, klass, scope, rel, repo, format].join('\t'));
 
   const entry: CuratedModel = {
     id,
@@ -105,6 +106,7 @@ export async function addCurated(
     scope,
     rel,
     repo,
+    format,
   };
 
   // `findByRel` reads the catalog each call so subsequent writers in the
