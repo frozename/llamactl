@@ -1,0 +1,58 @@
+# Granite 4.1 3B Q8_0 on `mac-mini` — sibling judge for the t2-promotion pool.
+#
+# Pairs with granite41-8b-long-lived-local (:8083) as the second memory-refiner
+# agent (granite-mini-8b) in penumbra's judge pool. Cross-family/cross-machine
+# diversity for the t2 promotion classifier.
+#
+# Binds :8086 (free; qwen3-8b-mac-mini holds :8090). --host 0.0.0.0 so the
+# mac-mini gateway at :7843 exposes it alongside Qwen3-8B in /v1/models.
+#
+# Apply:
+#   llamactl --node mac-mini apply -f templates/workloads/granite41-3b-judge-mac-mini.yaml
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: granite41-3b-judge-mac-mini
+  labels:
+    family: granite41
+    role: judge
+    agents: "memory-refiner"
+spec:
+  node: mac-mini
+  enabled: true
+  binary: ${env:LLAMA_SERVER_BIN}
+  resources:
+    expectedMemoryGiB: 4
+  target:
+    kind: rel
+    value: granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf
+  extraArgs:
+    - --alias
+    - granite-mini-3b
+    - --host
+    - 0.0.0.0
+    - --jinja
+    - --ctx-size
+    - "32768"
+    - -ngl
+    - "999"
+    - --flash-attn
+    - "on"
+    - -b
+    - "2048"
+    - -ub
+    - "1024"
+    - -ctk
+    - q8_0
+    - -ctv
+    - q8_0
+    - --cache-reuse
+    - "256"
+    - --no-warmup
+    - -np
+    - "2"
+  restartPolicy: Always
+  timeoutSeconds: 240
+  endpoint:
+    host: 127.0.0.1
+    port: 8086
