@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import type { CellRow } from './types.js';
+import type { CellRow, CellRowDetail } from './types.js';
 
 /** Idempotent and safe to call on every operation; v1 may memoize per-Database instance. */
 export function ensureMatrixSchema(db: Database): void {
@@ -22,6 +22,19 @@ export function ensureMatrixSchema(db: Database): void {
       finished_at TEXT NOT NULL,
       host_machine TEXT NOT NULL,
       PRIMARY KEY (run_id, model_name, workload_name)
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS matrix_cell_row_details (
+      run_id TEXT NOT NULL,
+      model_name TEXT NOT NULL,
+      workload_name TEXT NOT NULL,
+      row_index INTEGER NOT NULL,
+      prediction TEXT,
+      gold TEXT,
+      metrics_json TEXT NOT NULL,
+      latency_ms REAL,
+      PRIMARY KEY (run_id, model_name, workload_name, row_index)
     )
   `);
 }
@@ -101,4 +114,64 @@ export function listCellRows(
        ORDER BY run_id ASC, model_name ASC, workload_name ASC`,
     )
     .all(params as any) as CellRow[];
+}
+
+export function insertCellRowDetail(db: Database, detail: CellRowDetail): void {
+  ensureMatrixSchema(db);
+  db
+    .query(
+      `
+      INSERT INTO matrix_cell_row_details (
+        run_id, model_name, workload_name, row_index,
+        prediction, gold, metrics_json, latency_ms
+      ) VALUES (
+        $run_id, $model_name, $workload_name, $row_index,
+        $prediction, $gold, $metrics_json, $latency_ms
+      )
+      ON CONFLICT(run_id, model_name, workload_name, row_index) DO UPDATE SET
+        prediction=excluded.prediction,
+        gold=excluded.gold,
+        metrics_json=excluded.metrics_json,
+        latency_ms=excluded.latency_ms
+    `,
+    )
+    .run({
+      $run_id: detail.run_id,
+      $model_name: detail.model_name,
+      $workload_name: detail.workload_name,
+      $row_index: detail.row_index,
+      $prediction: detail.prediction,
+      $gold: detail.gold,
+      $metrics_json: detail.metrics_json,
+      $latency_ms: detail.latency_ms,
+    });
+}
+
+export function listCellRowDetails(
+  db: Database,
+  filter: { run_id?: string; model_name?: string; workload_name?: string } = {},
+): CellRowDetail[] {
+  ensureMatrixSchema(db);
+  const clauses: string[] = [];
+  const params: Record<string, unknown> = {};
+  if (filter.run_id) {
+    clauses.push('run_id = $run_id');
+    params.$run_id = filter.run_id;
+  }
+  if (filter.model_name) {
+    clauses.push('model_name = $model_name');
+    params.$model_name = filter.model_name;
+  }
+  if (filter.workload_name) {
+    clauses.push('workload_name = $workload_name');
+    params.$workload_name = filter.workload_name;
+  }
+  return db
+    .query(
+      `SELECT run_id, model_name, workload_name, row_index, prediction, gold, metrics_json, latency_ms
+       FROM matrix_cell_row_details
+       ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+       ORDER BY run_id ASC, model_name ASC, workload_name ASC, row_index ASC`,
+    )
+    .all(params as any) as CellRowDetail[];
 }

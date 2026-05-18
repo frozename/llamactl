@@ -39,6 +39,17 @@ export interface WorkloadEval {
   judge_model?: ModelSpec;
 }
 
+export interface CellRowDetail {
+  run_id: string;
+  model_name: string;
+  workload_name: string;
+  row_index: number;
+  prediction: string | null;
+  gold: string | null;
+  metrics_json: string;
+  latency_ms: number | null;
+}
+
 export interface CellRow {
   run_id: string;
   runner_version: number;

@@ -4,7 +4,7 @@ import os from 'node:os';
 import { aggregateMetrics, percentile } from './scoring.js';
 import { ensureModelServing, teardownIfOwned } from './lifecycle.js';
 import { resolveCorpusPath } from './repo-root.js';
-import { ensureMatrixSchema, insertCellRow } from './store.js';
+import { ensureMatrixSchema, insertCellRow, insertCellRowDetail } from './store.js';
 import { buildCompletionRequest, completeChat } from '../client.js';
 import type { ModelSpec, WorkloadEval } from './types.js';
 
@@ -85,7 +85,8 @@ export async function runMatrix(
           errors += 1;
         }
         try {
-          for (const row of rows) {
+          for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+            const row = rows[rowIndex];
             nRows += 1;
             try {
               const built = workload.prompt_builder(row);
@@ -104,6 +105,16 @@ export async function runMatrix(
               });
               predictions.push({ pred: scored.prediction, gold: scored.gold });
               rowMetrics.push(scored.metrics);
+              insertCellRowDetail(opts.db, {
+                run_id: runId,
+                model_name: model.name,
+                workload_name: workload.name,
+                row_index: rowIndex,
+                prediction: scored.prediction,
+                gold: scored.gold,
+                metrics_json: JSON.stringify(scored.metrics),
+                latency_ms: wallMs,
+              });
             } catch (err) {
               errors += 1;
               const message = err instanceof Error ? err.message : String(err);

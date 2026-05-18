@@ -6,9 +6,12 @@ import {
   aggregateMetrics,
   ensureMatrixSchema,
   insertCellRow,
+  insertCellRowDetail,
   listCellRows,
+  listCellRowDetails,
   runMatrix,
   type CellRow,
+  type CellRowDetail,
   type ModelSpec,
   type WorkloadEval,
 } from '../src/index.js';
@@ -55,6 +58,46 @@ describe('matrix store', () => {
     insertCellRow(db, row);
 
     expect(listCellRows(db)).toEqual([row]);
+  });
+
+  test('round-trips per-row cell details', () => {
+    const db = new Database(':memory:');
+    ensureMatrixSchema(db);
+
+    const detailA: CellRowDetail = {
+      run_id: 'run-1',
+      model_name: 'model-a',
+      workload_name: 'workload-a',
+      row_index: 0,
+      prediction: 'true',
+      gold: 'true',
+      metrics_json: JSON.stringify({ exact_match: 1 }),
+      latency_ms: 12.5,
+    };
+    const detailB: CellRowDetail = {
+      ...detailA,
+      row_index: 1,
+      prediction: 'false',
+      gold: 'true',
+      metrics_json: JSON.stringify({ exact_match: 0 }),
+      latency_ms: 13.0,
+    };
+
+    insertCellRowDetail(db, detailA);
+    insertCellRowDetail(db, detailB);
+    insertCellRowDetail(db, { ...detailA, latency_ms: 99.9 });
+
+    const all = listCellRowDetails(db);
+    expect(all).toHaveLength(2);
+    const [first, second] = all;
+    expect(first!.row_index).toBe(0);
+    expect(first!.latency_ms).toBe(99.9);
+    expect(second!.row_index).toBe(1);
+
+    const filteredByRun = listCellRowDetails(db, { run_id: 'run-1', workload_name: 'workload-a' });
+    expect(filteredByRun).toHaveLength(2);
+    const filteredEmpty = listCellRowDetails(db, { run_id: 'run-missing' });
+    expect(filteredEmpty).toHaveLength(0);
   });
 });
 
@@ -121,6 +164,13 @@ describe('runMatrix', () => {
         { pred: 'true', gold: 'false' },
       ]);
       expect(cell.primary_metric_value).toBeCloseTo(expected.macro_f1, 5);
+      const details = listCellRowDetails(db, { run_id: run.runId });
+      expect(details).toHaveLength(2);
+      expect(details.map((d) => d.row_index)).toEqual([0, 1]);
+      expect(details.every((d) => d.prediction === 'true')).toBe(true);
+      expect(details[0]!.gold).toBe('true');
+      expect(details[1]!.gold).toBe('false');
+      expect(details.every((d) => typeof d.latency_ms === 'number')).toBe(true);
     } finally {
       globalThis.fetch = origFetch;
       try {
