@@ -29,6 +29,21 @@ here is a matrix-eval decision, not a K-track decision.
 - 34 single-call
 - 11 multi-call (mostly 2-call sequences)
 
+## Tier splits (committed as siblings of `test.jsonl`)
+
+- `tier-nocall.jsonl` (n=5) — assistant answers directly, no tool_call.
+- `tier-single.jsonl` (n=34) — exactly one gold tool_call.
+- `tier-multi.jsonl` (n=11) — 2+ gold tool_calls in a single assistant
+  turn. **Known broken for `tool_choice: auto` evaluation** — see
+  `packages/eval/results/2026-05-18-tool-call-gold-tier-diag.md`. All
+  four production candidates scored 0/11 because the natural-and-correct
+  multi-step behavior is to emit calls one-at-a-time across turns, not
+  in a single turn. Needs either multi-turn rollout or prefix-match
+  gold semantics before this tier is usable.
+
+Rebuild via
+`jq -c 'select((.messages[-1].tool_calls // []) | length == K)' test.jsonl > tier-...jsonl`.
+
 ## Bench continuity
 
 Last recorded score against the n=8 ancestor (2026-05-18):
