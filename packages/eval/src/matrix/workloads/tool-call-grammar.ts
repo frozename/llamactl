@@ -40,7 +40,7 @@ export function __signature(toolCalls: unknown): string {
 
 export const toolCallGrammarWorkload: WorkloadEval = {
   name: 'tool-call-grammar',
-  corpus_path: 'packages/train/corpora/tool-call-grammar/uncommon-v0/splits/test.jsonl',
+  corpus_path: 'packages/eval/corpora/tool-call-grammar/v0/test.jsonl',
   primary_metric_name: 'mean_exact_match',
   prompt_builder: (row) => {
     const r = row as CorpusRow;
