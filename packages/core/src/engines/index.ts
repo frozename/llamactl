@@ -1,19 +1,11 @@
 import type { EngineAdapter, EngineName } from './types.js';
 import { llamacppEngine } from './llamacpp.js';
-
-const placeholder = (name: EngineName): EngineAdapter => ({
-  name,
-  validateSpec: () => ({ ok: false, error: `engine ${name} not yet implemented` }),
-  buildBootCommand: () => {
-    throw new Error(`engine ${name} not yet implemented`);
-  },
-  probeReady: async () => ({ ready: false, modelIds: [] }),
-  teardown: async () => {},
-});
+import { omlxEngine } from './omlx.js';
 
 export const ENGINES: Record<EngineName, EngineAdapter> = {
   llamacpp: llamacppEngine,
-  omlx: placeholder('omlx'),
+  omlx: omlxEngine,
 };
 
 export type { EngineAdapter, EngineName, ModelHostSpecForEngine, ModelHostHostedModel } from './types.js';
+export { matchHostedModel } from './omlx.js';
