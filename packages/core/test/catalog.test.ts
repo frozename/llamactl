@@ -38,6 +38,19 @@ describe('catalog.readCustomCatalog', () => {
     expect(rows[0]?.format).toBe('gguf');
   });
 
+  test('treats an explicit empty format column as legacy gguf', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llamactl-catalog-'));
+    const file = join(dir, 'empty-format.tsv');
+    writeFileSync(
+      file,
+      'test-empty\tTest Empty\tqwen\tcustom\tcandidate\tempty/model.gguf\tunsloth/empty\t\n',
+    );
+
+    const rows = readCustomCatalog(file);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.format).toBe('gguf');
+  });
+
   test('parses format=mlx when explicitly present', () => {
     const dir = mkdtempSync(join(tmpdir(), 'llamactl-catalog-'));
     const file = join(dir, 'mlx.tsv');

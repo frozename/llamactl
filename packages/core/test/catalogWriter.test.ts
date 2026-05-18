@@ -86,4 +86,26 @@ describe('catalogWriter.addCurated (integration)', () => {
     expect(r.entry.rel).toBe('subdir/foo.gguf');
     expect(existsSync(r.file)).toBe(true);
   });
+
+  test('uses basename suffix for format inference', async () => {
+    const r = await addCurated({
+      repo: 'acme/my.gguf-models',
+      fileOrRel: 'Qwen3-8B-MLX-4bit',
+      class: 'general',
+    });
+    if (!r.ok) throw new Error(r.error);
+    expect(r.entry.format).toBe('mlx');
+    expect(r.entry.rel).toBe('my.gguf-models/Qwen3-8B-MLX-4bit');
+  });
+
+  test('rejects TSV control characters in user-supplied fields', async () => {
+    const r = await addCurated({
+      repo: 'unsloth/Bad-GGUF',
+      fileOrRel: 'bad\tfile.gguf',
+      class: 'general',
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/illegal control character/i);
+  });
 });

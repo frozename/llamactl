@@ -171,7 +171,7 @@ export function readCustomCatalog(file: string): CuratedModel[] {
     for (let j = 0; j < curatedTsvFields.length; j += 1) {
       const field = curatedTsvFields[j];
       if (field === undefined) continue;
-      if (field === 'format' && cols[j] === undefined) {
+      if (field === 'format' && (cols[j] === undefined || cols[j] === '')) {
         record[field] = 'gguf';
         continue;
       }
