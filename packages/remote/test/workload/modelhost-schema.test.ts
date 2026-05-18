@@ -25,6 +25,20 @@ describe('ModelHostManifestSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  test('accepts engine=llamacpp (registry-wired engine)', () => {
+    const llamacppManifest = {
+      ...valid,
+      spec: {
+        ...valid.spec,
+        engine: 'llamacpp',
+        binary: '/usr/local/bin/llama-server',
+        hostedModels: [{ rel: 'granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf' }],
+      },
+    };
+    const result = ModelHostManifestSchema.safeParse(llamacppManifest);
+    expect(result.success).toBe(true);
+  });
+
   test('rejects engine string outside the enum', () => {
     const bad = { ...valid, spec: { ...valid.spec, engine: 'vllm-mlx' } };
     const result = ModelHostManifestSchema.safeParse(bad);
