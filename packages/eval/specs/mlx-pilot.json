@@ -1,0 +1,16 @@
+[
+  {
+    "name": "qwen3-8b-mlx-4bit",
+    "engine": "omlx",
+    "family": "qwen-3",
+    "quant": "MLX-4bit",
+    "size_params": "8B",
+    "host": "127.0.0.1",
+    "port": 8094,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "managed": false,
+    "extra_args": [],
+    "start_args": []
+  }
+]
