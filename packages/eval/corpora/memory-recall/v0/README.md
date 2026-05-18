@@ -47,6 +47,12 @@ The script is deterministic for a fixed `--seed` (default 2026_05_18).
   per-model differences smaller than ±0.05 NDCG@5 as meaningful.
   Future work: re-label with Qwen3.5-9B-MTP (pulled 2026-05-18-pm,
   bench-pending) and diff agreement.
+  - Concrete bias observed in v0 synth: question openers concentrate
+    on "What ..." (top-10 openers are all interrogatives like "What
+    is the", "What changes were", "What must be", etc.). A model that
+    keys on interrogative→answer pairing may outperform one that keys
+    on entity/term overlap, independent of true ranking quality.
+    Diff vs an alternate labeler is the right control.
 
 ## Bench plan
 
