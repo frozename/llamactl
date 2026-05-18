@@ -73,7 +73,7 @@ export function ndcgAtK(ranking: string[], goldIds: string[], k = 5): number {
 
 export const memoryRecallWorkload: WorkloadEval = {
   name: 'memory-recall',
-  corpus_path: 'packages/eval/corpora/memory-recall/v0/seed.jsonl',
+  corpus_path: 'packages/eval/corpora/memory-recall/v0/test.jsonl',
   primary_metric_name: 'mean_ndcg5',
   prompt_builder: (row) => {
     const r = row as CorpusRow;
