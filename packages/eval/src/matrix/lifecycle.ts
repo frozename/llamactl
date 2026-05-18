@@ -49,6 +49,32 @@ async function pingHealth(host: string, port: number, timeoutMs = 2000): Promise
   }
 }
 
+export async function probeInference(host: string, port: number, timeoutMs: number): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const resp = await fetch(`http://${host}:${port}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'local',
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 4,
+        temperature: 0,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!resp.ok) return false;
+    const body = (await resp.json()) as {
+      choices?: Array<{ message?: { content?: unknown } }>;
+    };
+    return typeof body.choices?.[0]?.message?.content === 'string';
+  } catch {
+    return false;
+  }
+}
+
 export async function ensureModelServing(model: ModelSpec): Promise<BootResult> {
   if (await pingHealth(model.host, model.port)) {
     return { owned: false, proc: null };
@@ -89,6 +115,12 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
       );
     }
     if (await pingHealth(model.host, model.port)) {
+      if (!(await probeInference(model.host, model.port, 30_000))) {
+        proc.kill('SIGTERM');
+        throw new Error(
+          `llama-server for ${model.name} /v1 boot-probe failed\n--- stderr tail ---\n${stderrTail.join('\n')}`,
+        );
+      }
       installExitHook();
       ownedProcs.add(proc);
       return { owned: true, proc };

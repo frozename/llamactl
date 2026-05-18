@@ -3,6 +3,7 @@ import {
   __ownedProcsForTests,
   __seedOwnedProcForTests,
   ensureModelServing,
+  probeInference,
   teardownIfOwned,
   type ModelSpec,
 } from '../src/index.js';
@@ -55,6 +56,63 @@ describe('ensureModelServing', () => {
       await expect(
         ensureModelServing(baseModel({ managed: true, binary: '/nonexistent-binary' })),
       ).rejects.toThrow(/binary not found/);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  test('throws when managed spawn passes /health but /v1 boot-probe fails', async () => {
+    const origFetch = globalThis.fetch;
+    let healthChecks = 0;
+    globalThis.fetch = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/health')) {
+        healthChecks += 1;
+        if (healthChecks === 1) throw new Error('ECONNREFUSED');
+        return new Response('ok', { status: 200 });
+      }
+      if (url.endsWith('/v1/chat/completions')) {
+        return new Response('nope', { status: 500 });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    };
+    try {
+      await expect(
+        ensureModelServing(
+          baseModel({ managed: true, binary: '/bin/sleep', start_args: ['1000'], port: 65502 }),
+        ),
+      ).rejects.toThrow(/\/v1 boot-probe failed/);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+});
+
+describe('probeInference', () => {
+  test('returns true when /v1 responds with valid JSON', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ choices: [{ message: { content: '' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    try {
+      await expect(probeInference('127.0.0.1', 65501, 1000)).resolves.toBe(true);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  test('returns false when /v1 responds 500 or fetch throws', async () => {
+    const origFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => new Response('nope', { status: 500 });
+      await expect(probeInference('127.0.0.1', 65501, 1000)).resolves.toBe(false);
+
+      globalThis.fetch = async () => {
+        throw new Error('ECONNREFUSED');
+      };
+      await expect(probeInference('127.0.0.1', 65501, 1000)).resolves.toBe(false);
     } finally {
       globalThis.fetch = origFetch;
     }
