@@ -21,6 +21,19 @@ import { withNodeLock } from './node-mutex.js';
 type SubscribeCallbacks = { onData: (e: any) => void; onError: (err: any) => void; onComplete: () => void };
 type Unsubscribable = { unsubscribe?: () => void };
 
+const LOCAL_NODE_IDENTITIES = new Set(['local', 'localhost', '127.0.0.1', '::1']);
+const CHILD_ENV_ALLOWLIST = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LANG',
+  'LC_ALL',
+  'TMPDIR',
+  'LLAMACTL_MODELS_DIR',
+  'LLAMA_CPP_MODELS',
+  'LLAMA_CPP_BIN',
+];
+
 export interface WorkloadClient {
   serverStatus: {
     query(input: { workload: string }): Promise<{
@@ -117,6 +130,22 @@ function normalizeLoopbackHost(host: string | undefined): string {
   return host === '::1' ? '127.0.0.1' : host ?? '127.0.0.1';
 }
 
+function formatHostForUrl(host: string): string {
+  return host.includes(':') ? `[${host}]` : host;
+}
+
+function sanitizeChildEnv(parent: NodeJS.ProcessEnv, overrides: Record<string, string> | undefined): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const key of CHILD_ENV_ALLOWLIST) {
+    const value = parent[key];
+    if (value !== undefined) out[key] = value;
+  }
+  if (overrides) {
+    for (const [key, value] of Object.entries(overrides)) out[key] = value;
+  }
+  return out;
+}
+
 function manifestKind(raw: unknown): string | null {
   if (!raw || typeof raw !== 'object') return null;
   const kind = (raw as { kind?: unknown }).kind;
@@ -127,6 +156,15 @@ async function applyModelHostManifest(
   manifest: ModelHostManifest,
   opts: ApplyManifestOptions,
 ): Promise<ApplyManifestOutcome> {
+  // Sub A keeps ModelHost controller-local until the node dispatcher
+  // path lands. The run is still not persisted into the ModelRun store.
+  if (!LOCAL_NODE_IDENTITIES.has(manifest.spec.node)) {
+    return {
+      ok: false,
+      error: `ModelHost runs on local nodes only in this release; got spec.node=${manifest.spec.node}. Use kind: ModelRun for remote workloads.`,
+    };
+  }
+
   const engine = ENGINES[manifest.spec.engine];
   const validation = engine.validateSpec({
     engine: manifest.spec.engine,
@@ -156,13 +194,43 @@ async function applyModelHostManifest(
   );
 
   const spawn = opts.spawn ?? nodeSpawn;
-  const proc = spawn(built.binary, built.args, { env: { ...process.env, ...built.envOverrides } });
+  const proc = spawn(built.binary, built.args, { env: sanitizeChildEnv(process.env, built.envOverrides) });
+  if (!proc.pid) {
+    return { ok: false, error: `spawn failed: child has no pid (binary ${built.binary})` };
+  }
+
+  const timeoutMs = (manifest.spec.timeoutSeconds ?? 60) * 1000;
+  const readyPromise = engine.probeReady(manifest.spec.endpoint, timeoutMs);
+  const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    proc.once?.('exit', (code, signal) => resolve({ code, signal }));
+    proc.once?.('error', () => resolve({ code: null, signal: null }));
+  });
+
+  const winner = await Promise.race([
+    readyPromise.then((r) => ({ kind: 'ready' as const, r })),
+    exitPromise.then((e) => ({ kind: 'exit' as const, e })),
+  ]);
+
+  if (winner.kind === 'exit') {
+    return {
+      ok: false,
+      error: `ModelHost child exited before readiness (code=${winner.e.code ?? 'null'} signal=${winner.e.signal ?? 'null'})`,
+    };
+  }
+
+  if (!winner.r.ready) {
+    try {
+      if (proc.pid) await engine.teardown(proc.pid);
+    } catch {}
+    return { ok: false, error: `ModelHost did not reach ready within ${timeoutMs}ms` };
+  }
+
   return {
     ok: true,
     kind: 'ModelHost',
     manifest,
     pid: proc.pid,
-    endpoint: `http://${manifest.spec.endpoint.host}:${manifest.spec.endpoint.port}`,
+    endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${manifest.spec.endpoint.port}`,
   };
 }
 
