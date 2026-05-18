@@ -8,9 +8,35 @@ import { taskRefinerRubricWorkload } from './workloads/task-refiner-rubric.js';
 import { renderCsvReport, renderMarkdownReport } from './report.js';
 import type { ModelSpec, WorkloadEval } from './types.js';
 
-function getArg(flag: string): string | undefined {
-  const index = process.argv.indexOf(flag);
-  return index >= 0 ? process.argv[index + 1] : undefined;
+export interface MatrixCliArgs {
+  modelsPath: string;
+  workloadsArg: string;
+  outDb: string;
+  report?: 'md' | 'csv' | 'both';
+  reportOut?: string;
+  runId?: string;
+  reportAllRuns: boolean;
+}
+
+export function parseArgs(argv: string[]): MatrixCliArgs {
+  const readArg = (flag: string): string | undefined => {
+    const index = argv.indexOf(flag);
+    return index >= 0 ? argv[index + 1] : undefined;
+  };
+  const modelsPath = readArg('--models');
+  const workloadsArg = readArg('--workloads');
+  const outDb = readArg('--out-db');
+  const report = readArg('--report') as MatrixCliArgs['report'];
+  const reportOut = readArg('--report-out');
+  const runId = readArg('--run-id');
+  const reportAllRuns = argv.includes('--report-all-runs');
+  if (runId && reportAllRuns) {
+    throw new Error('--run-id and --report-all-runs are mutually exclusive');
+  }
+  if (!modelsPath || !workloadsArg || !outDb) {
+    throw new Error('usage: --models <json> --workloads <names> --out-db <path>');
+  }
+  return { modelsPath, workloadsArg, outDb, report, reportOut, runId, reportAllRuns };
 }
 
 function validateModelSpec(value: unknown): ModelSpec {
@@ -74,12 +100,7 @@ async function main(): Promise<void> {
     console.log('usage: --models <json> --workloads <names> --out-db <path> [--report md|csv|both] [--report-out <path>]');
     return;
   }
-  const modelsPath = getArg('--models');
-  const workloadsArg = getArg('--workloads');
-  const outDb = getArg('--out-db');
-  if (!modelsPath || !workloadsArg || !outDb) {
-    throw new Error('usage: --models <json> --workloads <names> --out-db <path>');
-  }
+  const { modelsPath, workloadsArg, outDb, report, reportOut, runId, reportAllRuns } = parseArgs(process.argv.slice(2));
 
   const models = ((await Bun.file(modelsPath).json()) as unknown[]).map(validateModelSpec);
   const knownWorkloads = getKnownWorkloads();
@@ -90,28 +111,30 @@ async function main(): Promise<void> {
     }
     return workload;
   });
-  const report = getArg('--report');
-  const reportOut = getArg('--report-out');
 
   const db = new Database(outDb);
-  const result = await runMatrix({ models, workloads, db });
+  const result = await runMatrix({ models, workloads, db, runId });
   if (report) {
     if (!reportOut) {
       throw new Error('--report-out is required when --report is set');
     }
-    const cells = listCellRows(db, { run_id: result.runId });
+    const cells = reportAllRuns ? listCellRows(db) : listCellRows(db, { run_id: result.runId });
+    const reportOpts = reportAllRuns ? {} : { runId: result.runId };
     if (report === 'md') {
-      await Bun.write(reportOut, renderMarkdownReport(cells, { runId: result.runId }));
+      await Bun.write(reportOut, renderMarkdownReport(cells, reportOpts));
     } else if (report === 'csv') {
-      await Bun.write(reportOut, renderCsvReport(cells, { runId: result.runId }));
+      await Bun.write(reportOut, renderCsvReport(cells, reportOpts));
     } else if (report === 'both') {
-      await Bun.write(`${reportOut}.md`, renderMarkdownReport(cells, { runId: result.runId }));
-      await Bun.write(`${reportOut}.csv`, renderCsvReport(cells, { runId: result.runId }));
+      await Bun.write(`${reportOut}.md`, renderMarkdownReport(cells, reportOpts));
+      await Bun.write(`${reportOut}.csv`, renderCsvReport(cells, reportOpts));
     } else {
       throw new Error(`unknown report format: ${report}`);
     }
   }
   console.log(`runId=${result.runId} cellsWritten=${result.cellsWritten}`);
+  if (reportAllRuns) {
+    console.log('report-mode=all-runs');
+  }
 }
 
 if (import.meta.main) {

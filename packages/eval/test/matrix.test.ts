@@ -12,6 +12,7 @@ import {
   type ModelSpec,
   type WorkloadEval,
 } from '../src/index.js';
+import { parseArgs } from '../src/matrix/cli.js';
 import { memoryEfficacy4wayWorkload, memoryEfficacyBinaryWorkload } from '../src/index.js';
 
 function makeModel(name: string): ModelSpec {
@@ -128,6 +129,50 @@ describe('runMatrix', () => {
     }
   });
 
+  test('runMatrix uses an explicit runId when provided', async () => {
+    const db = new Database(':memory:');
+    const tmpPath = `/tmp/memory-efficacy-binary-${randomUUID()}.jsonl`;
+    const jsonl = [
+      JSON.stringify({
+        messages: [
+          { role: 'user', content: 'Is this memory related?' },
+          { role: 'assistant', content: JSON.stringify({ memory_related: true, reason: 'x' }) },
+        ],
+      }),
+    ].join('\n');
+    await Bun.write(tmpPath, jsonl);
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"memory_related":true}' } }],
+          usage: { completion_tokens: 5 },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    try {
+      const workload: WorkloadEval = {
+        ...memoryEfficacyBinaryWorkload,
+        corpus_path: tmpPath,
+      };
+      const run = await runMatrix({
+        models: [makeModel('model-a')],
+        workloads: [workload],
+        db,
+        runId: 'fixed-run-id-123',
+      });
+      expect(run.runId).toBe('fixed-run-id-123');
+      const rows = listCellRows(db, { run_id: 'fixed-run-id-123' });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.run_id).toBe('fixed-run-id-123');
+    } finally {
+      globalThis.fetch = origFetch;
+      try {
+        rmSync(tmpPath);
+      } catch {}
+    }
+  });
+
   test('runs the 4way memory-efficacy workload end to end', async () => {
     const db = new Database(':memory:');
     const tmpPath = `/tmp/memory-efficacy-4way-${randomUUID()}.jsonl`;
@@ -183,5 +228,23 @@ describe('runMatrix', () => {
         rmSync(tmpPath);
       } catch {}
     }
+  });
+});
+
+describe('matrix CLI', () => {
+  test('rejects --run-id together with --report-all-runs', () => {
+    expect(() =>
+      parseArgs([
+        '--run-id',
+        'foo',
+        '--report-all-runs',
+        '--models',
+        '/tmp/empty.json',
+        '--workloads',
+        'memory-efficacy-binary',
+        '--out-db',
+        '/tmp/nope.db',
+      ]),
+    ).toThrow('--run-id and --report-all-runs are mutually exclusive');
   });
 });
