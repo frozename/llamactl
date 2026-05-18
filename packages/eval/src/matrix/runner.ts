@@ -140,6 +140,22 @@ export async function runMatrix(
                   }),
                 };
               })()
+            : workload.primary_metric_name === 'mean_exact_match'
+            ? (() => {
+                let sum = 0;
+                let n = 0;
+                for (const metrics of rowMetrics) {
+                  if (typeof metrics.exact_match === 'number') {
+                    sum += metrics.exact_match;
+                    n += 1;
+                  }
+                }
+                const mean = n > 0 ? sum / n : 0;
+                return {
+                  primary_metric_value: mean,
+                  per_class_metrics_json: JSON.stringify({ mean_exact_match: mean, n_scored: n }),
+                };
+              })()
             : (() => {
                 const aggregate = aggregateMetrics(predictions);
                 return {
