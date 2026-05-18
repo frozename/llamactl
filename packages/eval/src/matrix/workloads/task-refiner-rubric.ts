@@ -30,6 +30,20 @@ noise_removal:       does the candidate strip preamble, meta-narration, approval
 Reply with JSON only, no preamble, no markdown:
 {"intent_preservation": <0-3>, "contract_clarity": <0-3>, "noise_removal": <0-3>, "comment": "<one sentence>"}`;
 
+const judgeModel = {
+  name: 'judge-granite-8b-Q4',
+  gguf_path: '/Volumes/WorkSSD/ai-models/llama.cpp/models/granite-4.1-8b-GGUF/granite-4.1-8b-Q4_K_M.gguf',
+  quant: 'Q4_K_M',
+  family: 'granite-4.1',
+  size_params: '8B',
+  host: '127.0.0.1',
+  port: 8094,
+  extra_args: [],
+  binary: '/Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server',
+  start_args: ['--ctx-size', '16384', '-ngl', '999', '--flash-attn', 'on', '-ctk', 'q8_0', '-ctv', 'q8_0', '--no-warmup', '-np', '1', '--jinja', '--reasoning', 'off', '--alias', 'local'],
+  managed: true,
+} as const;
+
 function parseJudgeJson(text: string): { intent_preservation: number; contract_clarity: number; noise_removal: number } | null {
   let s = text;
   if (s.includes('@@metadata')) {
@@ -64,19 +78,7 @@ export const taskRefinerRubricWorkload: WorkloadEval = {
   name: 'task-refiner-rubric',
   corpus_path: '/tmp/phase2-refiner/inputs.jsonl',
   primary_metric_name: 'composite',
-  judge_model: {
-    name: 'judge-granite-8b-Q4',
-    gguf_path: '/Volumes/WorkSSD/ai-models/llama.cpp/models/granite-4.1-8b-GGUF/granite-4.1-8b-Q4_K_M.gguf',
-    quant: 'Q4_K_M',
-    family: 'granite-4.1',
-    size_params: '8B',
-    host: '127.0.0.1',
-    port: 8083,
-    extra_args: [],
-    binary: '/Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server',
-    start_args: ['--ctx-size', '16384', '-ngl', '999', '--flash-attn', 'on', '-ctk', 'q8_0', '-ctv', 'q8_0', '--no-warmup', '-np', '1', '--jinja', '--reasoning', 'off', '--alias', 'local'],
-    managed: true,
-  },
+  judge_model: judgeModel,
   prompt_builder: (row) => {
     const r = row as CorpusRow;
     return {
@@ -103,9 +105,10 @@ export const taskRefinerRubricWorkload: WorkloadEval = {
       max_tokens: 300,
       temperature: 0,
     };
+    const judgeUrl = `http://${judgeModel.host}:${judgeModel.port}/v1/chat/completions`;
     let judgeText: string;
     try {
-      const resp = await fetch('http://127.0.0.1:8083/v1/chat/completions', {
+      const resp = await fetch(judgeUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(judgeReq),
