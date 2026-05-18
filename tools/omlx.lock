@@ -1,7 +1,7 @@
 # Pinned upstream commit of jundot/omlx verified working with llamactl Sub A.
 # Update this and re-run tools/install-omlx-from-source.sh when bumping.
 # Format: key=value lines. Unknown keys are ignored by the installer.
-commit=HEAD
+commit=51907f08074742defec4375fb629e289801a8a9f
 verified_date=2026-05-18
 verified_by=llamactl/mlx-engine-sub-a-plan
-notes=initial pin; tighten to a concrete sha when first manual install confirms cli compatibility.
+notes=initial pin resolved via `git ls-remote https://github.com/jundot/omlx.git HEAD` 2026-05-18. Phase 6.4 manual run will confirm cli compatibility and re-pin if the upstream branch advances before that run.

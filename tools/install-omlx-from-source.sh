@@ -18,6 +18,11 @@ if [[ -z "$PINNED_COMMIT" ]]; then
   echo "omlx.lock missing 'commit=<sha>' line" >&2
   exit 1
 fi
+if [[ ! "$PINNED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "omlx.lock 'commit' must be a full 40-hex SHA; got: $PINNED_COMMIT" >&2
+  echo "Symbolic refs (HEAD/main/tag-names) are rejected for reproducibility." >&2
+  exit 1
+fi
 
 mkdir -p "$(dirname "$SRC_DIR")"
 
@@ -28,6 +33,11 @@ fi
 cd "$SRC_DIR"
 git fetch --quiet
 git checkout --quiet "$PINNED_COMMIT"
+ACTUAL_SHA="$(git rev-parse HEAD)"
+if [[ "$ACTUAL_SHA" != "$PINNED_COMMIT" ]]; then
+  echo "post-checkout SHA mismatch: expected $PINNED_COMMIT, got $ACTUAL_SHA" >&2
+  exit 1
+fi
 
 if [[ ! -d "$SRC_DIR/.venv" ]]; then
   uv venv
