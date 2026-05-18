@@ -168,21 +168,38 @@ or a production swap, default to these in order:
    - Also skip when (a) the variant isn't built for the chosen quant,
      (b) the prompt is too short for draft amortization to win
      (under ~30 prompt tokens).
-2. **Quant ladder, by architecture.** Conventional dense + hybrid
+2. **MLX engine for Apple Silicon, when workload benefits from
+   shared prefix caching.** llamactl can host MLX-format models via
+   `kind: ModelHost` + `spec.engine: omlx`. Prefer MLX when:
+   - The workload is a long-lived agent with a stable system+tools
+     prefix (oMLX's SSD-tiered KV cache turns 30-90s TTFT on cold
+     reload into 1-3s).
+   - You're closing the train -> infer loop (packages/train/ produces
+     MLX adapters; serving them via oMLX skips the GGUF roundtrip).
+   Skip MLX when:
+   - The workload is classification / rubric-in-prompt — Q8-small
+     GGUF (Granite 3B Q8_0 via llama.cpp) still wins per the
+     attention-thesis eval until directly re-benched on MLX.
+   - You need the wider set of llama.cpp arch-specific flags
+     (--mtp-head, --swa-full, --rpc, etc.) — oMLX exposes its own
+     flag set, not those.
+   Sub A ships single-model ModelHost on local only;
+   multi-model + mac-mini + train-adapter loading land in Sub B/C/D.
+3. **Quant ladder, by architecture.** Conventional dense + hybrid
    attention (Granite 4.1, Llama 3.x, Qwen 3.x non-MoE) ranks
    Q8_0 > Q6_K > Q5_K_M > Q4_K_M monotonically on retrieval/
    classify tasks. MatFormer / MoE families (Gemma 4 26B-A4B,
    Gemma 4 E4B, Qwen 3.6 27B/35B MoE) prefer `UD-Q4_K_XL` over
    Q8_0 — the per-tensor imatrix schedule matches the architecture.
-3. **KV cache.** Default `-ctk q8_0 -ctv q8_0` for any model >4B
+4. **KV cache.** Default `-ctk q8_0 -ctv q8_0` for any model >4B
    on M4 Pro (saves ~7 GB on 32K ctx vs f16). f16 only when the
    workload requires it (e.g. Gemma 4 26B-A4B + MTP draft head,
    per the workload yaml).
-4. **Context size.** Match the workload's actual prompt + completion
+5. **Context size.** Match the workload's actual prompt + completion
    budget, not a round number. 32K is the default; 65K only for
    long-context workloads or when the model's `--swa-full` + cache
    reuse fix needs it for steady-state throughput.
-5. **Builds.** Gemma 4 + Qwen 3.6 must use the atomic forks (per
+6. **Builds.** Gemma 4 + Qwen 3.6 must use the atomic forks (per
    `reference_llamacpp_mtp_binaries`). Granite + Llama + Phi use
    upstream `llama.cpp`. Verify branch with
    `git -C <fork> branch --show-current` before benching — the
