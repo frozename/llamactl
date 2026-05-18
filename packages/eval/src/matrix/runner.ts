@@ -13,11 +13,18 @@ interface RunMatrixOpts {
   workloads: WorkloadEval[];
   db: Database;
   runId?: string;
+  corpusOverrides?: Map<string, string>;
 }
 
 export async function runMatrix(
   opts: RunMatrixOpts,
 ): Promise<{ runId: string; cellsWritten: number }> {
+  if (opts.models.length === 0) {
+    throw new Error('runMatrix: models list is empty — no work to do');
+  }
+  if (opts.workloads.length === 0) {
+    throw new Error('runMatrix: workloads list is empty — no work to do');
+  }
   ensureMatrixSchema(opts.db);
   const runId = opts.runId ?? `${new Date().toISOString()}-${randomUUID().slice(0, 8)}`;
   let cellsWritten = 0;
@@ -68,7 +75,8 @@ export async function runMatrix(
         let nRows = 0;
         let rows: unknown[] = [];
         try {
-          const abs = resolveCorpusPath(workload.corpus_path);
+          const corpusPath = opts.corpusOverrides?.get(workload.name) ?? workload.corpus_path;
+          const abs = resolveCorpusPath(corpusPath);
           const text = await Bun.file(abs).text();
           const lines = text.split('\n').filter(Boolean);
           rows = [];

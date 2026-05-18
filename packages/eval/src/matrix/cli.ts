@@ -18,6 +18,29 @@ export interface MatrixCliArgs {
   reportOut?: string;
   runId?: string;
   reportAllRuns: boolean;
+  corpusOverrides?: Map<string, string>;
+}
+
+export function parseCorpusOverrides(raw: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const pair of raw.split(',')) {
+    const trimmed = pair.trim();
+    if (!trimmed) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0 || eq === trimmed.length - 1) {
+      throw new Error(`--corpus-override entry must be workload=path, got: ${trimmed}`);
+    }
+    const workload = trimmed.slice(0, eq).trim();
+    const path = trimmed.slice(eq + 1).trim();
+    if (!workload || !path) {
+      throw new Error(`--corpus-override entry must be workload=path, got: ${trimmed}`);
+    }
+    if (out.has(workload)) {
+      throw new Error(`--corpus-override has duplicate entry for workload: ${workload}`);
+    }
+    out.set(workload, path);
+  }
+  return out;
 }
 
 export function parseArgs(argv: string[]): MatrixCliArgs {
@@ -32,13 +55,15 @@ export function parseArgs(argv: string[]): MatrixCliArgs {
   const reportOut = readArg('--report-out');
   const runId = readArg('--run-id');
   const reportAllRuns = argv.includes('--report-all-runs');
+  const corpusOverrideRaw = readArg('--corpus-override');
   if (runId && reportAllRuns) {
     throw new Error('--run-id and --report-all-runs are mutually exclusive');
   }
   if (!modelsPath || !workloadsArg || !outDb) {
     throw new Error('usage: --models <json> --workloads <names> --out-db <path>');
   }
-  return { modelsPath, workloadsArg, outDb, report, reportOut, runId, reportAllRuns };
+  const corpusOverrides = corpusOverrideRaw ? parseCorpusOverrides(corpusOverrideRaw) : undefined;
+  return { modelsPath, workloadsArg, outDb, report, reportOut, runId, reportAllRuns, corpusOverrides };
 }
 
 function validateModelSpec(value: unknown): ModelSpec {
@@ -85,7 +110,7 @@ function validateModelSpec(value: unknown): ModelSpec {
       throw new Error(`invalid ModelSpec: missing/bad field ${String(field)}`);
     }
   }
-  return spec as ModelSpec;
+  return spec as unknown as ModelSpec;
 }
 
 function getKnownWorkloads(): Record<string, WorkloadEval> {
@@ -101,12 +126,15 @@ function getKnownWorkloads(): Record<string, WorkloadEval> {
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
-    console.log('usage: --models <json> --workloads <names> --out-db <path> [--report md|csv|both] [--report-out <path>]');
+    console.log('usage: --models <json> --workloads <names> --out-db <path> [--report md|csv|both] [--report-out <path>] [--corpus-override workload=path[,...]]');
     return;
   }
-  const { modelsPath, workloadsArg, outDb, report, reportOut, runId, reportAllRuns } = parseArgs(process.argv.slice(2));
+  const { modelsPath, workloadsArg, outDb, report, reportOut, runId, reportAllRuns, corpusOverrides } = parseArgs(process.argv.slice(2));
 
   const models = ((await Bun.file(modelsPath).json()) as unknown[]).map(validateModelSpec);
+  if (models.length === 0) {
+    throw new Error(`--models points to an empty list (${modelsPath}); nothing to bench`);
+  }
   const knownWorkloads = getKnownWorkloads();
   const workloads = workloadsArg.split(',').map((name) => {
     const workload = knownWorkloads[name];
@@ -115,9 +143,17 @@ async function main(): Promise<void> {
     }
     return workload;
   });
+  if (corpusOverrides) {
+    const requested = new Set(workloads.map((w) => w.name));
+    for (const overrideName of corpusOverrides.keys()) {
+      if (!requested.has(overrideName)) {
+        throw new Error(`--corpus-override references workload ${overrideName} which is not in --workloads`);
+      }
+    }
+  }
 
   const db = new Database(outDb);
-  const result = await runMatrix({ models, workloads, db, runId });
+  const result = await runMatrix({ models, workloads, db, runId, corpusOverrides });
   if (report) {
     if (!reportOut) {
       throw new Error('--report-out is required when --report is set');

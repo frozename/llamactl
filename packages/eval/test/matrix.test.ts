@@ -15,7 +15,7 @@ import {
   type ModelSpec,
   type WorkloadEval,
 } from '../src/index.js';
-import { parseArgs } from '../src/matrix/cli.js';
+import { parseArgs, parseCorpusOverrides } from '../src/matrix/cli.js';
 import { memoryEfficacy4wayWorkload, memoryEfficacyBinaryWorkload } from '../src/index.js';
 
 function makeModel(name: string): ModelSpec {
@@ -296,5 +296,66 @@ describe('matrix CLI', () => {
         '/tmp/nope.db',
       ]),
     ).toThrow('--run-id and --report-all-runs are mutually exclusive');
+  });
+
+  test('parseCorpusOverrides parses one entry', () => {
+    const m = parseCorpusOverrides('tool-call-grammar=/tmp/foo.jsonl');
+    expect(m.size).toBe(1);
+    expect(m.get('tool-call-grammar')).toBe('/tmp/foo.jsonl');
+  });
+
+  test('parseCorpusOverrides parses comma-separated entries', () => {
+    const m = parseCorpusOverrides(
+      'tool-call-grammar=/tmp/a.jsonl,memory-recall=/tmp/b.jsonl',
+    );
+    expect(m.size).toBe(2);
+    expect(m.get('tool-call-grammar')).toBe('/tmp/a.jsonl');
+    expect(m.get('memory-recall')).toBe('/tmp/b.jsonl');
+  });
+
+  test('parseCorpusOverrides rejects malformed entries', () => {
+    expect(() => parseCorpusOverrides('no-equals-sign')).toThrow(
+      '--corpus-override entry must be workload=path',
+    );
+    expect(() => parseCorpusOverrides('=/tmp/x.jsonl')).toThrow(
+      '--corpus-override entry must be workload=path',
+    );
+    expect(() => parseCorpusOverrides('foo=')).toThrow(
+      '--corpus-override entry must be workload=path',
+    );
+  });
+
+  test('parseCorpusOverrides rejects duplicate workload keys', () => {
+    expect(() => parseCorpusOverrides('foo=/a,foo=/b')).toThrow(
+      'duplicate entry for workload: foo',
+    );
+  });
+
+  test('parseArgs threads --corpus-override into MatrixCliArgs', () => {
+    const args = parseArgs([
+      '--models',
+      '/tmp/m.json',
+      '--workloads',
+      'memory-efficacy-binary',
+      '--out-db',
+      '/tmp/x.db',
+      '--corpus-override',
+      'memory-efficacy-binary=/tmp/alt.jsonl',
+    ]);
+    expect(args.corpusOverrides?.get('memory-efficacy-binary')).toBe('/tmp/alt.jsonl');
+  });
+
+  test('runMatrix throws on empty models list', async () => {
+    const db = new Database(':memory:');
+    await expect(
+      runMatrix({ models: [], workloads: [memoryEfficacyBinaryWorkload], db }),
+    ).rejects.toThrow('models list is empty');
+  });
+
+  test('runMatrix throws on empty workloads list', async () => {
+    const db = new Database(':memory:');
+    await expect(
+      runMatrix({ models: [makeModel('m')], workloads: [], db }),
+    ).rejects.toThrow('workloads list is empty');
   });
 });
