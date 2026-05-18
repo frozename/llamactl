@@ -58,25 +58,33 @@ export function classifyRepoFormat(
   repo: string,
   files: string[],
   opts: { override?: RepoFormat } = {},
-): { format: RepoFormat } | { error: string } {
-  if (opts.override) return { format: opts.override };
+): { ok: true; format: RepoFormat } | { ok: false; error: string } {
+  if (opts.override) return { ok: true, format: opts.override };
 
-  const hasGguf = files.some((f) => f.endsWith('.gguf'));
-  if (hasGguf) return { format: 'gguf' };
+  const hasGguf = files.some((f) => f.toLowerCase().endsWith('.gguf'));
+  if (hasGguf) return { ok: true, format: 'gguf' };
 
   const hasConfig = files.includes('config.json');
   const hasTokenizer = files.includes('tokenizer.json') || files.includes('tokenizer.model');
   const hasSafetensors = files.some(
-    (f) => f === 'model.safetensors' || f === 'model.safetensors.index.json' || /\.safetensors$/.test(f),
+    (f) => {
+      const lower = f.toLowerCase();
+      return (
+        lower === 'model.safetensors' ||
+        lower === 'model.safetensors.index.json' ||
+        lower.endsWith('.safetensors')
+      );
+    },
   );
-  if (hasConfig && hasTokenizer && hasSafetensors) return { format: 'mlx' };
+  if (hasConfig && hasTokenizer && hasSafetensors) return { ok: true, format: 'mlx' };
 
   if (repo.startsWith('mlx-community/')) {
     return {
+      ok: false,
       error: `repo ${repo} looks like an MLX repo by namespace but is missing required files (need config.json + tokenizer + safetensors)`,
     };
   }
-  return { error: `no gguf files and no MLX format signature in ${repo}` };
+  return { ok: false, error: `no gguf files and no MLX format signature in ${repo}` };
 }
 
 /**
