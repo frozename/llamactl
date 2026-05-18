@@ -15,6 +15,7 @@ import {
   listWorkloads,
   loadWorkload,
   loadWorkloadByName,
+  parseManifestYaml,
   parseWorkload,
   saveWorkload,
   workloadPath,
@@ -323,6 +324,69 @@ describe('interpolateEnvRefs', () => {
     } finally {
       if (prior === undefined) delete process.env.LLAMA_SERVER_BIN;
       else process.env.LLAMA_SERVER_BIN = prior;
+    }
+  });
+});
+
+describe('parseManifestYaml', () => {
+  test('interpolates env refs in nested ModelRun and ModelHost fields', () => {
+    const prior = {
+      MODEL_REL: process.env.MODEL_REL,
+      MODELS_DIR: process.env.MODELS_DIR,
+      HOST_BINARY: process.env.HOST_BINARY,
+      HOST_REL: process.env.HOST_REL,
+    };
+    process.env.MODEL_REL = '/models/run.gguf';
+    process.env.MODELS_DIR = '/srv/models';
+    process.env.HOST_BINARY = '/usr/bin/llamactl-host';
+    process.env.HOST_REL = '/models/host.gguf';
+    try {
+      const parsedRun = parseManifestYaml(`
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: env-run
+spec:
+  node: local
+  target:
+    value: ${'${env:MODEL_REL}'}
+  extraArgs:
+    - --models-dir
+    - ${'${env:MODELS_DIR}'}
+`);
+      expect(parsedRun).toMatchObject({
+        spec: {
+          target: { value: '/models/run.gguf' },
+          extraArgs: ['--models-dir', '/srv/models'],
+        },
+      });
+
+      const parsedHost = parseManifestYaml(`
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: env-host
+spec:
+  engine: omlx
+  node: local
+  binary: ${'${env:HOST_BINARY}'}
+  endpoint:
+    host: 127.0.0.1
+    port: 19090
+  hostedModels:
+    - rel: ${'${env:HOST_REL}'}
+`);
+      expect(parsedHost).toMatchObject({
+        spec: {
+          binary: '/usr/bin/llamactl-host',
+          hostedModels: [{ rel: '/models/host.gguf' }],
+        },
+      });
+    } finally {
+      for (const [key, value] of Object.entries(prior)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 });

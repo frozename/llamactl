@@ -48,13 +48,34 @@ export function interpolateEnvRefs(
   });
 }
 
+function interpolateEnvRefsDeep(
+  value: unknown,
+  env: NodeJS.ProcessEnv = process.env,
+): unknown {
+  if (typeof value === 'string') return interpolateEnvRefs(value, env);
+  if (Array.isArray(value)) return value.map((entry) => interpolateEnvRefsDeep(entry, env));
+  if (!value || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    out[key] = interpolateEnvRefsDeep(entry, env);
+  }
+  return out;
+}
+
+export function parseManifestYaml(
+  raw: string,
+  env: NodeJS.ProcessEnv = process.env,
+): unknown {
+  return interpolateEnvRefsDeep(parseYaml(raw), env);
+}
+
 /**
  * Parse + validate a manifest from YAML text. Used by `apply -f` where
  * the file might live outside the workloads dir (typical kubectl flow
  * is to edit a manifest in a git repo, then apply it).
  */
 export function parseWorkload(raw: string): ModelRun {
-  const parsed = parseYaml(interpolateEnvRefs(raw));
+  const parsed = parseManifestYaml(raw);
   return ModelRunSchema.parse(parsed);
 }
 

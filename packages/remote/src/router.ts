@@ -22,9 +22,11 @@ import * as reconcileLoopMod from './workload/reconcileLoop.js';
 import * as benchScheduleMod from './bench/schedule.js';
 import * as benchScheduleLoopMod from './bench/scheduleLoop.js';
 import {
+  ModelRunSchema,
   ModelRunSpecSchema,
   type ModelRun,
 } from './workload/schema.js';
+import { ModelHostManifestSchema } from './workload/modelhost-schema.js';
 import { buildPinnedLinks } from './client/links.js';
 import {
   createLlmExecutor,
@@ -1122,8 +1124,15 @@ export const router = t.router({
   workloadApply: t.procedure
     .input(z.object({ yaml: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const { parse: parseYaml } = await import('yaml');
-      const manifest = parseYaml(input.yaml) as Record<string, unknown>;
+      let manifest: unknown;
+      try {
+        manifest = workloadStoreMod.parseManifestYaml(input.yaml);
+      } catch (err) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `invalid workload manifest: ${(err as Error).message}`,
+        });
+      }
       const cfg = kubecfg.loadConfig();
       const workloadsDir = workloadStoreMod.defaultWorkloadsDir();
       // applyOne's NodeClient type pulls AppRouter → NodeClient → AppRouter
@@ -1218,8 +1227,26 @@ export const router = t.router({
     .input(z.object({ yaml: z.string().min(1) }))
     .query(({ input }) => {
       try {
-        const manifest = workloadStoreMod.parseWorkload(input.yaml);
-        return { ok: true as const, manifest };
+        const parsed = workloadStoreMod.parseManifestYaml(input.yaml);
+        if (!parsed || typeof parsed !== 'object') {
+          return { ok: false as const, error: 'invalid workload manifest: expected a YAML mapping' };
+        }
+        const kind = (parsed as { kind?: unknown }).kind;
+        if (kind === 'ModelRun') {
+          const parsedRun = ModelRunSchema.safeParse(parsed);
+          if (!parsedRun.success) {
+            return { ok: false as const, error: parsedRun.error.message };
+          }
+          return { ok: true as const, manifest: parsedRun.data };
+        }
+        if (kind === 'ModelHost') {
+          const parsedHost = ModelHostManifestSchema.safeParse(parsed);
+          if (!parsedHost.success) {
+            return { ok: false as const, error: parsedHost.error.message };
+          }
+          return { ok: true as const, manifest: parsedHost.data };
+        }
+        return { ok: false as const, error: `unsupported workload kind: ${typeof kind === 'string' ? kind : 'missing'}` };
       } catch (err) {
         return { ok: false as const, error: (err as Error).message };
       }
