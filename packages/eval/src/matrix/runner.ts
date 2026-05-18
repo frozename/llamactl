@@ -88,14 +88,20 @@ export async function runMatrix(
           for (const row of rows) {
             nRows += 1;
             try {
-              const built = workload.prompt_builder(row) as { messages: any[] };
-              const req = buildCompletionRequest({ messages: built.messages, maxTokens: 256 });
+              const built = workload.prompt_builder(row);
+              const req = buildCompletionRequest({
+                messages: built.messages as any[],
+                maxTokens: 256,
+                ...(built.tools ? { tools: built.tools as any[], tool_choice: built.tool_choice } : {}),
+              });
               const { resp, wallMs } = await completeChat(`http://${model.host}:${model.port}`, req);
               wallMsArr.push(wallMs);
               totalWallMs += wallMs;
               totalCompletionTokens += resp.usage?.completion_tokens ?? 0;
               const completion = resp.choices[0]?.message?.content ?? '';
-              const scored = await workload.scorer(row, completion);
+              const scored = await workload.scorer(row, completion, {
+                tool_calls: resp.choices[0]?.message?.tool_calls,
+              });
               predictions.push({ pred: scored.prediction, gold: scored.gold });
               rowMetrics.push(scored.metrics);
             } catch (err) {

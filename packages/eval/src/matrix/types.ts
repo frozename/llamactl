@@ -22,10 +22,15 @@ export interface WorkloadEval {
    * Returns the body shape passed to llama-server: string for `/completion`,
    * `{messages: ...}` for `/chat/completions`. Concrete typing lands in v1.
    */
-  prompt_builder: (row: unknown) => unknown;
+  prompt_builder: (row: unknown) => {
+    messages: unknown[];
+    tools?: unknown[];
+    tool_choice?: unknown;
+  };
   scorer: (
     row: unknown,
     completion: string,
+    meta?: { tool_calls?: unknown[] },
   ) =>
     | { metrics: Record<string, number>; prediction: string; gold: string }
     | Promise<{ metrics: Record<string, number>; prediction: string; gold: string }>;
