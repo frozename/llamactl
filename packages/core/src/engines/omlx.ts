@@ -1,7 +1,10 @@
 import { existsSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, resolve, sep } from 'node:path';
 import type { ResolvedEnv } from '../types.js';
 import type { EngineAdapter, ModelHostSpecForEngine } from './types.js';
+import { gracefulShutdown, pollUntilModelIds } from './lifecycle.js';
+
+const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost', '0.0.0.0']);
 
 export const omlxEngine: EngineAdapter = {
   name: 'omlx',
@@ -19,14 +22,25 @@ export const omlxEngine: EngineAdapter = {
     if (!spec.endpoint || typeof spec.endpoint.port !== 'number') {
       return { ok: false, error: 'omlx engine requires spec.endpoint.port' };
     }
+    if (!LOOPBACK.has(spec.endpoint.host)) {
+      return { ok: false, error: `endpoint.host must be loopback or 0.0.0.0; got ${spec.endpoint.host}` };
+    }
     if (!Array.isArray(spec.hostedModels) || spec.hostedModels.length !== 1) {
-      return { ok: false, error: 'Sub A: hostedModels must have exactly one entry' };
+      return { ok: false, error: 'hostedModels must have exactly one entry' };
     }
     return { ok: true };
   },
 
   buildBootCommand(spec: ModelHostSpecForEngine, env: ResolvedEnv) {
-    const modelsDir = (env as Record<string, string>).LLAMA_CPP_MODELS ?? '/tmp/models';
+    const modelsDir =
+      (env as Record<string, string>).LLAMACTL_MODELS_DIR ??
+      (env as Record<string, string>).LLAMA_CPP_MODELS ??
+      '/tmp/models';
+    const sanitizedModelRel = spec.hostedModels[0].rel;
+    const normalizedModelPath = resolve(modelsDir, sanitizedModelRel);
+    if (!normalizedModelPath.startsWith(`${resolve(modelsDir)}${sep}`)) {
+      throw new Error(`hostedModel rel escapes models dir: ${sanitizedModelRel}`);
+    }
     const args: string[] = [
       'serve',
       '--model-dir',
@@ -44,31 +58,11 @@ export const omlxEngine: EngineAdapter = {
   },
 
   async probeReady(endpoint, timeoutMs) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      try {
-        const r = await fetch(`http://${endpoint.host}:${endpoint.port}/v1/models`);
-        if (r.ok) {
-          const body = (await r.json()) as { data?: Array<{ id?: string }> };
-          const ids = (body.data ?? []).map((m) => m.id ?? '').filter(Boolean);
-          if (ids.length > 0) {
-            return { ready: true, modelIds: ids };
-          }
-        }
-      } catch {}
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    return { ready: false, modelIds: [] };
+    return pollUntilModelIds(endpoint, timeoutMs);
   },
 
   async teardown(pid) {
-    try {
-      process.kill(pid, 'SIGTERM');
-      await new Promise((resolve) => setTimeout(resolve, 10_000));
-    } catch {}
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {}
+    await gracefulShutdown(pid);
   },
 };
 

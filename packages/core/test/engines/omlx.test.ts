@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { ENGINES } from '../../src/engines/index.js';
+import { gracefulShutdown } from '../../src/engines/lifecycle.js';
 import type { ModelHostSpecForEngine } from '../../src/engines/types.js';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -51,6 +52,13 @@ describe('omlx engine adapter', () => {
     expect(result.ok).toBe(false);
   });
 
+  test('validateSpec rejects non-loopback endpoint host', () => {
+    const bad = { ...baseSpec, endpoint: { host: 'example.com', port: 8094 } };
+    const result = ENGINES.omlx.validateSpec(bad);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/loopback|0\.0\.0\.0/);
+  });
+
   test('buildBootCommand uses serve subcommand + --model-dir + --port', () => {
     const built = ENGINES.omlx.buildBootCommand(baseSpec, {
       LLAMA_CPP_MODELS: '/Volumes/WorkSSD/ai-models/llama.cpp/models',
@@ -77,6 +85,25 @@ describe('omlx engine adapter', () => {
     expect(built.args).toContain('4');
   });
 
+  test('buildBootCommand prefers LLAMACTL_MODELS_DIR over LLAMA_CPP_MODELS', () => {
+    const built = ENGINES.omlx.buildBootCommand(baseSpec, {
+      LLAMACTL_MODELS_DIR: '/neutral/models',
+      LLAMA_CPP_MODELS: '/legacy/models',
+    } as any);
+    expect(built.args).toContain('/neutral/models');
+    expect(built.args).not.toContain('/legacy/models');
+  });
+
+  test('buildBootCommand rejects hosted model rel escapes', () => {
+    const bad = {
+      ...baseSpec,
+      hostedModels: [{ rel: '../../escape' }],
+    };
+    expect(() => ENGINES.omlx.buildBootCommand(bad, { LLAMA_CPP_MODELS: '/tmp/models' } as any)).toThrow(
+      /escapes models dir/,
+    );
+  });
+
   test('probeReady returns matching modelIds when /v1/models contains the rel basename', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () => new Response(JSON.stringify({
@@ -98,6 +125,44 @@ describe('omlx engine adapter', () => {
       500,
     );
     expect(result.ready).toBe(false);
+  });
+
+  test('probeReady times out cleanly without overrunning the deadline', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      })) as typeof fetch;
+    const started = Date.now();
+    const result = await ENGINES.omlx.probeReady({ host: '127.0.0.1', port: 54321 }, 300);
+    const elapsed = Date.now() - started;
+    globalThis.fetch = originalFetch;
+    expect(result.ready).toBe(false);
+    expect(elapsed).toBeLessThan(1200);
+  });
+
+  test('teardown returns quickly when the process exits on its own', async () => {
+    const proc = Bun.spawn(['sh', '-lc', 'sleep 0.2'], { stderr: 'pipe', stdout: 'pipe' });
+    const started = Date.now();
+    await ENGINES.omlx.teardown(proc.pid!);
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  test('teardown escalates to SIGKILL after grace expires', async () => {
+    const proc = Bun.spawn(
+      [
+        'python3',
+        '-c',
+        'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)',
+      ],
+      { stderr: 'pipe', stdout: 'pipe' },
+    );
+    const started = Date.now();
+    await gracefulShutdown(proc.pid!, 250);
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeLessThan(2000);
+    expect(() => process.kill(proc.pid!, 0)).toThrow();
   });
 
   afterAll(() => {

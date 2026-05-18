@@ -1,5 +1,9 @@
 import type { ResolvedEnv } from '../types.js';
 import type { EngineAdapter, ModelHostSpecForEngine } from './types.js';
+import { gracefulShutdown, pollUntilModelIds } from './lifecycle.js';
+import { resolve, sep } from 'node:path';
+
+const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost', '0.0.0.0']);
 
 export const llamacppEngine: EngineAdapter = {
   name: 'llamacpp',
@@ -11,48 +15,42 @@ export const llamacppEngine: EngineAdapter = {
     if (!spec.endpoint || typeof spec.endpoint.port !== 'number') {
       return { ok: false, error: 'llamacpp engine requires spec.endpoint.port' };
     }
+    if (!LOOPBACK.has(spec.endpoint.host)) {
+      return { ok: false, error: `endpoint.host must be loopback or 0.0.0.0; got ${spec.endpoint.host}` };
+    }
     if (!Array.isArray(spec.hostedModels) || spec.hostedModels.length !== 1) {
-      return { ok: false, error: 'Sub A: hostedModels must have exactly one entry' };
+      return { ok: false, error: 'hostedModels must have exactly one entry' };
     }
     return { ok: true };
   },
 
   buildBootCommand(spec: ModelHostSpecForEngine, env: ResolvedEnv) {
     const modelRel = spec.hostedModels[0].rel;
-    const modelsDir = (env as Record<string, string>).LLAMA_CPP_MODELS ?? '/tmp/models';
+    const modelsDir =
+      (env as Record<string, string>).LLAMACTL_MODELS_DIR ??
+      (env as Record<string, string>).LLAMA_CPP_MODELS ??
+      '/tmp/models';
+    const fullModelPath = resolve(modelsDir, modelRel);
+    if (!fullModelPath.startsWith(`${resolve(modelsDir)}${sep}`)) {
+      throw new Error(`hostedModel rel escapes models dir: ${modelRel}`);
+    }
     const args: string[] = [
       '--host',
       spec.endpoint.host,
       '--port',
       String(spec.endpoint.port),
       '-m',
-      `${modelsDir}/${modelRel}`,
+      fullModelPath,
       ...spec.extraArgs,
     ];
     return { binary: spec.binary, args };
   },
 
   async probeReady(endpoint, timeoutMs) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      try {
-        const r = await fetch(`http://${endpoint.host}:${endpoint.port}/health`);
-        if (r.ok) {
-          return { ready: true, modelIds: [] };
-        }
-      } catch {}
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    return { ready: false, modelIds: [] };
+    return pollUntilModelIds(endpoint, timeoutMs);
   },
 
   async teardown(pid) {
-    try {
-      process.kill(pid, 'SIGTERM');
-      await new Promise((resolve) => setTimeout(resolve, 10_000));
-    } catch {}
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {}
+    await gracefulShutdown(pid);
   },
 };

@@ -23,6 +23,10 @@ export interface EngineAdapter {
     spec: ModelHostSpecForEngine,
     env: ResolvedEnv,
   ): { binary: string; args: string[]; envOverrides?: Record<string, string> };
+  /**
+   * Resolves when the engine is serving at least one model (not just process-alive).
+   * `modelIds` lists what the engine advertises via /v1/models.
+   */
   probeReady(
     endpoint: { host: string; port: number },
     timeoutMs: number,
