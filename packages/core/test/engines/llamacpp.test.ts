@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { ENGINES } from '../../src/engines/index.js';
-import { gracefulShutdown } from '../../src/engines/lifecycle.js';
+import { formatHostForUrl, gracefulShutdown } from '../../src/engines/lifecycle.js';
 import type { ModelHostSpecForEngine } from '../../src/engines/types.js';
 
 const baseSpec: ModelHostSpecForEngine = {
@@ -81,6 +81,11 @@ describe('llamacpp engine adapter', () => {
     globalThis.fetch = originalFetch;
     expect(result.ready).toBe(true);
     expect(result.modelIds).toContain('granite-4.1-3b-Q8_0.gguf');
+  });
+
+  test('formatHostForUrl brackets IPv6 literals', () => {
+    expect(formatHostForUrl('::1')).toBe('[::1]');
+    expect(formatHostForUrl('127.0.0.1')).toBe('127.0.0.1');
   });
 
   test('probeReady returns ready:false without overrunning timeout', async () => {

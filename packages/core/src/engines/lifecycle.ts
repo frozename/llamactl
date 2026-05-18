@@ -3,6 +3,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function formatHostForUrl(host: string): string {
+  return host.includes(':') ? `[${host}]` : host;
+}
+
 function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -35,7 +39,7 @@ async function fetchModelIds(
   endpoint: { host: string; port: number },
   timeoutMs: number,
 ): Promise<string[]> {
-  const response = await fetch(`http://${endpoint.host}:${endpoint.port}/v1/models`, {
+  const response = await fetch(`http://${formatHostForUrl(endpoint.host)}:${endpoint.port}/v1/models`, {
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
