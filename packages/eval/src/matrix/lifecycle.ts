@@ -1,5 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { basename } from 'node:path';
+import { ENGINES } from '../../../core/src/engines/index.js';
+import type { ModelHostSpecForEngine } from '../../../core/src/engines/types.js';
 import type { ModelSpec } from './types.js';
 
 const HEALTH_POLL_INTERVAL_MS = 1000;
@@ -75,6 +78,43 @@ export async function probeInference(host: string, port: number, timeoutMs: numb
   }
 }
 
+function buildLlamaCppBootCommand(model: ModelSpec): { binary: string; args: string[] } {
+  return {
+    binary: model.binary!,
+    args: [
+      '-m',
+      model.gguf_path,
+      '--host',
+      model.host,
+      '--port',
+      String(model.port),
+      ...(model.start_args ?? []),
+      ...(model.extra_args ?? []),
+    ],
+  };
+}
+
+export function buildBootCommandForModelSpec(model: ModelSpec): { binary: string; args: string[] } {
+  if ((model.engine ?? 'llamacpp') === 'omlx') {
+    if (!model.binary || !existsSync(model.binary)) {
+      throw new Error(`model ${model.name} managed=true but binary not found: ${model.binary}`);
+    }
+    const spec: ModelHostSpecForEngine = {
+      engine: 'omlx',
+      binary: model.binary,
+      endpoint: { host: model.host, port: model.port },
+      hostedModels: [{ rel: basename(model.gguf_path) }],
+      resources: {},
+      extraArgs: model.extra_args ?? [],
+      timeoutSeconds: 60,
+    };
+    return ENGINES.omlx.buildBootCommand(spec, {
+      LLAMACTL_MODELS_DIR: model.mlx_model_dir ?? '',
+    } as any);
+  }
+  return buildLlamaCppBootCommand(model);
+}
+
 export async function ensureModelServing(model: ModelSpec): Promise<BootResult> {
   if (await pingHealth(model.host, model.port)) {
     return { owned: false, proc: null };
@@ -85,17 +125,8 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
   if (!model.binary || !existsSync(model.binary)) {
     throw new Error(`model ${model.name} managed=true but binary not found: ${model.binary}`);
   }
-  const args = [
-    '-m',
-    model.gguf_path,
-    '--host',
-    model.host,
-    '--port',
-    String(model.port),
-    ...(model.start_args ?? []),
-    ...(model.extra_args ?? []),
-  ];
-  const proc = spawn(model.binary, args, { stdio: 'pipe', detached: false });
+  const boot = buildBootCommandForModelSpec(model);
+  const proc = spawn(boot.binary, boot.args, { stdio: 'pipe', detached: false });
   const stderrTail: string[] = [];
   function pushStderr(chunk: Buffer | string) {
     const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');

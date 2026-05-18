@@ -1,6 +1,8 @@
 export interface ModelSpec {
   name: string;
+  engine?: 'llamacpp' | 'omlx';
   gguf_path: string;
+  mlx_model_dir?: string;
   quant: string;
   family: string;
   size_params: string;

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   __ownedProcsForTests,
   __seedOwnedProcForTests,
+  buildBootCommandForModelSpec,
   ensureModelServing,
   probeInference,
   teardownIfOwned,
@@ -21,6 +22,50 @@ function baseModel(overrides: Partial<ModelSpec>): ModelSpec {
     ...overrides,
   };
 }
+
+describe('matrix lifecycle - engine dispatch', () => {
+  test('omlx ModelSpec routes to ENGINES.omlx.buildBootCommand', () => {
+    const spec = {
+      name: 'qwen3-8b-mlx-4bit',
+      engine: 'omlx',
+      family: 'qwen-3',
+      quant: 'MLX-4bit',
+      size_params: '8B',
+      host: '127.0.0.1',
+      port: 8094,
+      binary: '/usr/bin/true',
+      mlx_model_dir: '/tmp/mlx',
+      managed: true,
+      extra_args: ['--max-concurrent-requests', '1'],
+      start_args: [],
+      gguf_path: '/tmp/unused.gguf',
+      hostedModels: [{ rel: 'qwen3-8b-mlx-4bit.gguf' }],
+    };
+    const built = buildBootCommandForModelSpec(spec as any);
+    expect(built.args[0]).toBe('serve');
+    expect(built.args).toContain('--model-dir');
+    expect(built.args).toContain('/tmp/mlx');
+  });
+
+  test('default engine (undefined) routes to llama.cpp path (back-compat)', () => {
+    const spec = {
+      name: 'granite-3b-Q8',
+      family: 'granite',
+      quant: 'Q8_0',
+      size_params: '3B',
+      host: '127.0.0.1',
+      port: 8085,
+      binary: '/usr/bin/true',
+      gguf_path: '/tmp/granite-3b-Q8.gguf',
+      managed: true,
+      extra_args: [],
+      start_args: [],
+    };
+    const built = buildBootCommandForModelSpec(spec as any);
+    expect(built.binary).toBe('/usr/bin/true');
+    expect(built.args).toContain('--port');
+  });
+});
 
 describe('ensureModelServing', () => {
   test('returns owned=false when server already responds to /health', async () => {
