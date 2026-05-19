@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { startSearchIngest, stopSearchIngest } from '../search/ingest/lifecycle.js';
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
-import { openaiProxy, workloadRuntime } from '@llamactl/core';
+import { openaiProxy } from '@llamactl/core';
 import { resolveEnv } from '../../../core/src/env.js';
 import { migrateLegacySingletonRuntime } from '../../../core/src/workloadRuntime.js';
 import { router as appRouter } from '../router.js';
@@ -246,10 +246,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     let status = 0;
     try {
       if (req.method === 'GET' && url.pathname === '/v1/models') {
-        const data = workloadRuntime
-          .listLocalWorkloads()
-          .filter((e) => e.alive)
-          .flatMap((e) => openaiProxy.listOpenAIModels({ name: e.name }).data);
+        const data = openaiProxy.listOpenAIModels().data;
         const models = { object: 'list' as const, data };
         llamaServerUp.set(data.length > 0 ? 1 : 0);
         status = 200;

@@ -2,6 +2,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFile
 import { join } from 'node:path';
 import type { ResolvedEnv } from './types.js';
 import { resolveEnv } from './env.js';
+import { readModelHostState, modelhostPidFile } from './engines/state.js';
+import { readServerState } from './server.js';
+import type { EngineName } from './engines/index.js';
 
 export interface WorkloadKey {
   name: string;
@@ -11,6 +14,16 @@ export interface WorkloadRuntimeEntry {
   name: string;
   pid: number | null;
   alive: boolean;
+}
+
+export interface LocalRoute {
+  workload: string;
+  model: string;
+  host: string;
+  port: number;
+  engine: EngineName;
+  kind: 'ModelRun' | 'ModelHost';
+  pid: number;
 }
 
 export function workloadRuntimeRoot(resolved: ResolvedEnv = resolveEnv()): string {
@@ -31,6 +44,17 @@ function isProcessAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
+function readPidFile(path: string): number | null {
+  if (!existsSync(path)) return null;
+  try {
+    const raw = readFileSync(path, 'utf8').trim();
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 export function listLocalWorkloads(resolved: ResolvedEnv = resolveEnv()): WorkloadRuntimeEntry[] {
   const root = workloadRuntimeRoot(resolved);
   if (!existsSync(root)) return [];
@@ -39,15 +63,54 @@ export function listLocalWorkloads(resolved: ResolvedEnv = resolveEnv()): Worklo
     if (!dirent.isDirectory()) continue;
     const pidPath = join(root, dirent.name, 'llama-server.pid');
     if (!existsSync(pidPath)) continue;
-    let pid: number | null = null;
-    try {
-      const raw = readFileSync(pidPath, 'utf8').trim();
-      const n = Number.parseInt(raw, 10);
-      if (Number.isFinite(n) && n > 0) pid = n;
-    } catch { pid = null; }
+    const pid = readPidFile(pidPath);
     entries.push({ name: dirent.name, pid, alive: pid !== null && isProcessAlive(pid) });
   }
   return entries;
+}
+
+export function listLocalRoutes(resolved: ResolvedEnv = resolveEnv()): LocalRoute[] {
+  const root = workloadRuntimeRoot(resolved);
+  if (!existsSync(root)) return [];
+  const out: LocalRoute[] = [];
+  for (const dirent of readdirSync(root, { withFileTypes: true })) {
+    if (!dirent.isDirectory()) continue;
+    const key = { name: dirent.name };
+
+    const hostPid = readPidFile(modelhostPidFile(resolved, key));
+    if (hostPid !== null && isProcessAlive(hostPid)) {
+      const state = readModelHostState(key, resolved);
+      if (state && state.pid === hostPid) {
+        for (const alias of state.modelAliases) {
+          out.push({
+            workload: dirent.name,
+            model: alias,
+            host: state.host,
+            port: state.port,
+            engine: state.engine,
+            kind: 'ModelHost',
+            pid: hostPid,
+          });
+        }
+        continue;
+      }
+    }
+
+    const runPid = readPidFile(join(root, dirent.name, 'llama-server.pid'));
+    if (runPid === null || !isProcessAlive(runPid)) continue;
+    const state = readServerState(key, resolved);
+    if (!state?.rel || !state.host || state.port == null) continue;
+    out.push({
+      workload: dirent.name,
+      model: state.rel,
+      host: state.host,
+      port: Number(state.port),
+      engine: 'llamacpp',
+      kind: 'ModelRun',
+      pid: runPid,
+    });
+  }
+  return out;
 }
 
 export function listWorkloadDirs(resolved: ResolvedEnv = resolveEnv()): string[] {

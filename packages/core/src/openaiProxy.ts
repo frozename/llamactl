@@ -31,18 +31,44 @@ const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
  * empty list when nothing is tracked.
  */
 export function listOpenAIModels(
+  resolved: ResolvedEnv = resolveEnv(),
+): ModelListResponse;
+export function listOpenAIModels(
   key: WorkloadKey,
+  resolved?: ResolvedEnv,
+): ModelListResponse;
+export function listOpenAIModels(
+  keyOrResolved: WorkloadKey | ResolvedEnv = resolveEnv(),
   resolved: ResolvedEnv = resolveEnv(),
 ): ModelListResponse {
-  const state = readServerState(key, resolved);
-  const pid = readServerPid(key, resolved);
+  if ('name' in keyOrResolved) {
+    const key = keyOrResolved;
+    const state = readServerState(key, resolved);
+    const pid = readServerPid(key, resolved);
+    const data: ModelInfo[] = [];
+    if (state && pid !== null) {
+      data.push({
+        id: state.rel,
+        object: 'model',
+        created: Math.floor(new Date(state.startedAt).getTime() / 1000),
+        owned_by: 'llamactl-agent',
+        capabilities: ['chat'],
+      });
+    }
+    return { object: 'list', data };
+  }
+
+  const unifiedResolved = keyOrResolved;
   const data: ModelInfo[] = [];
-  if (state && pid !== null) {
+  const seen = new Set<string>();
+  for (const route of workloadRuntime.listLocalRoutes(unifiedResolved)) {
+    if (seen.has(route.model)) continue;
+    seen.add(route.model);
     data.push({
-      id: state.rel,
+      id: route.model,
       object: 'model',
-      created: Math.floor(new Date(state.startedAt).getTime() / 1000),
-      owned_by: 'llamactl-agent',
+      created: Math.floor(Date.now() / 1000),
+      owned_by: route.kind === 'ModelHost' ? 'llamactl-host' : 'llamactl-agent',
       capabilities: ['chat'],
     });
   }
@@ -84,11 +110,8 @@ let routeMapBuildCount = 0;
 function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
   routeMapBuildCount += 1;
   const out = new Map<string, RouteEntry>();
-  for (const entry of workloadRuntime.listLocalWorkloads(resolved)) {
-    if (!entry.alive) continue;
-    const state = readServerState({ name: entry.name }, resolved);
-    if (!state?.rel || !state.host || state.port == null) continue;
-    out.set(state.rel, { host: state.host, port: Number(state.port) });
+  for (const route of workloadRuntime.listLocalRoutes(resolved)) {
+    out.set(route.model, { host: route.host, port: route.port });
   }
   return out;
 }

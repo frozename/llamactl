@@ -937,11 +937,8 @@ export const router = t.router({
       // inline a call through the pinned-fetch path when remote,
       // and use the core listOpenAIModels directly when local.
       if (resolved.node.endpoint.startsWith('inproc://')) {
-        const { openaiProxy, workloadRuntime } = await import('@llamactl/core');
-        const data = workloadRuntime
-          .listLocalWorkloads()
-          .filter((e) => e.alive)
-          .flatMap((e) => openaiProxy.listOpenAIModels({ name: e.name }).data);
+        const { openaiProxy } = await import('@llamactl/core');
+        const data = openaiProxy.listOpenAIModels().data;
         return { node: input.name, kind, models: data };
       }
       // Remote agent: scrape its /v1/models endpoint via pinned fetch.

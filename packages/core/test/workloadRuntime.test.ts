@@ -5,10 +5,12 @@ import { tmpdir } from 'node:os';
 import {
   workloadRuntimeDir,
   listLocalWorkloads,
+  listLocalRoutes,
   listWorkloadDirs,
   ensureWorkloadRuntimeDir,
   migrateLegacySingletonRuntime,
 } from '../src/workloadRuntime.js';
+import { writeModelHostState } from '../src/engines/state.js';
 
 const tempEnv = () => {
   const dir = mkdtempSync(join(tmpdir(), 'workloadrt-'));
@@ -48,6 +50,77 @@ test('listLocalWorkloads returns names of workload subdirs with pidfiles', () =>
     expect(names).toEqual(['a']);
     expect(entries[0]!.pid).toBe(99999);
     expect(entries[0]!.alive).toBe(false);
+  } finally { t.cleanup(); }
+});
+
+test('listLocalRoutes returns ModelRun entries from llama-server state', () => {
+  const t = tempEnv();
+  try {
+    const dir = join(t.runtimeDir, 'workloads', 'test-run');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'llama-server.pid'), `${process.pid}\n`);
+    writeFileSync(join(dir, 'llama-server.state'), JSON.stringify({
+      rel: 'org/model.gguf',
+      extraArgs: [],
+      host: '127.0.0.1',
+      port: 8090,
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      tunedProfile: null,
+    }));
+    const routes = listLocalRoutes(t.resolved);
+    expect(routes).toHaveLength(1);
+    expect(routes[0]).toMatchObject({
+      workload: 'test-run',
+      model: 'org/model.gguf',
+      host: '127.0.0.1',
+      port: 8090,
+      engine: 'llamacpp',
+      kind: 'ModelRun',
+    });
+  } finally { t.cleanup(); }
+});
+
+test('listLocalRoutes returns one route per ModelHost alias', () => {
+  const t = tempEnv();
+  try {
+    const dir = join(t.runtimeDir, 'workloads', 'mlx-host');
+    mkdirSync(dir, { recursive: true });
+    const state = {
+      kind: 'ModelHost' as const,
+      engine: 'omlx' as const,
+      pid: process.pid,
+      host: '127.0.0.1',
+      port: 8094,
+      modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit', 'Qwen3-8B-MLX-4bit'],
+      startedAt: '2026-05-19T00:00:00Z',
+    };
+    writeModelHostState(state, { name: 'mlx-host' }, t.resolved);
+    const routes = listLocalRoutes(t.resolved);
+    expect(routes).toHaveLength(2);
+    expect(new Set(routes.map((r) => r.model))).toEqual(
+      new Set(['mlx-community/Qwen3-8B-MLX-4bit', 'Qwen3-8B-MLX-4bit']),
+    );
+    expect(routes.every((r) => r.engine === 'omlx' && r.kind === 'ModelHost')).toBe(true);
+  } finally { t.cleanup(); }
+});
+
+test('listLocalRoutes skips dead processes', () => {
+  const t = tempEnv();
+  try {
+    const dir = join(t.runtimeDir, 'workloads', 'dead');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'modelhost.pid'), '99999999\n');
+    writeFileSync(join(dir, 'modelhost.state'), JSON.stringify({
+      kind: 'ModelHost',
+      engine: 'omlx',
+      pid: 99999999,
+      host: '127.0.0.1',
+      port: 8094,
+      modelAliases: ['x'],
+      startedAt: 't',
+    }));
+    expect(listLocalRoutes(t.resolved)).toHaveLength(0);
   } finally { t.cleanup(); }
 });
 

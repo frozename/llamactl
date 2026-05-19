@@ -52,6 +52,7 @@ let fingerprint = '';
 const ENV_LLAMA_PORT = 52001;
 const WORKLOAD_A_PORT = 52002;
 const WORKLOAD_B_PORT = 52003;
+const WORKLOAD_HOST_PORT = 52004;
 
 const originalEnv = { ...process.env };
 
@@ -80,7 +81,6 @@ beforeAll(async () => {
                 contentType: req.headers.get('content-type'),
                 hasAuth: req.headers.has('authorization'),
               });
-              // Simulate SSE for streaming chat/completions.
               if (req.method === 'POST' && body.includes('"stream":true')) {
                 const stream = new ReadableStream({
                   start(controller) {
