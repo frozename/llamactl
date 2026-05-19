@@ -54,23 +54,10 @@ spec:
     expect(result.manifest.metadata.name).toBe('validate-host');
   });
 
-  test('forwards ModelHost status to the node client', async () => {
-    const calls: unknown[] = [];
-    const caller = router.createCaller({
-      nodeClient: {
-        modelHostStatus: {
-          query: async (input: unknown) => {
-            calls.push(input);
-            return { state: 'Running' };
-          },
-        },
-      },
-    } as any);
-
+  test('reads ModelHost status from local runtime state', async () => {
+    const caller = router.createCaller({});
     const result = await caller.modelHostStatus({ workload: 'host-a' });
-
-    expect(result).toEqual({ state: 'Running' });
-    expect(calls).toEqual([{ workload: 'host-a' }]);
+    expect(result).toEqual({ state: 'Stopped' });
   });
 
   test('rejects unknown workload kinds with a clear error', async () => {

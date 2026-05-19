@@ -27,6 +27,7 @@ import {
   type ModelRun,
 } from './workload/schema.js';
 import { ModelHostManifestSchema } from './workload/modelhost-schema.js';
+import { startModelHost, statusModelHost, stopModelHost } from './server/modelhost.js';
 import { buildPinnedLinks } from './client/links.js';
 import {
   createLlmExecutor,
@@ -1201,27 +1202,31 @@ export const router = t.router({
 
   modelHostStatus: t.procedure
     .input(modelHostStatusInput)
-    .query(async ({ input, ctx }) => ctx.nodeClient.modelHostStatus.query(input)),
+    .query(async ({ input }) => statusModelHost({ key: { name: input.workload } })),
 
   modelHostStop: t.procedure
     .input(modelHostStopInput)
-    .mutation(async ({ input, ctx }) => ctx.nodeClient.modelHostStop.mutate(input)),
+    .mutation(async ({ input }) =>
+      stopModelHost({
+        key: { name: input.workload },
+        graceSeconds: input.graceSeconds,
+      }),
+    ),
 
   modelHostStart: t.procedure
     .input(modelHostStartInput)
-    .subscription(({ input, ctx, signal }) => {
+    .subscription(({ input, signal }) => {
       const clientSignal = signal ?? new AbortController().signal;
       return bridgeEventStream(clientSignal, async (emit, subSignal) => {
-        const sub = ctx.nodeClient.modelHostStart.subscribe(input, {
-          onData: emit,
-          onError: (err: unknown) => {
-            throw err;
-          },
-          onComplete: () => undefined,
-          onStarted: () => undefined,
-        });
-        subSignal.addEventListener('abort', () => {
-          sub.unsubscribe();
+        await startModelHost({
+          key: { name: input.workload },
+          target: input.target,
+          extraArgs: input.extraArgs,
+          endpoint: input.endpoint,
+          binary: input.binary,
+          timeoutSeconds: input.timeoutSeconds,
+          signal: subSignal,
+          onEvent: emit,
         });
       });
     }),
