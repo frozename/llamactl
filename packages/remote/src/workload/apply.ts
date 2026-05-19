@@ -1,5 +1,6 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import { ENGINES } from '../../../core/src/engines/index.js';
+import { removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
 import { resolveEnv } from '../../../core/src/env.js';
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
 import { ModelRunSchema } from './schema.js';
@@ -8,6 +9,7 @@ import type { GatewayDispatch } from './gateway-handlers/types.js';
 import { computeNodeBudget } from './admission.js';
 import { defaultWorkloadsDir, listWorkloads } from './store.js';
 import { withNodeLock } from './node-mutex.js';
+import { basename } from 'node:path';
 
 /**
  * Structural subset of `NodeClient` that `applyOne` actually touches.
@@ -212,6 +214,7 @@ async function applyModelHostManifest(
   ]);
 
   if (winner.kind === 'exit') {
+    removeModelHostState({ name: manifest.metadata.name }, resolved);
     return {
       ok: false,
       error: `ModelHost child exited before readiness (code=${winner.e.code ?? 'null'} signal=${winner.e.signal ?? 'null'})`,
@@ -222,8 +225,25 @@ async function applyModelHostManifest(
     try {
       if (proc.pid) await engine.teardown(proc.pid);
     } catch {}
+    removeModelHostState({ name: manifest.metadata.name }, resolved);
     return { ok: false, error: `ModelHost did not reach ready within ${timeoutMs}ms` };
   }
+
+  const rel = manifest.spec.hostedModels[0]!.rel;
+  const modelAliases = Array.from(new Set([rel, basename(rel)]));
+  writeModelHostState(
+    {
+      kind: 'ModelHost',
+      engine: manifest.spec.engine,
+      pid: proc.pid,
+      host: manifest.spec.endpoint.host,
+      port: manifest.spec.endpoint.port,
+      modelAliases,
+      startedAt: new Date().toISOString(),
+    },
+    { name: manifest.metadata.name },
+    resolved,
+  );
 
   return {
     ok: true,

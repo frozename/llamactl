@@ -1,5 +1,9 @@
 import { describe, expect, mock, test } from 'bun:test';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ENGINES } from '../../../core/src/engines/index.js';
+import { readModelHostState } from '../../../core/src/engines/state.js';
 import { applyManifest, type WorkloadClient } from '../../src/workload/apply.js';
 
 function makeModelRunClient(): WorkloadClient {
@@ -35,6 +39,8 @@ function makeModelRunClient(): WorkloadClient {
 describe('applyManifest — kind dispatch', () => {
   test('routes kind:ModelHost manifests to the engine adapter buildBootCommand', async () => {
     const captured: { cmd?: string; args?: string[] } = {};
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-'));
+    const env = { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp };
     const fakeSpawn = mock((cmd: string, args: string[]) => {
       captured.cmd = cmd;
       captured.args = args;
@@ -61,7 +67,7 @@ describe('applyManifest — kind dispatch', () => {
         },
       };
 
-      const result = await applyManifest({ manifest, spawn: fakeSpawn as any });
+      const result = await applyManifest({ manifest, spawn: fakeSpawn as any, env });
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.kind).toBe('ModelHost');
@@ -74,6 +80,9 @@ describe('applyManifest — kind dispatch', () => {
       expect(captured.args).toContain('18094');
     } finally {
       ENGINES.omlx.probeReady = originalProbeReady;
+      try {
+        rmSync(tmp, { recursive: true, force: true });
+      } catch {}
     }
   });
 
@@ -140,6 +149,52 @@ describe('applyManifest — kind dispatch', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toMatch(/exited before readiness/i);
+  });
+
+  test('writes modelhost.state sidecar after readiness passes', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-'));
+    const env = { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp };
+    const originalProbeReady = ENGINES.omlx.probeReady;
+    ENGINES.omlx.probeReady = async () => ({ ready: true, modelIds: ['mlx-community/Test-MLX-4bit'] });
+
+    try {
+      const manifest = {
+        apiVersion: 'llamactl/v1',
+        kind: 'ModelHost',
+        metadata: { name: 'mlx-host-test-write' },
+        spec: {
+          engine: 'omlx',
+          node: 'local',
+          enabled: true,
+          binary: '/usr/bin/true',
+          endpoint: { host: '127.0.0.1', port: 18097 },
+          hostedModels: [{ rel: 'mlx-community/Test-MLX-4bit' }],
+          extraArgs: [],
+          restartPolicy: 'Always',
+          timeoutSeconds: 5,
+        },
+      };
+
+      const result = await applyManifest({
+        manifest,
+        spawn: mock(() => ({ pid: 4242 } as any)) as any,
+        env,
+      });
+      expect(result.ok).toBe(true);
+
+      const state = readModelHostState({ name: 'mlx-host-test-write' }, { LOCAL_AI_RUNTIME_DIR: tmp } as any);
+      expect(state).not.toBeNull();
+      expect(state?.pid).toBe(4242);
+      expect(state?.engine).toBe('omlx');
+      expect(state?.modelAliases).toContain('mlx-community/Test-MLX-4bit');
+      expect(state?.modelAliases).toContain('Test-MLX-4bit');
+      expect(existsSync(join(tmp, 'workloads', 'mlx-host-test-write', 'modelhost.pid'))).toBe(true);
+    } finally {
+      ENGINES.omlx.probeReady = originalProbeReady;
+      try {
+        rmSync(tmp, { recursive: true, force: true });
+      } catch {}
+    }
   });
 
   test('ModelRun manifests still take the legacy path', async () => {
