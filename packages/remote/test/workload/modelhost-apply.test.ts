@@ -42,6 +42,26 @@ function makeModelRunClient(): WorkloadClient {
 }
 
 describe('applyManifest — kind dispatch', () => {
+  function makeModelHostManifest(name: string, expectedMemoryGiB: number) {
+    return {
+      apiVersion: 'llamactl/v1',
+      kind: 'ModelHost',
+      metadata: { name },
+      spec: {
+        engine: 'omlx',
+        node: 'local',
+        enabled: true,
+        binary: '/usr/bin/true',
+        endpoint: { host: '127.0.0.1', port: 18094 },
+        resources: { expectedMemoryGiB },
+        hostedModels: [{ rel: `mlx-community/${name}` }],
+        extraArgs: [],
+        restartPolicy: 'Always',
+        timeoutSeconds: 60,
+      },
+    };
+  }
+
   test('applyOneModelHost persists status and uses node dispatch client methods', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-'));
     const captured: { spawnCalls: number; startInput?: unknown; statusCalls: number } = {
@@ -130,6 +150,114 @@ describe('applyManifest — kind dispatch', () => {
         binary: '/usr/bin/true',
         timeoutSeconds: 60,
       });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('applyOneModelHost rejects when incumbent ModelHosts already exhaust the node budget', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-budget-'));
+    const workloadsDir = join(tmp, 'workloads');
+    saveModelHost(makeModelHostManifest('mlx-host-a', 6), workloadsDir);
+    saveModelHost(makeModelHostManifest('mlx-host-b', 6), workloadsDir);
+    const client: WorkloadClient = {
+      serverStatus: {
+        query: async () => ({
+          state: 'down',
+          rel: null,
+          extraArgs: [],
+          pid: null,
+          host: null,
+          port: null,
+          binary: null,
+          endpoint: '',
+        }),
+      },
+      serverStop: { mutate: async () => ({ ok: true }) },
+      serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      modelHostStart: {
+        subscribe: async (_input, callbacks) => {
+          queueMicrotask(() => {
+            callbacks.onData({ type: 'done', result: { ok: true, pid: 123, state: 'Running' } });
+            callbacks.onComplete();
+          });
+          return { unsubscribe() {} };
+        },
+      },
+      modelHostStop: { mutate: async () => ({ ok: true }) },
+      modelHostStatus: { query: async () => ({ state: 'Running', pid: 123 }) },
+      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      rpcServerStop: { mutate: async () => ({ ok: true }) },
+      rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+    };
+
+    const result = await applyManifest({
+      manifest: makeModelHostManifest('mlx-host-c', 6),
+      workloadsDir,
+      getNodeBudgetGiB: () => 16,
+      getClient: () => client,
+      spawn: mock(() => ({ pid: 99999 } as any)) as any,
+      env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain('would reserve 18.0 GiB');
+
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('applyOneModelHost uses pid from done payload and skips the follow-up status query', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-pid-'));
+    const captured = { statusCalls: 0 };
+    const client: WorkloadClient = {
+      serverStatus: {
+        query: async () => ({
+          state: 'down',
+          rel: null,
+          extraArgs: [],
+          pid: null,
+          host: null,
+          port: null,
+          binary: null,
+          endpoint: '',
+        }),
+      },
+      serverStop: { mutate: async () => ({ ok: true }) },
+      serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      modelHostStart: {
+        subscribe: async (_input, callbacks) => {
+          queueMicrotask(() => {
+            callbacks.onData({ type: 'done', result: { ok: true, pid: 99, state: 'Running' } });
+            callbacks.onComplete();
+          });
+          return { unsubscribe() {} };
+        },
+      },
+      modelHostStop: { mutate: async () => ({ ok: true }) },
+      modelHostStatus: {
+        query: async () => {
+          captured.statusCalls += 1;
+          return { state: 'Running', pid: 123 };
+        },
+      },
+      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      rpcServerStop: { mutate: async () => ({ ok: true }) },
+      rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+    };
+
+    try {
+      const result = await applyManifest({
+        manifest: makeModelHostManifest('mlx-host-pid', 4),
+        getClient: () => client,
+        spawn: mock(() => ({ pid: 99999 } as any)) as any,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.pid).toBe(99);
+      expect(captured.statusCalls).toBe(0);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

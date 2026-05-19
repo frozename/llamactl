@@ -8,6 +8,7 @@ import { ModelHostManifestSchema, type ModelHostManifest } from './modelhost-sch
 import type { GatewayDispatch } from './gateway-handlers/types.js';
 import { computeNodeBudget, defaultNodeBudgetGiB } from './admission.js';
 import { defaultWorkloadsDir, listWorkloads } from './store.js';
+import { listModelHosts } from './modelhost-store.js';
 import { withNodeLock } from './node-mutex.js';
 import { basename } from 'node:path';
 
@@ -178,6 +179,32 @@ function manifestKind(raw: unknown): string | null {
   return typeof kind === 'string' ? kind : null;
 }
 
+function projectModelHostToModelRun(manifest: ModelHostManifest): ModelRun {
+  return {
+    apiVersion: manifest.apiVersion,
+    kind: 'ModelRun',
+    metadata: {
+      name: manifest.metadata.name,
+      labels: manifest.metadata.labels ?? {},
+      annotations: {},
+    },
+    spec: {
+      node: manifest.spec.node,
+      enabled: manifest.spec.enabled,
+      target: { kind: 'rel', value: manifest.spec.hostedModels[0]!.rel },
+      extraArgs: manifest.spec.extraArgs,
+      workers: [],
+      restartPolicy: manifest.spec.restartPolicy,
+      resources: manifest.spec.resources,
+      timeoutSeconds: manifest.spec.timeoutSeconds,
+      endpoint: manifest.spec.endpoint,
+      binary: manifest.spec.binary,
+      gateway: false,
+      allowExternalBind: false,
+    },
+  };
+}
+
 async function applyModelHostManifest(
   manifest: ModelHostManifest,
   opts: ApplyManifestOptions,
@@ -219,10 +246,22 @@ async function applyModelHostManifest(
   }
 
   const budget = opts.getNodeBudgetGiB?.(manifest.spec.node) ?? defaultNodeBudgetGiB();
+  const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir();
+  const livingManifests = [
+    ...listWorkloads(workloadsDir)
+      .filter((m) => m.metadata.name !== manifest.metadata.name)
+      .filter((m) => m.spec.node === manifest.spec.node)
+      .filter((m) => m.spec.enabled !== false),
+    ...listModelHosts(workloadsDir)
+      .filter((m) => m.metadata.name !== manifest.metadata.name)
+      .filter((m) => m.spec.node === manifest.spec.node)
+      .filter((m) => m.spec.enabled !== false)
+      .map(projectModelHostToModelRun),
+  ];
   const admit = computeNodeBudget({
     nodeName: manifest.spec.node,
     nodeBudgetGiB: budget,
-    livingManifests: [],
+    livingManifests,
     incoming: {
       apiVersion: manifest.apiVersion,
       kind: 'ModelRun',
@@ -252,7 +291,7 @@ async function applyModelHostManifest(
   try {
     const startResult = await new Promise<{ ok: boolean; error?: string } | null>((resolve, reject) => {
       timer = setTimeout(() => reject(new Error('modelHostStart timed out')), timeoutMs);
-      let done: { ok: boolean; error?: string } | null = null;
+      let done: { ok: boolean; error?: string; pid?: number | null; state?: string | null } | null = null;
       sub = client.modelHostStart.subscribe(
         {
           workload: manifest.metadata.name,
@@ -265,7 +304,7 @@ async function applyModelHostManifest(
         {
           onData: (evt: unknown) => {
             const e = evt as { type?: string; result?: unknown };
-            if (e.type === 'done') done = e.result as { ok: boolean; error?: string };
+            if (e.type === 'done') done = e.result as { ok: boolean; error?: string; pid?: number | null; state?: string | null };
           },
           onError: (err: unknown) => {
             if (timer) clearTimeout(timer);
@@ -283,7 +322,14 @@ async function applyModelHostManifest(
       return { ok: false, error: startResult?.error ?? 'modelHostStart failed' };
     }
 
-    status = await client.modelHostStatus.query({ workload: manifest.metadata.name });
+    if (typeof startResult.pid === 'number' && typeof startResult.state === 'string') {
+      status = {
+        state: startResult.state,
+        pid: startResult.pid,
+      };
+    } else {
+      status = await client.modelHostStatus.query({ workload: manifest.metadata.name });
+    }
   } finally {
     if (timer) clearTimeout(timer);
     sub?.unsubscribe?.();
