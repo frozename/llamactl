@@ -64,6 +64,24 @@ export interface NodeBudgetView {
   }>;
 }
 
+interface WorkloadTestSeams {
+  getNodeClientByName?: typeof getNodeClientByName;
+}
+
+let workloadTestSeams: WorkloadTestSeams = {};
+
+export function __setWorkloadTestSeams(seams: WorkloadTestSeams): void {
+  workloadTestSeams = { ...seams };
+}
+
+export function __resetWorkloadTestSeams(): void {
+  workloadTestSeams = {};
+}
+
+function getWorkloadNodeClient(name: string) {
+  return (workloadTestSeams.getNodeClientByName ?? getNodeClientByName)(name);
+}
+
 export function renderNodeBudget(budget: NodeBudgetView): string {
   const pad = (s: string, w: number): string => (s.length >= w ? s : s + ' '.repeat(w - s.length));
   const out: string[] = [];
@@ -333,7 +351,10 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
   }
 
   try {
-    const outcome = await workloadApply.applyManifest({ manifest });
+    const outcome = await workloadApply.applyManifest({
+      manifest,
+      getClient: (name) => getWorkloadNodeClient(name),
+    });
     if (!outcome.ok) {
       process.stderr.write(`apply: ${outcome.error}\n`);
       return 1;
@@ -342,8 +363,7 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
       process.stderr.write(`apply: expected ModelHost outcome, got ${outcome.kind}\n`);
       return 1;
     }
-    const persisted = { ...outcome.manifest, status: outcome.statusSection };
-    saveModelHost(persisted);
+    saveModelHost(outcome.manifest);
     if (json) {
       process.stdout.write(
         `${JSON.stringify(
@@ -360,7 +380,7 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
       );
     } else {
       process.stdout.write(
-        `modelhost/${outcome.manifest.metadata.name}: ModelHost ready at ${outcome.endpoint} pid=${outcome.pid}\n`,
+        `modelhost/${outcome.manifest.metadata.name}: ModelHost ready at ${outcome.endpoint}${typeof outcome.pid === 'number' ? ` pid=${outcome.pid}` : ' pid=remote'}\n`,
       );
     }
     return 0;

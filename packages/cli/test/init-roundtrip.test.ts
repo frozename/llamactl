@@ -7,6 +7,10 @@ import { runInit } from '../src/commands/init.js';
 import { runComposite } from '../src/commands/composite.js';
 import { runApply } from '../src/commands/workload.js';
 import { runGet } from '../src/commands/workload.js';
+import {
+  __resetWorkloadTestSeams,
+  __setWorkloadTestSeams,
+} from '../src/commands/workload.js';
 
 /**
  * Opt-in E2E covering the full onboarding round-trip:
@@ -30,6 +34,41 @@ let configPath = '';
 const originalEnv = { ...process.env };
 let dockerReachable = false;
 
+function makeModelHostClient() {
+  return {
+    serverStatus: {
+      query: async () => ({
+        state: 'down',
+        rel: null,
+        extraArgs: [],
+        pid: null,
+        host: null,
+        port: null,
+        binary: null,
+        endpoint: '',
+      }),
+    },
+    serverStop: { mutate: async () => ({ ok: true }) },
+    serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
+    modelHostStart: {
+      subscribe: async (_input: unknown, callbacks: { onData: (data: unknown) => void; onComplete: () => void }) => {
+        queueMicrotask(() => {
+          callbacks.onData({ type: 'done', result: { ok: true, pid: 3333, endpoint: 'http://127.0.0.1:8094' } });
+          callbacks.onComplete();
+        });
+        return { unsubscribe() {} };
+      },
+    },
+    modelHostStop: { mutate: async () => ({ ok: true }) },
+    modelHostStatus: {
+      query: async () => ({ state: 'Running', pid: 3333 }),
+    },
+    rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+    rpcServerStop: { mutate: async () => ({ ok: true }) },
+    rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+  };
+}
+
 beforeAll(async () => {
   if (!SHOULD_RUN) return;
   tmp = mkdtempSync(join(tmpdir(), 'llamactl-init-e2e-'));
@@ -37,6 +76,9 @@ beforeAll(async () => {
   configPath = join(tmp, 'config');
   process.env.LLAMACTL_COMPOSITES_DIR = compositesDir;
   process.env.LLAMACTL_CONFIG = configPath;
+  __setWorkloadTestSeams({
+    getNodeClientByName: () => makeModelHostClient(),
+  });
 
   try {
     // Cheap docker-reachability probe without pulling the full
@@ -57,6 +99,7 @@ afterAll(() => {
   if (tmp) rmSync(tmp, { recursive: true, force: true });
   for (const k of Object.keys(process.env)) delete process.env[k];
   Object.assign(process.env, originalEnv);
+  __resetWorkloadTestSeams();
 });
 
 function silence<T>(fn: () => Promise<T>): Promise<T> {
@@ -137,13 +180,11 @@ describe.skipIf(!SHOULD_RUN)('init → apply → destroy round-trip', () => {
 
 describe.skipIf(!SHOULD_RUN)('modelhost workload round-trip', () => {
   test('apply persists ModelHost and list renders it', async () => {
-    if (!dockerReachable) {
-      console.warn('[init-e2e] skipping: docker daemon unreachable');
-      return;
-    }
-
     const workloadDir = join(tmp, 'workloads');
     process.env.LLAMACTL_WORKLOADS_DIR = workloadDir;
+    process.env.LOCAL_AI_RUNTIME_DIR = join(tmp, 'runtime');
+    const fakeBinary = join(tmp, 'omlx');
+    await Bun.write(fakeBinary, '');
 
     const manifestPath = join(tmp, 'mlx-host-local.yaml');
     await Bun.write(
@@ -157,7 +198,7 @@ describe.skipIf(!SHOULD_RUN)('modelhost workload round-trip', () => {
         '  enabled: true',
         '  node: local',
         '  engine: omlx',
-        '  binary: /tmp/omlx',
+        `  binary: ${fakeBinary}`,
         '  endpoint:',
         '    host: 127.0.0.1',
         '    port: 8094',
