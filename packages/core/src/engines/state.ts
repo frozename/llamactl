@@ -15,6 +15,43 @@ export interface ModelHostState {
   port: number;
   modelAliases: string[];
   startedAt: string;
+  /**
+   * Stable hash of the launch-affecting spec fields at the time the
+   * sidecar was written. Used by the reconciler to detect spec drift
+   * (manifest edited under a Running host) and trigger a restart.
+   * Optional for back-compat with sidecars written before this field
+   * existed; absent → reconciler treats spec as unknown and assumes
+   * unchanged (no spurious restart on existing hosts).
+   */
+  specHash?: string;
+}
+
+/**
+ * Compute a stable hash of the launch-affecting fields of a ModelHost
+ * spec. JSON.stringify is deterministic for the shapes we use (no
+ * undefined values in the spec subtree after Zod parse). Consumers
+ * compare hashes — they should never inspect the contents.
+ */
+export function computeModelHostSpecHash(spec: {
+  engine: EngineName;
+  binary: string;
+  endpoint: { host: string; port: number };
+  hostedModels: ReadonlyArray<unknown>;
+  extraArgs: readonly string[];
+  resources?: { expectedMemoryGiB?: number } | undefined;
+  restartPolicy: string;
+  timeoutSeconds: number;
+}): string {
+  return JSON.stringify({
+    engine: spec.engine,
+    binary: spec.binary,
+    endpoint: spec.endpoint,
+    hostedModels: spec.hostedModels,
+    extraArgs: spec.extraArgs,
+    resources: spec.resources ?? null,
+    restartPolicy: spec.restartPolicy,
+    timeoutSeconds: spec.timeoutSeconds,
+  });
 }
 
 export function modelhostPidFile(resolved: ResolvedEnv = resolveEnv(), key: WorkloadKey): string {

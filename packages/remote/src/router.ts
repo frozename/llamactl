@@ -1211,10 +1211,6 @@ export const router = t.router({
       return bridgeEventStream(clientSignal, async (emit, subSignal) => {
         await startModelHost({
           key: { name: input.workload },
-          target: input.target,
-          extraArgs: input.extraArgs,
-          endpoint: input.endpoint,
-          binary: input.binary,
           timeoutSeconds: input.timeoutSeconds,
           signal: subSignal,
           onEvent: emit,

@@ -162,6 +162,7 @@ function synthesizeTransientWorkload(
           : {}),
         ...(typeof parsed.binary === 'string' ? { binary: parsed.binary } : {}),
         gateway: false,
+        allowExternalBind: false,
       },
     };
     saveWorkload(transient);

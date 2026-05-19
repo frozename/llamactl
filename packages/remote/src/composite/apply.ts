@@ -500,6 +500,7 @@ async function applyGatewayComponent(
       workers: [],
       restartPolicy: 'Never',
       gateway: true,
+      allowExternalBind: false,
       timeoutSeconds: 30,
     },
   };

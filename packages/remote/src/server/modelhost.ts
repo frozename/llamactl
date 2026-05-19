@@ -1,7 +1,7 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { basename } from 'node:path';
 import { ENGINES } from '../../../core/src/engines/index.js';
-import { readModelHostState, removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
+import { computeModelHostSpecHash, readModelHostState, removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
 import { resolveEnv } from '../../../core/src/env.js';
 import { loadModelHostByName } from '../workload/modelhost-store.js';
 import type { WorkloadKey } from '../../../core/src/workloadRuntime.js';
@@ -159,6 +159,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
         port: endpoint.port,
         modelAliases,
         startedAt: new Date().toISOString(),
+        specHash: computeModelHostSpecHash(manifest.spec),
       },
       opts.key,
       resolved,

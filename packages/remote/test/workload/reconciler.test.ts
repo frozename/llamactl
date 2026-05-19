@@ -7,7 +7,24 @@ import { reconcileOnce, type ReconcileResult } from '../../src/workload/reconcil
 import { saveWorkload } from '../../src/workload/store.js';
 import { saveModelHost } from '../../src/workload/modelhost-store.js';
 import { resolveEnv } from '../../../core/src/env.js';
-import { readModelHostState } from '../../../core/src/engines/state.js';
+import { computeModelHostSpecHash, readModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
+
+function seedRunningSidecar(dir: string, manifest: ReturnType<typeof makeHostManifest>): void {
+  writeModelHostState(
+    {
+      kind: 'ModelHost',
+      engine: manifest.spec.engine,
+      pid: 1234,
+      host: manifest.spec.endpoint.host,
+      port: manifest.spec.endpoint.port,
+      modelAliases: [manifest.spec.hostedModels[0]!.rel],
+      startedAt: new Date().toISOString(),
+      specHash: computeModelHostSpecHash(manifest.spec),
+    },
+    { name: manifest.metadata.name },
+    resolveEnv({ LOCAL_AI_RUNTIME_DIR: dir }),
+  );
+}
 import type { WorkloadClient } from '../../src/workload/apply.js';
 
 function makeClient(): WorkloadClient {
@@ -109,6 +126,8 @@ describe('reconcileOnce', () => {
       saveWorkload(makeRunManifest(), dir);
       saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } } as never, dir);
       process.env.LOCAL_AI_RUNTIME_DIR = dir;
+      // Sidecar with matching specHash → reconciler skips applyOneModelHost.
+      seedRunningSidecar(dir, makeHostManifest());
 
       const result: ReconcileResult = await reconcileOnce({
         workloadsDir: dir,
@@ -162,6 +181,8 @@ describe('reconcileOnce', () => {
     try {
       saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } } as never, dir);
       process.env.LOCAL_AI_RUNTIME_DIR = dir;
+      // Sidecar with matching specHash → reconciler skips applyOneModelHost.
+      seedRunningSidecar(dir, makeHostManifest());
 
       const result = await reconcileOnce({
         workloadsDir: dir,

@@ -4,10 +4,8 @@ import {
   workloadSchema,
   workloadStore,
 } from '@llamactl/remote';
-import {
-  applyOneModelHost,
-  type ModelHostManifest,
-} from '../../../remote/src/workload/apply.js';
+import { applyOneModelHost } from '../../../remote/src/workload/apply.js';
+import type { ModelHostManifest } from '../../../remote/src/workload/modelhost-schema.js';
 import {
   loadModelHostByName,
   saveModelHost,
@@ -56,11 +54,11 @@ export async function setWorkloadEnabledWithDeps(
 
   manifest.spec.enabled = enabled;
 
-  let result: { error: string | null };
+  let errMsg: string | null = null;
   if (manifest.kind === 'ModelRun') {
     (deps.saveWorkload ?? saveWorkload)(manifest);
     const cfg = loadConfig();
-    result = await applyOne(
+    const result = await applyOne(
       manifest,
       (n) => getClient(n),
       undefined,
@@ -75,16 +73,18 @@ export async function setWorkloadEnabledWithDeps(
         },
       },
     );
+    errMsg = result.error ?? null;
   } else {
     (deps.saveModelHost ?? saveModelHost)(manifest);
-    result = await (deps.applyOneModelHost ?? applyOneModelHost)(
+    const outcome = await (deps.applyOneModelHost ?? applyOneModelHost)(
       manifest,
       (n) => getClient(n),
     );
+    errMsg = outcome.ok ? null : outcome.error;
   }
 
-  if (result.error) {
-    return { code: 1, message: `${enabled ? 'enable' : 'disable'}: ${result.error}\n` };
+  if (errMsg) {
+    return { code: 1, message: `${enabled ? 'enable' : 'disable'}: ${errMsg}\n` };
   }
 
   return {

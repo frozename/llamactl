@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import { ENGINES } from '../../../core/src/engines/index.js';
-import { removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
+import { computeModelHostSpecHash, removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
 import { resolveEnv } from '../../../core/src/env.js';
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
 import { ModelRunSchema } from './schema.js';
@@ -126,14 +126,23 @@ export interface ApplyManifestOptions {
   getClient?: (nodeName: string) => WorkloadClient;
   spawn?: typeof nodeSpawn;
   env?: NodeJS.ProcessEnv;
+  /** Override the workloads directory; defaults to `defaultWorkloadsDir()`. */
+  workloadsDir?: string;
+  /** Resolve the node's memory budget for admission control. */
+  getNodeBudgetGiB?: (nodeName: string) => number;
+  /** Bubble up per-workload progress events for logging. */
+  onEvent?: (event: ApplyEvent) => void;
 }
 
 export type ApplyManifestOutcome =
   | { ok: true; kind: 'ModelRun'; manifest: ModelRun; result: ApplyResult }
   | {
+      // M7: ModelHost outcome carries only the desired-state manifest.
+      // Observed status lives in the runtime sidecar (writeModelHostState),
+      // not in the persisted YAML or on this outcome.
       ok: true;
       kind: 'ModelHost';
-      manifest: ModelHostManifest & { status: { phase: string } };
+      manifest: ModelHostManifest;
       pid: number | null;
       endpoint: string;
     }
@@ -173,7 +182,7 @@ function manifestKind(raw: unknown): string | null {
 
 async function applyModelHostManifest(
   manifest: ModelHostManifest,
-  opts: ApplyManifestOptions,
+  opts: Omit<ApplyManifestOptions, 'manifest'>,
 ): Promise<ApplyManifestOutcome> {
   const engine = ENGINES[manifest.spec.engine];
   const validation = engine.validateSpec({
@@ -237,6 +246,7 @@ async function applyModelHostManifest(
         restartPolicy: manifest.spec.restartPolicy,
         timeoutSeconds: manifest.spec.timeoutSeconds,
         gateway: false,
+        allowExternalBind: false,
         ...(manifest.spec.resources ? { resources: manifest.spec.resources } : {}),
       },
     },
@@ -251,9 +261,12 @@ async function applyModelHostManifest(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let status: { state: string; pid?: number | null };
   try {
-    const startResult = await new Promise<{ ok: boolean; error?: string } | null>((resolve, reject) => {
+    type StartResult =
+      | { ok: true; error?: string; pid?: number | null; state?: string | null }
+      | { ok: false; error: string };
+    const startResult = await new Promise<StartResult | null>((resolve, reject) => {
       timer = setTimeout(() => reject(new Error('modelHostStart timed out')), timeoutMs);
-      let done: { ok: boolean; error?: string; pid?: number | null; state?: string | null } | null = null;
+      let done: StartResult | null = null;
       sub = client.modelHostStart.subscribe(
         {
           workload: manifest.metadata.name,
@@ -262,7 +275,7 @@ async function applyModelHostManifest(
         {
           onData: (evt: unknown) => {
             const e = evt as { type?: string; result?: unknown };
-            if (e.type === 'done') done = e.result as { ok: boolean; error?: string; pid?: number | null; state?: string | null };
+            if (e.type === 'done') done = e.result as StartResult;
           },
           onError: (err: unknown) => {
             if (timer) clearTimeout(timer);
@@ -274,7 +287,7 @@ async function applyModelHostManifest(
           },
         },
       );
-    }).catch((err: unknown) => ({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+    }).catch((err: unknown): StartResult => ({ ok: false, error: err instanceof Error ? err.message : String(err) }));
 
     if (!startResult?.ok) {
       return { ok: false, error: startResult?.error ?? 'modelHostStart failed' };
@@ -308,6 +321,7 @@ async function applyModelHostManifest(
         port: manifest.spec.endpoint.port,
         modelAliases,
         startedAt: new Date().toISOString(),
+        specHash: computeModelHostSpecHash(manifest.spec),
       },
       { name: manifest.metadata.name },
       resolved,

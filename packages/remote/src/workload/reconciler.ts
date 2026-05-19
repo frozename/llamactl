@@ -1,4 +1,6 @@
 import { applyOne, applyOneModelHost, type ApplyEvent, type ApplyResult, type WorkloadClient } from './apply.js';
+import { computeModelHostSpecHash, readModelHostState } from '../../../core/src/engines/state.js';
+import { resolveEnv } from '../../../core/src/env.js';
 import { defaultNodeBudgetGiB } from './admission.js';
 import { listWorkloads, saveWorkload, defaultWorkloadsDir } from './store.js';
 import { listModelHosts, saveModelHost } from './modelhost-store.js';
@@ -60,6 +62,10 @@ function liveHostSpecSnapshot(current: Record<string, unknown>): Record<string, 
   };
 }
 
+// Retained for future use when modelHostStatus surfaces launch args
+// and reconcile can detect spec drift on-tick rather than only on the
+// explicit `apply -f` path.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function hostSpecsEqual(manifest: ModelHostManifest, current: Record<string, unknown>): boolean {
   return JSON.stringify(hostSpecSnapshot(manifest)) === JSON.stringify(liveHostSpecSnapshot(current));
 }
@@ -127,13 +133,17 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
         });
         continue;
       }
-      // Idempotent reconcile: while the host is Running we leave it
-      // alone. Spec drift is detected by the explicit `llamactl apply`
-      // path, not by the reconcile loop, because modelHostStatus today
-      // only reports state + pid — no launch args — so we cannot
-      // compare desired vs observed launch args from here. If you
-      // edit the manifest on disk, run `llamactl apply -f` to re-apply.
-      if (current.state === 'Running') {
+      // Idempotent reconcile with spec-drift detection. modelHostStatus
+      // surfaces state + pid; the launch spec is recorded in the
+      // controller-local sidecar via specHash at apply time. Skip the
+      // restart iff the host is Running AND the sidecar's recorded
+      // hash matches the desired manifest. If the sidecar is missing
+      // (first reconcile after upgrade) or the hash diverges, fall
+      // through to applyOneModelHost so the sidecar gets a fresh
+      // specHash and the live spec converges.
+      const persistedState = readModelHostState({ name }, resolveEnv(process.env));
+      const desiredHash = computeModelHostSpecHash(spec);
+      if (current.state === 'Running' && persistedState?.specHash === desiredHash) {
         reports.push({
           name,
           node: spec.node,
@@ -149,7 +159,7 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
         getNodeBudgetGiB: (nodeName) =>
           nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
       });
-      if (result.ok) {
+      if (result.ok && result.kind === 'ModelHost') {
         reports.push({
           name,
           node: spec.node,
@@ -157,12 +167,16 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
         });
         saveModelHost(result.manifest, dir);
       } else {
+        // applyOneModelHost only emits {ok:true, kind:'ModelHost'} or
+        // {ok:false, error}; the ModelRun shape can't arrive here, but
+        // narrow defensively for TS.
+        const errMsg = result.ok ? 'unexpected non-ModelHost outcome' : result.error;
         errors++;
         reports.push({
           name,
           node: spec.node,
           action: 'unchanged',
-          error: result.error,
+          error: errMsg,
         });
       }
     } catch (err) {
