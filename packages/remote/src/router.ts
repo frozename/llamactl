@@ -369,6 +369,24 @@ type CandidateStreamEvent =
 // we started returning Date/Map/Set, but electron-trpc v0.7 doesn't pass
 // a transformer through ipcLink, so this keeps the pipeline uncomplicated.
 const t = initTRPC.create();
+const modelHostStatusInput = z.object({ workload: z.string().min(1) });
+const modelHostStopInput = z.object({
+  workload: z.string().min(1),
+  graceSeconds: z.number().int().positive().max(60).optional(),
+});
+const modelHostStartInput = z.object({
+  workload: z.string().min(1),
+  target: z.string().min(1),
+  extraArgs: z.array(z.string()).optional(),
+  endpoint: z
+    .object({
+      host: z.string().optional(),
+      port: z.number().int().positive().optional(),
+    })
+    .optional(),
+  binary: z.string().optional(),
+  timeoutSeconds: z.number().int().positive().max(600).optional(),
+});
 
 /**
  * Reach a remote agent's /trpc/nodeFacts endpoint using a pinned TLS
@@ -1178,6 +1196,33 @@ export const router = t.router({
           name: result.manifest.metadata.name,
           node: result.manifest.spec.node,
         };
+      });
+    }),
+
+  modelHostStatus: t.procedure
+    .input(modelHostStatusInput)
+    .query(async ({ input, ctx }) => ctx.nodeClient.modelHostStatus.query(input)),
+
+  modelHostStop: t.procedure
+    .input(modelHostStopInput)
+    .mutation(async ({ input, ctx }) => ctx.nodeClient.modelHostStop.mutate(input)),
+
+  modelHostStart: t.procedure
+    .input(modelHostStartInput)
+    .subscription(({ input, ctx, signal }) => {
+      const clientSignal = signal ?? new AbortController().signal;
+      return bridgeEventStream(clientSignal, async (emit, subSignal) => {
+        const sub = ctx.nodeClient.modelHostStart.subscribe(input, {
+          onData: emit,
+          onError: (err: unknown) => {
+            throw err;
+          },
+          onComplete: () => undefined,
+          onStarted: () => undefined,
+        });
+        subSignal.addEventListener('abort', () => {
+          sub.unsubscribe();
+        });
       });
     }),
 

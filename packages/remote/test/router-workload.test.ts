@@ -2,6 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { router } from '../src/router.js';
 
 describe('router workload validation', () => {
+  test('exposes ModelHost lifecycle procedures', () => {
+    const caller = router.createCaller({});
+    expect(typeof caller.modelHostStatus.query).toBe('function');
+    expect(typeof caller.modelHostStop.mutate).toBe('function');
+    expect(typeof caller.modelHostStart.subscribe).toBe('function');
+  });
+
   test('accepts ModelRun manifests', async () => {
     const caller = router.createCaller({});
     const result = await caller.workloadValidate({
@@ -45,6 +52,25 @@ spec:
     if (!result.ok) return;
     expect(result.manifest.kind).toBe('ModelHost');
     expect(result.manifest.metadata.name).toBe('validate-host');
+  });
+
+  test('forwards ModelHost status to the node client', async () => {
+    const calls: unknown[] = [];
+    const caller = router.createCaller({
+      nodeClient: {
+        modelHostStatus: {
+          query: async (input: unknown) => {
+            calls.push(input);
+            return { state: 'Running' };
+          },
+        },
+      },
+    } as any);
+
+    const result = await caller.modelHostStatus({ workload: 'host-a' });
+
+    expect(result).toEqual({ state: 'Running' });
+    expect(calls).toEqual([{ workload: 'host-a' }]);
   });
 
   test('rejects unknown workload kinds with a clear error', async () => {
