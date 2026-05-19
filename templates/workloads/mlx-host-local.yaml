@@ -4,7 +4,7 @@
 # Pre-reqs:
 # 1. tools/install-omlx-from-source.sh has been run on this node
 #    (creates /Volumes/WorkSSD/src/omlx/.venv/bin/omlx).
-# 2. llamactl pull mlx-community/Qwen3-8B-MLX-4bit has been run.
+# 2. llamactl pull lmstudio-community/Qwen3-8B-MLX-4bit has been run.
 #
 # Apply:
 #   llamactl apply -f templates/workloads/mlx-host-local.yaml
@@ -30,7 +30,7 @@ spec:
     host: 127.0.0.1
     port: 8094
   hostedModels:
-    - rel: mlx-community/Qwen3-8B-MLX-4bit
+    - rel: lmstudio-community/Qwen3-8B-MLX-4bit
   extraArgs:
     - --max-concurrent-requests
     - "4"

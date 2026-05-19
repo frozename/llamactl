@@ -9,7 +9,7 @@ set -euo pipefail
 
 YAML="$(cd "$(dirname "$0")/.." && pwd)/templates/workloads/mlx-host-local.yaml"
 PORT=8094
-MODEL_REL="mlx-community/Qwen3-8B-MLX-4bit"
+MODEL_REL="lmstudio-community/Qwen3-8B-MLX-4bit"
 MODEL_BASENAME="Qwen3-8B-MLX-4bit"
 
 if [[ ! -f "$YAML" ]]; then
