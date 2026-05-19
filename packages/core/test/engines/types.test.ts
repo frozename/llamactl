@@ -10,7 +10,7 @@ describe('engine registry', () => {
 
   test('every registered engine reports its own name', () => {
     for (const [key, adapter] of Object.entries(ENGINES)) {
-      expect(adapter.name).toBe(key as EngineName);
+      expect(adapter.name).toBe(key);
     }
   });
 

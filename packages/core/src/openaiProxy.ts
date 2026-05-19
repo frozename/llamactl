@@ -32,22 +32,20 @@ const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
  * empty list when nothing is tracked.
  */
 export function listOpenAIModels(
-  resolved?: ResolvedEnv,
+  resolved: ResolvedEnv = resolveEnv(),
 ): ModelListResponse;
 export function listOpenAIModels(
   key: WorkloadKey,
   resolved?: ResolvedEnv,
 ): ModelListResponse;
 export function listOpenAIModels(
-  keyOrResolved?: WorkloadKey | ResolvedEnv,
-  resolved?: ResolvedEnv,
+  keyOrResolved: WorkloadKey | ResolvedEnv = resolveEnv(),
+  resolved: ResolvedEnv = resolveEnv(),
 ): ModelListResponse {
-  const actualResolved = resolved ?? resolveEnv();
-  const keyOrResolvedValue = keyOrResolved ?? actualResolved;
-  if ('name' in keyOrResolvedValue) {
-    const key = keyOrResolvedValue;
-    const state = readServerState(key, actualResolved);
-    const pid = readServerPid(key, actualResolved);
+  if ('name' in keyOrResolved) {
+    const key = keyOrResolved;
+    const state = readServerState(key, resolved);
+    const pid = readServerPid(key, resolved);
     const data: ModelInfo[] = [];
     if (state && pid !== null) {
       data.push({
@@ -61,7 +59,7 @@ export function listOpenAIModels(
     return { object: 'list', data };
   }
 
-  return getCachedModelsResponse(keyOrResolvedValue);
+  return getCachedModelsResponse(keyOrResolved);
 }
 
 function createdAtForRoute(route: workloadRuntime.LocalRoute, resolved: ResolvedEnv): number {

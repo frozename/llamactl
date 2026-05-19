@@ -106,10 +106,10 @@ describe('omlx engine adapter', () => {
 
   test('probeReady returns matching modelIds when /v1/models contains the rel basename', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = ((async () => new Response(JSON.stringify({
+    globalThis.fetch = (async () => new Response(JSON.stringify({
       object: 'list',
       data: [{ id: 'Qwen3-8B-MLX-4bit', object: 'model' }],
-    }), { headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch);
+    }), { headers: { 'content-type': 'application/json' } })) as typeof fetch;
     const result = await ENGINES.omlx.probeReady(
       { host: '127.0.0.1', port: 54321 },
       3000,
@@ -129,10 +129,10 @@ describe('omlx engine adapter', () => {
 
   test('probeReady times out cleanly without overrunning the deadline', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = ((async (_input: Request | URL | string, init?: RequestInit) =>
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) =>
       new Promise((_, reject) => {
         init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
-      })) as unknown as typeof fetch);
+      })) as typeof fetch;
     const started = Date.now();
     const result = await ENGINES.omlx.probeReady({ host: '127.0.0.1', port: 54321 }, 300);
     const elapsed = Date.now() - started;

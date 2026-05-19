@@ -6,8 +6,8 @@ import {
 } from '@llamactl/remote';
 import {
   applyOneModelHost,
+  type ModelHostManifest,
 } from '../../../remote/src/workload/apply.js';
-import type { ModelHostManifest } from '../../../remote/src/workload/modelhost-schema.js';
 import {
   loadModelHostByName,
   saveModelHost,
@@ -56,7 +56,7 @@ export async function setWorkloadEnabledWithDeps(
 
   manifest.spec.enabled = enabled;
 
-  let result: { error: string | null } | Awaited<ReturnType<typeof applyOne>> | Awaited<ReturnType<typeof applyOneModelHost>>;
+  let result: { error: string | null };
   if (manifest.kind === 'ModelRun') {
     (deps.saveWorkload ?? saveWorkload)(manifest);
     const cfg = loadConfig();
@@ -83,9 +83,8 @@ export async function setWorkloadEnabledWithDeps(
     );
   }
 
-  const error = 'error' in result ? result.error : null;
-  if (error) {
-    return { code: 1, message: `${enabled ? 'enable' : 'disable'}: ${error}\n` };
+  if (result.error) {
+    return { code: 1, message: `${enabled ? 'enable' : 'disable'}: ${result.error}\n` };
   }
 
   return {

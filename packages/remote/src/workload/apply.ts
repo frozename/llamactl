@@ -122,12 +122,10 @@ export interface ApplyResult {
 }
 
 export interface ApplyManifestOptions {
+  manifest: unknown;
   getClient?: (nodeName: string) => WorkloadClient;
   spawn?: typeof nodeSpawn;
   env?: NodeJS.ProcessEnv;
-  workloadsDir?: string;
-  getNodeBudgetGiB?: (nodeName: string) => number;
-  onEvent?: (e: ApplyEvent) => void;
 }
 
 export type ApplyManifestOutcome =
@@ -239,7 +237,6 @@ async function applyModelHostManifest(
         restartPolicy: manifest.spec.restartPolicy,
         timeoutSeconds: manifest.spec.timeoutSeconds,
         gateway: false,
-        allowExternalBind: false,
         ...(manifest.spec.resources ? { resources: manifest.spec.resources } : {}),
       },
     },
@@ -254,7 +251,7 @@ async function applyModelHostManifest(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let status: { state: string; pid?: number | null };
   try {
-    const startResult = await new Promise<{ ok: boolean; error?: string; pid?: number | null; state?: string | null } | null>((resolve, reject) => {
+    const startResult = await new Promise<{ ok: boolean; error?: string } | null>((resolve, reject) => {
       timer = setTimeout(() => reject(new Error('modelHostStart timed out')), timeoutMs);
       let done: { ok: boolean; error?: string; pid?: number | null; state?: string | null } | null = null;
       sub = client.modelHostStart.subscribe(

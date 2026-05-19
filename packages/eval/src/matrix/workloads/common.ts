@@ -20,7 +20,7 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
   const accept = (label: string): boolean => !opts.validLabels || opts.validLabels.has(label);
   function stripCodeFences(s: string): string {
     const m = s.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
-    if (m) return m[1] ?? s;
+    if (m) return m[1];
     return s;
   }
   function tryParseJson(s: string): Record<string, unknown> | null {
