@@ -1,12 +1,12 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import { ENGINES } from '../../../core/src/engines/index.js';
-import { removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
+import { writeModelHostState } from '../../../core/src/engines/state.js';
 import { resolveEnv } from '../../../core/src/env.js';
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
 import { ModelRunSchema } from './schema.js';
 import { ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
 import type { GatewayDispatch } from './gateway-handlers/types.js';
-import { computeNodeBudget } from './admission.js';
+import { computeNodeBudget, defaultNodeBudgetGiB } from './admission.js';
 import { defaultWorkloadsDir, listWorkloads } from './store.js';
 import { withNodeLock } from './node-mutex.js';
 import { basename } from 'node:path';
@@ -23,7 +23,6 @@ import { basename } from 'node:path';
 type SubscribeCallbacks = { onData: (e: any) => void; onError: (err: any) => void; onComplete: () => void };
 type Unsubscribable = { unsubscribe?: () => void };
 
-const LOCAL_NODE_IDENTITIES = new Set(['local', 'localhost', '127.0.0.1', '::1']);
 const CHILD_ENV_ALLOWLIST = [
   'PATH',
   'HOME',
@@ -66,6 +65,25 @@ export interface WorkloadClient {
       },
       callbacks: SubscribeCallbacks,
     ): Unsubscribable;
+  };
+  modelHostStart: {
+    subscribe(
+      input: {
+        workload: string;
+        target: string;
+        extraArgs?: string[];
+        endpoint?: { host?: string; port?: number };
+        binary?: string;
+        timeoutSeconds?: number;
+      },
+      callbacks: SubscribeCallbacks,
+    ): Unsubscribable;
+  };
+  modelHostStop: {
+    mutate(input: { workload: string; graceSeconds?: number }): Promise<unknown>;
+  };
+  modelHostStatus: {
+    query(input: { workload: string }): Promise<{ state: string }>;
   };
   rpcServerStart: {
     subscribe(
@@ -119,7 +137,13 @@ export interface ApplyManifestOptions {
 
 export type ApplyManifestOutcome =
   | { ok: true; kind: 'ModelRun'; manifest: ModelRun; result: ApplyResult }
-  | { ok: true; kind: 'ModelHost'; manifest: ModelHostManifest; pid: number; endpoint: string }
+  | {
+      ok: true;
+      kind: 'ModelHost';
+      manifest: ModelHostManifest & { status: { phase: string } };
+      pid: number;
+      endpoint: string;
+    }
   | { ok: false; error: string };
 
 function sameExtraArgs(a: readonly string[], b: readonly string[]): boolean {
@@ -158,15 +182,6 @@ async function applyModelHostManifest(
   manifest: ModelHostManifest,
   opts: ApplyManifestOptions,
 ): Promise<ApplyManifestOutcome> {
-  // Sub A keeps ModelHost controller-local until the node dispatcher
-  // path lands. The run is still not persisted into the ModelRun store.
-  if (!LOCAL_NODE_IDENTITIES.has(manifest.spec.node)) {
-    return {
-      ok: false,
-      error: `ModelHost runs on local nodes only in this release; got spec.node=${manifest.spec.node}. Use kind: ModelRun for remote workloads.`,
-    };
-  }
-
   const engine = ENGINES[manifest.spec.engine];
   const validation = engine.validateSpec({
     engine: manifest.spec.engine,
@@ -182,60 +197,82 @@ async function applyModelHostManifest(
   }
 
   const resolved = resolveEnv(opts.env);
-  const built = engine.buildBootCommand(
-    {
-      engine: manifest.spec.engine,
-      binary: manifest.spec.binary,
-      endpoint: manifest.spec.endpoint,
-      hostedModels: manifest.spec.hostedModels,
-      resources: manifest.spec.resources,
-      extraArgs: manifest.spec.extraArgs,
-      timeoutSeconds: manifest.spec.timeoutSeconds,
-    },
-    resolved,
-  );
+  const client = opts.getClient?.(manifest.spec.node);
+  if (!client?.modelHostStart || !client.modelHostStatus) {
+    return { ok: false, error: `missing modelHostStart on node ${manifest.spec.node}` };
+  }
 
-  const spawn = opts.spawn ?? nodeSpawn;
-  const proc = spawn(built.binary, built.args, { env: sanitizeChildEnv(process.env, built.envOverrides) });
-  if (!proc.pid) {
-    return { ok: false, error: `spawn failed: child has no pid (binary ${built.binary})` };
+  const budget = opts.getNodeBudgetGiB?.(manifest.spec.node) ?? defaultNodeBudgetGiB();
+  const admit = computeNodeBudget({
+    nodeName: manifest.spec.node,
+    nodeBudgetGiB: budget,
+    livingManifests: [],
+    incoming: {
+      apiVersion: manifest.apiVersion,
+      kind: 'ModelRun',
+      metadata: { name: manifest.metadata.name, labels: {}, annotations: {} },
+      spec: {
+        node: manifest.spec.node,
+        enabled: manifest.spec.enabled,
+        target: { kind: 'rel', value: manifest.spec.hostedModels[0]!.rel },
+        extraArgs: manifest.spec.extraArgs,
+        workers: [],
+        restartPolicy: manifest.spec.restartPolicy,
+        timeoutSeconds: manifest.spec.timeoutSeconds,
+        gateway: false,
+        ...(manifest.spec.resources ? { resources: manifest.spec.resources } : {}),
+      },
+    },
+    forceAdmit: false,
+  });
+  if (!admit.ok) {
+    return { ok: false, error: admit.reason };
   }
 
   const timeoutMs = (manifest.spec.timeoutSeconds ?? 60) * 1000;
-  const readyPromise = engine.probeReady(manifest.spec.endpoint, timeoutMs);
-  const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-    proc.once?.('exit', (code, signal) => resolve({ code, signal }));
-    proc.once?.('error', () => resolve({ code: null, signal: null }));
+  const startResult = await new Promise<{ ok: boolean; error?: string } | null>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('modelHostStart timed out')), timeoutMs);
+    let done: { ok: boolean; error?: string } | null = null;
+    const sub = client.modelHostStart.subscribe(
+      {
+        workload: manifest.metadata.name,
+        target: manifest.spec.hostedModels[0]!.rel,
+        ...(manifest.spec.extraArgs.length > 0 ? { extraArgs: manifest.spec.extraArgs } : {}),
+        ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
+        ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
+        timeoutSeconds: manifest.spec.timeoutSeconds,
+      },
+      {
+        onData: (evt: unknown) => {
+          const e = evt as { type?: string; result?: unknown };
+          if (e.type === 'done') done = e.result as { ok: boolean; error?: string };
+        },
+        onError: (err: unknown) => {
+          clearTimeout(timer);
+          reject(err as Error);
+        },
+        onComplete: () => {
+          clearTimeout(timer);
+          resolve(done);
+        },
+      },
+    );
+    void sub;
   });
 
-  const winner = await Promise.race([
-    readyPromise.then((r) => ({ kind: 'ready' as const, r })),
-    exitPromise.then((e) => ({ kind: 'exit' as const, e })),
-  ]);
-
-  if (winner.kind === 'exit') {
-    removeModelHostState({ name: manifest.metadata.name }, resolved);
-    return {
-      ok: false,
-      error: `ModelHost child exited before readiness (code=${winner.e.code ?? 'null'} signal=${winner.e.signal ?? 'null'})`,
-    };
+  if (!startResult?.ok) {
+    return { ok: false, error: startResult?.error ?? 'modelHostStart failed' };
   }
 
-  if (!winner.r.ready) {
-    try {
-      if (proc.pid) await engine.teardown(proc.pid);
-    } catch {}
-    removeModelHostState({ name: manifest.metadata.name }, resolved);
-    return { ok: false, error: `ModelHost did not reach ready within ${timeoutMs}ms` };
-  }
-
+  const status = await client.modelHostStatus.query({ workload: manifest.metadata.name });
+  const persisted = { ...manifest, status: { phase: status.state } };
   const rel = manifest.spec.hostedModels[0]!.rel;
   const modelAliases = Array.from(new Set([rel, basename(rel)]));
   writeModelHostState(
     {
       kind: 'ModelHost',
       engine: manifest.spec.engine,
-      pid: proc.pid,
+      pid: 1,
       host: manifest.spec.endpoint.host,
       port: manifest.spec.endpoint.port,
       modelAliases,
@@ -248,8 +285,8 @@ async function applyModelHostManifest(
   return {
     ok: true,
     kind: 'ModelHost',
-    manifest,
-    pid: proc.pid,
+    manifest: persisted,
+    pid: 1,
     endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${manifest.spec.endpoint.port}`,
   };
 }
