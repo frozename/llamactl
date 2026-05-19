@@ -208,7 +208,7 @@ async function applyModelHostManifest(
     return {
       ok: true,
       kind: 'ModelHost',
-      manifest: { ...manifest, status: { phase: 'stopped' } },
+      manifest: { ...manifest, status: { phase: 'Stopped' } },
       pid: null,
       endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${manifest.spec.endpoint.port}`,
     };

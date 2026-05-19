@@ -33,6 +33,37 @@ export interface ReconcileOptions {
   filter?: (m: ModelRun) => boolean;
 }
 
+function hostSpecSnapshot(manifest: ModelHostManifest): Record<string, unknown> {
+  const { spec } = manifest;
+  return {
+    engine: spec.engine,
+    binary: spec.binary,
+    endpoint: spec.endpoint,
+    hostedModels: spec.hostedModels,
+    extraArgs: spec.extraArgs,
+    resources: spec.resources,
+    restartPolicy: spec.restartPolicy,
+    timeoutSeconds: spec.timeoutSeconds,
+  };
+}
+
+function liveHostSpecSnapshot(current: Record<string, unknown>): Record<string, unknown> {
+  return {
+    engine: current.engine,
+    binary: current.binary,
+    endpoint: current.endpoint,
+    hostedModels: current.hostedModels,
+    extraArgs: current.extraArgs,
+    resources: current.resources,
+    restartPolicy: current.restartPolicy,
+    timeoutSeconds: current.timeoutSeconds,
+  };
+}
+
+function hostSpecsEqual(manifest: ModelHostManifest, current: Record<string, unknown>): boolean {
+  return JSON.stringify(hostSpecSnapshot(manifest)) === JSON.stringify(liveHostSpecSnapshot(current));
+}
+
 /**
  * One reconciliation pass across every workload in the store. Each
  * workload is applied in sequence (avoids N parallel serverStart
@@ -88,7 +119,16 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
     try {
       const client = opts.getClient(spec.node);
       const current = await client.modelHostStatus.query({ workload: name });
-      if (current.state === 'Running' && manifest.status?.phase === 'Running') {
+      if (spec.enabled === false && current.state !== 'Running') {
+        reports.push({
+          name,
+          node: spec.node,
+          action: 'unchanged',
+        });
+        continue;
+      }
+      const persisted = manifest.status?.phase === 'Running';
+      if (current.state === 'Running' && persisted && hostSpecsEqual(manifest, current as Record<string, unknown>)) {
         reports.push({
           name,
           node: spec.node,
@@ -108,7 +148,7 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
         reports.push({
           name,
           node: spec.node,
-          action: 'started',
+          action: current.state === 'Running' ? 'restarted' : 'started',
         });
         saveModelHost(result.manifest, dir);
       } else {

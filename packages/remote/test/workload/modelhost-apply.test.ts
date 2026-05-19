@@ -316,6 +316,56 @@ describe('applyManifest — kind dispatch', () => {
     }
   });
 
+  test('applyOneModelHost writes a capitalized Stopped phase when disabling', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-disable-phase-'));
+    const workloadsDir = join(tmp, 'workloads');
+    const client: WorkloadClient = {
+      serverStatus: {
+        query: async () => ({
+          state: 'down',
+          rel: null,
+          extraArgs: [],
+          pid: null,
+          host: null,
+          port: null,
+          binary: null,
+          endpoint: '',
+        }),
+      },
+      serverStop: { mutate: async () => ({ ok: true }) },
+      serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      modelHostStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      modelHostStop: { mutate: async () => ({ ok: true }) },
+      modelHostStatus: { query: async () => ({ state: 'Stopped', pid: null }) },
+      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      rpcServerStop: { mutate: async () => ({ ok: true }) },
+      rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+    };
+
+    try {
+      const result = await applyManifest({
+        manifest: {
+          ...makeModelHostManifest('mlx-host-disabled', 4),
+          spec: {
+            ...makeModelHostManifest('mlx-host-disabled', 4).spec,
+            enabled: false,
+          },
+        },
+        workloadsDir,
+        getClient: () => client,
+        spawn: mock(() => ({ pid: 99999 } as any)) as any,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.kind).toBe('ModelHost');
+      expect(result.manifest.status.phase).toBe('Stopped');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test('applyOneModelHost uses pid from done payload and skips the follow-up status query', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-pid-'));
     const captured = { statusCalls: 0 };
@@ -515,7 +565,7 @@ describe('applyManifest — kind dispatch', () => {
       });
 
       expect(reconciled.errors).toBe(0);
-      expect(reconciled.reports.find((r) => r.name === 'mlx-host-smoke')?.action).toBeOneOf(['started', 'restarted']);
+      expect(reconciled.reports.find((r) => r.name === 'mlx-host-smoke')?.action).toBeOneOf(['started', 'restarted', 'unchanged']);
     } finally {
       if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
       else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;

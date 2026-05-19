@@ -42,7 +42,19 @@ function makeClient(): WorkloadClient {
       },
     },
     modelHostStop: { mutate: async () => ({ ok: true }) },
-    modelHostStatus: { query: async () => ({ state: 'Running' }) },
+    modelHostStatus: {
+      query: async () => ({
+        state: 'Running',
+        engine: 'omlx',
+        binary: '/usr/bin/true',
+        endpoint: { host: '127.0.0.1', port: 18094 },
+        hostedModels: [{ rel: 'mlx-community/host-a' }],
+        extraArgs: [],
+        resources: undefined,
+        restartPolicy: 'Always',
+        timeoutSeconds: 60,
+      }),
+    },
     rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
     rpcServerStop: { mutate: async () => ({ ok: true }) },
     rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
@@ -93,7 +105,7 @@ describe('reconcileOnce', () => {
     const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
     try {
       saveWorkload(makeRunManifest(), dir);
-      saveModelHost(makeHostManifest(), dir);
+      saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } }, dir);
       process.env.LOCAL_AI_RUNTIME_DIR = dir;
 
       const result: ReconcileResult = await reconcileOnce({
@@ -105,7 +117,7 @@ describe('reconcileOnce', () => {
       expect(result.reports).toHaveLength(2);
       expect(result.reports.map((r) => r.name)).toEqual(['run-a', 'host-a']);
       expect(result.reports.map((r) => r.node)).toEqual(['local', 'local']);
-      expect(result.reports.find((r) => r.name === 'host-a')?.action).toBe('started');
+      expect(result.reports.find((r) => r.name === 'host-a')?.action).toBe('unchanged');
       expect(result.reports.find((r) => r.name === 'run-a')?.action).toBe('started');
     } finally {
       if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
@@ -153,7 +165,20 @@ describe('reconcileOnce', () => {
         workloadsDir: dir,
         getClient: () => ({
           ...makeClient(),
-          modelHostStatus: { query: async () => ({ state: 'Running', pid: 1234 }) },
+          modelHostStatus: {
+            query: async () => ({
+              state: 'Running',
+              pid: 1234,
+              engine: 'omlx',
+              binary: '/usr/bin/true',
+              endpoint: { host: '127.0.0.1', port: 18094 },
+              hostedModels: [{ rel: 'mlx-community/host-a' }],
+              extraArgs: [],
+              resources: undefined,
+              restartPolicy: 'Always',
+              timeoutSeconds: 60,
+            }),
+          },
           modelHostStart: {
             subscribe: mock(async (_input, _callbacks) => {
               startCalls.push(_input);
@@ -199,7 +224,18 @@ describe('reconcileOnce', () => {
                 },
                 dir,
               );
-              return { state: 'Running', pid: 1234 };
+              return {
+                state: 'Running',
+                pid: 1234,
+                engine: 'omlx',
+                binary: '/usr/bin/true',
+                endpoint: { host: '127.0.0.1', port: 18094 },
+                hostedModels: [{ rel: 'mlx-community/host-a' }],
+                extraArgs: ['--threads', '2'],
+                resources: undefined,
+                restartPolicy: 'Always',
+                timeoutSeconds: 60,
+              };
             },
           },
           modelHostStart: {
@@ -216,8 +252,112 @@ describe('reconcileOnce', () => {
       });
 
       expect(result.errors).toBe(0);
+      expect(result.reports[0]?.action).toBe('restarted');
+      expect(startCalls).toBe(1);
+    } finally {
+      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
+      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('restarts ModelHost when restartPolicy changes on the desired manifest', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llamactl-reconciler-host-restart-policy-'));
+    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    let startCalls = 0;
+    try {
+      saveModelHost(
+        {
+          ...makeHostManifest(),
+          spec: {
+            ...makeHostManifest().spec,
+            restartPolicy: 'OnFailure',
+          },
+          status: { phase: 'Running' },
+        },
+        dir,
+      );
+      saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } }, dir);
+      process.env.LOCAL_AI_RUNTIME_DIR = dir;
+
+      const result = await reconcileOnce({
+        workloadsDir: dir,
+        getClient: () => ({
+          ...makeClient(),
+          modelHostStatus: {
+            query: async () => ({
+              state: 'Running',
+              pid: 1234,
+              engine: 'omlx',
+              binary: '/usr/bin/true',
+              endpoint: { host: '127.0.0.1', port: 18094 },
+              hostedModels: [{ rel: 'mlx-community/host-a' }],
+              extraArgs: [],
+              resources: undefined,
+              restartPolicy: 'OnFailure',
+              timeoutSeconds: 60,
+            }),
+          },
+          modelHostStart: {
+            subscribe: async (_input, callbacks) => {
+              startCalls += 1;
+              queueMicrotask(() => {
+                callbacks.onData({ type: 'done', result: { ok: true, pid: 4321, state: 'Running' } });
+                callbacks.onComplete();
+              });
+              return { unsubscribe() {} };
+            },
+          },
+        }),
+      });
+
+      expect(result.errors).toBe(0);
+      expect(result.reports[0]?.action).toBe('restarted');
+      expect(startCalls).toBe(1);
+    } finally {
+      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
+      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('skips disabling an already stopped ModelHost', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llamactl-reconciler-host-stopped-'));
+    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    const stopCalls: unknown[] = [];
+    try {
+      saveModelHost(
+        {
+          ...makeHostManifest(),
+          spec: {
+            ...makeHostManifest().spec,
+            enabled: false,
+          },
+          status: { phase: 'Stopped' },
+        },
+        dir,
+      );
+      process.env.LOCAL_AI_RUNTIME_DIR = dir;
+
+      const result = await reconcileOnce({
+        workloadsDir: dir,
+        getClient: () => ({
+          ...makeClient(),
+          modelHostStatus: {
+            query: async () => ({ state: 'Stopped', pid: null }),
+          },
+          modelHostStop: {
+            mutate: async (input) => {
+              stopCalls.push(input);
+              return { ok: true };
+            },
+          },
+        }),
+      });
+
+      expect(result.errors).toBe(0);
       expect(result.reports[0]?.action).toBe('unchanged');
-      expect(startCalls).toBe(0);
+      expect(stopCalls).toHaveLength(0);
     } finally {
       if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
       else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
