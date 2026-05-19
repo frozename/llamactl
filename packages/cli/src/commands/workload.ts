@@ -15,6 +15,7 @@ import {
   listModelHosts,
   saveModelHost,
 } from '../../../remote/src/workload/modelhost-store.js';
+import { ModelHostManifestSchema } from '../../../remote/src/workload/modelhost-schema.js';
 import { readModelHostState } from '../../../core/src/engines/state.js';
 import { getNodeClientByName } from '../dispatcher.js';
 import { makeSpecArtifactResolver } from './noderun-helpers.js';
@@ -350,6 +351,21 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
     process.stderr.write(`apply: ModelHost manifest YAML parse failed: ${(err as Error).message}\n`);
     return 1;
   }
+
+  // Persist the desired-state manifest BEFORE dispatching modelHostStart.
+  // The agent's startModelHost handler loads the manifest by name from
+  // the workloads dir, so the file must exist before the subscription
+  // begins. Validation happens inside saveModelHost via Zod.
+  const parsedHost = (() => {
+    try {
+      return ModelHostManifestSchema.parse(manifest);
+    } catch (err) {
+      process.stderr.write(`apply: ModelHost manifest rejected: ${(err as Error).message}\n`);
+      return null;
+    }
+  })();
+  if (!parsedHost) return 1;
+  saveModelHost(parsedHost);
 
   try {
     const outcome = await workloadApply.applyManifest({
