@@ -4,6 +4,14 @@ import {
   workloadSchema,
   workloadStore,
 } from '@llamactl/remote';
+import {
+  applyOneModelHost,
+  type ModelHostManifest,
+} from '../../../remote/src/workload/apply.js';
+import {
+  loadModelHostByName,
+  saveModelHost,
+} from '../../../remote/src/workload/modelhost-store.js';
 import { getNodeClientByName } from '../dispatcher.js';
 
 export interface SetEnabledResult {
@@ -15,6 +23,9 @@ export interface SetEnabledDeps {
   loadWorkloadByName?: typeof workloadStore.loadWorkloadByName;
   saveWorkload?: typeof workloadStore.saveWorkload;
   applyOne?: typeof workloadApply.applyOne;
+  loadModelHostByName?: typeof loadModelHostByName;
+  saveModelHost?: typeof saveModelHost;
+  applyOneModelHost?: typeof applyOneModelHost;
   loadConfig?: typeof kubecfg.loadConfig;
   resolveNode?: typeof kubecfg.resolveNode;
   getNodeClientByName?: typeof getNodeClientByName;
@@ -32,32 +43,45 @@ export async function setWorkloadEnabledWithDeps(
   const resolveNode = deps.resolveNode ?? kubecfg.resolveNode;
   const getClient = deps.getNodeClientByName ?? getNodeClientByName;
 
-  let manifest: workloadSchema.ModelRun;
+  let manifest: workloadSchema.ModelRun | ModelHostManifest;
   try {
     manifest = loadWorkloadByName(name);
   } catch {
-    return { code: 1, message: `${enabled ? 'enable' : 'disable'}: workload not found: ${name}\n` };
+    try {
+      manifest = (deps.loadModelHostByName ?? loadModelHostByName)(name);
+    } catch {
+      return { code: 1, message: `${enabled ? 'enable' : 'disable'}: workload not found: ${name}\n` };
+    }
   }
 
   manifest.spec.enabled = enabled;
-  saveWorkload(manifest);
 
-  const cfg = loadConfig();
-  const result = await applyOne(
-    manifest,
-    (n) => getClient(n),
-    undefined,
-    undefined,
-    {
-      resolveNodeIdentity: (n) => {
-        try {
-          return resolveNode(cfg, n).node.endpoint || null;
-        } catch {
-          return null;
-        }
+  let result: { error: string | null };
+  if (manifest.kind === 'ModelRun') {
+    (deps.saveWorkload ?? saveWorkload)(manifest);
+    const cfg = loadConfig();
+    result = await applyOne(
+      manifest,
+      (n) => getClient(n),
+      undefined,
+      undefined,
+      {
+        resolveNodeIdentity: (n) => {
+          try {
+            return resolveNode(cfg, n).node.endpoint || null;
+          } catch {
+            return null;
+          }
+        },
       },
-    },
-  );
+    );
+  } else {
+    (deps.saveModelHost ?? saveModelHost)(manifest);
+    result = await (deps.applyOneModelHost ?? applyOneModelHost)(
+      manifest,
+      (n) => getClient(n),
+    );
+  }
 
   if (result.error) {
     return { code: 1, message: `${enabled ? 'enable' : 'disable'}: ${result.error}\n` };
@@ -65,7 +89,7 @@ export async function setWorkloadEnabledWithDeps(
 
   return {
     code: 0,
-    message: `${enabled ? 'enabled' : 'disabled'} modelrun/${name}\n`,
+    message: `${enabled ? 'enabled' : 'disabled'} ${manifest.kind.toLowerCase()}/${name}\n`,
   };
 }
 
