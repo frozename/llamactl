@@ -99,6 +99,7 @@ export function buildBootCommandForModelSpec(model: ModelSpec): { binary: string
     if (!model.binary || !existsSync(model.binary)) {
       throw new Error(`model ${model.name} managed=true but binary not found: ${model.binary}`);
     }
+    const rel = model.request_model_id ?? (model.gguf_path ? basename(model.gguf_path) : model.name);
     const spec: ModelHostSpecForEngine = {
       engine: 'omlx',
       binary: model.binary,
@@ -107,7 +108,7 @@ export function buildBootCommandForModelSpec(model: ModelSpec): { binary: string
       // models from --model-dir subdirs). Use request_model_id when
       // provided, else fall back to basename(gguf_path) for legacy
       // llama.cpp-style specs that set both fields.
-      hostedModels: [{ rel: model.request_model_id ?? (model.gguf_path ? basename(model.gguf_path) : model.name) }],
+      hostedModels: [model.dflash ? { rel, dflash: model.dflash as never } : { rel }],
       resources: {},
       extraArgs: model.extra_args ?? [],
       timeoutSeconds: 60,
@@ -131,11 +132,12 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
     throw new Error(`model ${model.name} managed=true but binary not found: ${model.binary}`);
   }
   if ((model.engine ?? 'llamacpp') === 'omlx') {
+    const rel = model.request_model_id ?? (model.gguf_path ? basename(model.gguf_path) : model.name);
     const spec: ModelHostSpecForEngine = {
       engine: 'omlx',
       binary: model.binary!,
       endpoint: { host: model.host, port: model.port },
-      hostedModels: [{ rel: model.request_model_id ?? (model.gguf_path ? basename(model.gguf_path) : model.name) }],
+      hostedModels: [model.dflash ? { rel, dflash: model.dflash as never } : { rel }],
       resources: {},
       extraArgs: model.extra_args ?? [],
       timeoutSeconds: 60,

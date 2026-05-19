@@ -26,6 +26,13 @@ export interface ModelSpec {
   lora_path?: string;
   prompt_template?: 'chat-format' | 'bare-instruct' | 'bare-base';
   inference_toggles?: Record<string, unknown>;
+  /**
+   * Optional dflash block forwarded to oMLX prepareLaunch via
+   * hostedModels[0].dflash. Shape validated by ModelHostHostedModelSchema
+   * in packages/remote/src/workload/modelhost-schema.ts. Pass the full
+   * { enabled, dflash_enabled, dflash_draft_model, ... } object.
+   */
+  dflash?: Record<string, unknown>;
 }
 
 export interface WorkloadEval {
