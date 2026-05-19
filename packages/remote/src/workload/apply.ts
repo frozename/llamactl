@@ -83,7 +83,7 @@ export interface WorkloadClient {
     mutate(input: { workload: string; graceSeconds?: number }): Promise<unknown>;
   };
   modelHostStatus: {
-    query(input: { workload: string }): Promise<{ state: string }>;
+    query(input: { workload: string }): Promise<{ state: string; pid?: number | null }>;
   };
   rpcServerStart: {
     subscribe(
@@ -213,7 +213,7 @@ async function applyModelHostManifest(
       ok: true,
       kind: 'ModelHost',
       manifest: { ...manifest, status: { phase: 'stopped' } },
-      pid: 0,
+      pid: null,
       endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${manifest.spec.endpoint.port}`,
     };
   }
@@ -246,41 +246,49 @@ async function applyModelHostManifest(
   }
 
   const timeoutMs = (manifest.spec.timeoutSeconds ?? 60) * 1000;
-  const startResult = await new Promise<{ ok: boolean; error?: string } | null>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('modelHostStart timed out')), timeoutMs);
-    let done: { ok: boolean; error?: string } | null = null;
-    const sub = client.modelHostStart.subscribe(
-      {
-        workload: manifest.metadata.name,
-        target: manifest.spec.hostedModels[0]!.rel,
-        ...(manifest.spec.extraArgs.length > 0 ? { extraArgs: manifest.spec.extraArgs } : {}),
-        ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
-        ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
-        timeoutSeconds: manifest.spec.timeoutSeconds,
-      },
-      {
-        onData: (evt: unknown) => {
-          const e = evt as { type?: string; result?: unknown };
-          if (e.type === 'done') done = e.result as { ok: boolean; error?: string };
+  let sub: Unsubscribable | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let status: { state: string; pid?: number | null };
+  try {
+    const startResult = await new Promise<{ ok: boolean; error?: string } | null>((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('modelHostStart timed out')), timeoutMs);
+      let done: { ok: boolean; error?: string } | null = null;
+      sub = client.modelHostStart.subscribe(
+        {
+          workload: manifest.metadata.name,
+          target: manifest.spec.hostedModels[0]!.rel,
+          ...(manifest.spec.extraArgs.length > 0 ? { extraArgs: manifest.spec.extraArgs } : {}),
+          ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
+          ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
+          timeoutSeconds: manifest.spec.timeoutSeconds,
         },
-        onError: (err: unknown) => {
-          clearTimeout(timer);
-          reject(err as Error);
+        {
+          onData: (evt: unknown) => {
+            const e = evt as { type?: string; result?: unknown };
+            if (e.type === 'done') done = e.result as { ok: boolean; error?: string };
+          },
+          onError: (err: unknown) => {
+            if (timer) clearTimeout(timer);
+            reject(err as Error);
+          },
+          onComplete: () => {
+            if (timer) clearTimeout(timer);
+            resolve(done);
+          },
         },
-        onComplete: () => {
-          clearTimeout(timer);
-          resolve(done);
-        },
-      },
-    );
-    void sub;
-  });
+      );
+    }).catch((err: unknown) => ({ ok: false, error: err instanceof Error ? err.message : String(err) }));
 
-  if (!startResult?.ok) {
-    return { ok: false, error: startResult?.error ?? 'modelHostStart failed' };
+    if (!startResult?.ok) {
+      return { ok: false, error: startResult?.error ?? 'modelHostStart failed' };
+    }
+
+    status = await client.modelHostStatus.query({ workload: manifest.metadata.name });
+  } finally {
+    if (timer) clearTimeout(timer);
+    sub?.unsubscribe?.();
   }
 
-  const status = await client.modelHostStatus.query({ workload: manifest.metadata.name });
   const persisted = { ...manifest, status: { phase: status.state } };
   const rel = manifest.spec.hostedModels[0]!.rel;
   const modelAliases = Array.from(new Set([rel, basename(rel)]));
@@ -288,7 +296,7 @@ async function applyModelHostManifest(
     {
       kind: 'ModelHost',
       engine: manifest.spec.engine,
-      pid: 1,
+      pid: status.pid ?? null,
       host: manifest.spec.endpoint.host,
       port: manifest.spec.endpoint.port,
       modelAliases,
@@ -302,7 +310,7 @@ async function applyModelHostManifest(
     ok: true,
     kind: 'ModelHost',
     manifest: persisted,
-    pid: 1,
+    pid: status.pid ?? null,
     endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${manifest.spec.endpoint.port}`,
   };
 }

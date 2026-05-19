@@ -77,7 +77,7 @@ describe('applyManifest — kind dispatch', () => {
       modelHostStatus: {
         query: async () => {
           captured.statusCalls += 1;
-          return { state: 'Running' };
+          return { state: 'Running', pid: 3333 };
         },
       },
       rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
@@ -118,7 +118,7 @@ describe('applyManifest — kind dispatch', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.kind).toBe('ModelHost');
-      expect(result.pid).toBe(1);
+      expect(result.pid).toBe(3333);
       expect(result.manifest.status.phase).toBe('Running');
       expect(captured.spawnCalls).toBe(0);
       expect(captured.statusCalls).toBe(1);
@@ -215,6 +215,7 @@ describe('applyManifest — kind dispatch', () => {
       modelHostStatus: {
         query: async () => ({
           state: readModelHostState({ name: 'mlx-host-smoke' }, runtimeEnv) ? 'Running' : 'Stopped',
+          pid: readModelHostState({ name: 'mlx-host-smoke' }, runtimeEnv)?.pid ?? null,
         }),
       },
       rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
