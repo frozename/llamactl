@@ -40,11 +40,11 @@ test('routes chat completions to a ModelHost by rel alias', async () => {
     );
 
     const calls: Array<{ url: string; body: string | null }> = [];
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = ((async (input: Request | URL | string, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       calls.push({ url, body: typeof init?.body === 'string' ? init.body : null });
       return Response.json({ echoed: { url } });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch);
 
     const res = await openaiProxy.proxyOpenAI(
       new Request('http://localhost/v1/chat/completions', {
@@ -86,11 +86,11 @@ test('routes chat completions to a ModelHost by basename alias', async () => {
     );
 
     const calls: Array<{ url: string }> = [];
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = ((async (input: Request | URL | string) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       calls.push({ url });
       return Response.json({ ok: true });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch);
 
     const res = await openaiProxy.proxyOpenAI(
       new Request('http://localhost/v1/chat/completions', {
@@ -243,11 +243,11 @@ test('same-kind alias collision keeps the alphabetically earlier workload', asyn
     );
 
     const calls: Array<{ url: string }> = [];
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = ((async (input: Request | URL | string) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       calls.push({ url });
       return Response.json({ ok: true });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch);
 
     const res = await openaiProxy.proxyOpenAI(
       new Request('http://localhost/v1/chat/completions', {

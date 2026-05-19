@@ -73,10 +73,10 @@ describe('llamacpp engine adapter', () => {
 
   test('probeReady resolves only when /v1/models advertises a model id', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
+    globalThis.fetch = ((async () =>
       new Response(JSON.stringify({ object: 'list', data: [{ id: 'granite-4.1-3b-Q8_0.gguf' }] }), {
         headers: { 'content-type': 'application/json' },
-      })) as typeof fetch;
+      })) as unknown as typeof fetch);
     const result = await ENGINES.llamacpp.probeReady({ host: '127.0.0.1', port: 12345 }, 1000);
     globalThis.fetch = originalFetch;
     expect(result.ready).toBe(true);
@@ -90,10 +90,10 @@ describe('llamacpp engine adapter', () => {
 
   test('probeReady returns ready:false without overrunning timeout', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) =>
+    globalThis.fetch = ((async (_input: Request | URL | string, init?: RequestInit) =>
       new Promise((_, reject) => {
         init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
-      })) as typeof fetch;
+      })) as unknown as typeof fetch);
     const started = Date.now();
     const result = await ENGINES.llamacpp.probeReady({ host: '127.0.0.1', port: 12345 }, 300);
     const elapsed = Date.now() - started;

@@ -92,7 +92,7 @@ export async function addCurated(
   const klass = await resolveClass(repo, input.class);
   const scope = input.scope && input.scope.length > 0 ? input.scope : 'candidate';
   const id = deriveEntryId(repoBase, rel);
-  const format = /\.gguf$/i.test(fileBasename) ? 'gguf' : 'mlx';
+  const format: CuratedModel['format'] = /\.gguf$/i.test(fileBasename) ? 'gguf' : 'mlx';
 
   const fields = { id, label, family, class: klass, scope, rel, repo, format };
   for (const [field, value] of Object.entries(fields)) {

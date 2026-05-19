@@ -1,4 +1,4 @@
-import type { WorkloadEval } from '../types.js';
+import type { ModelSpec, WorkloadEval } from '../types.js';
 
 interface CorpusRow {
   handoff_id?: string;
@@ -30,7 +30,7 @@ noise_removal:       does the candidate strip preamble, meta-narration, approval
 Reply with JSON only, no preamble, no markdown:
 {"intent_preservation": <0-3>, "contract_clarity": <0-3>, "noise_removal": <0-3>, "comment": "<one sentence>"}`;
 
-const judgeModel = {
+const judgeModel: ModelSpec = {
   name: 'judge-granite-8b-Q4',
   gguf_path: '/Volumes/WorkSSD/ai-models/llama.cpp/models/granite-4.1-8b-GGUF/granite-4.1-8b-Q4_K_M.gguf',
   quant: 'Q4_K_M',
@@ -40,19 +40,19 @@ const judgeModel = {
   port: 8094,
   extra_args: [],
   binary: '/Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server',
-  start_args: ['--ctx-size', '16384', '-ngl', '999', '--flash-attn', 'on', '-ctk', 'q8_0', '-ctv', 'q8_0', '--no-warmup', '-np', '1', '--jinja', '--reasoning', 'off', '--alias', 'local'],
+  start_args: ['--ctx-size', '16384', '-ngl', '999', '--flash-attn', 'on', '-ctk', 'q8_0', '-ctv', 'q8_0', '--no-warmup', '-np', '1', '--jinja', '--reasoning', 'off', '--alias', 'local'] as string[],
   managed: true,
-} as const;
+};
 
 function parseJudgeJson(text: string): { intent_preservation: number; contract_clarity: number; noise_removal: number } | null {
   let s = text;
   if (s.includes('@@metadata')) {
     const parts = s.split('@@metadata', 2);
-    if (parts.length > 1) s = parts[1];
+    if (parts.length > 1) s = parts[1] ?? s;
     if (s.includes('@@end')) s = s.split('@@end', 1)[0];
   }
   const fenceMatch = s.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (fenceMatch) s = fenceMatch[1];
+  if (fenceMatch) s = fenceMatch[1] ?? s;
   const start = s.indexOf('{');
   const end = s.lastIndexOf('}');
   if (start < 0 || end <= start) return null;
@@ -81,15 +81,17 @@ export const taskRefinerRubricWorkload: WorkloadEval = {
   judge_model: judgeModel,
   prompt_builder: (row) => {
     const r = row as CorpusRow;
+    const input = String(r.input ?? '');
     return {
       messages: [
         { role: 'system', content: REFINER_SYSTEM_PROMPT },
-        { role: 'user', content: r.input },
+        { role: 'user', content: input },
       ],
     };
   },
   scorer: async (row, completion) => {
     const r = row as CorpusRow;
+    const input = String(r.input ?? '');
     const fail = (reason: string) => ({
       metrics: { intent_preservation: 0, contract_clarity: 0, noise_removal: 0, composite: 0, parse_error: 1 },
       prediction: reason,
@@ -100,7 +102,7 @@ export const taskRefinerRubricWorkload: WorkloadEval = {
       model: 'local',
       messages: [
         { role: 'system', content: JUDGE_SYSTEM },
-        { role: 'user', content: `ORIGINAL:\n${r.input}\n\nCANDIDATE:\n${completion}` },
+        { role: 'user', content: `ORIGINAL:\n${input}\n\nCANDIDATE:\n${completion}` },
       ],
       max_tokens: 300,
       temperature: 0,

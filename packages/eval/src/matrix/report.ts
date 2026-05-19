@@ -77,7 +77,7 @@ function buildGrid(cells: CellRow[]): { models: string[]; workloads: string[]; l
 
 function getPrimaryMetricName(cells: CellRow[]): string {
   const names = uniqueSorted(cells.map((cell) => cell.primary_metric_name));
-  return names.length === 1 ? names[0] : 'mixed';
+  return names.length === 1 ? names[0] ?? 'mixed' : 'mixed';
 }
 
 function renderWinnerList(workloads: string[], lookup: Map<string, CellRow>): string {
