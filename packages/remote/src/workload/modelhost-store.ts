@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { resolve, sep, join } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { defaultWorkloadsDir } from './store.js';
 import { ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
@@ -20,12 +20,22 @@ export function modelHostPath(name: string, dir: string = defaultModelHostDir())
   return join(dir, `${name}.yaml`);
 }
 
+function ensureModelHostPathWithinDir(path: string, dir: string): string {
+  const resolvedDir = resolve(dir);
+  const resolvedPath = resolve(path);
+  const allowedPrefix = `${resolvedDir}${sep}`;
+  if (resolvedPath !== resolvedDir && !resolvedPath.startsWith(allowedPrefix)) {
+    throw new Error(`ModelHost path escapes workloads dir: ${resolvedPath} not within ${resolvedDir}`);
+  }
+  return resolvedPath;
+}
+
 export function loadModelHost(path: string): ModelHostManifest {
   return parseModelHost(readFileSync(path, 'utf8'));
 }
 
 export function loadModelHostByName(name: string, dir: string = defaultModelHostDir()): ModelHostManifest {
-  const path = modelHostPath(name, dir);
+  const path = ensureModelHostPathWithinDir(modelHostPath(name, dir), dir);
   if (!existsSync(path)) throw new Error(`ModelHost ${name} not found at ${path}`);
   return loadModelHost(path);
 }
@@ -33,7 +43,7 @@ export function loadModelHostByName(name: string, dir: string = defaultModelHost
 export function saveModelHost(manifest: ModelHostManifest, dir: string = defaultModelHostDir()): string {
   const validated = ModelHostManifestSchema.parse(manifest);
   mkdirSync(dir, { recursive: true });
-  const path = modelHostPath(validated.metadata.name, dir);
+  const path = ensureModelHostPathWithinDir(modelHostPath(validated.metadata.name, dir), dir);
   writeFileSync(path, stringifyYaml(validated), 'utf8');
   return path;
 }
@@ -53,7 +63,7 @@ export function listModelHosts(dir: string = defaultModelHostDir()): ModelHostMa
 }
 
 export function deleteModelHost(name: string, dir: string = defaultModelHostDir()): boolean {
-  const path = modelHostPath(name, dir);
+  const path = ensureModelHostPathWithinDir(modelHostPath(name, dir), dir);
   if (!existsSync(path)) return false;
   rmSync(path, { force: true });
   return true;

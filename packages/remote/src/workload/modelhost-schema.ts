@@ -48,7 +48,8 @@ export const ModelHostManifestSchema = z.object({
   apiVersion: z.literal('llamactl/v1'),
   kind: z.literal('ModelHost'),
   metadata: z.object({
-    name: z.string().min(1),
+    name: z.string().regex(/^[a-z0-9][-a-z0-9]{0,62}$/,
+      'name must be lowercase alphanumeric with dashes, max 63 chars'),
     labels: z.record(z.string(), z.string()).optional(),
   }).strict(),
   spec: ModelHostSpecSchema,
