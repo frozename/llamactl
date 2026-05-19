@@ -11,6 +11,10 @@ import {
   workloadSchema,
   workloadStore,
 } from '@llamactl/remote';
+import {
+  listModelHosts,
+  saveModelHost,
+} from '../../../remote/src/workload/modelhost-store.js';
 import { getNodeClientByName } from '../dispatcher.js';
 import { makeSpecArtifactResolver } from './noderun-helpers.js';
 
@@ -338,6 +342,8 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
       process.stderr.write(`apply: expected ModelHost outcome, got ${outcome.kind}\n`);
       return 1;
     }
+    const persisted = { ...outcome.manifest, status: outcome.statusSection };
+    saveModelHost(persisted);
     if (json) {
       process.stdout.write(
         `${JSON.stringify(
@@ -354,7 +360,7 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
       );
     } else {
       process.stdout.write(
-        `${outcome.manifest.metadata.name}: ModelHost ready at ${outcome.endpoint} pid=${outcome.pid}\n`,
+        `modelhost/${outcome.manifest.metadata.name}: ModelHost ready at ${outcome.endpoint} pid=${outcome.pid}\n`,
       );
     }
     return 0;
@@ -443,7 +449,22 @@ export async function runGet(args: string[]): Promise<number> {
   }
 
   const manifests = workloadStore.listWorkloads();
-  const rows = await Promise.all(manifests.map(inspect));
+  const modelHosts = listModelHosts();
+  const rows = [
+    ...(await Promise.all(manifests.map(inspect))).map((row) => ({
+      ...row,
+      kind: 'modelrun' as const,
+    })),
+    ...modelHosts.map((manifest) => ({
+      kind: 'modelhost' as const,
+      name: manifest.metadata.name,
+      node: manifest.spec.node,
+      phase: manifest.status?.phase ?? 'Pending',
+      rel: manifest.spec.hostedModels.map((m) => m.rel).join(', '),
+      endpoint: manifest.status?.endpoint ?? null,
+      gateway: false,
+    })),
+  ];
   if (json) {
     process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
     return 0;
@@ -457,13 +478,13 @@ export async function runGet(args: string[]): Promise<number> {
   const nameW = Math.max(4, ...rows.map((r) => r.name.length));
   const nodeW = Math.max(4, ...rows.map((r) => r.node.length));
   const phaseW = Math.max(5, ...rows.map((r) => r.phase.length));
-  const kindW = 4; // 'agent' or 'gway' — always four chars
+  const kindW = 9;
   process.stdout.write(
     `${pad('NAME', nameW)}  ${pad('NODE', nodeW)}  ${pad('KIND', kindW)}  ${pad('PHASE', phaseW)}  REL\n`,
   );
   for (const r of rows) {
     process.stdout.write(
-      `${pad(r.name, nameW)}  ${pad(r.node, nodeW)}  ${pad(r.gateway ? 'gway' : 'agnt', kindW)}  ${pad(r.phase, phaseW)}  ${r.rel}\n`,
+      `${pad(r.name, nameW)}  ${pad(r.node, nodeW)}  ${pad(r.kind, kindW)}  ${pad(r.phase, phaseW)}  ${r.rel}\n`,
     );
   }
   return 0;

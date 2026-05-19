@@ -5,6 +5,8 @@ import { join } from 'node:path';
 
 import { runInit } from '../src/commands/init.js';
 import { runComposite } from '../src/commands/composite.js';
+import { runApply } from '../src/commands/workload.js';
+import { runGet } from '../src/commands/workload.js';
 
 /**
  * Opt-in E2E covering the full onboarding round-trip:
@@ -131,4 +133,63 @@ describe.skipIf(!SHOULD_RUN)('init → apply → destroy round-trip', () => {
     },
     10 * 60_000,
   );
+});
+
+describe.skipIf(!SHOULD_RUN)('modelhost workload round-trip', () => {
+  test('apply persists ModelHost and list renders it', async () => {
+    if (!dockerReachable) {
+      console.warn('[init-e2e] skipping: docker daemon unreachable');
+      return;
+    }
+
+    const workloadDir = join(tmp, 'workloads');
+    process.env.LLAMACTL_WORKLOADS_DIR = workloadDir;
+
+    const manifestPath = join(tmp, 'mlx-host-local.yaml');
+    await Bun.write(
+      manifestPath,
+      [
+        'apiVersion: llamactl/v1',
+        'kind: ModelHost',
+        'metadata:',
+        '  name: mlx-host-local',
+        'spec:',
+        '  enabled: true',
+        '  node: local',
+        '  engine: omlx',
+        '  binary: /tmp/omlx',
+        '  endpoint:',
+        '    host: 127.0.0.1',
+        '    port: 8094',
+        '  hostedModels:',
+        '    - rel: mlx-community/Qwen3-8B-MLX-4bit',
+        '  resources:',
+        '    expectedMemoryGiB: 12',
+        '  extraArgs: []',
+        '  timeoutSeconds: 60',
+        '',
+      ].join('\n'),
+    );
+
+    let stdout = '';
+    const stdoutOrig = process.stdout.write.bind(process.stdout);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stdout as any).write = (s: string | Uint8Array): boolean => {
+      stdout += typeof s === 'string' ? s : String(s);
+      return true;
+    };
+
+    try {
+      const applyRc = await runApply(['-f', manifestPath]);
+      expect(applyRc).toBe(0);
+      const listRc = await runGet(['workloads']);
+      expect(listRc).toBe(0);
+    } finally {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (process.stdout as any).write = stdoutOrig;
+    }
+
+    expect(stdout).toContain('modelhost/mlx-host-local');
+    expect(stdout).toContain('ModelHost ready at http://127.0.0.1:8094');
+  }, 10 * 60_000);
 });
