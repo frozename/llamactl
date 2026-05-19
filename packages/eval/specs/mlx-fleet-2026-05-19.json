@@ -1,0 +1,50 @@
+[
+  {
+    "name": "qwen3-8b-mlx-4bit",
+    "engine": "omlx",
+    "family": "qwen-3",
+    "quant": "MLX-4bit",
+    "size_params": "8B",
+    "host": "127.0.0.1",
+    "port": 8094,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "request_model_id": "Qwen3-8B-MLX-4bit",
+    "disable_thinking": true,
+    "extra_args": ["--max-concurrent-requests", "4"],
+    "start_args": [],
+    "managed": true
+  },
+  {
+    "name": "qwen3-14b-mlx-4bit",
+    "engine": "omlx",
+    "family": "qwen-3",
+    "quant": "MLX-4bit",
+    "size_params": "14B",
+    "host": "127.0.0.1",
+    "port": 8094,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "request_model_id": "Qwen3-14B-4bit",
+    "disable_thinking": true,
+    "extra_args": ["--max-concurrent-requests", "4"],
+    "start_args": [],
+    "managed": true
+  },
+  {
+    "name": "qwen36-35b-a3b-mlx-4bit",
+    "engine": "omlx",
+    "family": "qwen-3.6",
+    "quant": "MLX-4bit",
+    "size_params": "35B-A3B",
+    "host": "127.0.0.1",
+    "port": 8094,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "request_model_id": "Qwen3.6-35B-A3B-4bit",
+    "disable_thinking": true,
+    "extra_args": ["--max-concurrent-requests", "4"],
+    "start_args": [],
+    "managed": true
+  }
+]
