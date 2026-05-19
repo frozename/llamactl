@@ -1,0 +1,73 @@
+# dflash D2 pilot: Qwen3-8B-MLX-4bit target + dflash draft on local (M4 Pro).
+# Sibling of mlx-host-local.yaml; runs on :8095 so both can coexist.
+#
+# What this exercises end-to-end:
+#   1. llamactl writes ${LLAMACTL_RUNTIME_DIR}/workloads/dflash-host-local/.omlx/
+#      model_settings.json with the dflash block keyed by the model_id
+#      (basename of the rel — "Qwen3-8B-MLX-4bit").
+#   2. oMLX starts with --base-path pointing at that dir, picks up the
+#      dflash settings on first inference, downloads/loads the draft
+#      model.
+#   3. The first /v1/chat/completions response is served with dflash
+#      speculative decoding (visible via per-token acceptance metrics in
+#      the oMLX log).
+#
+# Pre-reqs (manual, before applying):
+# 1. tools/install-omlx-from-source.sh has been run on the M4 Pro.
+# 2. llamactl pull lmstudio-community/Qwen3-8B-MLX-4bit
+# 3. The draft model is downloaded to the same models dir:
+#       export HF_HUB_DOWNLOAD_TIMEOUT=120
+#       hf download z-lab/Qwen3.5-4B-DFlash --local-dir \
+#         "${LLAMACTL_MODELS_DIR:-/Volumes/AI-MODELS}/z-lab/Qwen3.5-4B-DFlash"
+#    (or substitute whichever Qwen-family DFlash draft is currently
+#    published — check https://huggingface.co/z-lab for the canonical
+#    pairing. The smoke script below echoes the model_settings.json that
+#    llamactl wrote so you can confirm the draft path was honored.)
+#
+# Apply:
+#   llamactl apply -f templates/workloads/mlx-host-dflash.yaml
+#
+# Verify:
+#   tools/smoke-modelhost-dflash.sh
+#
+# Teardown:
+#   llamactl disable dflash-host-local
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: dflash-host-local
+  labels:
+    family: mlx
+    role: inference-host
+    capability: dflash
+spec:
+  engine: omlx
+  node: local
+  enabled: true
+  binary: /Volumes/WorkSSD/src/omlx/.venv/bin/omlx
+  resources:
+    # Target ~12 GiB (Qwen3-8B at MLX-4bit) + ~3 GiB (Qwen3.5-4B-DFlash at
+    # MLX-4bit) + KV cache headroom. Bump if the chosen draft is larger.
+    expectedMemoryGiB: 18
+  endpoint:
+    host: 127.0.0.1
+    port: 8095
+  hostedModels:
+    - rel: lmstudio-community/Qwen3-8B-MLX-4bit
+      dflash:
+        enabled: true
+        dflash_enabled: true
+        dflash_draft_model: z-lab/Qwen3.5-4B-DFlash
+        # Long-context tuning knobs (oMLX issue #1276). Leave unset to
+        # accept dflash-mlx defaults; uncomment when you want to sweep
+        # acceptance/throughput.
+        # dflash_draft_window_size: 16
+        # dflash_draft_sink_size: 4
+        # dflash_verify_mode: "tree"
+  extraArgs:
+    - --max-concurrent-requests
+    - "1"
+    - --paged-ssd-cache-dir
+    - /Volumes/WorkSSD/cache/omlx
+  restartPolicy: Always
+  timeoutSeconds: 120
