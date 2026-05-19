@@ -141,7 +141,11 @@ describe('applyManifest — kind dispatch', () => {
       if (!result.ok) return;
       expect(result.kind).toBe('ModelHost');
       expect(result.pid).toBe(3333);
-      expect(result.manifest.status.phase).toBe('Running');
+      // Observed state lives in the sidecar, not the manifest.
+      expect(readModelHostState(
+        { name: 'mlx-host-test' },
+        { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp } as any,
+      )?.pid).toBe(3333);
       expect(captured.spawnCalls).toBe(0);
       expect(captured.statusCalls).toBe(1);
       expect(captured.startInput).toEqual({
@@ -360,7 +364,12 @@ describe('applyManifest — kind dispatch', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.kind).toBe('ModelHost');
-      expect(result.manifest.status.phase).toBe('Stopped');
+      // Disable removes the controller-side sidecar; there is no
+      // observed-phase to assert on the manifest itself.
+      expect(readModelHostState(
+        { name: 'mlx-host-disabled' },
+        { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp } as any,
+      )).toBeNull();
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
