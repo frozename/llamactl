@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import { ENGINES } from '../../../core/src/engines/index.js';
-import { writeModelHostState } from '../../../core/src/engines/state.js';
+import { removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
 import { resolveEnv } from '../../../core/src/env.js';
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
 import { ModelRunSchema } from './schema.js';
@@ -200,6 +200,22 @@ async function applyModelHostManifest(
   const client = opts.getClient?.(manifest.spec.node);
   if (!client?.modelHostStart || !client.modelHostStatus) {
     return { ok: false, error: `missing modelHostStart on node ${manifest.spec.node}` };
+  }
+
+  if (manifest.spec.enabled === false) {
+    if (client.modelHostStop) {
+      try {
+        await client.modelHostStop.mutate({ workload: manifest.metadata.name });
+      } catch {}
+    }
+    removeModelHostState({ name: manifest.metadata.name }, resolved);
+    return {
+      ok: true,
+      kind: 'ModelHost',
+      manifest: { ...manifest, status: { phase: 'stopped' } },
+      pid: 0,
+      endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${manifest.spec.endpoint.port}`,
+    };
   }
 
   const budget = opts.getNodeBudgetGiB?.(manifest.spec.node) ?? defaultNodeBudgetGiB();
