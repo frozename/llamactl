@@ -32,7 +32,7 @@ const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
  * empty list when nothing is tracked.
  */
 export function listOpenAIModels(
-  resolved: ResolvedEnv = resolveEnv(),
+  resolved?: ResolvedEnv,
 ): ModelListResponse;
 export function listOpenAIModels(
   key: WorkloadKey,

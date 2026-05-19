@@ -20,6 +20,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     scope: 'fast',
     rel: 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf',
     repo: 'unsloth/gemma-4-E4B-it-GGUF',
+    format: 'gguf',
   },
   {
     id: 'gemma4-e4b-q4',
@@ -29,6 +30,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     scope: 'compact',
     rel: 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf',
     repo: 'unsloth/gemma-4-E4B-it-GGUF',
+    format: 'gguf',
   },
   {
     id: 'gemma4-26b-q4',
@@ -38,6 +40,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     scope: 'balanced',
     rel: 'gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf',
     repo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
+    format: 'gguf',
   },
   {
     id: 'gemma4-31b-q4',
@@ -47,6 +50,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     scope: 'quality',
     rel: 'gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf',
     repo: 'unsloth/gemma-4-31B-it-GGUF',
+    format: 'gguf',
   },
   {
     // Tightest fit on 16 GiB unified memory (M4-class). 35B-A3B at
@@ -60,6 +64,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     scope: 'compact-fit-16g',
     rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ2_M.gguf',
     repo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+    format: 'gguf',
   },
   {
     id: 'qwen36-q3s',
@@ -69,6 +74,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     scope: 'compact',
     rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q3_K_S.gguf',
     repo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+    format: 'gguf',
   },
   {
     id: 'qwen36-q4m',
@@ -78,6 +84,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     scope: 'balanced',
     rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf',
     repo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+    format: 'gguf',
   },
   {
     id: 'qwen36-q4',
@@ -87,6 +94,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     scope: 'quality',
     rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf',
     repo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
+    format: 'gguf',
   },
   {
     // 27B at IQ2_M is ~10.2 GB; the smallest fit-on-16g rel for
@@ -98,6 +106,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     scope: 'compact-fit-16g',
     rel: 'Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-IQ2_M.gguf',
     repo: 'unsloth/Qwen3.5-27B-GGUF',
+    format: 'gguf',
   },
   {
     id: 'qwen27-q5',
@@ -107,6 +116,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     scope: 'legacy-balanced',
     rel: 'Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf',
     repo: 'unsloth/Qwen3.5-27B-GGUF',
+    format: 'gguf',
   },
   {
     // Granite 4.1 8b at Q4_K_M — top agentic candidate per the
@@ -119,6 +129,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     scope: 'compact-fit-16g',
     rel: 'granite-4.1-8b-GGUF/granite-4.1-8b-Q4_K_M.gguf',
     repo: 'unsloth/granite-4.1-8b-GGUF',
+    format: 'gguf',
   },
   {
     // Granite 4.1 3b at Q4_K_M — best small-model agentic candidate
@@ -131,6 +142,7 @@ export const BUILTIN_CATALOG: readonly CuratedModel[] = [
     scope: 'fast',
     rel: 'granite-4.1-3b-GGUF/granite-4.1-3b-Q4_K_M.gguf',
     repo: 'unsloth/granite-4.1-3b-GGUF',
+    format: 'gguf',
   },
 ] as const;
 

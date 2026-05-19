@@ -111,6 +111,7 @@ export async function addCurated(
   const entry: CuratedModel = {
     ...fields,
     class: klass as CuratedModel['class'],
+    format: format as CuratedModel['format'],
   };
 
   // `findByRel` reads the catalog each call so subsequent writers in the
