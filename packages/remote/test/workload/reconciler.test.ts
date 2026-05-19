@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -130,6 +130,90 @@ describe('reconcileOnce', () => {
 
       const loaded = loadModelHostByName('host-a', dir);
       expect(loaded.status.phase).toBe('Running');
+    } finally {
+      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
+      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('skips ModelHost start when the persisted Running spec still matches', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llamactl-reconciler-host-unchanged-'));
+    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    const startCalls: unknown[] = [];
+    try {
+      saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } }, dir);
+      process.env.LOCAL_AI_RUNTIME_DIR = dir;
+
+      const result = await reconcileOnce({
+        workloadsDir: dir,
+        getClient: () => ({
+          ...makeClient(),
+          modelHostStatus: { query: async () => ({ state: 'Running', pid: 1234 }) },
+          modelHostStart: {
+            subscribe: mock(async (_input, _callbacks) => {
+              startCalls.push(_input);
+              return { unsubscribe() {} };
+            }),
+          },
+        }),
+      });
+
+      expect(result.errors).toBe(0);
+      expect(result.reports[0]?.action).toBe('unchanged');
+      expect(startCalls).toHaveLength(0);
+    } finally {
+      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
+      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('restarts ModelHost when the persisted spec diverges from the desired manifest', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llamactl-reconciler-host-restart-'));
+    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    let startCalls = 0;
+    const currentManifest = makeHostManifest();
+    try {
+      saveModelHost({ ...currentManifest, status: { phase: 'Running' } }, dir);
+      process.env.LOCAL_AI_RUNTIME_DIR = dir;
+
+      const result = await reconcileOnce({
+        workloadsDir: dir,
+        getClient: () => ({
+          ...makeClient(),
+          modelHostStatus: {
+            query: async () => {
+              saveModelHost(
+                {
+                  ...currentManifest,
+                  spec: {
+                    ...currentManifest.spec,
+                    extraArgs: ['--threads', '2'],
+                  },
+                  status: { phase: 'Running' },
+                },
+                dir,
+              );
+              return { state: 'Running', pid: 1234 };
+            },
+          },
+          modelHostStart: {
+            subscribe: async (_input, callbacks) => {
+              startCalls += 1;
+              queueMicrotask(() => {
+                callbacks.onData({ type: 'done', result: { ok: true, pid: 4321, state: 'Running' } });
+                callbacks.onComplete();
+              });
+              return { unsubscribe() {} };
+            },
+          },
+        }),
+      });
+
+      expect(result.errors).toBe(0);
+      expect(result.reports[0]?.action).toBe('started');
+      expect(startCalls).toBe(1);
     } finally {
       if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
       else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
