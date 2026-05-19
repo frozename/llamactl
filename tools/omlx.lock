@@ -1,7 +1,19 @@
 # Pinned upstream commit of jundot/omlx verified working with llamactl Sub A.
 # Update this and re-run tools/install-omlx-from-source.sh when bumping.
 # Format: key=value lines. Unknown keys are ignored by the installer.
-commit=51907f08074742defec4375fb629e289801a8a9f
-verified_date=2026-05-18
+#
+# REQUIREMENT: `commit` MUST be a full 40-hex SHA. Symbolic refs
+# (HEAD/main/tags) are rejected by the installer — see SHA validation
+# in tools/install-omlx-from-source.sh.
+#
+# 2026-05-19: switched from upstream HEAD (51907f08...) to the
+# feat/speculative-decoding branch (24e1bbd2...). That branch adds
+# MTP / speculative-decoding support, which matches the project's
+# MTP-first model-selection rule for generation workloads
+# (see AGENTS.md "Model selection preferences" + the workload
+# qualifier note: MTP helps generation/ranking, not classification).
+commit=24e1bbd21b60e9d96f2f46e28a5c1c9fd6a8aad8
+verified_date=2026-05-19
 verified_by=llamactl/mlx-engine-sub-a-plan
-notes=initial pin resolved via `git ls-remote https://github.com/jundot/omlx.git HEAD` 2026-05-18. Phase 6.4 manual run will confirm cli compatibility and re-pin if the upstream branch advances before that run.
+branch=feat/speculative-decoding
+notes=Switched to feat/speculative-decoding head for MTP support. Phase 6.4 manual run will confirm CLI compatibility on M4 Pro before stamping verified_date as the post-smoke date.
