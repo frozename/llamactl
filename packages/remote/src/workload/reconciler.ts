@@ -127,8 +127,13 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
         });
         continue;
       }
-      const persisted = current.state === 'Running';
-      if (current.state === 'Running' && persisted && hostSpecsEqual(manifest, current as Record<string, unknown>)) {
+      // Idempotent reconcile: while the host is Running we leave it
+      // alone. Spec drift is detected by the explicit `llamactl apply`
+      // path, not by the reconcile loop, because modelHostStatus today
+      // only reports state + pid — no launch args — so we cannot
+      // compare desired vs observed launch args from here. If you
+      // edit the manifest on disk, run `llamactl apply -f` to re-apply.
+      if (current.state === 'Running') {
         reports.push({
           name,
           node: spec.node,

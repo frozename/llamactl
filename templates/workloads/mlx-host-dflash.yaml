@@ -17,8 +17,8 @@
 # 2. llamactl pull lmstudio-community/Qwen3-8B-MLX-4bit
 # 3. The draft model is downloaded to the same models dir:
 #       export HF_HUB_DOWNLOAD_TIMEOUT=120
-#       hf download z-lab/Qwen3.5-4B-DFlash --local-dir \
-#         "${LLAMACTL_MODELS_DIR:-/Volumes/AI-MODELS}/z-lab/Qwen3.5-4B-DFlash"
+#       hf download z-lab/Qwen3-8B-DFlash-b16 --local-dir \
+#         "${LLAMACTL_MODELS_DIR:-/Volumes/AI-MODELS}/z-lab/Qwen3-8B-DFlash-b16"
 #    (or substitute whichever Qwen-family DFlash draft is currently
 #    published — check https://huggingface.co/z-lab for the canonical
 #    pairing. The smoke script below echoes the model_settings.json that
@@ -57,7 +57,7 @@ spec:
       dflash:
         enabled: true
         dflash_enabled: true
-        dflash_draft_model: z-lab/Qwen3.5-4B-DFlash
+        dflash_draft_model: z-lab/Qwen3-8B-DFlash-b16
         # Long-context tuning knobs (oMLX issue #1276). Leave unset to
         # accept dflash-mlx defaults; uncomment when you want to sweep
         # acceptance/throughput.

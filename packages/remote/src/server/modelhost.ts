@@ -137,6 +137,11 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     if (pid === null) {
       throw new Error('failed to spawn modelhost process');
     }
+    // Detach from the parent's reference count so subscription
+    // teardown / generator cleanup cannot propagate a signal back
+    // to the engine process. Mirrors core/src/server.ts:startServer
+    // which uses the same detached + unref pattern for llama-server.
+    child.unref();
 
     const endpoint = manifest.spec.endpoint;
     const readiness = await (opts.probeReady ?? engine.probeReady)(endpoint, (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000);
