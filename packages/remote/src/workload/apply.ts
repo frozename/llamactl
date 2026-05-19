@@ -291,6 +291,25 @@ async function applyModelHostManifest(
   };
 }
 
+export async function applyOneModelHost(
+  manifest: ModelHostManifest,
+  getClient: (nodeName: string) => WorkloadClient,
+  onEvent?: (e: ApplyEvent) => void,
+  opts?: {
+    env?: NodeJS.ProcessEnv;
+    workloadsDir?: string;
+    getNodeBudgetGiB?: (nodeName: string) => number;
+  },
+): Promise<ApplyManifestOutcome> {
+  return applyModelHostManifest(manifest, {
+    getClient,
+    onEvent,
+    env: opts?.env,
+    workloadsDir: opts?.workloadsDir,
+    getNodeBudgetGiB: opts?.getNodeBudgetGiB,
+  });
+}
+
 interface StartDone {
   ok: boolean;
   pid: number | null;
