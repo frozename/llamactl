@@ -53,9 +53,6 @@ export const ModelHostManifestSchema = z.object({
     labels: z.record(z.string(), z.string()).optional(),
   }).strict(),
   spec: ModelHostSpecSchema,
-  status: z.object({
-    phase: z.string(),
-  }).strict().optional(),
 }).strict();
 
 export type ModelHostManifest = z.infer<typeof ModelHostManifestSchema>;

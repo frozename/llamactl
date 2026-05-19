@@ -15,6 +15,7 @@ import {
   listModelHosts,
   saveModelHost,
 } from '../../../remote/src/workload/modelhost-store.js';
+import { readModelHostState } from '../../../core/src/engines/state.js';
 import { getNodeClientByName } from '../dispatcher.js';
 import { makeSpecArtifactResolver } from './noderun-helpers.js';
 
@@ -475,15 +476,18 @@ export async function runGet(args: string[]): Promise<number> {
       ...row,
       kind: 'modelrun' as const,
     })),
-    ...modelHosts.map((manifest) => ({
-      kind: 'modelhost' as const,
-      name: manifest.metadata.name,
-      node: manifest.spec.node,
-      phase: manifest.status?.phase ?? 'Pending',
-      rel: manifest.spec.hostedModels.map((m) => m.rel).join(', '),
-      endpoint: manifest.status?.endpoint ?? null,
-      gateway: false,
-    })),
+    ...modelHosts.map((manifest) => {
+      const state = readModelHostState({ name: manifest.metadata.name });
+      return {
+        kind: 'modelhost' as const,
+        name: manifest.metadata.name,
+        node: manifest.spec.node,
+        phase: state ? 'Running' : 'unknown',
+        rel: manifest.spec.hostedModels.map((m) => m.rel).join(', '),
+        endpoint: state ? `http://${state.host}:${state.port}` : null,
+        gateway: false,
+      };
+    }),
   ];
   if (json) {
     process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);

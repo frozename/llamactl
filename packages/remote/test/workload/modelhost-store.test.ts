@@ -40,6 +40,18 @@ describe('modelhost-store', () => {
       const loaded = loadModelHostByName('mlx-host-local', dir);
       expect(loaded.metadata.name).toBe('mlx-host-local');
       expect(loaded.kind).toBe('ModelHost');
+      expect(loaded.status).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('saveModelHost strips status before writing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-status-'));
+    try {
+      saveModelHost({ ...manifest, status: { phase: 'Running' } } as never, dir);
+      const loaded = loadModelHostByName('mlx-host-local', dir);
+      expect(loaded.status).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -52,6 +64,21 @@ describe('modelhost-store', () => {
       writeFileSync(join(dir, 'node.yaml'), 'kind: NodeRun\napiVersion: llamactl.io/v1\nmetadata: {name: node}\nspec: {enabled: true}\n');
       saveModelHost(manifest, dir);
       expect(listModelHosts(dir).map((m) => m.metadata.name)).toEqual(['mlx-host-local']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('listModelHosts reports malformed YAML skips', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-skip-'));
+    try {
+      const bad = join(dir, 'broken.yaml');
+      writeFileSync(bad, 'kind: ModelHost\napiVersion: llamactl/v1\nmetadata: {name: broken}\nspec: {');
+      const onSkip = (file: string, err: Error) => {
+        expect(file).toBe(bad);
+        expect(err.message.length).toBeGreaterThan(0);
+      };
+      expect(listModelHosts(dir, onSkip)).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

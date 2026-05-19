@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reconcileOnce, type ReconcileResult } from '../../src/workload/reconciler.js';
 import { saveWorkload } from '../../src/workload/store.js';
-import { loadModelHost, saveModelHost } from '../../src/workload/modelhost-store.js';
+import { saveModelHost } from '../../src/workload/modelhost-store.js';
+import { resolveEnv } from '../../../core/src/env.js';
+import { readModelHostState } from '../../../core/src/engines/state.js';
 import type { WorkloadClient } from '../../src/workload/apply.js';
 
 function makeClient(): WorkloadClient {
@@ -105,7 +107,7 @@ describe('reconcileOnce', () => {
     const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
     try {
       saveWorkload(makeRunManifest(), dir);
-      saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } }, dir);
+      saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } } as never, dir);
       process.env.LOCAL_AI_RUNTIME_DIR = dir;
 
       const result: ReconcileResult = await reconcileOnce({
@@ -144,8 +146,8 @@ describe('reconcileOnce', () => {
 
       expect(readSpy).toHaveBeenCalled();
       readSpy.mockRestore();
-      const loaded = loadModelHost(join(dir, 'host-a.yaml'));
-      expect(loaded.status.phase).toBe('Running');
+      const state = readModelHostState({ name: 'host-a' }, resolveEnv({ LOCAL_AI_RUNTIME_DIR: dir }));
+      expect(state?.pid).toBe(1234);
     } finally {
       if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
       else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
@@ -158,7 +160,7 @@ describe('reconcileOnce', () => {
     const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
     const startCalls: unknown[] = [];
     try {
-      saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } }, dir);
+      saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } } as never, dir);
       process.env.LOCAL_AI_RUNTIME_DIR = dir;
 
       const result = await reconcileOnce({
@@ -221,7 +223,7 @@ describe('reconcileOnce', () => {
                     extraArgs: ['--threads', '2'],
                   },
                   status: { phase: 'Running' },
-                },
+                } as never,
                 dir,
               );
               return {
@@ -274,10 +276,10 @@ describe('reconcileOnce', () => {
             restartPolicy: 'OnFailure',
           },
           status: { phase: 'Running' },
-        },
+        } as never,
         dir,
       );
-      saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } }, dir);
+      saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } } as never, dir);
       process.env.LOCAL_AI_RUNTIME_DIR = dir;
 
       const result = await reconcileOnce({
@@ -334,7 +336,7 @@ describe('reconcileOnce', () => {
             enabled: false,
           },
           status: { phase: 'Stopped' },
-        },
+        } as never,
         dir,
       );
       process.env.LOCAL_AI_RUNTIME_DIR = dir;

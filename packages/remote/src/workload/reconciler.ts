@@ -127,7 +127,7 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
         });
         continue;
       }
-      const persisted = manifest.status?.phase === 'Running';
+      const persisted = current.state === 'Running';
       if (current.state === 'Running' && persisted && hostSpecsEqual(manifest, current as Record<string, unknown>)) {
         reports.push({
           name,

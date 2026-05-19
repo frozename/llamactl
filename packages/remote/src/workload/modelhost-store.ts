@@ -41,23 +41,33 @@ export function loadModelHostByName(name: string, dir: string = defaultModelHost
 }
 
 export function saveModelHost(manifest: ModelHostManifest, dir: string = defaultModelHostDir()): string {
-  const validated = ModelHostManifestSchema.parse(manifest);
+  const { status: _status, ...desired } = manifest as ModelHostManifest & { status?: unknown };
+  const validated = ModelHostManifestSchema.parse(desired);
   mkdirSync(dir, { recursive: true });
   const path = ensureModelHostPathWithinDir(modelHostPath(validated.metadata.name, dir), dir);
   writeFileSync(path, stringifyYaml(validated), 'utf8');
   return path;
 }
 
-export function listModelHosts(dir: string = defaultModelHostDir()): ModelHostManifest[] {
+export function listModelHosts(
+  dir: string = defaultModelHostDir(),
+  onSkip?: (file: string, err: Error) => void,
+): ModelHostManifest[] {
   if (!existsSync(dir)) return [];
   const out: ModelHostManifest[] = [];
   for (const entry of readdirSync(dir)) {
     if (!entry.endsWith('.yaml')) continue;
+    const file = join(dir, entry);
     try {
-      const parsed = parseYaml(readFileSync(join(dir, entry), 'utf8')) as { kind?: string };
+      const parsed = parseYaml(readFileSync(file, 'utf8')) as { kind?: string };
       if (parsed?.kind !== 'ModelHost') continue;
       out.push(ModelHostManifestSchema.parse(parsed));
-    } catch {}
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      (onSkip ?? ((skippedFile: string, skippedErr: Error) => {
+        console.warn(`listModelHosts: skipped ${skippedFile}: ${skippedErr.message}`);
+      }))(file, error);
+    }
   }
   return out.sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 }

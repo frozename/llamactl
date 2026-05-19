@@ -208,7 +208,7 @@ async function applyModelHostManifest(
     return {
       ok: true,
       kind: 'ModelHost',
-      manifest: { ...manifest, status: { phase: 'Stopped' } },
+      manifest,
       pid: null,
       endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${manifest.spec.endpoint.port}`,
     };
@@ -293,7 +293,6 @@ async function applyModelHostManifest(
     sub?.unsubscribe?.();
   }
 
-  const persisted = { ...manifest, status: { phase: status.state } };
   const rel = manifest.spec.hostedModels[0]!.rel;
   const modelAliases = Array.from(new Set([rel, basename(rel)]));
   // Only persist the controller-local sidecar when we have an authoritative
@@ -318,7 +317,7 @@ async function applyModelHostManifest(
   return {
     ok: true,
     kind: 'ModelHost',
-    manifest: persisted,
+    manifest,
     pid: status.pid ?? null,
     endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${manifest.spec.endpoint.port}`,
   };

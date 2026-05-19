@@ -151,6 +151,7 @@ export function listWorkloadNames(
 
 export function listWorkloads(
   dir: string = defaultWorkloadsDir(),
+  onSkip?: (file: string, err: Error) => void,
 ): ModelRun[] {
   // Kind-filter: NodeRun manifests also live in this directory
   // (Phase I.4). Skip anything that isn't `kind: ModelRun`
@@ -165,9 +166,11 @@ export function listWorkloads(
       const parsed = parseYaml(raw) as { kind?: string } | null;
       if (parsed?.kind !== 'ModelRun') continue;
       out.push(ModelRunSchema.parse(parsed));
-    } catch {
-      // Malformed files surface via `llamactl describe workload <n>`
-      // where the operator gets a real error message.
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      (onSkip ?? ((skippedFile: string, skippedErr: Error) => {
+        console.warn(`listWorkloads: skipped ${skippedFile}: ${skippedErr.message}`);
+      }))(path, error);
     }
   }
   return out.sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
