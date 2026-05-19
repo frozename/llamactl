@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reconcileOnce, type ReconcileResult } from '../../src/workload/reconciler.js';
 import { saveWorkload } from '../../src/workload/store.js';
-import { saveModelHost } from '../../src/workload/modelhost-store.js';
+import { loadModelHostByName, saveModelHost } from '../../src/workload/modelhost-store.js';
 import type { WorkloadClient } from '../../src/workload/apply.js';
 
 function makeClient(): WorkloadClient {
@@ -106,6 +106,30 @@ describe('reconcileOnce', () => {
       expect(result.reports.map((r) => r.node)).toEqual(['local', 'local']);
       expect(result.reports.find((r) => r.name === 'host-a')?.action).toBe('started');
       expect(result.reports.find((r) => r.name === 'run-a')?.action).toBe('started');
+    } finally {
+      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
+      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('persists ModelHost status returned by the reconciler outcome', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llamactl-reconciler-host-status-'));
+    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    try {
+      saveModelHost(makeHostManifest(), dir);
+      process.env.LOCAL_AI_RUNTIME_DIR = dir;
+
+      await reconcileOnce({
+        workloadsDir: dir,
+        getClient: () => ({
+          ...makeClient(),
+          modelHostStatus: { query: async () => ({ state: 'Running', pid: 1234 }) },
+        }),
+      });
+
+      const loaded = loadModelHostByName('host-a', dir);
+      expect(loaded.status.phase).toBe('Running');
     } finally {
       if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
       else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;

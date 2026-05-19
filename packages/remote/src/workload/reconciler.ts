@@ -99,7 +99,7 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
           node: spec.node,
           action: 'started',
         });
-        saveModelHost(manifest, dir);
+        saveModelHost(result.manifest, dir);
       } else {
         errors++;
         reports.push({
