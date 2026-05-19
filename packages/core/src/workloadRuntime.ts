@@ -62,8 +62,10 @@ export function listLocalWorkloads(resolved: ResolvedEnv = resolveEnv()): Worklo
   for (const dirent of readdirSync(root, { withFileTypes: true })) {
     if (!dirent.isDirectory()) continue;
     const pidPath = join(root, dirent.name, 'llama-server.pid');
-    if (!existsSync(pidPath)) continue;
-    const pid = readPidFile(pidPath);
+    const modelhostPidPath = join(root, dirent.name, 'modelhost.pid');
+    const activePidPath = existsSync(pidPath) ? pidPath : modelhostPidPath;
+    if (!existsSync(activePidPath)) continue;
+    const pid = readPidFile(activePidPath);
     entries.push({ name: dirent.name, pid, alive: pid !== null && isProcessAlive(pid) });
   }
   return entries;

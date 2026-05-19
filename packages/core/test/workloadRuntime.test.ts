@@ -53,6 +53,18 @@ test('listLocalWorkloads returns names of workload subdirs with pidfiles', () =>
   } finally { t.cleanup(); }
 });
 
+test('listLocalWorkloads discovers ModelHost pid files alongside llama-server pid', () => {
+  const t = tempEnv();
+  try {
+    const a = join(t.runtimeDir, 'workloads', 'a');
+    mkdirSync(a, { recursive: true });
+    writeFileSync(join(a, 'modelhost.pid'), '777\n');
+    const entries = listLocalWorkloads(t.resolved);
+    expect(entries.map((e) => e.name)).toEqual(['a']);
+    expect(entries[0]!.pid).toBe(777);
+  } finally { t.cleanup(); }
+});
+
 test('listLocalRoutes returns ModelRun entries from llama-server state', () => {
   const t = tempEnv();
   try {

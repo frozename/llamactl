@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, test, spyOn } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +8,7 @@ const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
 });
 
 function tempEnv() {
@@ -152,6 +153,118 @@ test('listOpenAIModels differentiates host and agent ownership', () => {
       'llamactl-host',
     );
   } finally {
+    t.cleanup();
+  }
+});
+
+test('basename alias collision prefers ModelRun over ModelHost and warns', () => {
+  const t = tempEnv();
+  const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const run = join(t.dir, 'workloads', 'run');
+    mkdirSync(run, { recursive: true });
+    writeFileSync(join(run, 'llama-server.pid'), `${process.pid}\n`);
+    writeFileSync(
+      join(run, 'llama-server.state'),
+      JSON.stringify({
+        rel: 'Qwen3-8B-MLX-4bit',
+        extraArgs: [],
+        host: '127.0.0.1',
+        port: 8113,
+        binary: '/x/llama-server',
+        pid: process.pid,
+        startedAt: '2026-05-19T00:00:00Z',
+        tunedProfile: null,
+      }),
+    );
+
+    const host = join(t.dir, 'workloads', 'host');
+    mkdirSync(host, { recursive: true });
+    writeFileSync(join(host, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(
+      join(host, 'modelhost.state'),
+      JSON.stringify({
+        kind: 'ModelHost',
+        engine: 'omlx',
+        pid: process.pid,
+        host: '127.0.0.1',
+        port: 8114,
+        modelAliases: ['Qwen3-8B-MLX-4bit'],
+        startedAt: '2026-05-19T00:00:00Z',
+      }),
+    );
+
+    const models = openaiProxy.listOpenAIModels(t.env);
+    expect(models.data).toHaveLength(1);
+    expect(models.data[0]?.owned_by).toBe('llamactl-agent');
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[openaiProxy] route-map collision on model='Qwen3-8B-MLX-4bit': keeping ModelRun:run, ignoring ModelHost:host",
+    );
+  } finally {
+    warnSpy.mockRestore();
+    t.cleanup();
+  }
+});
+
+test('same-kind alias collision keeps the alphabetically earlier workload', async () => {
+  const t = tempEnv();
+  const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const alpha = join(t.dir, 'workloads', 'alpha');
+    mkdirSync(alpha, { recursive: true });
+    writeFileSync(join(alpha, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(
+      join(alpha, 'modelhost.state'),
+      JSON.stringify({
+        kind: 'ModelHost',
+        engine: 'omlx',
+        pid: process.pid,
+        host: '127.0.0.1',
+        port: 8115,
+        modelAliases: ['Qwen3-8B-MLX-4bit'],
+        startedAt: '2026-05-19T00:00:00Z',
+      }),
+    );
+
+    const beta = join(t.dir, 'workloads', 'beta');
+    mkdirSync(beta, { recursive: true });
+    writeFileSync(join(beta, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(
+      join(beta, 'modelhost.state'),
+      JSON.stringify({
+        kind: 'ModelHost',
+        engine: 'omlx',
+        pid: process.pid,
+        host: '127.0.0.1',
+        port: 8116,
+        modelAliases: ['Qwen3-8B-MLX-4bit'],
+        startedAt: '2026-05-19T00:00:00Z',
+      }),
+    );
+
+    const calls: Array<{ url: string }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push({ url });
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'Qwen3-8B-MLX-4bit',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      }),
+      t.env,
+    );
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe('http://127.0.0.1:8115/v1/chat/completions');
+  } finally {
+    warnSpy.mockRestore();
     t.cleanup();
   }
 });

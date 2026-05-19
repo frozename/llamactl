@@ -5,6 +5,8 @@ import type { ResolvedEnv } from '../types.js';
 import { ensureWorkloadRuntimeDir, workloadRuntimeDir, type WorkloadKey } from '../workloadRuntime.js';
 import type { EngineName } from './index.js';
 
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost', '0.0.0.0']);
+
 export interface ModelHostState {
   kind: 'ModelHost';
   engine: EngineName;
@@ -43,10 +45,20 @@ export function readModelHostState(
     const raw = readFileSync(path, 'utf8');
     const parsed = JSON.parse(raw) as ModelHostState;
     if (parsed?.kind !== 'ModelHost') return null;
-    if (typeof parsed.pid !== 'number') return null;
-    if (typeof parsed.host !== 'string') return null;
-    if (typeof parsed.port !== 'number') return null;
-    if (!Array.isArray(parsed.modelAliases)) return null;
+    if (!Number.isInteger(parsed.pid) || parsed.pid <= 0) return null;
+    if (typeof parsed.host !== 'string' || !LOOPBACK_HOSTS.has(parsed.host)) return null;
+    if (!Number.isInteger(parsed.port) || parsed.port < 1 || parsed.port > 65535) return null;
+    if (parsed.engine !== 'llamacpp' && parsed.engine !== 'omlx') return null;
+    if (typeof parsed.startedAt !== 'string' || Number.isNaN(Date.parse(parsed.startedAt))) return null;
+    if (!Array.isArray(parsed.modelAliases) || parsed.modelAliases.length === 0) return null;
+    if (
+      parsed.modelAliases.some(
+        (alias) =>
+          typeof alias !== 'string' ||
+          alias.length === 0 ||
+          /[\t\r\n]/.test(alias),
+      )
+    ) return null;
     return parsed;
   } catch {
     return null;

@@ -51,13 +51,46 @@ describe('engines/state', () => {
       kind: 'ModelHost',
       engine: 'omlx',
       pid: 1,
-      host: 'h',
+      host: '127.0.0.1',
       port: 1,
-      modelAliases: [],
-      startedAt: 't',
+      modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit'],
+      startedAt: '2026-05-19T00:00:00Z',
     };
     writeModelHostState(state, KEY, env);
     writeFileSync(modelhostStateFile(env, KEY), 'not json');
+    expect(readModelHostState(KEY, env)).toBeNull();
+  });
+
+  test('rejects invalid model host aliases, engine, host, port, pid, and startedAt', () => {
+    const base: ModelHostState = {
+      kind: 'ModelHost',
+      engine: 'omlx',
+      pid: 1,
+      host: '127.0.0.1',
+      port: 8094,
+      modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit'],
+      startedAt: '2026-05-19T00:00:00Z',
+    };
+
+    writeModelHostState({ ...base, modelAliases: [] }, KEY, env);
+    expect(readModelHostState(KEY, env)).toBeNull();
+
+    writeModelHostState({ ...base, modelAliases: ['bad\talias'] }, KEY, env);
+    expect(readModelHostState(KEY, env)).toBeNull();
+
+    writeModelHostState({ ...base, engine: 'not-an-engine' as ModelHostState['engine'] }, KEY, env);
+    expect(readModelHostState(KEY, env)).toBeNull();
+
+    writeModelHostState({ ...base, startedAt: 'not-a-date' }, KEY, env);
+    expect(readModelHostState(KEY, env)).toBeNull();
+
+    writeModelHostState({ ...base, pid: 0 }, KEY, env);
+    expect(readModelHostState(KEY, env)).toBeNull();
+
+    writeModelHostState({ ...base, host: '10.0.0.5' }, KEY, env);
+    expect(readModelHostState(KEY, env)).toBeNull();
+
+    writeModelHostState({ ...base, port: 70000 }, KEY, env);
     expect(readModelHostState(KEY, env)).toBeNull();
   });
 
@@ -66,10 +99,10 @@ describe('engines/state', () => {
       kind: 'ModelHost',
       engine: 'omlx',
       pid: 1,
-      host: 'h',
+      host: '127.0.0.1',
       port: 1,
-      modelAliases: [],
-      startedAt: 't',
+      modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit'],
+      startedAt: '2026-05-19T00:00:00Z',
     };
     writeModelHostState(state, KEY, env);
     expect(readModelHostState(KEY, env)).not.toBeNull();

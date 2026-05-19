@@ -2,6 +2,7 @@ import type { ModelInfo, ModelListResponse } from '@nova/contracts';
 import { statSync } from 'node:fs';
 import { resolveEnv } from './env.js';
 import { endpoint as llamaEndpoint, readServerState, readServerPid } from './server.js';
+import { readModelHostState } from './engines/state.js';
 import type { ResolvedEnv } from './types.js';
 import * as workloadRuntime from './workloadRuntime.js';
 import type { WorkloadKey } from './workloadRuntime.js';
@@ -58,21 +59,59 @@ export function listOpenAIModels(
     return { object: 'list', data };
   }
 
-  const unifiedResolved = keyOrResolved;
+  return getCachedModelsResponse(keyOrResolved);
+}
+
+function createdAtForRoute(route: workloadRuntime.LocalRoute, resolved: ResolvedEnv): number {
+  if (route.kind === 'ModelHost') {
+    const state = readModelHostState({ name: route.workload }, resolved);
+    if (state?.startedAt) return Math.floor(new Date(state.startedAt).getTime() / 1000);
+  } else {
+    const state = readServerState({ name: route.workload }, resolved);
+    if (state?.startedAt) return Math.floor(new Date(state.startedAt).getTime() / 1000);
+  }
+  return 0;
+}
+
+function buildListOpenAIModels(resolved: ResolvedEnv): ModelListResponse {
   const data: ModelInfo[] = [];
-  const seen = new Set<string>();
-  for (const route of workloadRuntime.listLocalRoutes(unifiedResolved)) {
-    if (seen.has(route.model)) continue;
-    seen.add(route.model);
+  const winners = new Map<string, { kind: string; workload: string }>();
+  const routes = [...workloadRuntime.listLocalRoutes(resolved)].sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'ModelRun' ? -1 : 1;
+    return a.workload.localeCompare(b.workload);
+  });
+  for (const route of routes) {
+    if (winners.has(route.model)) {
+      const prior = winners.get(route.model)!;
+      console.warn(
+        `[openaiProxy] route-map collision on model='${route.model}': keeping ${prior.kind}:${prior.workload}, ignoring ${route.kind}:${route.workload}`,
+      );
+      continue;
+    }
+    winners.set(route.model, { kind: route.kind, workload: route.workload });
     data.push({
       id: route.model,
       object: 'model',
-      created: Math.floor(Date.now() / 1000),
+      created: createdAtForRoute(route, resolved),
       owned_by: route.kind === 'ModelHost' ? 'llamactl-host' : 'llamactl-agent',
       capabilities: ['chat'],
     });
   }
   return { object: 'list', data };
+}
+
+let modelsResponseCache: { mtimeNs: bigint; response: ModelListResponse } | null = null;
+
+function getCachedModelsResponse(resolved: ResolvedEnv): ModelListResponse {
+  try {
+    const mtimeNs = statSync(workloadRuntime.workloadRuntimeRoot(resolved), { bigint: true }).mtimeNs;
+    if (modelsResponseCache && modelsResponseCache.mtimeNs === mtimeNs) return modelsResponseCache.response;
+    const response = buildListOpenAIModels(resolved);
+    modelsResponseCache = { mtimeNs, response };
+    return response;
+  } catch {
+    return buildListOpenAIModels(resolved);
+  }
 }
 
 function isJsonContentType(contentType: string | null): boolean {
@@ -110,7 +149,20 @@ let routeMapBuildCount = 0;
 function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
   routeMapBuildCount += 1;
   const out = new Map<string, RouteEntry>();
-  for (const route of workloadRuntime.listLocalRoutes(resolved)) {
+  const winners = new Map<string, { kind: string; workload: string }>();
+  const routes = [...workloadRuntime.listLocalRoutes(resolved)].sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'ModelRun' ? -1 : 1;
+    return a.workload.localeCompare(b.workload);
+  });
+  for (const route of routes) {
+    const prior = winners.get(route.model);
+    if (prior) {
+      console.warn(
+        `[openaiProxy] route-map collision on model='${route.model}': keeping ${prior.kind}:${prior.workload}, ignoring ${route.kind}:${route.workload}`,
+      );
+      continue;
+    }
+    winners.set(route.model, { kind: route.kind, workload: route.workload });
     out.set(route.model, { host: route.host, port: route.port });
   }
   return out;
@@ -130,6 +182,7 @@ function getRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
 
 export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   routeMapCache = null;
+  modelsResponseCache = null;
   routeMapBuildCount = 0;
 }
 
