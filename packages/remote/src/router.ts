@@ -377,15 +377,6 @@ const modelHostStopInput = z.object({
 });
 const modelHostStartInput = z.object({
   workload: z.string().min(1),
-  target: z.string().min(1),
-  extraArgs: z.array(z.string()).optional(),
-  endpoint: z
-    .object({
-      host: z.string().optional(),
-      port: z.number().int().positive().optional(),
-    })
-    .optional(),
-  binary: z.string().optional(),
   timeoutSeconds: z.number().int().positive().max(600).optional(),
 });
 

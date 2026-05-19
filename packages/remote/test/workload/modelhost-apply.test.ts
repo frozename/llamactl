@@ -1,4 +1,5 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, mock, spyOn, test } from 'bun:test';
+import * as fs from 'node:fs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +7,7 @@ import { applyManifest, type WorkloadClient } from '../../src/workload/apply.js'
 import { reconcileOnce } from '../../src/workload/reconciler.js';
 import { listModelHosts, saveModelHost } from '../../src/workload/modelhost-store.js';
 import { setWorkloadEnabledWithDeps } from '../../../cli/src/commands/setEnabled.js';
+import * as modelHostState from '../../../core/src/engines/state.js';
 import { readModelHostState, removeModelHostState } from '../../../core/src/engines/state.js';
 
 function makeModelRunClient(): WorkloadClient {
@@ -144,13 +146,63 @@ describe('applyManifest — kind dispatch', () => {
       expect(captured.statusCalls).toBe(1);
       expect(captured.startInput).toEqual({
         workload: 'mlx-host-test',
-        target: 'mlx-community/Test-MLX-4bit',
-        extraArgs: ['--max-concurrent-requests', '1'],
-        endpoint: { host: '127.0.0.1', port: 18094 },
-        binary: '/usr/bin/true',
         timeoutSeconds: 60,
       });
     } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('applyOneModelHost uses a single directory scan for admission', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-admission-scan-'));
+    const workloadsDir = join(tmp, 'workloads');
+    saveModelHost(makeModelHostManifest('mlx-host-a', 4), workloadsDir);
+    saveModelHost(makeModelHostManifest('mlx-host-b', 4), workloadsDir);
+    const readdirSpy = spyOn(fs, 'readdirSync');
+    const client: WorkloadClient = {
+      serverStatus: {
+        query: async () => ({
+          state: 'down',
+          rel: null,
+          extraArgs: [],
+          pid: null,
+          host: null,
+          port: null,
+          binary: null,
+          endpoint: '',
+        }),
+      },
+      serverStop: { mutate: async () => ({ ok: true }) },
+      serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      modelHostStart: {
+        subscribe: async (_input, callbacks) => {
+          queueMicrotask(() => {
+            callbacks.onData({ type: 'done', result: { ok: true, pid: 123, state: 'Running' } });
+            callbacks.onComplete();
+          });
+          return { unsubscribe() {} };
+        },
+      },
+      modelHostStop: { mutate: async () => ({ ok: true }) },
+      modelHostStatus: { query: async () => ({ state: 'Running', pid: 123 }) },
+      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      rpcServerStop: { mutate: async () => ({ ok: true }) },
+      rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+    };
+
+    try {
+      const result = await applyManifest({
+        manifest: makeModelHostManifest('mlx-host-c', 4),
+        workloadsDir,
+        getClient: () => client,
+        spawn: mock(() => ({ pid: 99999 } as any)) as any,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(readdirSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      readdirSpy.mockRestore();
       rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -205,6 +257,63 @@ describe('applyManifest — kind dispatch', () => {
     expect(result.error).toContain('would reserve 18.0 GiB');
 
     rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('applyOneModelHost surfaces modelHostStop failures when disabling', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-disable-fail-'));
+    const workloadsDir = join(tmp, 'workloads');
+    saveModelHost({ ...makeModelHostManifest('mlx-host-smoke', 4), status: { phase: 'Running' } }, workloadsDir);
+    const removeSpy = spyOn(modelHostState, 'removeModelHostState');
+    const client: WorkloadClient = {
+      serverStatus: {
+        query: async () => ({
+          state: 'down',
+          rel: null,
+          extraArgs: [],
+          pid: null,
+          host: null,
+          port: null,
+          binary: null,
+          endpoint: '',
+        }),
+      },
+      serverStop: { mutate: async () => ({ ok: true }) },
+      serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      modelHostStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      modelHostStop: {
+        mutate: async () => {
+          throw new Error('upstream unavailable');
+        },
+      },
+      modelHostStatus: { query: async () => ({ state: 'Running', pid: 123 }) },
+      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      rpcServerStop: { mutate: async () => ({ ok: true }) },
+      rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+    };
+
+    try {
+      const result = await applyManifest({
+        manifest: {
+          ...makeModelHostManifest('mlx-host-smoke', 4),
+          spec: {
+            ...makeModelHostManifest('mlx-host-smoke', 4).spec,
+            enabled: false,
+          },
+        },
+        workloadsDir,
+        getClient: () => client,
+        spawn: mock(() => ({ pid: 99999 } as any)) as any,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('modelHostStop failed');
+      expect(removeSpy).not.toHaveBeenCalled();
+    } finally {
+      removeSpy.mockRestore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   test('applyOneModelHost uses pid from done payload and skips the follow-up status query', async () => {

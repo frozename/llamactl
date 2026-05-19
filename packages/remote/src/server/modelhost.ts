@@ -13,10 +13,6 @@ export interface ModelHostSpawnResult {
 
 export interface StartModelHostOptions {
   key: WorkloadKey;
-  target?: string;
-  extraArgs?: string[];
-  endpoint?: { host?: string; port?: number };
-  binary?: string;
   timeoutSeconds?: number;
   signal?: AbortSignal;
   onEvent?: (event: unknown) => void;
@@ -65,6 +61,30 @@ function toRuntimeEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
   return env ?? process.env;
 }
 
+const CHILD_ENV_ALLOWLIST = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LANG',
+  'LC_ALL',
+  'TMPDIR',
+  'LLAMACTL_MODELS_DIR',
+  'LLAMA_CPP_MODELS',
+  'LLAMA_CPP_BIN',
+];
+
+function sanitizeChildEnv(parent: NodeJS.ProcessEnv, overrides: Record<string, string> | undefined): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const key of CHILD_ENV_ALLOWLIST) {
+    const value = parent[key];
+    if (value !== undefined) out[key] = value;
+  }
+  if (overrides) {
+    for (const [key, value] of Object.entries(overrides)) out[key] = value;
+  }
+  return out;
+}
+
 function withRuntimeDir(env: NodeJS.ProcessEnv, runtimeDir?: string): NodeJS.ProcessEnv {
   if (!runtimeDir) return env;
   return { ...env, LOCAL_AI_RUNTIME_DIR: runtimeDir };
@@ -102,54 +122,55 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     LLAMACTL_RUNTIME_DIR: env.LLAMACTL_RUNTIME_DIR,
     workloadName: opts.key.name,
   };
-  const launch = engine.buildBootCommand(
-    {
-      ...spec,
-      endpoint: opts.endpoint ?? spec.endpoint,
-      binary: opts.binary ?? spec.binary,
-      extraArgs: opts.extraArgs ?? spec.extraArgs,
-    },
-    bootEnv,
-  );
 
   const spawn = opts.spawn ?? nodeSpawn;
-  const child: ChildProcess = spawn(launch.binary, launch.args, {
-    detached: true,
-    stdio: 'ignore',
-    env: runtimeEnv,
-  });
-  const pid = child.pid ?? null;
-  if (pid === null) {
-    const result = { ok: false, pid: null, error: 'failed to spawn modelhost process' };
+  let child: ChildProcess | null = null;
+  try {
+    await engine.prepareLaunch?.(spec, bootEnv);
+    const launch = engine.buildBootCommand(spec, bootEnv);
+    child = spawn(launch.binary, launch.args, {
+      detached: true,
+      stdio: 'ignore',
+      env: sanitizeChildEnv(runtimeEnv, launch.envOverrides),
+    });
+    const pid = child.pid ?? null;
+    if (pid === null) {
+      throw new Error('failed to spawn modelhost process');
+    }
+
+    const endpoint = manifest.spec.endpoint;
+    const readiness = await (opts.probeReady ?? engine.probeReady)(endpoint, (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000);
+    if (!readiness.ready) {
+      throw new Error('modelhost failed readiness probe');
+    }
+
+    const modelAliases = Array.from(new Set([manifest.spec.hostedModels[0]!.rel, basename(manifest.spec.hostedModels[0]!.rel)]));
+    writeModelHostState(
+      {
+        kind: 'ModelHost',
+        engine: manifest.spec.engine,
+        pid,
+        host: endpoint.host,
+        port: endpoint.port,
+        modelAliases,
+        startedAt: new Date().toISOString(),
+      },
+      opts.key,
+      resolved,
+    );
+    const result = { ok: true, pid };
+    opts.onEvent?.({ type: 'done', result });
+    return result;
+  } catch (error) {
+    const pid = child?.pid ?? null;
+    if (pid !== null) {
+      await engine.teardown(pid).catch(() => {});
+    }
+    const message = error instanceof Error ? error.message : 'modelhost start failed';
+    const result = { ok: false, pid: null, error: message };
     opts.onEvent?.({ type: 'done', result });
     return result;
   }
-
-  const endpoint = opts.endpoint ?? manifest.spec.endpoint;
-  const readiness = await (opts.probeReady ?? engine.probeReady)(endpoint, (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000);
-  if (!readiness.ready) {
-    const result = { ok: false, pid: null, error: 'modelhost failed readiness probe' };
-    opts.onEvent?.({ type: 'done', result });
-    return result;
-  }
-
-  const modelAliases = Array.from(new Set([manifest.spec.hostedModels[0]!.rel, basename(manifest.spec.hostedModels[0]!.rel)]));
-  writeModelHostState(
-    {
-      kind: 'ModelHost',
-      engine: manifest.spec.engine,
-      pid,
-      host: endpoint.host,
-      port: endpoint.port,
-      modelAliases,
-      startedAt: new Date().toISOString(),
-    },
-    opts.key,
-    resolved,
-  );
-  const result = { ok: true, pid };
-  opts.onEvent?.({ type: 'done', result });
-  return result;
 }
 
 export async function stopModelHost(opts: StopModelHostOptions): Promise<StopModelHostResult> {

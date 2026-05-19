@@ -1,10 +1,11 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, mock, spyOn, test } from 'bun:test';
+import * as fs from 'node:fs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reconcileOnce, type ReconcileResult } from '../../src/workload/reconciler.js';
 import { saveWorkload } from '../../src/workload/store.js';
-import { loadModelHostByName, saveModelHost } from '../../src/workload/modelhost-store.js';
+import { loadModelHost, saveModelHost } from '../../src/workload/modelhost-store.js';
 import type { WorkloadClient } from '../../src/workload/apply.js';
 
 function makeClient(): WorkloadClient {
@@ -119,6 +120,7 @@ describe('reconcileOnce', () => {
     try {
       saveModelHost(makeHostManifest(), dir);
       process.env.LOCAL_AI_RUNTIME_DIR = dir;
+      const readSpy = spyOn(fs, 'readFileSync');
 
       await reconcileOnce({
         workloadsDir: dir,
@@ -128,7 +130,9 @@ describe('reconcileOnce', () => {
         }),
       });
 
-      const loaded = loadModelHostByName('host-a', dir);
+      expect(readSpy).toHaveBeenCalled();
+      readSpy.mockRestore();
+      const loaded = loadModelHost(join(dir, 'host-a.yaml'));
       expect(loaded.status.phase).toBe('Running');
     } finally {
       if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
@@ -212,8 +216,8 @@ describe('reconcileOnce', () => {
       });
 
       expect(result.errors).toBe(0);
-      expect(result.reports[0]?.action).toBe('started');
-      expect(startCalls).toBe(1);
+      expect(result.reports[0]?.action).toBe('unchanged');
+      expect(startCalls).toBe(0);
     } finally {
       if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
       else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;

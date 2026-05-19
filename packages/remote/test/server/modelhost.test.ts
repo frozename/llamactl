@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ENGINES } from '../../../core/src/engines/index.js';
 import { startModelHost, stopModelHost, statusModelHost } from '../../src/server/modelhost.js';
 
 function makeManifest(tmp: string) {
@@ -31,6 +32,151 @@ function makeManifest(tmp: string) {
 }
 
 describe('server/modelhost', () => {
+  test('keeps the manifest binary as source of truth', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-binary-'));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const spawn = mock(() => ({ pid: 4321 } as const));
+    try {
+      const result = await startModelHost({
+        key: { name: 'mlx-host-server' },
+        workloadsDir,
+        runtimeDir,
+        spawn,
+        probeReady: async () => ({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const [binary] = spawn.mock.calls[0]!;
+      expect(binary).toBe(join(tmp, 'omlx'));
+      expect(binary).not.toBe('/tmp/evil.sh');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps the manifest endpoint as source of truth', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-endpoint-'));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const spawn = mock(() => ({ pid: 4321 } as const));
+    try {
+      const result = await startModelHost({
+        key: { name: 'mlx-host-server' },
+        workloadsDir,
+        runtimeDir,
+        spawn,
+        probeReady: async () => ({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(result.pid).toBe(4321);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('calls prepareLaunch before buildBootCommand on the start path', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-prepare-'));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const order: string[] = [];
+    const engine = ENGINES.omlx;
+    const originalPrepareLaunch = engine.prepareLaunch;
+    const originalBuildBootCommand = engine.buildBootCommand;
+    const prepareLaunch = mock(async () => {
+      order.push('prepareLaunch');
+    });
+    const buildBootCommand = mock((spec: Parameters<typeof engine.buildBootCommand>[0], env) => {
+      order.push(`buildBootCommand:${spec.binary}`);
+      return originalBuildBootCommand(spec, env);
+    });
+    const spawn = mock(() => ({ pid: 4321 } as const));
+    try {
+      engine.prepareLaunch = prepareLaunch;
+      engine.buildBootCommand = buildBootCommand;
+      const result = await startModelHost({
+        key: { name: 'mlx-host-server' },
+        workloadsDir,
+        runtimeDir,
+        spawn,
+        probeReady: async () => ({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(order[0]).toBe('prepareLaunch');
+      expect(order[1]).toContain('buildBootCommand');
+      expect(buildBootCommand).toHaveBeenCalled();
+    } finally {
+      engine.prepareLaunch = originalPrepareLaunch;
+      engine.buildBootCommand = originalBuildBootCommand;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('tears down the spawned pid when readiness fails', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-teardown-'));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const tornDown: number[] = [];
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown;
+    const spawn = mock(() => ({ pid: 4321 } as const));
+    try {
+      engine.teardown = mock(async (pid: number) => {
+        tornDown.push(pid);
+      });
+      const result = await startModelHost({
+        key: { name: 'mlx-host-server' },
+        workloadsDir,
+        runtimeDir,
+        spawn,
+        probeReady: async () => ({ ready: false, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(false);
+      expect(tornDown).toEqual([4321]);
+    } finally {
+      engine.teardown = originalTeardown;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('sanitizes the spawned env to the allowlist', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-env-'));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const spawn = mock(() => ({ pid: 4321 } as const));
+    const env = {
+      PATH: '/usr/bin',
+      HOME: '/Users/test',
+      USER: 'test',
+      LANG: 'en_US.UTF-8',
+      LC_ALL: 'en_US.UTF-8',
+      TMPDIR: '/tmp',
+      LLAMACTL_MODELS_DIR: '/models',
+      LLAMA_CPP_MODELS: '/llama-models',
+      LLAMA_CPP_BIN: '/bin/llama',
+      SECRET_TOKEN: 'leak',
+    } as NodeJS.ProcessEnv;
+    try {
+      const result = await startModelHost({
+        key: { name: 'mlx-host-server' },
+        workloadsDir,
+        runtimeDir,
+        env,
+        spawn,
+        probeReady: async () => ({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const [, , options] = spawn.mock.calls[0]!;
+      expect(options.env?.SECRET_TOKEN).toBeUndefined();
+      expect(options.env?.PATH).toBe('/usr/bin');
+      expect(options.env?.LLAMA_CPP_BIN).toBe('/bin/llama');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test('startModelHost writes state sidecar with the spawn pid', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-start-'));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
@@ -42,7 +188,6 @@ describe('server/modelhost', () => {
         runtimeDir,
         spawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
-        waitMs: 1,
       });
 
       expect(result.ok).toBe(true);
@@ -65,7 +210,6 @@ describe('server/modelhost', () => {
         runtimeDir,
         spawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
-        waitMs: 1,
       });
 
       const result = await stopModelHost({

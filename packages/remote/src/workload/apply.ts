@@ -7,8 +7,7 @@ import { ModelRunSchema } from './schema.js';
 import { ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
 import type { GatewayDispatch } from './gateway-handlers/types.js';
 import { computeNodeBudget, defaultNodeBudgetGiB } from './admission.js';
-import { defaultWorkloadsDir, listWorkloads } from './store.js';
-import { listModelHosts } from './modelhost-store.js';
+import { defaultWorkloadsDir, listAnyWorkloadsForAdmission, listWorkloads } from './store.js';
 import { withNodeLock } from './node-mutex.js';
 import { basename } from 'node:path';
 
@@ -69,14 +68,7 @@ export interface WorkloadClient {
   };
   modelHostStart: {
     subscribe(
-      input: {
-        workload: string;
-        target: string;
-        extraArgs?: string[];
-        endpoint?: { host?: string; port?: number };
-        binary?: string;
-        timeoutSeconds?: number;
-      },
+      input: { workload: string; timeoutSeconds?: number },
       callbacks: SubscribeCallbacks,
     ): Unsubscribable;
   };
@@ -179,32 +171,6 @@ function manifestKind(raw: unknown): string | null {
   return typeof kind === 'string' ? kind : null;
 }
 
-function projectModelHostToModelRun(manifest: ModelHostManifest): ModelRun {
-  return {
-    apiVersion: manifest.apiVersion,
-    kind: 'ModelRun',
-    metadata: {
-      name: manifest.metadata.name,
-      labels: manifest.metadata.labels ?? {},
-      annotations: {},
-    },
-    spec: {
-      node: manifest.spec.node,
-      enabled: manifest.spec.enabled,
-      target: { kind: 'rel', value: manifest.spec.hostedModels[0]!.rel },
-      extraArgs: manifest.spec.extraArgs,
-      workers: [],
-      restartPolicy: manifest.spec.restartPolicy,
-      resources: manifest.spec.resources,
-      timeoutSeconds: manifest.spec.timeoutSeconds,
-      endpoint: manifest.spec.endpoint,
-      binary: manifest.spec.binary,
-      gateway: false,
-      allowExternalBind: false,
-    },
-  };
-}
-
 async function applyModelHostManifest(
   manifest: ModelHostManifest,
   opts: ApplyManifestOptions,
@@ -233,7 +199,10 @@ async function applyModelHostManifest(
     if (client.modelHostStop) {
       try {
         await client.modelHostStop.mutate({ workload: manifest.metadata.name });
-      } catch {}
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: `modelHostStop failed: ${message}` };
+      }
     }
     removeModelHostState({ name: manifest.metadata.name }, resolved);
     return {
@@ -247,17 +216,10 @@ async function applyModelHostManifest(
 
   const budget = opts.getNodeBudgetGiB?.(manifest.spec.node) ?? defaultNodeBudgetGiB();
   const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir();
-  const livingManifests = [
-    ...listWorkloads(workloadsDir)
-      .filter((m) => m.metadata.name !== manifest.metadata.name)
-      .filter((m) => m.spec.node === manifest.spec.node)
-      .filter((m) => m.spec.enabled !== false),
-    ...listModelHosts(workloadsDir)
-      .filter((m) => m.metadata.name !== manifest.metadata.name)
-      .filter((m) => m.spec.node === manifest.spec.node)
-      .filter((m) => m.spec.enabled !== false)
-      .map(projectModelHostToModelRun),
-  ];
+  const livingManifests = listAnyWorkloadsForAdmission(workloadsDir)
+    .filter((m) => m.metadata.name !== manifest.metadata.name)
+    .filter((m) => m.spec.node === manifest.spec.node)
+    .filter((m) => m.spec.enabled !== false);
   const admit = computeNodeBudget({
     nodeName: manifest.spec.node,
     nodeBudgetGiB: budget,
@@ -295,10 +257,6 @@ async function applyModelHostManifest(
       sub = client.modelHostStart.subscribe(
         {
           workload: manifest.metadata.name,
-          target: manifest.spec.hostedModels[0]!.rel,
-          ...(manifest.spec.extraArgs.length > 0 ? { extraArgs: manifest.spec.extraArgs } : {}),
-          ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
-          ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
           timeoutSeconds: manifest.spec.timeoutSeconds,
         },
         {
