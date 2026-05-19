@@ -141,7 +141,7 @@ export type ApplyManifestOutcome =
       ok: true;
       kind: 'ModelHost';
       manifest: ModelHostManifest & { status: { phase: string } };
-      pid: number;
+      pid: number | null;
       endpoint: string;
     }
   | { ok: false; error: string };
@@ -292,19 +292,24 @@ async function applyModelHostManifest(
   const persisted = { ...manifest, status: { phase: status.state } };
   const rel = manifest.spec.hostedModels[0]!.rel;
   const modelAliases = Array.from(new Set([rel, basename(rel)]));
-  writeModelHostState(
-    {
-      kind: 'ModelHost',
-      engine: manifest.spec.engine,
-      pid: status.pid ?? null,
-      host: manifest.spec.endpoint.host,
-      port: manifest.spec.endpoint.port,
-      modelAliases,
-      startedAt: new Date().toISOString(),
-    },
-    { name: manifest.metadata.name },
-    resolved,
-  );
+  // Only persist the controller-local sidecar when we have an authoritative
+  // pid from the dispatcher. Without one, the sidecar's liveness/teardown
+  // semantics are wrong, so skip it — the dispatcher owns the real state.
+  if (typeof status.pid === 'number' && status.pid > 0) {
+    writeModelHostState(
+      {
+        kind: 'ModelHost',
+        engine: manifest.spec.engine,
+        pid: status.pid,
+        host: manifest.spec.endpoint.host,
+        port: manifest.spec.endpoint.port,
+        modelAliases,
+        startedAt: new Date().toISOString(),
+      },
+      { name: manifest.metadata.name },
+      resolved,
+    );
+  }
 
   return {
     ok: true,
