@@ -1,0 +1,42 @@
+[
+  {
+    "name": "qwen3-8b-mlx-4bit",
+    "engine": "omlx",
+    "family": "qwen-3",
+    "quant": "MLX-4bit",
+    "size_params": "8B",
+    "host": "127.0.0.1",
+    "port": 8094,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "request_model_id": "Qwen3-8B-MLX-4bit",
+    "extra_args": ["--max-concurrent-requests", "4"],
+    "start_args": [],
+    "managed": true
+  },
+  {
+    "name": "qwen3-8b-llamacpp-Q4KM",
+    "engine": "llamacpp",
+    "family": "qwen-3",
+    "quant": "Q4_K_M",
+    "size_params": "8B",
+    "host": "127.0.0.1",
+    "port": 8087,
+    "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf",
+    "extra_args": [],
+    "binary": "/Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server",
+    "start_args": [
+      "--ctx-size", "32768",
+      "-ngl", "999",
+      "--flash-attn", "on",
+      "-ctk", "q8_0",
+      "-ctv", "q8_0",
+      "--no-warmup",
+      "-np", "1",
+      "--jinja",
+      "--reasoning", "off",
+      "--alias", "local"
+    ],
+    "managed": true
+  }
+]

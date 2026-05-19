@@ -102,6 +102,7 @@ export async function runMatrix(
                 messages: built.messages as any[],
                 maxTokens: 256,
                 ...(model.request_model_id ? { model: model.request_model_id } : {}),
+                ...(model.disable_thinking ? { enableThinking: false } : {}),
                 ...(built.tools ? { tools: built.tools as any[], tool_choice: built.tool_choice } : {}),
               });
               const { resp, wallMs } = await completeChat(`http://${model.host}:${model.port}`, req);

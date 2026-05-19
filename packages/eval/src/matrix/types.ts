@@ -17,6 +17,12 @@ export interface ModelSpec {
    *  for llama.cpp. For oMLX (multi-model), set to the directory
    *  basename (e.g. 'Qwen3-8B-MLX-4bit'). */
   request_model_id?: string;
+  /** Send `chat_template_kwargs.enable_thinking: false` in every
+   *  request body. Needed when a thinking-mode-capable model (Qwen3)
+   *  is hosted by an engine that doesn't expose --reasoning off
+   *  (oMLX); without this the model emits chain-of-thought that
+   *  breaks structured-output scorers. */
+  disable_thinking?: boolean;
   lora_path?: string;
   prompt_template?: 'chat-format' | 'bare-instruct' | 'bare-base';
   inference_toggles?: Record<string, unknown>;

@@ -1,0 +1,33 @@
+# Matrix report
+
+Run: 2026-05-19T14:07:29.715Z-c9fd4e82
+Cells: 2
+
+## Primary metric (mixed)
+
+| Model | memory-recall | tool-call-grammar |
+| -- | -- | -- |
+| qwen3-8b-mlx-4bit | 0.5603 | 0.9000 |
+
+## Latency (p50 / p95, ms)
+
+| Model | memory-recall | tool-call-grammar |
+| -- | -- | -- |
+| qwen3-8b-mlx-4bit | 1971 / 2216 | 1423 / 2209 |
+
+## Throughput (tps)
+
+| Model | memory-recall | tool-call-grammar |
+| -- | -- | -- |
+| qwen3-8b-mlx-4bit | 36.34 | 31.64 |
+
+## Errors
+
+| Model | memory-recall | tool-call-grammar |
+| -- | -- | -- |
+| qwen3-8b-mlx-4bit | 0 | 0 |
+
+## Per-workload winner
+
+- memory-recall: **qwen3-8b-mlx-4bit** (0.5603)
+- tool-call-grammar: **qwen3-8b-mlx-4bit** (0.9000)

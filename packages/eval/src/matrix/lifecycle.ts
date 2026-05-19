@@ -52,7 +52,7 @@ async function pingHealth(host: string, port: number, timeoutMs = 2000): Promise
   }
 }
 
-export async function probeInference(host: string, port: number, timeoutMs: number): Promise<boolean> {
+export async function probeInference(host: string, port: number, timeoutMs: number, modelId = 'local'): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -60,7 +60,7 @@ export async function probeInference(host: string, port: number, timeoutMs: numb
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: 'local',
+        model: modelId,
         messages: [{ role: 'user', content: 'hi' }],
         max_tokens: 4,
         temperature: 0,
@@ -103,7 +103,11 @@ export function buildBootCommandForModelSpec(model: ModelSpec): { binary: string
       engine: 'omlx',
       binary: model.binary,
       endpoint: { host: model.host, port: model.port },
-      hostedModels: [{ rel: basename(model.gguf_path) }],
+      // hostedModels is a no-op for the matrix path (oMLX auto-discovers
+      // models from --model-dir subdirs). Use request_model_id when
+      // provided, else fall back to basename(gguf_path) for legacy
+      // llama.cpp-style specs that set both fields.
+      hostedModels: [{ rel: model.request_model_id ?? (model.gguf_path ? basename(model.gguf_path) : model.name) }],
       resources: {},
       extraArgs: model.extra_args ?? [],
       timeoutSeconds: 60,
@@ -146,7 +150,7 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
       );
     }
     if (await pingHealth(model.host, model.port)) {
-      if (!(await probeInference(model.host, model.port, 30_000))) {
+      if (!(await probeInference(model.host, model.port, 30_000, model.request_model_id ?? 'local'))) {
         proc.kill('SIGTERM');
         throw new Error(
           `llama-server for ${model.name} /v1 boot-probe failed\n--- stderr tail ---\n${stderrTail.join('\n')}`,
