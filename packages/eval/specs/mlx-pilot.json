@@ -9,6 +9,7 @@
     "port": 8094,
     "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
     "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "request_model_id": "Qwen3-8B-MLX-4bit",
     "managed": false,
     "extra_args": [],
     "start_args": []

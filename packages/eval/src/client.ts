@@ -61,10 +61,14 @@ export function buildCompletionRequest(opts: {
   tools?: ToolDef[];
   tool_choice?: unknown;
   enableThinking?: boolean;
+  /** Model id sent in the OpenAI request body. Defaults to 'local'
+   *  (llama-server alias). For multi-model hosts (oMLX), pass the
+   *  actual model id (e.g. directory basename). */
+  model?: string;
 }): CompletionRequest {
   return {
     body: {
-      model: 'local',
+      model: opts.model ?? 'local',
       messages: opts.messages,
       temperature: 0,
       max_tokens: opts.maxTokens,

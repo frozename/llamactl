@@ -6,14 +6,17 @@
 # (HEAD/main/tags) are rejected by the installer — see SHA validation
 # in tools/install-omlx-from-source.sh.
 #
-# 2026-05-19: switched from upstream HEAD (51907f08...) to the
-# feat/speculative-decoding branch (24e1bbd2...). That branch adds
-# MTP / speculative-decoding support, which matches the project's
-# MTP-first model-selection rule for generation workloads
-# (see AGENTS.md "Model selection preferences" + the workload
-# qualifier note: MTP helps generation/ranking, not classification).
-commit=24e1bbd21b60e9d96f2f46e28a5c1c9fd6a8aad8
+# 2026-05-19: pinned to main HEAD. MTP / speculative-decoding support
+# lives on mainline as `dflash` (draft-flash, see commits like
+# `feat(dflash): expose draft_window_size / draft_sink_size /
+# verify_mode in model settings (#1276)`). The earlier
+# `feat/speculative-decoding` branch is an abandoned attempt with a
+# GPU-stream registration bug (`RuntimeError: There is no Stream(gpu, 0)
+# in current thread` in scheduler.py#L416). dflash on main is the
+# working path; configuration is per-model via model settings rather
+# than CLI flags.
+commit=f6f4269c70f3a9898ff9b1a0e65068b5a6c96187
 verified_date=2026-05-19
 verified_by=llamactl/mlx-engine-sub-a-plan
-branch=feat/speculative-decoding
-notes=Switched to feat/speculative-decoding head for MTP support. Phase 6.4 manual run will confirm CLI compatibility on M4 Pro before stamping verified_date as the post-smoke date.
+branch=main
+notes=Phase 6.4 smoke (2026-05-19) confirmed CLI compatibility on M4 Pro. dflash MTP is available but disabled by default; enable per-model via model settings.

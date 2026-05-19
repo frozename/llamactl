@@ -12,6 +12,11 @@ export interface ModelSpec {
   binary?: string;
   start_args?: string[];
   managed?: boolean;
+  /** Override the OpenAI request body's `model` field. Llama-server
+   *  uses --alias local by default, so leaving this unset is correct
+   *  for llama.cpp. For oMLX (multi-model), set to the directory
+   *  basename (e.g. 'Qwen3-8B-MLX-4bit'). */
+  request_model_id?: string;
   lora_path?: string;
   prompt_template?: 'chat-format' | 'bare-instruct' | 'bare-base';
   inference_toggles?: Record<string, unknown>;

@@ -71,9 +71,11 @@ function validateModelSpec(value: unknown): ModelSpec {
     throw new Error('invalid ModelSpec: missing/bad field name');
   }
   const spec = value as Record<string, unknown>;
+  const engine = typeof spec.engine === 'string' ? spec.engine : 'llamacpp';
+  const modelPathField: keyof ModelSpec = engine === 'omlx' ? 'mlx_model_dir' : 'gguf_path';
   const required: Array<keyof ModelSpec> = [
     'name',
-    'gguf_path',
+    modelPathField,
     'quant',
     'family',
     'size_params',
