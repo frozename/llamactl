@@ -5,10 +5,29 @@ export type EngineName = 'llamacpp' | 'omlx';
 export interface EngineBootEnv {
   LLAMACTL_MODELS_DIR?: string;
   LLAMA_CPP_MODELS?: string;
+  LLAMACTL_RUNTIME_DIR?: string;
+  workloadName?: string;
 }
 
 export interface ModelHostHostedModel {
   rel: string;
+  dflash?: {
+    enabled: boolean;
+    dflash_enabled?: boolean;
+    dflash_draft_model?: string | null;
+    dflash_draft_quant_enabled?: boolean;
+    dflash_draft_quant_weight_bits?: number;
+    dflash_draft_quant_activation_bits?: number;
+    dflash_draft_quant_group_size?: number;
+    dflash_max_ctx?: number | null;
+    dflash_in_memory_cache?: boolean;
+    dflash_in_memory_cache_max_entries?: number;
+    dflash_in_memory_cache_max_bytes?: number;
+    dflash_ssd_cache?: boolean;
+    dflash_draft_window_size?: number;
+    dflash_draft_sink_size?: number;
+    dflash_verify_mode?: string | null;
+  };
 }
 
 export interface ModelHostSpecForEngine {

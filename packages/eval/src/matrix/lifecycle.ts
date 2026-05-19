@@ -114,6 +114,7 @@ export function buildBootCommandForModelSpec(model: ModelSpec): { binary: string
     };
     const env: EngineBootEnv = {};
     if (model.mlx_model_dir) env.LLAMACTL_MODELS_DIR = model.mlx_model_dir;
+    env.workloadName = model.name;
     return ENGINES.omlx.buildBootCommand(spec, env);
   }
   return buildLlamaCppBootCommand(model);

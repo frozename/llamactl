@@ -2,6 +2,23 @@ import { z } from 'zod';
 
 export const ModelHostHostedModelSchema = z.object({
   rel: z.string().min(1),
+  dflash: z.object({
+    enabled: z.boolean(),
+    dflash_enabled: z.boolean().optional(),
+    dflash_draft_model: z.string().min(1).nullable().optional(),
+    dflash_draft_quant_enabled: z.boolean().optional(),
+    dflash_draft_quant_weight_bits: z.number().int().optional(),
+    dflash_draft_quant_activation_bits: z.number().int().optional(),
+    dflash_draft_quant_group_size: z.number().int().optional(),
+    dflash_max_ctx: z.number().int().optional(),
+    dflash_in_memory_cache: z.boolean().optional(),
+    dflash_in_memory_cache_max_entries: z.number().int().optional(),
+    dflash_in_memory_cache_max_bytes: z.number().int().optional(),
+    dflash_ssd_cache: z.boolean().optional(),
+    dflash_draft_window_size: z.number().int().optional(),
+    dflash_draft_sink_size: z.number().int().optional(),
+    dflash_verify_mode: z.string().min(1).nullable().optional(),
+  }).strict().optional(),
 }).strict();
 
 export const ModelHostEndpointSchema = z.object({

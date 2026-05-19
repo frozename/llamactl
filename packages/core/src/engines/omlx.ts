@@ -1,9 +1,38 @@
-import { existsSync } from 'node:fs';
-import { basename, resolve, sep } from 'node:path';
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from './types.js';
 import { gracefulShutdown, pollUntilModelIds } from './lifecycle.js';
+import { ensureWorkloadRuntimeDir } from '../workloadRuntime.js';
+import { resolveEnv } from '../env.js';
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost', '0.0.0.0']);
+
+function omxBasePath(env: EngineBootEnv, workloadName: string): string {
+  if (env.LLAMACTL_RUNTIME_DIR) {
+    return join(env.LLAMACTL_RUNTIME_DIR, 'workloads', workloadName, '.omlx');
+  }
+  const resolved = resolveEnv();
+  return join(ensureWorkloadRuntimeDir(resolved, { name: workloadName }), '.omlx');
+}
+
+function writeAtomicJson(path: string, value: unknown): void {
+  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
+  renameSync(tmp, path);
+}
+
+function buildDflashModelSettings(spec: ModelHostSpecForEngine): Record<string, unknown> | null {
+  const hostedModel = spec.hostedModels[0];
+  const dflash = hostedModel?.dflash;
+  if (!dflash?.enabled) return null;
+  const settings: Record<string, unknown> = { dflash_enabled: dflash.dflash_enabled ?? true };
+  for (const [key, value] of Object.entries(dflash)) {
+    if (key === 'enabled') continue;
+    if (value !== undefined) settings[key] = value;
+  }
+  return settings;
+}
 
 export const omlxEngine: EngineAdapter = {
   name: 'omlx',
@@ -52,6 +81,18 @@ export const omlxEngine: EngineAdapter = {
     ];
     if (spec.resources?.expectedMemoryGiB !== undefined) {
       args.push('--max-model-memory', `${spec.resources.expectedMemoryGiB}GB`);
+    }
+    const workloadName = env.workloadName;
+    const modelSettings = workloadName ? buildDflashModelSettings(spec) : null;
+    if (workloadName && modelSettings) {
+      const basePath = omxBasePath(env, workloadName);
+      writeAtomicJson(join(basePath, 'model_settings.json'), {
+        version: 1,
+        models: {
+          [basename(hostedModel.rel)]: modelSettings,
+        },
+      });
+      args.push('--base-path', basePath);
     }
     args.push(...spec.extraArgs);
     return { binary: spec.binary, args };
