@@ -50,7 +50,7 @@ export function parseArgs(argv: string[]): MatrixCliArgs {
   };
   const modelsPath = readArg('--models');
   const workloadsArg = readArg('--workloads');
-  const outDb = readArg('--out-db');
+  const outDb = readArg('--out-db') ?? 'packages/eval/results/matrix.db';
   const report = readArg('--report') as MatrixCliArgs['report'];
   const reportOut = readArg('--report-out');
   const runId = readArg('--run-id');
@@ -59,8 +59,8 @@ export function parseArgs(argv: string[]): MatrixCliArgs {
   if (runId && reportAllRuns) {
     throw new Error('--run-id and --report-all-runs are mutually exclusive');
   }
-  if (!modelsPath || !workloadsArg || !outDb) {
-    throw new Error('usage: --models <json> --workloads <names> --out-db <path>');
+  if (!modelsPath || !workloadsArg) {
+    throw new Error('usage: --models <json> --workloads <names> [--out-db <path>] (default packages/eval/results/matrix.db)');
   }
   const corpusOverrides = corpusOverrideRaw ? parseCorpusOverrides(corpusOverrideRaw) : undefined;
   return { modelsPath, workloadsArg, outDb, report, reportOut, runId, reportAllRuns, corpusOverrides };
