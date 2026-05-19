@@ -1,26 +1,10 @@
 import { applyOne, applyOneModelHost, type ApplyEvent, type ApplyResult, type WorkloadClient } from './apply.js';
 import { defaultNodeBudgetGiB } from './admission.js';
 import { listWorkloads, saveWorkload, defaultWorkloadsDir } from './store.js';
-import { listModelHosts, loadModelHostByName, saveModelHost } from './modelhost-store.js';
+import { listModelHosts, saveModelHost } from './modelhost-store.js';
 import { listNodeRuns } from './noderun-store.js';
 import type { ModelRun } from './schema.js';
 import type { ModelHostManifest } from './modelhost-schema.js';
-
-function modelHostSpecSignature(manifest: Pick<ModelHostManifest, 'spec'>): string {
-  const { spec } = manifest;
-  return JSON.stringify({
-    engine: spec.engine,
-    binary: spec.binary,
-    endpoint: spec.endpoint,
-    extraArgs: spec.extraArgs,
-    hostedModels: spec.hostedModels,
-    resources: spec.resources,
-  });
-}
-
-function modelHostReconcileMatches(persisted: ModelHostManifest, desired: ModelHostManifest): boolean {
-  return modelHostSpecSignature(persisted) === modelHostSpecSignature(desired);
-}
 
 export interface ReconcileNodeReport {
   name: string;
@@ -104,8 +88,7 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
     try {
       const client = opts.getClient(spec.node);
       const current = await client.modelHostStatus.query({ workload: name });
-      const persisted = loadModelHostByName(name, dir);
-      if (current.state === 'Running' && persisted.status?.phase === 'Running' && modelHostReconcileMatches(persisted, manifest)) {
+      if (current.state === 'Running' && manifest.status?.phase === 'Running') {
         reports.push({
           name,
           node: spec.node,

@@ -11,6 +11,7 @@ import { homedir } from 'node:os';
 import { join, basename } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { ModelRunSchema, type ModelRun } from './schema.js';
+import { ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
 
 export function defaultWorkloadsDir(
   env: NodeJS.ProcessEnv = process.env,
@@ -167,6 +168,58 @@ export function listWorkloads(
     } catch {
       // Malformed files surface via `llamactl describe workload <n>`
       // where the operator gets a real error message.
+    }
+  }
+  return out.sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
+}
+
+function projectModelHostToModelRun(manifest: ModelHostManifest): ModelRun {
+  return {
+    apiVersion: manifest.apiVersion,
+    kind: 'ModelRun',
+    metadata: {
+      name: manifest.metadata.name,
+      labels: manifest.metadata.labels ?? {},
+      annotations: {},
+    },
+    spec: {
+      node: manifest.spec.node,
+      enabled: manifest.spec.enabled,
+      target: { kind: 'rel', value: manifest.spec.hostedModels[0]!.rel },
+      extraArgs: manifest.spec.extraArgs,
+      workers: [],
+      restartPolicy: manifest.spec.restartPolicy,
+      resources: manifest.spec.resources,
+      timeoutSeconds: manifest.spec.timeoutSeconds,
+      endpoint: manifest.spec.endpoint,
+      binary: manifest.spec.binary,
+      gateway: false,
+      allowExternalBind: false,
+    },
+  };
+}
+
+export function listAnyWorkloadsForAdmission(
+  dir: string = defaultWorkloadsDir(),
+): ModelRun[] {
+  if (!existsSync(dir)) return [];
+  const out: ModelRun[] = [];
+  for (const entry of readdirSync(dir)) {
+    if (!entry.endsWith('.yaml')) continue;
+    const path = join(dir, entry);
+    try {
+      const parsed = parseYaml(readFileSync(path, 'utf8')) as { kind?: string; apiVersion?: string } | null;
+      if (parsed && parsed.apiVersion === 'llamactl.io/v1') {
+        parsed.apiVersion = 'llamactl/v1';
+      }
+      if (parsed?.kind === 'ModelRun') {
+        out.push(ModelRunSchema.parse(parsed));
+      } else if (parsed?.kind === 'ModelHost') {
+        const host = ModelHostManifestSchema.parse(parsed);
+        out.push(projectModelHostToModelRun(host));
+      }
+    } catch {
+      // Malformed files are ignored during admission; describe/load paths surface the error.
     }
   }
   return out.sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
