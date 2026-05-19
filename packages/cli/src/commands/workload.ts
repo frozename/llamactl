@@ -171,6 +171,9 @@ export async function runApply(args: string[]): Promise<number> {
   if (kind === 'NodeRun') {
     return applyNodeRunFromRaw(raw, parsed.json);
   }
+  if (kind === 'ModelHost') {
+    return applyModelHostFromRaw(raw, parsed.json);
+  }
   return applyModelRunFromRaw(raw, parsed.json, parsed);
 }
 
@@ -314,6 +317,51 @@ async function applyNodeRunFromRaw(raw: string, json: boolean): Promise<number> 
     }
   }
   return result.error ? 1 : 0;
+}
+
+async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number> {
+  let manifest: unknown;
+  try {
+    manifest = parseYaml(raw);
+  } catch (err) {
+    process.stderr.write(`apply: ModelHost manifest YAML parse failed: ${(err as Error).message}\n`);
+    return 1;
+  }
+
+  try {
+    const outcome = await workloadApply.applyManifest({ manifest });
+    if (!outcome.ok) {
+      process.stderr.write(`apply: ${outcome.error}\n`);
+      return 1;
+    }
+    if (outcome.kind !== 'ModelHost') {
+      process.stderr.write(`apply: expected ModelHost outcome, got ${outcome.kind}\n`);
+      return 1;
+    }
+    if (json) {
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            action: 'started',
+            kind: 'ModelHost',
+            name: outcome.manifest.metadata.name,
+            pid: outcome.pid,
+            endpoint: outcome.endpoint,
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    } else {
+      process.stdout.write(
+        `${outcome.manifest.metadata.name}: ModelHost ready at ${outcome.endpoint} pid=${outcome.pid}\n`,
+      );
+    }
+    return 0;
+  } catch (err) {
+    process.stderr.write(`apply: ${(err as Error).message}\n`);
+    return 1;
+  }
 }
 
 type WorkloadRow = {
