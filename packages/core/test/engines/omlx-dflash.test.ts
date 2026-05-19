@@ -41,7 +41,7 @@ const baseSpec: ModelHostSpecForEngine = {
 };
 
 describe('omlx engine dflash boot command', () => {
-  test('writes model_settings.json and passes --base-path when dflash is present', () => {
+  test('buildBootCommand passes --base-path without writing model_settings.json', async () => {
     const spec = baseSpec;
     const built = ENGINES.omlx.buildBootCommand(spec, {
       LLAMA_CPP_MODELS: '/unused/models',
@@ -52,6 +52,14 @@ describe('omlx engine dflash boot command', () => {
     const expectedBasePath = join(runtimeRoot, 'workloads', 'mlx-host-local', '.omlx');
     expect(built.args).toContain('--base-path');
     expect(built.args).toContain(expectedBasePath);
+    expect(existsSync(join(expectedBasePath, 'model_settings.json'))).toBe(false);
+
+    await ENGINES.omlx.prepareLaunch?.(spec, {
+      LLAMA_CPP_MODELS: '/unused/models',
+      LLAMACTL_RUNTIME_DIR: runtimeRoot,
+      workloadName: 'mlx-host-local',
+    });
+
     expect(existsSync(join(expectedBasePath, 'model_settings.json'))).toBe(true);
 
     const raw = readFileSync(join(expectedBasePath, 'model_settings.json'), 'utf8');

@@ -14,9 +14,10 @@ describe('engine registry', () => {
     }
   });
 
-  test('every adapter exposes validateSpec / buildBootCommand / probeReady / teardown', () => {
+  test('every adapter exposes validateSpec / prepareLaunch / buildBootCommand / probeReady / teardown', () => {
     for (const adapter of Object.values(ENGINES)) {
       expect(typeof adapter.validateSpec).toBe('function');
+      expect(typeof adapter.prepareLaunch).toBe('function');
       expect(typeof adapter.buildBootCommand).toBe('function');
       expect(typeof adapter.probeReady).toBe('function');
       expect(typeof adapter.teardown).toBe('function');

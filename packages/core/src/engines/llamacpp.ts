@@ -23,6 +23,8 @@ export const llamacppEngine: EngineAdapter = {
     return { ok: true };
   },
 
+  async prepareLaunch() {},
+
   buildBootCommand(spec: ModelHostSpecForEngine, env: EngineBootEnv) {
     const hostedModel = spec.hostedModels[0];
     if (!hostedModel) {

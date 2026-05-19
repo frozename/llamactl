@@ -43,6 +43,7 @@ export interface ModelHostSpecForEngine {
 export interface EngineAdapter {
   name: EngineName;
   validateSpec(spec: ModelHostSpecForEngine): { ok: true } | { ok: false; error: string };
+  prepareLaunch?(spec: ModelHostSpecForEngine, env: EngineBootEnv): Promise<void>;
   buildBootCommand(
     spec: ModelHostSpecForEngine,
     env: EngineBootEnv,

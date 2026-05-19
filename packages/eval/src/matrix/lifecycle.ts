@@ -130,6 +130,21 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
   if (!model.binary || !existsSync(model.binary)) {
     throw new Error(`model ${model.name} managed=true but binary not found: ${model.binary}`);
   }
+  if ((model.engine ?? 'llamacpp') === 'omlx') {
+    const spec: ModelHostSpecForEngine = {
+      engine: 'omlx',
+      binary: model.binary!,
+      endpoint: { host: model.host, port: model.port },
+      hostedModels: [{ rel: model.request_model_id ?? (model.gguf_path ? basename(model.gguf_path) : model.name) }],
+      resources: {},
+      extraArgs: model.extra_args ?? [],
+      timeoutSeconds: 60,
+    };
+    const env: EngineBootEnv = {};
+    if (model.mlx_model_dir) env.LLAMACTL_MODELS_DIR = model.mlx_model_dir;
+    env.workloadName = model.name;
+    await ENGINES.omlx.prepareLaunch?.(spec, env);
+  }
   const boot = buildBootCommandForModelSpec(model);
   const proc = spawn(boot.binary, boot.args, { stdio: 'pipe', detached: false });
   const stderrTail: string[] = [];

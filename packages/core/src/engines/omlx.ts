@@ -59,6 +59,24 @@ export const omlxEngine: EngineAdapter = {
     return { ok: true };
   },
 
+  async prepareLaunch(spec: ModelHostSpecForEngine, env: EngineBootEnv) {
+    const hostedModel = spec.hostedModels[0];
+    if (!hostedModel) {
+      throw new Error('hostedModels must have exactly one entry');
+    }
+    const workloadName = env.workloadName;
+    const modelSettings = workloadName ? buildDflashModelSettings(spec) : null;
+    if (workloadName && modelSettings) {
+      const basePath = omxBasePath(env, workloadName);
+      writeAtomicJson(join(basePath, 'model_settings.json'), {
+        version: 1,
+        models: {
+          [basename(hostedModel.rel)]: modelSettings,
+        },
+      });
+    }
+  },
+
   buildBootCommand(spec: ModelHostSpecForEngine, env: EngineBootEnv) {
     const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS ?? '/tmp/models';
     const hostedModel = spec.hostedModels[0];
@@ -86,12 +104,6 @@ export const omlxEngine: EngineAdapter = {
     const modelSettings = workloadName ? buildDflashModelSettings(spec) : null;
     if (workloadName && modelSettings) {
       const basePath = omxBasePath(env, workloadName);
-      writeAtomicJson(join(basePath, 'model_settings.json'), {
-        version: 1,
-        models: {
-          [basename(hostedModel.rel)]: modelSettings,
-        },
-      });
       args.push('--base-path', basePath);
     }
     args.push(...spec.extraArgs);
