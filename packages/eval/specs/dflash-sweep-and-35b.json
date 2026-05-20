@@ -1,0 +1,87 @@
+[
+  {
+    "name": "qwen3-8b-mlx-dflash-window-64",
+    "engine": "omlx",
+    "family": "qwen-3",
+    "quant": "MLX-4bit+dflash-w64",
+    "size_params": "8B",
+    "host": "127.0.0.1",
+    "port": 8096,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "request_model_id": "Qwen3-8B-MLX-4bit",
+    "extra_args": ["--max-concurrent-requests", "1"],
+    "start_args": [],
+    "gguf_path": "",
+    "disable_thinking": true,
+    "managed": true,
+    "dflash": {
+      "enabled": true,
+      "dflash_enabled": true,
+      "dflash_draft_model": "z-lab/Qwen3-8B-DFlash-b16",
+      "dflash_draft_window_size": 64
+    }
+  },
+  {
+    "name": "qwen3-8b-mlx-dflash-verify-tree",
+    "engine": "omlx",
+    "family": "qwen-3",
+    "quant": "MLX-4bit+dflash-tree",
+    "size_params": "8B",
+    "host": "127.0.0.1",
+    "port": 8097,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "request_model_id": "Qwen3-8B-MLX-4bit",
+    "extra_args": ["--max-concurrent-requests", "1"],
+    "start_args": [],
+    "gguf_path": "",
+    "disable_thinking": true,
+    "managed": true,
+    "dflash": {
+      "enabled": true,
+      "dflash_enabled": true,
+      "dflash_draft_model": "z-lab/Qwen3-8B-DFlash-b16",
+      "dflash_verify_mode": "tree"
+    }
+  },
+  {
+    "name": "qwen36-35b-a3b-mlx-vanilla",
+    "engine": "omlx",
+    "family": "qwen-3.6",
+    "quant": "MLX-4bit",
+    "size_params": "35B-A3B",
+    "host": "127.0.0.1",
+    "port": 8098,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "request_model_id": "Qwen3.6-35B-A3B-4bit",
+    "extra_args": ["--max-concurrent-requests", "1"],
+    "start_args": [],
+    "gguf_path": "",
+    "disable_thinking": true,
+    "managed": true
+  },
+  {
+    "name": "qwen36-35b-a3b-mlx-dflash",
+    "engine": "omlx",
+    "family": "qwen-3.6",
+    "quant": "MLX-4bit+dflash",
+    "size_params": "35B-A3B",
+    "host": "127.0.0.1",
+    "port": 8099,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "request_model_id": "Qwen3.6-35B-A3B-4bit",
+    "extra_args": ["--max-concurrent-requests", "1"],
+    "start_args": [],
+    "gguf_path": "",
+    "disable_thinking": true,
+    "managed": true,
+    "dflash": {
+      "enabled": true,
+      "dflash_enabled": true,
+      "dflash_draft_model": "z-lab/Qwen3.6-35B-A3B-DFlash"
+    }
+  }
+]
