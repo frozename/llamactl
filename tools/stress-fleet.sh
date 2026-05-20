@@ -260,19 +260,24 @@ TMP_DIR="$(mktemp -d -t stress-fleet-${FLEET}-XXXXXX)"
 
 start_epoch="$(date +%s)"
 
-echo "[stress] starting 4 parallel matrix runs into ${OUT_DB#$ROOT_DIR/} (run_id=${RUN_ID})"
+echo "[stress] starting 4 parallel matrix runs (per-workload dbs, run_id=${RUN_ID})"
+declare -A WORKLOAD_DBS=()
 for workload in "${workloads[@]}"; do
   model_key="$(model_key_for_workload "$workload")"
   model_file="$TMP_DIR/${workload}.json"
   model_json_for_key "$model_key" "$model_file"
   MODEL_FILES["$workload"]="$model_file"
 
+  workload_db="${OUT_DB%.db}-${workload}.db"
+  rm -f "$workload_db"
+  WORKLOAD_DBS["$workload"]="$workload_db"
+
   (
     cd "$ROOT_DIR"
     bun packages/eval/src/matrix/cli.ts \
       --models "$model_file" \
       --workloads "$workload" \
-      --out-db "$OUT_DB" \
+      --out-db "$workload_db" \
       --run-id "$RUN_ID" \
       --concurrency "$CONCURRENCY"
   ) &
@@ -301,17 +306,35 @@ if (( failures > 0 )); then
 fi
 
 summary_rows="$TMP_DIR/summary.tsv"
-RUN_ID="$RUN_ID" OUT_DB="$OUT_DB" bun -e '
+# Build a colon-joined list of per-workload dbs for the aggregator
+WORKLOAD_DB_LIST=""
+for workload in "${workloads[@]}"; do
+  wdb="${WORKLOAD_DBS[$workload]}"
+  if [[ -f "$wdb" ]]; then
+    WORKLOAD_DB_LIST="${WORKLOAD_DB_LIST}${wdb}:"
+  fi
+done
+RUN_ID="$RUN_ID" WORKLOAD_DB_LIST="$WORKLOAD_DB_LIST" bun -e '
   import { Database } from "bun:sqlite";
-  const db = new Database(process.env.OUT_DB!);
-  const stmt = db.query(`
-    SELECT workload_name, model_name, primary_metric_name, primary_metric_value, throughput_tps, latency_p50_ms, latency_p95_ms, errors
-    FROM matrix_runs
-    WHERE run_id = ?
-    ORDER BY workload_name ASC
-  `);
-  const rows = stmt.all(process.env.RUN_ID!) as Array<Record<string, string | number>>;
-  for (const row of rows) {
+  const dbs = process.env.WORKLOAD_DB_LIST!.split(":").filter(Boolean);
+  const runId = process.env.RUN_ID!;
+  type Row = Record<string, string | number>;
+  const all: Row[] = [];
+  for (const path of dbs) {
+    const db = new Database(path);
+    try {
+      const rows = db.query(`
+        SELECT workload_name, model_name, primary_metric_name, primary_metric_value, throughput_tps, latency_p50_ms, latency_p95_ms, errors
+        FROM matrix_runs
+        WHERE run_id = ?
+      `).all(runId) as Row[];
+      all.push(...rows);
+    } finally {
+      db.close();
+    }
+  }
+  all.sort((a, b) => String(a.workload_name).localeCompare(String(b.workload_name)));
+  for (const row of all) {
     console.log([
       row.workload_name,
       row.model_name,
