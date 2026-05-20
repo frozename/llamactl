@@ -70,9 +70,13 @@ export async function probeInference(host: string, port: number, timeoutMs: numb
     clearTimeout(timer);
     if (!resp.ok) return false;
     const body = (await resp.json()) as {
-      choices?: Array<{ message?: { content?: unknown } }>;
+      choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown } }>;
     };
-    return typeof body.choices?.[0]?.message?.content === 'string';
+    // Some engines (oMLX gemma4 parser) route chain-of-thought into
+    // reasoning_content and leave content empty under tight max_tokens
+    // budgets. Accept either as proof the model responded.
+    const msg = body.choices?.[0]?.message;
+    return typeof msg?.content === 'string' || typeof msg?.reasoning_content === 'string';
   } catch {
     return false;
   }

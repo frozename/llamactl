@@ -13,6 +13,7 @@
     "extra_args": ["--max-concurrent-requests", "1"],
     "start_args": [],
     "gguf_path": "",
+    "disable_thinking": true,
     "managed": true
   },
   {
@@ -29,6 +30,7 @@
     "extra_args": ["--max-concurrent-requests", "1"],
     "start_args": [],
     "gguf_path": "",
+    "disable_thinking": true,
     "managed": true,
     "dflash": {
       "enabled": true,

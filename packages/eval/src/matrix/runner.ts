@@ -109,7 +109,13 @@ export async function runMatrix(
               wallMsArr.push(wallMs);
               totalWallMs += wallMs;
               totalCompletionTokens += resp.usage?.completion_tokens ?? 0;
-              const completion = resp.choices[0]?.message?.content ?? '';
+              // Some engines (oMLX gemma4 parser) emit chain-of-thought
+              // into reasoning_content and leave content empty even after
+              // the model has produced a real answer downstream of the
+              // <|channel>thought ... <channel|> markers. Concatenate so
+              // workload parsers see the full text.
+              const _msg = resp.choices[0]?.message;
+              const completion = ((_msg?.reasoning_content ?? '') + (_msg?.content ?? '')) || '';
               const scored = await workload.scorer(row, completion, {
                 tool_calls: resp.choices[0]?.message?.tool_calls,
               });
