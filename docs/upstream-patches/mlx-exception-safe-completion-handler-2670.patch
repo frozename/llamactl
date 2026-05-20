@@ -1,0 +1,235 @@
+From 4f7c4a7a081c969075f09405a62434b4aa1ff32b Mon Sep 17 00:00:00 2001
+From: Alexandre Cordeiro <nenisdeno@gmail.com>
+Date: Wed, 20 May 2026 20:02:24 -0300
+Subject: [PATCH] Make Metal command-buffer error handling exception-safe
+ across libdispatch (#2670)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replaces the throw inside Metal's addCompletedHandler completion blocks
+with a per-stream exception_ptr stash. The stash is re-thrown on the
+caller's thread at the next sync waitpoint (gpu::eval, gpu::finalize,
+gpu::synchronize) where the exception can actually be caught.
+
+Background
+==========
+
+mlx::core::gpu::check_error was called from inside completion handlers
+registered via MTL::CommandBuffer::addCompletedHandler. Those handlers
+run on Apple's com.Metal.CompletionQueueDispatch (libdispatch). C++
+exceptions cannot unwind through libdispatch dispatch blocks: the throw
+propagates to the dispatch_async block boundary with no exception
+handler in scope, triggering std::terminate -> abort. This makes any
+transient Metal command-buffer failure (timeout, GPU watchdog, resource
+exhaustion under concurrent multi-model load) an unrecoverable process
+death rather than a recoverable per-request error.
+
+The same status check on CommandEncoder::synchronize() runs after
+waitUntilCompleted on the caller's thread and works correctly — but
+the asynchronous completion-handler paths in eval() / finalize() did
+not have the same safety.
+
+Change
+======
+
+scheduler.h: add two new APIs on Scheduler
+
+  notify_stream_error(stream, exception_ptr)
+    Called from any background context (including a Metal completion
+    handler). Stashes the exception on the stream. First error wins;
+    subsequent errors before the stash is drained are dropped to keep
+    behaviour deterministic.
+
+  throw_if_stream_error(stream)
+    Called on the user's thread. If a stashed error exists, clears it
+    and rethrows. No-op when nothing is stashed.
+
+The stash uses std::exception_ptr (move-only, safe to ferry across
+threads), protected by a dedicated mutex separate from the existing
+task-tracking mutex.
+
+backend/metal/eval.cpp:
+
+* check_error now takes a Stream and routes through
+  scheduler::notify_stream_error instead of throwing.
+* The three addCompletedHandler call sites in eval() and finalize() now
+  capture the stream and forward it to check_error.
+* eval() / finalize() / synchronize() call
+  scheduler::throw_if_stream_error(s) at the entry of each synchronous
+  waitpoint, surfacing any error stashed by a prior asynchronous
+  completion before queuing new work on the stream.
+
+CommandEncoder::synchronize() in backend/metal/device.cpp is unchanged
+— it already runs the check synchronously after waitUntilCompleted on
+the caller's thread and its throw path is well-formed.
+
+Why first-error-wins
+====================
+
+If completion handlers fire faster than the caller can drain, multiple
+errors may arrive. The stash keeps the first and drops subsequent ones
+until throw_if_stream_error consumes it. This preserves the original
+failure cause for the caller's reporting; secondary errors are usually
+cascading effects of the first.
+
+Limitations
+===========
+
+This patch makes the throw boundary safe but does not make
+CommandEncoder broadly exception-safe — internal state may still be
+inconsistent after an error. Callers should treat a rethrown
+[METAL] error as a recoverable failure for the failing operation but
+should be prepared to recreate the encoder / stream if subsequent
+operations behave unexpectedly. Full encoder-level exception safety is
+the natural follow-up.
+---
+ mlx/backend/metal/eval.cpp | 29 +++++++++++++++++++------
+ mlx/scheduler.h            | 43 ++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 66 insertions(+), 6 deletions(-)
+
+diff --git a/mlx/backend/metal/eval.cpp b/mlx/backend/metal/eval.cpp
+index 6f55976e..d0f4d65e 100644
+--- a/mlx/backend/metal/eval.cpp
++++ b/mlx/backend/metal/eval.cpp
+@@ -18,18 +18,28 @@ void new_stream(Stream s) {
+   encoders.try_emplace(s.index, d, s.index, d.residency_set());
+ }
+ 
+-inline void check_error(MTL::CommandBuffer* cbuf) {
++// Capture a Metal command-buffer error into a stash on the owning stream
++// instead of throwing. Metal completion handlers run on
++// `com.Metal.CompletionQueueDispatch` (libdispatch); a C++ exception thrown
++// across a dispatch block aborts the process unrecoverably. The stash is
++// re-thrown on the caller thread at the next sync waitpoint (eval / finalize
++// / CommandEncoder::synchronize). See mlx-explore/mlx#2670.
++inline void check_error(Stream s, MTL::CommandBuffer* cbuf) {
+   if (cbuf->status() == MTL::CommandBufferStatusError) {
+     std::ostringstream msg;
+     msg << "[METAL] Command buffer execution failed: "
+         << cbuf->error()->localizedDescription()->utf8String();
+-    throw std::runtime_error(msg.str());
++    scheduler::notify_stream_error(
++        s, std::make_exception_ptr(std::runtime_error(msg.str())));
+   }
+ }
+ 
+ void eval(array& arr) {
+   auto pool = metal::new_scoped_memory_pool();
+   auto s = arr.primitive().stream();
++  // Surface any error stashed asynchronously by a prior completion handler
++  // before queueing new work on this stream.
++  scheduler::throw_if_stream_error(s);
+   auto& encoder = metal::get_command_encoder(s);
+   auto* command_buffer = encoder.get_command_buffer();
+ 
+@@ -63,27 +73,34 @@ void eval(array& arr) {
+     command_buffer->addCompletedHandler(
+         [s, buffers = std::move(buffers)](MTL::CommandBuffer* cbuf) {
+           scheduler::notify_task_completion(s);
+-          check_error(cbuf);
++          check_error(s, cbuf);
+         });
+     encoder.commit();
+   } else {
+     command_buffer->addCompletedHandler(
+-        [buffers = std::move(buffers)](MTL::CommandBuffer* cbuf) {
+-          check_error(cbuf);
++        [s, buffers = std::move(buffers)](MTL::CommandBuffer* cbuf) {
++          check_error(s, cbuf);
+         });
+   }
+ }
+ 
+ void finalize(Stream s) {
+   auto pool = metal::new_scoped_memory_pool();
++  scheduler::throw_if_stream_error(s);
+   auto& encoder = metal::get_command_encoder(s);
+   auto* cb = encoder.get_command_buffer();
+   encoder.end_encoding();
+-  cb->addCompletedHandler([](MTL::CommandBuffer* cbuf) { check_error(cbuf); });
++  cb->addCompletedHandler(
++      [s](MTL::CommandBuffer* cbuf) { check_error(s, cbuf); });
+   encoder.commit();
+ }
+ 
+ void synchronize(Stream s) {
++  // Surface any error stashed asynchronously by a prior completion handler
++  // before driving the synchronous wait. CommandEncoder::synchronize()
++  // already throws on its own command buffer's error status; this covers
++  // the case where the failing buffer was committed earlier.
++  scheduler::throw_if_stream_error(s);
+   metal::get_command_encoder(s).synchronize();
+ }
+ 
+diff --git a/mlx/scheduler.h b/mlx/scheduler.h
+index c84ab628..b02a32a6 100644
+--- a/mlx/scheduler.h
++++ b/mlx/scheduler.h
+@@ -97,6 +97,37 @@ class MLX_API Scheduler {
+     return n_active_tasks_;
+   }
+ 
++  // Stash an exception on a stream from a background thread (e.g. a Metal
++  // completion handler running on libdispatch). Cannot throw from those
++  // contexts — see mlx-explore/mlx#2670. If a stream already has a pending
++  // error, the new one is dropped (first error wins).
++  void notify_stream_error(const Stream& stream, std::exception_ptr eptr) {
++    if (!eptr) return;
++    std::lock_guard<std::mutex> lk(error_mtx_);
++    auto& slot = stream_errors_[stream.index];
++    if (!slot) {
++      slot = std::move(eptr);
++    }
++  }
++
++  // If the given stream has a stashed error, clear and re-throw it on the
++  // calling thread. Must be called from a synchronous waitpoint where the
++  // exception can be caught (e.g. at the entry of eval/finalize/sync).
++  void throw_if_stream_error(const Stream& stream) {
++    std::exception_ptr eptr;
++    {
++      std::lock_guard<std::mutex> lk(error_mtx_);
++      auto it = stream_errors_.find(stream.index);
++      if (it != stream_errors_.end()) {
++        eptr = std::move(it->second);
++        stream_errors_.erase(it);
++      }
++    }
++    if (eptr) {
++      std::rethrow_exception(eptr);
++    }
++  }
++
+   void wait_for_one() {
+     std::unique_lock<std::mutex> lk(mtx);
+     int n_tasks_old = n_active_tasks();
+@@ -115,6 +146,8 @@ class MLX_API Scheduler {
+   std::shared_mutex threads_mtx_;
+   std::condition_variable completion_cv;
+   std::mutex mtx;
++  std::unordered_map<int, std::exception_ptr> stream_errors_;
++  std::mutex error_mtx_;
+ };
+ 
+ MLX_API Scheduler& scheduler();
+@@ -136,6 +169,16 @@ inline void notify_task_completion(const Stream& stream) {
+   scheduler().notify_task_completion(stream);
+ }
+ 
++inline void notify_stream_error(
++    const Stream& stream,
++    std::exception_ptr eptr) {
++  scheduler().notify_stream_error(stream, std::move(eptr));
++}
++
++inline void throw_if_stream_error(const Stream& stream) {
++  scheduler().throw_if_stream_error(stream);
++}
++
+ inline void wait_for_one() {
+   scheduler().wait_for_one();
+ }
+-- 
+2.53.0
+
