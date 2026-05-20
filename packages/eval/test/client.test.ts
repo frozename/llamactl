@@ -26,4 +26,27 @@ describe('buildCompletionRequest', () => {
     expect(req.body.tools).toEqual(tools);
     expect(req.body.tool_choice).toBe('auto');
   });
+
+  test('attaches response_format when provided', () => {
+    const response_format = {
+      type: 'json_schema',
+      json_schema: {
+        name: 'memory_efficacy_4way',
+        schema: {
+          type: 'object',
+          properties: {
+            classification: { type: 'string', enum: ['missed_registration'] },
+            reason: { type: 'string' },
+          },
+          required: ['classification', 'reason'],
+        },
+      },
+    };
+    const req = buildCompletionRequest({
+      messages: [{ role: 'user', content: 'classify' }],
+      maxTokens: 192,
+      response_format,
+    });
+    expect(req.body.response_format).toEqual(response_format);
+  });
 });

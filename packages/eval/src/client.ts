@@ -24,6 +24,7 @@ export interface CompletionRequest {
     stream: false;
     tools?: ToolDef[];
     tool_choice?: unknown;
+    response_format?: Record<string, unknown>;
     chat_template_kwargs?: Record<string, unknown>;
   };
 }
@@ -60,6 +61,7 @@ export function buildCompletionRequest(opts: {
   seed?: number;
   tools?: ToolDef[];
   tool_choice?: unknown;
+  response_format?: Record<string, unknown>;
   enableThinking?: boolean;
   /** Model id sent in the OpenAI request body. Defaults to 'local'
    *  (llama-server alias). For multi-model hosts (oMLX), pass the
@@ -75,6 +77,7 @@ export function buildCompletionRequest(opts: {
       seed: opts.seed,
       stream: false,
       ...(opts.tools ? { tools: opts.tools, tool_choice: opts.tool_choice ?? 'auto' } : {}),
+      ...(opts.response_format ? { response_format: opts.response_format } : {}),
       ...(opts.enableThinking === false
         ? { chat_template_kwargs: { enable_thinking: false } }
         : {}),

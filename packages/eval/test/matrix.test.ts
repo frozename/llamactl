@@ -102,6 +102,32 @@ describe('matrix store', () => {
 });
 
 describe('runMatrix', () => {
+  test('4way workload builds constrained response_format from valid labels', () => {
+    const responseFormat = memoryEfficacy4wayWorkload.response_format as
+      | {
+          type?: string;
+          json_schema?: {
+            name?: string;
+            schema?: {
+              properties?: Record<string, unknown>;
+            };
+          };
+        }
+      | undefined;
+
+    expect(responseFormat?.type).toBe('json_schema');
+    expect(responseFormat?.json_schema?.name).toBe('memory_efficacy_4way');
+    const classification = responseFormat?.json_schema?.schema?.properties?.classification as
+      | { enum?: string[] }
+      | undefined;
+    expect(classification?.enum).toEqual([
+      'missed_registration',
+      'recall_miss',
+      'memory_ignored',
+      'not_memory_related',
+    ]);
+  });
+
   test('strips markdown code fences before parsing binary memory-efficacy predictions', () => {
     const row = {
       messages: [
@@ -242,14 +268,19 @@ describe('runMatrix', () => {
     ].join('\n');
     await Bun.write(tmpPath, jsonl);
     const origFetch = globalThis.fetch;
-    globalThis.fetch = async () =>
-      new Response(
+    let lastRequestBody: Record<string, unknown> | undefined;
+    globalThis.fetch = async (_url, init) => {
+      if (init && typeof init.body === 'string') {
+        lastRequestBody = JSON.parse(init.body) as Record<string, unknown>;
+      }
+      return new Response(
         JSON.stringify({
           choices: [{ message: { content: '{"classification":"missed_registration","reason":"x"}' } }],
           usage: { completion_tokens: 5 },
         }),
         { headers: { 'Content-Type': 'application/json' } },
       );
+    };
     try {
       const workload: WorkloadEval = {
         ...memoryEfficacy4wayWorkload,
@@ -267,6 +298,7 @@ describe('runMatrix', () => {
       expect(cell.runner_version).toBe(1);
       expect(cell.n_rows).toBe(2);
       expect(cell.run_id).toMatch(/^\d{4}-\d{2}-\d{2}T.+-[0-9a-f]{8}$/);
+      expect(lastRequestBody?.response_format).toEqual(workload.response_format);
       const expected = aggregateMetrics([
         { pred: 'missed_registration', gold: 'missed_registration' },
         { pred: 'missed_registration', gold: 'not_memory_related' },

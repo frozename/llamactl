@@ -18,6 +18,23 @@ export interface JsonClassifierOpts {
 export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadEval {
   const normalize = opts.normalizeLabel ?? ((v: unknown) => String(v));
   const accept = (label: string): boolean => !opts.validLabels || opts.validLabels.has(label);
+  const labels = opts.validLabels ? Array.from(opts.validLabels) : undefined;
+  const response_format = labels
+    ? {
+        type: 'json_schema',
+        json_schema: {
+          name: opts.name.replace(/[^a-zA-Z0-9_]/g, '_'),
+          schema: {
+            type: 'object',
+            properties: {
+              [opts.labelField]: { type: 'string', enum: labels },
+              reason: { type: 'string' },
+            },
+            required: [opts.labelField, 'reason'],
+          },
+        },
+      }
+    : undefined;
   function stripCodeFences(s: string): string {
     const m = s.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
     if (m) return m[1];
@@ -48,6 +65,7 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
     name: opts.name,
     corpus_path: opts.corpus_path,
     primary_metric_name: 'macro_f1',
+    ...(response_format ? { response_format } : {}),
     prompt_builder: (row) => {
       const r = row as ChatCorpusRow;
       return { messages: r.messages.slice(0, -1) };

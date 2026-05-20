@@ -38,6 +38,7 @@ export interface ModelSpec {
 export interface WorkloadEval {
   name: string;
   corpus_path: string;
+  response_format?: Record<string, unknown>;
   /**
    * Returns the body shape passed to llama-server: string for `/completion`,
    * `{messages: ...}` for `/chat/completions`. Concrete typing lands in v1.

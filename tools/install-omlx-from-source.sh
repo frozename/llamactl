@@ -43,6 +43,7 @@ if [[ ! -d "$SRC_DIR/.venv" ]]; then
   uv venv
 fi
 uv pip install -e . --quiet
+uv pip install xgrammar --quiet
 
 ENTRYPOINT="$SRC_DIR/.venv/bin/omlx"
 if [[ ! -x "$ENTRYPOINT" ]]; then
