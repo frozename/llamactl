@@ -1,0 +1,39 @@
+[
+  {
+    "name": "gemma4-26b-a4b-mlx-vanilla",
+    "engine": "omlx",
+    "family": "gemma-4",
+    "quant": "MLX-4bit",
+    "size_params": "26B-A4B",
+    "host": "127.0.0.1",
+    "port": 8130,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "request_model_id": "gemma-4-26b-a4b-it-4bit",
+    "extra_args": ["--max-concurrent-requests", "1"],
+    "start_args": [],
+    "gguf_path": "",
+    "managed": true
+  },
+  {
+    "name": "gemma4-26b-a4b-mlx-dflash",
+    "engine": "omlx",
+    "family": "gemma-4",
+    "quant": "MLX-4bit+dflash",
+    "size_params": "26B-A4B",
+    "host": "127.0.0.1",
+    "port": 8131,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "request_model_id": "gemma-4-26b-a4b-it-4bit",
+    "extra_args": ["--max-concurrent-requests", "1"],
+    "start_args": [],
+    "gguf_path": "",
+    "managed": true,
+    "dflash": {
+      "enabled": true,
+      "dflash_enabled": true,
+      "dflash_draft_model": "z-lab/gemma-4-26B-A4B-it-DFlash"
+    }
+  }
+]
