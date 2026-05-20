@@ -1,0 +1,24 @@
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: stress-fleet-c-granite-8b-mac-mini
+  labels:
+    fleet: stress-c
+    family: granite-4.1
+spec:
+  engine: omlx
+  node: mac-mini
+  enabled: true
+  binary: /Volumes/AI-DATA/src/omlx/.venv/bin/omlx
+  resources:
+    expectedMemoryGiB: 5
+  endpoint:
+    host: 0.0.0.0
+    port: 8204
+  hostedModels:
+    - rel: mlx-community/granite-4.1-8b-nvfp4
+  extraArgs:
+    - --max-concurrent-requests
+    - "4"
+  restartPolicy: Always
+  timeoutSeconds: 180
