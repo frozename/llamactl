@@ -43,7 +43,8 @@ if [[ ! -d "$SRC_DIR/.venv" ]]; then
   uv venv
 fi
 uv pip install -e . --quiet
-uv pip install xgrammar --quiet
+# pinned for reproducibility; bump along with omlx.lock when verifying a new oMLX commit.
+uv pip install xgrammar==0.2.1 --quiet
 
 ENTRYPOINT="$SRC_DIR/.venv/bin/omlx"
 if [[ ! -x "$ENTRYPOINT" ]]; then

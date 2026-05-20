@@ -4,5 +4,6 @@ export const memoryEfficacyBinaryWorkload = buildJsonClassifierWorkload({
   name: 'memory-efficacy-binary',
   corpus_path: 'packages/train/corpora/memory-efficacy/binary-chat/test.jsonl',
   labelField: 'memory_related',
+  requireReason: true,
   normalizeLabel: (v) => (typeof v === 'boolean' ? String(v) : 'parse_error'),
 });

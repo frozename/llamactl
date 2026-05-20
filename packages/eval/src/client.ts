@@ -24,10 +24,14 @@ export interface CompletionRequest {
     stream: false;
     tools?: ToolDef[];
     tool_choice?: unknown;
-    response_format?: Record<string, unknown>;
+    response_format?: ResponseFormat;
     chat_template_kwargs?: Record<string, unknown>;
   };
 }
+
+export type ResponseFormat =
+  | { type: 'json_object' }
+  | { type: 'json_schema'; json_schema: { name: string; schema: Record<string, unknown> } };
 
 export interface CompletionResponse {
   choices: Array<{
@@ -61,7 +65,7 @@ export function buildCompletionRequest(opts: {
   seed?: number;
   tools?: ToolDef[];
   tool_choice?: unknown;
-  response_format?: Record<string, unknown>;
+  response_format?: ResponseFormat;
   enableThinking?: boolean;
   /** Model id sent in the OpenAI request body. Defaults to 'local'
    *  (llama-server alias). For multi-model hosts (oMLX), pass the

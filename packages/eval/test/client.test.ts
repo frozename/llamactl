@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildCompletionRequest } from '../src/client.js';
+import { buildCompletionRequest, type ResponseFormat } from '../src/client.js';
 
 describe('buildCompletionRequest', () => {
   test('builds OpenAI-compat request without tools', () => {
@@ -28,7 +28,7 @@ describe('buildCompletionRequest', () => {
   });
 
   test('attaches response_format when provided', () => {
-    const response_format = {
+    const response_format: ResponseFormat = {
       type: 'json_schema',
       json_schema: {
         name: 'memory_efficacy_4way',

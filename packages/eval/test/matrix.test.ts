@@ -4,6 +4,7 @@ import { rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import {
   aggregateMetrics,
+  buildJsonClassifierWorkload,
   ensureMatrixSchema,
   insertCellRow,
   insertCellRowDetail,
@@ -117,15 +118,44 @@ describe('runMatrix', () => {
 
     expect(responseFormat?.type).toBe('json_schema');
     expect(responseFormat?.json_schema?.name).toBe('memory_efficacy_4way');
+    const schema = responseFormat?.json_schema?.schema as
+      | {
+          properties?: Record<string, unknown>;
+          required?: string[];
+          additionalProperties?: boolean;
+        }
+      | undefined;
     const classification = responseFormat?.json_schema?.schema?.properties?.classification as
       | { enum?: string[] }
       | undefined;
-    expect(classification?.enum).toEqual([
+    expect(new Set(classification?.enum ?? [])).toEqual(new Set([
       'missed_registration',
       'recall_miss',
       'memory_ignored',
       'not_memory_related',
-    ]);
+    ]));
+    expect(schema?.required).toEqual(['classification', 'reason']);
+    expect(schema?.additionalProperties).toBe(false);
+  });
+
+  test('buildJsonClassifierWorkload omits response_format when validLabels is absent', () => {
+    const workload = buildJsonClassifierWorkload({
+      name: 'ad-hoc-json-classifier',
+      corpus_path: '/tmp/unused.jsonl',
+      labelField: 'classification',
+    });
+    expect(workload.response_format).toBeUndefined();
+  });
+
+  test('buildJsonClassifierWorkload rejects empty validLabels', () => {
+    expect(() =>
+      buildJsonClassifierWorkload({
+        name: 'ad-hoc-json-classifier',
+        corpus_path: '/tmp/unused.jsonl',
+        labelField: 'classification',
+        validLabels: new Set(),
+      }),
+    ).toThrow('buildJsonClassifierWorkload: validLabels must contain at least one label');
   });
 
   test('strips markdown code fences before parsing binary memory-efficacy predictions', () => {
@@ -304,6 +334,52 @@ describe('runMatrix', () => {
         { pred: 'missed_registration', gold: 'not_memory_related' },
       ]);
       expect(cell.primary_metric_value).toBeCloseTo(expected.macro_f1, 5);
+    } finally {
+      globalThis.fetch = origFetch;
+      try {
+        rmSync(tmpPath);
+      } catch {}
+    }
+  });
+
+  test('runMatrix does not forward response_format when model opts out of structured outputs', async () => {
+    const db = new Database(':memory:');
+    const tmpPath = `/tmp/memory-efficacy-4way-${randomUUID()}.jsonl`;
+    const jsonl = [
+      JSON.stringify({
+        messages: [
+          { role: 'user', content: 'Is this memory related?' },
+          { role: 'assistant', content: JSON.stringify({ classification: 'missed_registration', reason: 'x' }) },
+        ],
+      }),
+    ].join('\n');
+    await Bun.write(tmpPath, jsonl);
+    const origFetch = globalThis.fetch;
+    let lastRequestBody: Record<string, unknown> | undefined;
+    globalThis.fetch = async (_url, init) => {
+      if (init && typeof init.body === 'string') {
+        lastRequestBody = JSON.parse(init.body) as Record<string, unknown>;
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"classification":"missed_registration","reason":"x"}' } }],
+          usage: { completion_tokens: 5 },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+    try {
+      const workload: WorkloadEval = {
+        ...memoryEfficacy4wayWorkload,
+        corpus_path: tmpPath,
+      };
+      const run = await runMatrix({
+        models: [{ ...makeModel('model-a'), structured_outputs_supported: false }],
+        workloads: [workload],
+        db,
+      });
+      expect(run.cellsWritten).toBe(1);
+      expect(lastRequestBody?.response_format).toBeUndefined();
     } finally {
       globalThis.fetch = origFetch;
       try {

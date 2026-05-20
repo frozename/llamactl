@@ -95,10 +95,11 @@ function validateModelSpec(value: unknown): ModelSpec {
       throw new Error(`invalid ModelSpec: missing/bad field ${String(field)}`);
     }
   }
-  const optional: Array<keyof Pick<ModelSpec, 'binary' | 'start_args' | 'managed'>> = [
+  const optional: Array<keyof Pick<ModelSpec, 'binary' | 'start_args' | 'managed' | 'structured_outputs_supported'>> = [
     'binary',
     'start_args',
     'managed',
+    'structured_outputs_supported',
   ];
   for (const field of optional) {
     const fieldValue = spec[field];

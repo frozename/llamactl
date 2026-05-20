@@ -1,3 +1,4 @@
+import type { ResponseFormat } from '../../client.js';
 import type { WorkloadEval } from '../types.js';
 
 export interface ChatCorpusRow {
@@ -13,13 +14,19 @@ export interface JsonClassifierOpts {
   validLabels?: Set<string>;
   /** customize how a parsed value is normalized to a string label. Default: String(value). */
   normalizeLabel?: (value: unknown) => string;
+  /** when true, schema requires a "reason" string alongside the label field */
+  requireReason?: boolean;
 }
 
 export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadEval {
+  if (opts.validLabels && opts.validLabels.size === 0) {
+    throw new Error('buildJsonClassifierWorkload: validLabels must contain at least one label');
+  }
   const normalize = opts.normalizeLabel ?? ((v: unknown) => String(v));
   const accept = (label: string): boolean => !opts.validLabels || opts.validLabels.has(label);
+  const requireReason = opts.requireReason === true;
   const labels = opts.validLabels ? Array.from(opts.validLabels) : undefined;
-  const response_format = labels
+  const response_format: ResponseFormat | undefined = labels
     ? {
         type: 'json_schema',
         json_schema: {
@@ -28,9 +35,10 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
             type: 'object',
             properties: {
               [opts.labelField]: { type: 'string', enum: labels },
-              reason: { type: 'string' },
+              ...(requireReason ? { reason: { type: 'string' } } : {}),
             },
-            required: [opts.labelField, 'reason'],
+            required: requireReason ? [opts.labelField, 'reason'] : [opts.labelField],
+            additionalProperties: false,
           },
         },
       }

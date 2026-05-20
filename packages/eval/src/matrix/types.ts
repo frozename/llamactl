@@ -1,3 +1,5 @@
+import type { ResponseFormat } from '../client.js';
+
 export interface ModelSpec {
   name: string;
   engine?: 'llamacpp' | 'omlx';
@@ -33,12 +35,14 @@ export interface ModelSpec {
    * { enabled, dflash_enabled, dflash_draft_model, ... } object.
    */
   dflash?: Record<string, unknown>;
+  /** Default is supported; set false to opt out from forwarding response_format for this model. */
+  structured_outputs_supported?: boolean;
 }
 
 export interface WorkloadEval {
   name: string;
   corpus_path: string;
-  response_format?: Record<string, unknown>;
+  response_format?: ResponseFormat;
   /**
    * Returns the body shape passed to llama-server: string for `/completion`,
    * `{messages: ...}` for `/chat/completions`. Concrete typing lands in v1.

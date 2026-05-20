@@ -98,13 +98,16 @@ export async function runMatrix(
             nRows += 1;
             try {
               const built = workload.prompt_builder(row);
+              const structuredOutputsSupported = model.structured_outputs_supported !== false;
               const req = buildCompletionRequest({
                 messages: built.messages as any[],
                 maxTokens: 256,
                 ...(model.request_model_id ? { model: model.request_model_id } : {}),
                 ...(model.disable_thinking ? { enableThinking: false } : {}),
                 ...(built.tools ? { tools: built.tools as any[], tool_choice: built.tool_choice } : {}),
-                ...(workload.response_format ? { response_format: workload.response_format } : {}),
+                ...(structuredOutputsSupported && workload.response_format
+                  ? { response_format: workload.response_format }
+                  : {}),
               });
               const { resp, wallMs } = await completeChat(`http://${model.host}:${model.port}`, req);
               wallMsArr.push(wallMs);
