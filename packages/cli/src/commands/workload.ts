@@ -369,7 +369,7 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
 
   try {
     const outcome = await workloadApply.applyManifest({
-      manifest,
+      manifest: parsedHost,
       getClient: (name) => getWorkloadNodeClient(name),
     });
     if (!outcome.ok) {

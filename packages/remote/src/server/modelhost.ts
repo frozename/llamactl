@@ -3,7 +3,8 @@ import { basename } from 'node:path';
 import { ENGINES } from '../../../core/src/engines/index.js';
 import { computeModelHostSpecHash, readModelHostState, removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
 import { resolveEnv } from '../../../core/src/env.js';
-import { loadModelHostByName } from '../workload/modelhost-store.js';
+import { loadModelHostByName, saveModelHost } from '../workload/modelhost-store.js';
+import { ModelHostManifestSchema, type ModelHostManifest } from '../workload/modelhost-schema.js';
 import type { WorkloadKey } from '../../../core/src/workloadRuntime.js';
 import type { EngineBootEnv } from '../../../core/src/engines/types.js';
 
@@ -14,6 +15,7 @@ export interface ModelHostSpawnResult {
 export interface StartModelHostOptions {
   key: WorkloadKey;
   timeoutSeconds?: number;
+  manifest?: unknown;
   signal?: AbortSignal;
   onEvent?: (event: unknown) => void;
   workloadsDir?: string;
@@ -90,7 +92,7 @@ function withRuntimeDir(env: NodeJS.ProcessEnv, runtimeDir?: string): NodeJS.Pro
   return { ...env, LOCAL_AI_RUNTIME_DIR: runtimeDir };
 }
 
-function buildModelHostSpec(manifest: Awaited<ReturnType<typeof loadModelHostByName>>) {
+function buildModelHostSpec(manifest: ModelHostManifest) {
   return {
     engine: manifest.spec.engine,
     binary: manifest.spec.binary,
@@ -106,7 +108,21 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   const env = toRuntimeEnv(opts.env);
   const runtimeEnv = withRuntimeDir(env, opts.runtimeDir);
   const resolved = resolveEnv(runtimeEnv);
-  const manifest = loadModelHostByName(opts.key.name, opts.workloadsDir);
+  const manifest = opts.manifest
+    ? ModelHostManifestSchema.parse(opts.manifest)
+    : loadModelHostByName(opts.key.name, opts.workloadsDir);
+  if (manifest.metadata.name !== opts.key.name) {
+    const result = {
+      ok: false,
+      pid: null,
+      error: `modelHostStart workload mismatch: expected ${opts.key.name}, got ${manifest.metadata.name}`,
+    };
+    opts.onEvent?.({ type: 'done', result });
+    return result;
+  }
+  if (opts.manifest) {
+    saveModelHost(manifest, opts.workloadsDir);
+  }
   const engine = ENGINES[manifest.spec.engine];
   const spec = buildModelHostSpec(manifest);
   const validation = engine.validateSpec(spec);

@@ -151,6 +151,7 @@ describe('applyManifest — kind dispatch', () => {
       expect(captured.startInput).toEqual({
         workload: 'mlx-host-test',
         timeoutSeconds: 60,
+        manifest,
       });
     } finally {
       rmSync(tmp, { recursive: true, force: true });

@@ -60,6 +60,17 @@ spec:
     expect(result).toEqual({ state: 'Stopped' });
   });
 
+  test('modelHostStart validates optional inline manifest payloads', async () => {
+    const caller = router.createCaller({});
+    await expect(caller.modelHostStart({ workload: 'host-a' })).resolves.toEqual({});
+    await expect(
+      caller.modelHostStart({
+        workload: 'host-a',
+        manifest: { kind: 'ModelHost' } as never,
+      }),
+    ).rejects.toThrow(/manifest/i);
+  });
+
   test('rejects unknown workload kinds with a clear error', async () => {
     const caller = router.createCaller({});
     const result = await caller.workloadValidate({

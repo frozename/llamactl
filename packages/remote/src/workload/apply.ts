@@ -68,7 +68,7 @@ export interface WorkloadClient {
   };
   modelHostStart: {
     subscribe(
-      input: { workload: string; timeoutSeconds?: number },
+      input: { workload: string; timeoutSeconds?: number; manifest?: ModelHostManifest },
       callbacks: SubscribeCallbacks,
     ): Unsubscribable;
   };
@@ -273,6 +273,7 @@ async function applyModelHostManifest(
         {
           workload: manifest.metadata.name,
           timeoutSeconds: manifest.spec.timeoutSeconds,
+          manifest,
         },
         {
           onData: (evt: unknown) => {

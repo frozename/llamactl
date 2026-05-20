@@ -378,6 +378,7 @@ const modelHostStopInput = z.object({
 const modelHostStartInput = z.object({
   workload: z.string().min(1),
   timeoutSeconds: z.number().int().positive().max(600).optional(),
+  manifest: ModelHostManifestSchema.optional(),
 });
 
 /**
@@ -1212,6 +1213,7 @@ export const router = t.router({
         await startModelHost({
           key: { name: input.workload },
           timeoutSeconds: input.timeoutSeconds,
+          manifest: input.manifest,
           signal: subSignal,
           onEvent: emit,
         });

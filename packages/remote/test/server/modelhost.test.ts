@@ -32,6 +32,52 @@ function makeManifest(tmp: string) {
 }
 
 describe('server/modelhost', () => {
+  test('persists inline manifest to workloadsDir before start', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-inline-'));
+    const workloadsDir = join(tmp, 'workloads');
+    const runtimeDir = join(tmp, 'runtime');
+    const fakeBinary = join(tmp, 'omlx');
+    mkdirSync(workloadsDir, { recursive: true });
+    writeFileSync(fakeBinary, '#!/bin/sh\nexit 0\n');
+    const spawn = mock(() => {
+      expect(readFileSync(join(workloadsDir, 'mlx-host-inline.yaml'), 'utf8')).toContain('name: mlx-host-inline');
+      return { pid: 4321 } as const;
+    });
+    const manifest = {
+      apiVersion: 'llamactl/v1',
+      kind: 'ModelHost',
+      metadata: { name: 'mlx-host-inline' },
+      spec: {
+        engine: 'omlx',
+        node: 'mac-mini',
+        enabled: true,
+        binary: fakeBinary,
+        endpoint: { host: '127.0.0.1', port: 8098 },
+        hostedModels: [{ rel: 'mlx-community/Qwen3-8B-MLX-4bit' }],
+        extraArgs: ['--max-concurrent-requests', '2'],
+        restartPolicy: 'Always',
+        timeoutSeconds: 60,
+      },
+    } as const;
+
+    try {
+      const result = await startModelHost({
+        key: { name: 'mlx-host-inline' },
+        manifest,
+        workloadsDir,
+        runtimeDir,
+        spawn,
+        probeReady: async () => ({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(readFileSync(join(workloadsDir, 'mlx-host-inline.yaml'), 'utf8')).toContain('name: mlx-host-inline');
+      expect(spawn).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test('keeps the manifest binary as source of truth', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-binary-'));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
