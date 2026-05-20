@@ -185,17 +185,19 @@ async function applyModelHostManifest(
   opts: Omit<ApplyManifestOptions, 'manifest'>,
 ): Promise<ApplyManifestOutcome> {
   const engine = ENGINES[manifest.spec.engine];
-  const validation = engine.validateSpec({
-    engine: manifest.spec.engine,
-    binary: manifest.spec.binary,
-    endpoint: manifest.spec.endpoint,
-    hostedModels: manifest.spec.hostedModels,
-    resources: manifest.spec.resources,
-    extraArgs: manifest.spec.extraArgs,
-    timeoutSeconds: manifest.spec.timeoutSeconds,
-  });
-  if (!validation.ok) {
-    return { ok: false, error: validation.error };
+  if (manifest.spec.node === 'local') {
+    const validation = engine.validateSpec({
+      engine: manifest.spec.engine,
+      binary: manifest.spec.binary,
+      endpoint: manifest.spec.endpoint,
+      hostedModels: manifest.spec.hostedModels,
+      resources: manifest.spec.resources,
+      extraArgs: manifest.spec.extraArgs,
+      timeoutSeconds: manifest.spec.timeoutSeconds,
+    });
+    if (!validation.ok) {
+      return { ok: false, error: validation.error };
+    }
   }
 
   const resolved = resolveEnv(opts.env);

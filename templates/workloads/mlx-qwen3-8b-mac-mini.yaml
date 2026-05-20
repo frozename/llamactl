@@ -1,0 +1,41 @@
+# Qwen3-8B-MLX-4bit on `mac-mini` via oMLX.
+#
+# First mac-mini MLX smoke: validates that the Sub A ModelHost path works
+# on a second node. Binds :8094 (free on mac-mini).
+#
+# Pre-reqs on mac-mini:
+# 1. /Volumes/AI-DATA/src/omlx/.venv/bin/omlx exists
+#    (tools/install-omlx-from-source.sh ran with OMLX_SRC=/Volumes/AI-DATA/src/omlx).
+# 2. /Volumes/AI-MODELS/llama.cpp/models/Qwen3-8B-MLX-4bit/ rsynced from M4 Pro.
+#
+# Apply:
+#   llamactl --node mac-mini apply -f templates/workloads/mlx-qwen3-8b-mac-mini.yaml
+#
+# Verify:
+#   curl http://192.168.68.76:8094/v1/models
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: mlx-qwen3-8b-mac-mini
+  labels:
+    family: mlx
+    role: inference-host
+spec:
+  engine: omlx
+  node: mac-mini
+  enabled: true
+  binary: /Volumes/AI-DATA/src/omlx/.venv/bin/omlx
+  resources:
+    expectedMemoryGiB: 12
+  endpoint:
+    host: 0.0.0.0
+    port: 8094
+  hostedModels:
+    - rel: Qwen3-8B-MLX-4bit
+  extraArgs:
+    - --max-concurrent-requests
+    - "1"
+    - --paged-ssd-cache-dir
+    - /Volumes/AI-DATA/cache/omlx
+  restartPolicy: Always
+  timeoutSeconds: 120
