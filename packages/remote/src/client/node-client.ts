@@ -116,6 +116,68 @@ function resolveDefaultNodeName(config: Config, contextName?: string): string {
  */
 function proxyFromCaller(): NodeClient {
   const caller = appRouter.createCaller({}) as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const callerWithSignal = (signal: AbortSignal): Record<string, (...args: unknown[]) => unknown> =>
+    appRouter.createCaller({}, { signal }) as unknown as Record<string, (...args: unknown[]) => unknown>;
+
+  function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+    if (typeof value !== 'object' || value === null) return false;
+    // Symbol.asyncIterator is the runtime contract tRPC v11 uses for
+    // async-generator subscriptions in in-proc callers.
+    return typeof (value as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === 'function';
+  }
+
+  function subscribeViaCaller(
+    method: string,
+    input: unknown,
+    handlers: {
+      onData: (e: unknown) => void;
+      onError: (err: unknown) => void;
+      onComplete: () => void;
+      onStarted?: () => void;
+    },
+  ): { unsubscribe: () => void } {
+    const abort = new AbortController();
+    let settled = false;
+
+    const close = (): void => {
+      if (abort.signal.aborted) return;
+      abort.abort();
+    };
+
+    const run = async (): Promise<void> => {
+      try {
+        const methodFn = callerWithSignal(abort.signal)[method];
+        if (typeof methodFn !== 'function') {
+          throw new Error(`unknown procedure '${method}'`);
+        }
+        const stream = await methodFn(input);
+        if (!isAsyncIterable(stream)) {
+          throw new Error(`inproc subscribe('${method}') did not return an AsyncIterable`);
+        }
+        handlers.onStarted?.();
+        for await (const event of stream) {
+          if (settled) break;
+          handlers.onData(event);
+        }
+        if (!settled) {
+          settled = true;
+          handlers.onComplete();
+        }
+      } catch (err) {
+        if (!settled) {
+          settled = true;
+          if (abort.signal.aborted) handlers.onComplete();
+          else handlers.onError(err);
+        }
+      } finally {
+        close();
+      }
+    };
+
+    void run();
+    return { unsubscribe: close };
+  }
+
   const handler: ProxyHandler<object> = {
     get(_target, prop) {
       if (typeof prop !== 'string') return undefined;
@@ -126,7 +188,19 @@ function proxyFromCaller(): NodeClient {
       // surface mirrors the remote proxy client so downstream code
       // treats both paths identically.
       const invoke = (...args: unknown[]): unknown => caller[prop]!(...args);
-      return { query: invoke, mutate: invoke, subscribe: invoke };
+      return {
+        query: invoke,
+        mutate: invoke,
+        subscribe: (
+          input: unknown,
+          handlers: {
+            onData: (e: unknown) => void;
+            onError: (err: unknown) => void;
+            onComplete: () => void;
+            onStarted?: () => void;
+          },
+        ) => subscribeViaCaller(prop, input, handlers),
+      };
     },
   };
   return new Proxy({}, handler) as NodeClient;

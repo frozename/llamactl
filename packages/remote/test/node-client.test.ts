@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { createNodeClient } from '../src/client/node-client.js';
 import { freshConfig } from '../src/config/schema.js';
 import { upsertNode as upsertNodeInConfig } from '../src/config/kubeconfig.js';
+import { env as envMod, serverLogs as serverLogsMod } from '@llamactl/core';
 
 describe('createNodeClient (local sentinel path)', () => {
   test('local node dispatches in-process via router.createCaller', async () => {
@@ -36,5 +40,54 @@ describe('createNodeClient (local sentinel path)', () => {
     const client = createNodeClient(cfg, { nodeName: 'gpu1' });
     expect(client).toBeDefined();
   });
-});
 
+  test('local subscribe bridges AsyncGenerator events into handlers', async () => {
+    const prevRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    const profile = mkdtempSync(join(tmpdir(), 'llamactl-node-client-sub-'));
+    process.env.LOCAL_AI_RUNTIME_DIR = join(profile, 'runtime');
+
+    try {
+      const workload = `sub-bridge-${Date.now().toString(36)}`;
+      const logFile = serverLogsMod.serverLogFile(envMod.resolveEnv(), { name: workload });
+      mkdirSync(dirname(logFile), { recursive: true });
+      writeFileSync(logFile, 'line-a\nline-b\n', 'utf8');
+
+      const client = createNodeClient(freshConfig());
+      const got: string[] = [];
+      let started = false;
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('serverLogs subscription timed out')),
+          2000,
+        );
+        client.serverLogs.subscribe(
+          { workload, lines: 10, follow: false },
+          {
+            onStarted: () => {
+              started = true;
+            },
+            onData: (evt: unknown) => {
+              const e = evt as { type?: string; line?: string };
+              if (e.type === 'line' && typeof e.line === 'string') got.push(e.line);
+            },
+            onError: (err: unknown) => {
+              clearTimeout(timer);
+              reject(err);
+            },
+            onComplete: () => {
+              clearTimeout(timer);
+              resolve();
+            },
+          },
+        );
+      });
+
+      expect(started).toBe(true);
+      expect(got).toEqual(['line-a', 'line-b']);
+    } finally {
+      if (prevRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
+      else process.env.LOCAL_AI_RUNTIME_DIR = prevRuntimeDir;
+      rmSync(profile, { recursive: true, force: true });
+    }
+  });
+});
