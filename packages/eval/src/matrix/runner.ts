@@ -14,6 +14,7 @@ interface RunMatrixOpts {
   db: Database;
   runId?: string;
   corpusOverrides?: Map<string, string>;
+  concurrency?: number;
 }
 
 export async function runMatrix(
@@ -24,6 +25,10 @@ export async function runMatrix(
   }
   if (opts.workloads.length === 0) {
     throw new Error('runMatrix: workloads list is empty — no work to do');
+  }
+  const concurrency = opts.concurrency ?? 1;
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
+    throw new Error('runMatrix: concurrency must be an integer between 1 and 8');
   }
   ensureMatrixSchema(opts.db);
   const runId = opts.runId ?? `${new Date().toISOString()}-${randomUUID().slice(0, 8)}`;
@@ -93,9 +98,9 @@ export async function runMatrix(
           errors += 1;
         }
         try {
-          for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+          nRows = rows.length;
+          const runRow = async (rowIndex: number): Promise<void> => {
             const row = rows[rowIndex];
-            nRows += 1;
             try {
               const built = workload.prompt_builder(row);
               const structuredOutputsSupported = model.structured_outputs_supported !== false;
@@ -138,8 +143,27 @@ export async function runMatrix(
             } catch (err) {
               errors += 1;
               const message = err instanceof Error ? err.message : String(err);
-              console.warn(`[matrix] inference failed for ${workload.name} row ${nRows}: ${message}`);
+              console.warn(`[matrix] inference failed for ${workload.name} row ${rowIndex + 1}: ${message}`);
             }
+          };
+
+          if (concurrency === 1 || rows.length <= 1) {
+            for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+              await runRow(rowIndex);
+            }
+          } else {
+            let nextRowIndex = 0;
+            const workers = Array.from({ length: Math.min(concurrency, rows.length) }, async () => {
+              while (true) {
+                const rowIndex = nextRowIndex;
+                nextRowIndex += 1;
+                if (rowIndex >= rows.length) {
+                  return;
+                }
+                await runRow(rowIndex);
+              }
+            });
+            await Promise.all(workers);
           }
         } finally {
           if (judgeBoot) {

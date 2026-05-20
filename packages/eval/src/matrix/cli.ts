@@ -14,6 +14,7 @@ export interface MatrixCliArgs {
   modelsPath: string;
   workloadsArg: string;
   outDb: string;
+  concurrency: number;
   report?: 'md' | 'csv' | 'both';
   reportOut?: string;
   runId?: string;
@@ -51,19 +52,24 @@ export function parseArgs(argv: string[]): MatrixCliArgs {
   const modelsPath = readArg('--models');
   const workloadsArg = readArg('--workloads');
   const outDb = readArg('--out-db') ?? 'packages/eval/results/matrix.db';
+  const concurrencyRaw = readArg('--concurrency');
   const report = readArg('--report') as MatrixCliArgs['report'];
   const reportOut = readArg('--report-out');
   const runId = readArg('--run-id');
   const reportAllRuns = argv.includes('--report-all-runs');
   const corpusOverrideRaw = readArg('--corpus-override');
+  const concurrency = concurrencyRaw ? Number.parseInt(concurrencyRaw, 10) : 1;
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
+    throw new Error('--concurrency must be an integer between 1 and 8');
+  }
   if (runId && reportAllRuns) {
     throw new Error('--run-id and --report-all-runs are mutually exclusive');
   }
   if (!modelsPath || !workloadsArg) {
-    throw new Error('usage: --models <json> --workloads <names> [--out-db <path>] (default packages/eval/results/matrix.db)');
+    throw new Error('usage: --models <json> --workloads <names> [--out-db <path>] [--concurrency <1-8>] (default packages/eval/results/matrix.db)');
   }
   const corpusOverrides = corpusOverrideRaw ? parseCorpusOverrides(corpusOverrideRaw) : undefined;
-  return { modelsPath, workloadsArg, outDb, report, reportOut, runId, reportAllRuns, corpusOverrides };
+  return { modelsPath, workloadsArg, outDb, concurrency, report, reportOut, runId, reportAllRuns, corpusOverrides };
 }
 
 function validateModelSpec(value: unknown): ModelSpec {
@@ -129,10 +135,10 @@ function getKnownWorkloads(): Record<string, WorkloadEval> {
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
-    console.log('usage: --models <json> --workloads <names> --out-db <path> [--report md|csv|both] [--report-out <path>] [--corpus-override workload=path[,...]]');
+    console.log('usage: --models <json> --workloads <names> --out-db <path> [--concurrency <1-8>] [--report md|csv|both] [--report-out <path>] [--corpus-override workload=path[,...]]');
     return;
   }
-  const { modelsPath, workloadsArg, outDb, report, reportOut, runId, reportAllRuns, corpusOverrides } = parseArgs(process.argv.slice(2));
+  const { modelsPath, workloadsArg, outDb, concurrency, report, reportOut, runId, reportAllRuns, corpusOverrides } = parseArgs(process.argv.slice(2));
 
   const models = ((await Bun.file(modelsPath).json()) as unknown[]).map(validateModelSpec);
   if (models.length === 0) {
@@ -156,7 +162,7 @@ async function main(): Promise<void> {
   }
 
   const db = new Database(outDb);
-  const result = await runMatrix({ models, workloads, db, runId, corpusOverrides });
+  const result = await runMatrix({ models, workloads, db, runId, corpusOverrides, concurrency });
   if (report) {
     if (!reportOut) {
       throw new Error('--report-out is required when --report is set');

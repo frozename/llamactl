@@ -390,6 +390,59 @@ describe('runMatrix', () => {
 });
 
 describe('matrix CLI', () => {
+  test('parseArgs defaults concurrency to 1', () => {
+    const args = parseArgs([
+      '--models',
+      '/tmp/m.json',
+      '--workloads',
+      'memory-efficacy-binary',
+      '--out-db',
+      '/tmp/x.db',
+    ]);
+    expect(args.concurrency).toBe(1);
+  });
+
+  test('parseArgs accepts --concurrency within [1,8]', () => {
+    const args = parseArgs([
+      '--models',
+      '/tmp/m.json',
+      '--workloads',
+      'memory-efficacy-binary',
+      '--out-db',
+      '/tmp/x.db',
+      '--concurrency',
+      '4',
+    ]);
+    expect(args.concurrency).toBe(4);
+  });
+
+  test('parseArgs rejects --concurrency outside [1,8]', () => {
+    expect(() =>
+      parseArgs([
+        '--models',
+        '/tmp/m.json',
+        '--workloads',
+        'memory-efficacy-binary',
+        '--out-db',
+        '/tmp/x.db',
+        '--concurrency',
+        '0',
+      ]),
+    ).toThrow('--concurrency must be an integer between 1 and 8');
+    expect(() =>
+      parseArgs([
+        '--models',
+        '/tmp/m.json',
+        '--workloads',
+        'memory-efficacy-binary',
+        '--out-db',
+        '/tmp/x.db',
+        '--concurrency',
+        '9',
+      ]),
+    ).toThrow('--concurrency must be an integer between 1 and 8');
+  });
+
   test('rejects --run-id together with --report-all-runs', () => {
     expect(() =>
       parseArgs([
@@ -465,5 +518,93 @@ describe('matrix CLI', () => {
     await expect(
       runMatrix({ models: [makeModel('m')], workloads: [], db }),
     ).rejects.toThrow('workloads list is empty');
+  });
+
+  test('runMatrix concurrency preserves row attribution and metrics', async () => {
+    const dbSeq = new Database(':memory:');
+    const dbPar = new Database(':memory:');
+    const tmpPath = `/tmp/matrix-concurrency-${randomUUID()}.jsonl`;
+    const rows = [
+      { prompt: 'p0', answer: 'A' },
+      { prompt: 'p1', answer: 'B' },
+      { prompt: 'p2', answer: 'C' },
+      { prompt: 'p3', answer: 'D' },
+    ];
+    await Bun.write(tmpPath, rows.map((row) => JSON.stringify(row)).join('\n'));
+
+    const origFetch = globalThis.fetch;
+    const delays = [80, 10, 60, 20];
+    let inflight = 0;
+    let peakInflight = 0;
+    globalThis.fetch = async (_url, init) => {
+      const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {};
+      const messages = Array.isArray(body.messages) ? body.messages : [];
+      const userMessage = (messages[0] as { content?: string } | undefined)?.content ?? '';
+      const match = /p(\d+)/.exec(userMessage);
+      const idx = Number(match?.[1] ?? '0');
+      inflight += 1;
+      peakInflight = Math.max(peakInflight, inflight);
+      await Bun.sleep(delays[idx] ?? 5);
+      inflight -= 1;
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: rows[idx]?.answer ?? '' } }],
+          usage: { completion_tokens: 10 },
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    };
+
+    const workload: WorkloadEval = {
+      name: 'concurrency-test',
+      corpus_path: tmpPath,
+      prompt_builder: (row) => {
+        const typed = row as { prompt: string };
+        return {
+          messages: [{ role: 'user', content: typed.prompt }],
+        };
+      },
+      scorer: (row, completion) => {
+        const typed = row as { answer: string };
+        const exact = completion.trim() === typed.answer ? 1 : 0;
+        return {
+          metrics: { exact_match: exact },
+          prediction: completion.trim(),
+          gold: typed.answer,
+        };
+      },
+      primary_metric_name: 'mean_exact_match',
+    };
+
+    try {
+      const seq = await runMatrix({
+        models: [makeModel('model-a')],
+        workloads: [workload],
+        db: dbSeq,
+        concurrency: 1,
+      });
+      const par = await runMatrix({
+        models: [makeModel('model-a')],
+        workloads: [workload],
+        db: dbPar,
+        concurrency: 2,
+      });
+
+      const seqCell = listCellRows(dbSeq, { run_id: seq.runId })[0];
+      const parCell = listCellRows(dbPar, { run_id: par.runId })[0];
+      expect(seqCell?.primary_metric_value).toBe(1);
+      expect(parCell?.primary_metric_value).toBe(seqCell?.primary_metric_value);
+
+      const details = listCellRowDetails(dbPar, { run_id: par.runId });
+      expect(details).toHaveLength(4);
+      expect(details.map((d) => d.row_index)).toEqual([0, 1, 2, 3]);
+      expect(details.map((d) => d.prediction)).toEqual(['A', 'B', 'C', 'D']);
+      expect(peakInflight).toBeGreaterThanOrEqual(2);
+    } finally {
+      globalThis.fetch = origFetch;
+      try {
+        rmSync(tmpPath);
+      } catch {}
+    }
   });
 });
