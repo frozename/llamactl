@@ -1,0 +1,43 @@
+[
+  {
+    "name": "granite41-3b-llamacpp-Q8-mac-mini",
+    "engine": "llamacpp",
+    "family": "granite-4.1",
+    "quant": "Q8_0",
+    "size_params": "3B",
+    "host": "127.0.0.1",
+    "port": 8087,
+    "binary": "/Volumes/AI-DATA/src/llama.cpp-atomic/build-shared-cache/bin/llama-server",
+    "gguf_path": "/Volumes/AI-MODELS/llama.cpp/models/granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+    "extra_args": [],
+    "start_args": [
+      "--ctx-size", "32768",
+      "-ngl", "999",
+      "--flash-attn", "on",
+      "-ctk", "q8_0",
+      "-ctv", "q8_0",
+      "--no-warmup",
+      "-np", "1",
+      "--jinja",
+      "--reasoning", "off",
+      "--alias", "local"
+    ],
+    "managed": true
+  },
+  {
+    "name": "granite41-8b-mlx-nvfp4-mac-mini",
+    "engine": "omlx",
+    "family": "granite-4.1",
+    "quant": "MLX-nvfp4",
+    "size_params": "8B",
+    "host": "127.0.0.1",
+    "port": 8089,
+    "binary": "/Volumes/AI-DATA/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/AI-MODELS/llama.cpp/models",
+    "request_model_id": "granite-4.1-8b-nvfp4",
+    "extra_args": ["--max-concurrent-requests", "1"],
+    "start_args": [],
+    "gguf_path": "",
+    "managed": true
+  }
+]
