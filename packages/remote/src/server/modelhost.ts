@@ -73,6 +73,11 @@ const CHILD_ENV_ALLOWLIST = [
   'LLAMACTL_MODELS_DIR',
   'LLAMA_CPP_MODELS',
   'LLAMA_CPP_BIN',
+  // Apple Metal GPU context-store timeout relaxation — workaround for
+  // MLX issue #2670 (uncatchable abort() on Metal command-buffer errors
+  // under high concurrency / multi-model load). Set to "1" in the host's
+  // launchd plist to enable; harmless when unset.
+  'AGX_RELAX_CDM_CTXSTORE_TIMEOUT',
 ];
 
 function sanitizeChildEnv(parent: NodeJS.ProcessEnv, overrides: Record<string, string> | undefined): NodeJS.ProcessEnv {
