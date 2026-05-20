@@ -1,0 +1,47 @@
+# Granite 4.1 3B MLX (4-bit) judge on `mac-mini` — production swap candidate
+# for granite41-3b-judge-mac-mini (llama.cpp Q8 GGUF).
+#
+# Rationale (validated 2026-05-20):
+# - macro-F1 on memory-efficacy-4way: 0.9235 (ties Q8 GGUF, byte-identical
+#   per-class confusion matrix)
+# - Throughput: 27.49 tps (+10% vs Q8 GGUF at 24.92 tps)
+# - RAM: ~3-4 GB resident (vs ~4-5 GB for Q8 GGUF) — frees ~1-2 GB headroom
+# - Requires xgrammar==0.2.1 + response_format on classifier requests
+#   (both shipped in 2a236a9; A/B refuted any regression risk)
+#
+# Apply:
+#   llamactl --node mac-mini apply -f templates/workloads/mlx-granite-3b-judge-mac-mini.yaml
+#
+# Verify before flipping agentchat.yaml:
+#   curl http://192.168.68.76:8186/v1/models   # granite-4.1-3b-4bit listed
+#
+# Concurrency: --max-concurrent-requests 2 matches the existing -np 2 on the
+# llama.cpp judge it replaces. Penumbra may call this from two t2-promotion
+# lanes in parallel.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: mlx-granite-3b-judge-mac-mini
+  labels:
+    family: granite-4.1
+    role: judge
+    agents: memory-refiner
+spec:
+  engine: omlx
+  node: mac-mini
+  enabled: true
+  binary: /Volumes/AI-DATA/src/omlx/.venv/bin/omlx
+  resources:
+    expectedMemoryGiB: 5
+  endpoint:
+    host: 0.0.0.0
+    port: 8186
+  hostedModels:
+    - rel: mlx-community/granite-4.1-3b-4bit
+  extraArgs:
+    - --max-concurrent-requests
+    - "2"
+    - --paged-ssd-cache-dir
+    - /Volumes/AI-DATA/cache/omlx
+  restartPolicy: Always
+  timeoutSeconds: 120
