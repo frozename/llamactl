@@ -1,0 +1,19 @@
+[
+  {
+    "name": "gemma4-e4b-mlx-4bit-nothink",
+    "engine": "omlx",
+    "family": "gemma-4",
+    "quant": "MLX-4bit",
+    "size_params": "E4B",
+    "host": "127.0.0.1",
+    "port": 8140,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "request_model_id": "gemma-4-e4b-it-4bit",
+    "extra_args": ["--max-concurrent-requests", "1"],
+    "start_args": [],
+    "gguf_path": "",
+    "disable_thinking": true,
+    "managed": true
+  }
+]

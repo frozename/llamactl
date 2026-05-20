@@ -172,7 +172,10 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
       );
     }
     if (await pingHealth(model.host, model.port)) {
-      if (!(await probeInference(model.host, model.port, 30_000, model.request_model_id ?? 'local'))) {
+      // dflash variants hit a 3-30 GB draft model sync from HF on first
+      // load. 30s isn't always enough on slow links; give them 180s.
+      const probeTimeoutMs = (model as { dflash?: unknown }).dflash ? 180_000 : 30_000;
+      if (!(await probeInference(model.host, model.port, probeTimeoutMs, model.request_model_id ?? 'local'))) {
         proc.kill('SIGTERM');
         throw new Error(
           `llama-server for ${model.name} /v1 boot-probe failed\n--- stderr tail ---\n${stderrTail.join('\n')}`,
