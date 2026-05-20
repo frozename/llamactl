@@ -20,5 +20,7 @@ spec:
   extraArgs:
     - --max-concurrent-requests
     - "4"
+    - --paged-ssd-cache-dir
+    - /Volumes/AI-DATA/cache/omlx
   restartPolicy: Always
   timeoutSeconds: 180
