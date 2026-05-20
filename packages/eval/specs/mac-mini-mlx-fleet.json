@@ -1,0 +1,52 @@
+[
+  {
+    "name": "qwen3-8b-mlx-4bit-mac-mini",
+    "engine": "omlx",
+    "family": "qwen-3",
+    "quant": "MLX-4bit",
+    "size_params": "8B",
+    "host": "127.0.0.1",
+    "port": 8094,
+    "binary": "/Volumes/AI-DATA/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/AI-MODELS/llama.cpp/models",
+    "request_model_id": "Qwen3-8B-MLX-4bit",
+    "disable_thinking": true,
+    "extra_args": ["--max-concurrent-requests", "1"],
+    "start_args": [],
+    "gguf_path": "",
+    "managed": true
+  },
+  {
+    "name": "gemma4-e2b-mlx-4bit-mac-mini",
+    "engine": "omlx",
+    "family": "gemma-4",
+    "quant": "MLX-4bit",
+    "size_params": "E2B",
+    "host": "127.0.0.1",
+    "port": 8096,
+    "binary": "/Volumes/AI-DATA/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/AI-MODELS/llama.cpp/models",
+    "request_model_id": "gemma-4-e2b-it-4bit",
+    "disable_thinking": true,
+    "extra_args": ["--max-concurrent-requests", "1"],
+    "start_args": [],
+    "gguf_path": "",
+    "managed": true
+  },
+  {
+    "name": "granite41-8b-mlx-nvfp4-mac-mini",
+    "engine": "omlx",
+    "family": "granite-4.1",
+    "quant": "MLX-nvfp4",
+    "size_params": "8B",
+    "host": "127.0.0.1",
+    "port": 8097,
+    "binary": "/Volumes/AI-DATA/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/AI-MODELS/llama.cpp/models",
+    "request_model_id": "granite-4.1-8b-nvfp4",
+    "extra_args": ["--max-concurrent-requests", "1"],
+    "start_args": [],
+    "gguf_path": "",
+    "managed": true
+  }
+]
