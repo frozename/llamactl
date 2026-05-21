@@ -1,4 +1,4 @@
-From e350f127ed3f4851cff7d2361386a8b738f1362a Mon Sep 17 00:00:00 2001
+From 8c514a1a5ff682f211539df4897c8a19f0740326 Mon Sep 17 00:00:00 2001
 From: Alexandre Cordeiro <nenisdeno@gmail.com>
 Date: Wed, 20 May 2026 20:02:24 -0300
 Subject: [PATCH] Make Metal command-buffer error handling exception-safe
@@ -84,9 +84,9 @@ should be prepared to recreate the encoder / stream if subsequent
 operations behave unexpectedly. Full encoder-level exception safety is
 the natural follow-up.
 ---
- mlx/backend/metal/eval.cpp |  62 ++++++++++++++++++----
- mlx/scheduler.h            | 103 +++++++++++++++++++++++++++++++++++++
- 2 files changed, 155 insertions(+), 10 deletions(-)
+ mlx/backend/metal/eval.cpp |  62 +++++++++++++++++----
+ mlx/scheduler.h            | 109 +++++++++++++++++++++++++++++++++++++
+ 2 files changed, 161 insertions(+), 10 deletions(-)
 
 diff --git a/mlx/backend/metal/eval.cpp b/mlx/backend/metal/eval.cpp
 index 6f55976e..1a371c3f 100644
@@ -203,10 +203,10 @@ index 6f55976e..1a371c3f 100644
  
  } // namespace mlx::core::gpu
 diff --git a/mlx/scheduler.h b/mlx/scheduler.h
-index c84ab628..71b59fac 100644
+index c84ab628..daee3b18 100644
 --- a/mlx/scheduler.h
 +++ b/mlx/scheduler.h
-@@ -97,6 +97,85 @@ class MLX_API Scheduler {
+@@ -97,6 +97,91 @@ class MLX_API Scheduler {
      return n_active_tasks_;
    }
  
@@ -215,19 +215,19 @@ index c84ab628..71b59fac 100644
 +  // contexts — see mlx-explore/mlx#2670. If a stream already has a pending
 +  // error, the new one is dropped (first error wins).
 +  //
-+  // Publishes the atomic sentinel *after* the slot is filled so a
-+  // concurrent `throw_if_stream_error` reader that observes the sentinel
-+  // is guaranteed to see a valid exception_ptr to consume.
++  // The sentinel transition runs INSIDE `error_mtx_` so it cannot race
++  // against a concurrent `throw_if_stream_error` lowering the sentinel
++  // after observing an empty map (otherwise an insertion+sentinel-raise
++  // sequencing against an erase+sentinel-lower sequence could end with
++  // the slot populated but the sentinel false, stranding the error).
 +  void notify_stream_error(const Stream& stream, std::exception_ptr eptr) {
 +    if (!eptr) return;
-+    {
-+      std::lock_guard<std::mutex> lk(error_mtx_);
-+      auto& slot = stream_errors_[stream.index];
-+      if (slot) {
-+        return; // first error wins; drop subsequent
-+      }
-+      slot = std::move(eptr);
++    std::lock_guard<std::mutex> lk(error_mtx_);
++    auto& slot = stream_errors_[stream.index];
++    if (slot) {
++      return; // first error wins; drop subsequent
 +    }
++    slot = std::move(eptr);
 +    any_stream_error_.store(true, std::memory_order_release);
 +  }
 +
@@ -235,15 +235,17 @@ index c84ab628..71b59fac 100644
 +  // calling thread. Must be called from a synchronous waitpoint where the
 +  // exception can be caught (e.g. at the entry of eval/finalize/sync).
 +  //
-+  // Hot path: an atomic sentinel makes the common (no-error) case a single
-+  // relaxed load with no mutex acquisition, so this is safe to call on
-+  // every `eval()` without measurable throughput cost.
++  // Hot path: the atomic sentinel makes the common (no-error) case a
++  // single acquire-load with no mutex acquisition, so this is safe to
++  // call on every `eval()` without measurable throughput cost. The
++  // sentinel is mutated only while holding `error_mtx_`, so the cleared
++  // observation that a no-pending reader gets via this fast path is
++  // tied to a real lock-protected emptiness check by some other thread.
 +  void throw_if_stream_error(const Stream& stream) {
 +    if (!any_stream_error_.load(std::memory_order_acquire)) {
 +      return;
 +    }
 +    std::exception_ptr eptr;
-+    bool any_remaining = false;
 +    {
 +      std::lock_guard<std::mutex> lk(error_mtx_);
 +      auto it = stream_errors_.find(stream.index);
@@ -251,12 +253,12 @@ index c84ab628..71b59fac 100644
 +        eptr = std::move(it->second);
 +        stream_errors_.erase(it);
 +      }
-+      any_remaining = !stream_errors_.empty();
-+    }
-+    // Lower the sentinel only when no other stream still has a pending
-+    // error; otherwise leave it raised so other streams trip it.
-+    if (!any_remaining) {
-+      any_stream_error_.store(false, std::memory_order_release);
++      // Sentinel transition INSIDE the lock so a concurrent
++      // notify_stream_error cannot insert after we observed the map
++      // empty but before we cleared the flag.
++      if (stream_errors_.empty()) {
++        any_stream_error_.store(false, std::memory_order_release);
++      }
 +    }
 +    if (eptr) {
 +      std::rethrow_exception(eptr);
@@ -267,32 +269,36 @@ index c84ab628..71b59fac 100644
 +  // stream lifecycle hooks (creation / teardown / clear) to prevent a
 +  // stale exception from a previous stream incarnation surfacing on a new
 +  // stream that happens to reuse the same index.
++  //
++  // Known limitation: a Metal completion handler captured a Stream by
++  // value before the stream was torn down will still call
++  // notify_stream_error with the old index after this clear. If the
++  // index was recycled to a new stream the new stream sees the error
++  // on its next sync waitpoint. Closing that window requires embedding
++  // a generation token in Stream, which is an upstream API change. In
++  // practice user code synchronizes before destroying a stream, which
++  // closes the window without an API change.
 +  void clear_stream_error(const Stream& stream) {
-+    bool any_remaining = false;
-+    {
-+      std::lock_guard<std::mutex> lk(error_mtx_);
-+      stream_errors_.erase(stream.index);
-+      any_remaining = !stream_errors_.empty();
-+    }
-+    if (!any_remaining) {
++    std::lock_guard<std::mutex> lk(error_mtx_);
++    stream_errors_.erase(stream.index);
++    if (stream_errors_.empty()) {
 +      any_stream_error_.store(false, std::memory_order_release);
 +    }
 +  }
 +
 +  // Drop all stashed errors across all streams. Called from
-+  // `clear_streams()` during backend reset / shutdown.
++  // `clear_streams()` during backend reset / shutdown. Both transitions
++  // are sequenced under the mutex.
 +  void clear_all_stream_errors() {
-+    {
-+      std::lock_guard<std::mutex> lk(error_mtx_);
-+      stream_errors_.clear();
-+    }
++    std::lock_guard<std::mutex> lk(error_mtx_);
++    stream_errors_.clear();
 +    any_stream_error_.store(false, std::memory_order_release);
 +  }
 +
    void wait_for_one() {
      std::unique_lock<std::mutex> lk(mtx);
      int n_tasks_old = n_active_tasks();
-@@ -115,6 +194,12 @@ class MLX_API Scheduler {
+@@ -115,6 +200,12 @@ class MLX_API Scheduler {
    std::shared_mutex threads_mtx_;
    std::condition_variable completion_cv;
    std::mutex mtx;
@@ -305,7 +311,7 @@ index c84ab628..71b59fac 100644
  };
  
  MLX_API Scheduler& scheduler();
-@@ -136,6 +221,24 @@ inline void notify_task_completion(const Stream& stream) {
+@@ -136,6 +227,24 @@ inline void notify_task_completion(const Stream& stream) {
    scheduler().notify_task_completion(stream);
  }
  

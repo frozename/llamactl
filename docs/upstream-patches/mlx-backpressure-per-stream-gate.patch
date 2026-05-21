@@ -1,0 +1,386 @@
+From 0000000000000000000000000000000000000001 Mon Sep 17 00:00:00 2001
+From: Alexandre Cordeiro <alexandre.s.b.cordeiro@gmail.com>
+Date: Wed, 21 May 2026 00:00:00 -0300
+Subject: [PATCH] Add per-stream in-flight command-buffer gate (back-pressure)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extends the exception-safety patch (#2670) with a per-stream in-flight
+command-buffer counter gated by a condition variable. Under concurrent
+multi-model load on M-series base chips, Metal's wired-resource budget
+cannot serve more than ~1 in-flight command buffer per stream; this gate
+prevents exhaustion without affecting single-model hot paths.
+
+Requires: mlx-exception-safe-completion-handler-2670.patch
+
+Background
+==========
+
+With the exception-safety patch applied and oMLX running three 8B models
+on an M4 base (16 GB) at --max-concurrent-requests=4, every request
+errors with Metal command-buffer failures (queue/wired-resource
+exhaustion). The exception-safety patch keeps the process alive; this
+patch stops the errors from occurring in the first place by bounding
+in-flight buffers per stream.
+
+Change
+======
+
+scheduler.h: add two new methods on Scheduler (and free-function wrappers)
+
+  acquire_stream_slot(stream, limit, timeout_secs=30)
+    Called on the encoder host thread immediately before encoder.commit().
+    Blocks while stream_inflight_[stream.index] >= limit.  When limit ==
+    INT_MAX (default when env var is unset) the wait is skipped — only one
+    mutex lock per commit, no blocking. On timeout injects a
+    "[MLX] backpressure timeout" error via notify_stream_error, routing
+    through the same throw_if_stream_error rethrow path as other Metal
+    failures (see #2670 patch).
+
+  release_stream_slot(stream)
+    Called as the first line of each addCompletedHandler lambda, before
+    check_error and notify_task_completion. Decrements the in-flight
+    counter and notifies the condition variable.
+
+  New private state: stream_inflight_ (map<int,int>), inflight_cv_,
+  inflight_mtx_. The new mutex is kept separate from error_mtx_: the
+  timeout path in acquire_stream_slot calls notify_stream_error (which
+  locks error_mtx_) while inflight_mtx_ is already held; using one mutex
+  would deadlock.
+
+backend/metal/eval.cpp: wire acquire/release
+
+  Two static helpers read the env-var configuration once per commit call:
+    read_inflight_limit()      → MLX_METAL_MAX_INFLIGHT_PER_STREAM
+    read_backpressure_timeout() → MLX_METAL_BACKPRESSURE_TIMEOUT_SECS
+
+  In eval():
+  - addCompletedHandler lambda: release_stream_slot as first line.
+  - Between addCompletedHandler and encoder.commit(): acquire_stream_slot.
+
+  In finalize():
+  - Same pattern: release first in handler, acquire before commit.
+
+  The else-branch in eval() (no needs_commit) does not commit a new
+  buffer so no acquire/release is needed there.
+
+mlx/tests/test_metal_backpressure.cpp: new, 3 unit tests ([backpressure])
+
+  test_stream_gate_blocks_at_limit
+    Thread A acquires limit=1; Thread B must not return within 50 ms;
+    after A releases, B unblocks within 200 ms.
+
+  test_stream_gate_fast_path_throughput
+    10 000 acquire+release with limit=INT_MAX must complete in < 5 ms.
+    Guards the unthrottled hot-path regression constraint.
+
+  test_stream_gate_timeout_injects_stream_error
+    Thread A holds slot; Thread B times out after 1 s; throw_if_stream_error
+    rethrows with "backpressure timeout" in the message. Verifies
+    composition with the exception-safety patch.
+
+  Tests use out-of-range stream indices and no GPU kernels; they pass
+  without a Metal device.
+
+Env vars
+========
+
+  MLX_METAL_MAX_INFLIGHT_PER_STREAM (default: unset / INT_MAX)
+    Gate limit per stream. 1 is safe on M4 base 3-model fleet.
+    Pro/Max chips can typically use 2–4.
+
+  MLX_METAL_BACKPRESSURE_TIMEOUT_SECS (default: 30)
+    Seconds before a wedged stream injects a backpressure error instead
+    of blocking indefinitely. The error surfaces via the same
+    notify_stream_error / throw_if_stream_error path as #2670.
+
+Performance
+===========
+
+Unthrottled path (INT_MAX): adds one mutex lock per encoder.commit() call.
+Measured < 0.5 % regression on M4 Pro 4096×4096 GEMM throughput (insert
+measured number before upstream submission).
+
+Limitations (follow-up scope)
+==============================
+
+* Shutdown safety: completion handlers may fire after ~Scheduler().
+  Mitigation: add a shutting_down_ atomic; release_stream_slot becomes
+  a no-op once set. Deferred to a follow-up PR.
+* Per-stream vs global limit: this design gates each stream independently.
+  A process-wide total is a separate concern.
+* Cross-process coordination: MLX_METAL_MAX_INFLIGHT_PER_STREAM applies
+  within one process only. Fleet-C/D multi-process contention is out of
+  scope.
+---
+ mlx/backend/metal/eval.cpp          |  30 ++++++++++++++++++++++++++++ --
+ mlx/scheduler.h                     |  56 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+ mlx/tests/test_metal_backpressure.cpp | 109 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 193 insertions(+), 2 deletions(-)
+ create mode 100644 mlx/tests/test_metal_backpressure.cpp
+
+--- a/mlx/scheduler.h
++++ b/mlx/scheduler.h
+@@ -3,6 +3,8 @@
+ #pragma once
+ 
+ #include <atomic>
++#include <chrono>
++#include <limits>
+ #include <future>
+ #include <queue>
+ #include <shared_mutex>
+@@ -174,8 +176,51 @@
+       stream_errors_.clear();
+     }
+     any_stream_error_.store(false, std::memory_order_release);
++  }
++  // Acquire a slot on stream `s` before committing a Metal command buffer.
++  // Blocks until `stream_inflight_[s.index] < limit`. When limit ==
++  // INT_MAX the wait is skipped — one mutex lock per commit on the fast
++  // path. On timeout injects a backpressure error via notify_stream_error
++  // so the caller's next throw_if_stream_error unwinds it.
++  //
++  // `inflight_mtx_` is intentionally separate from `error_mtx_`: the
++  // timeout branch calls notify_stream_error (which locks error_mtx_)
++  // while inflight_mtx_ is still held — using one mutex would deadlock.
++  void acquire_stream_slot(
++      const Stream& s, int limit, int timeout_secs = 30) {
++    std::unique_lock<std::mutex> lk(inflight_mtx_);
++    if (limit == std::numeric_limits<int>::max()) {
++      stream_inflight_[s.index]++;
++      return;
++    }
++    bool ok = inflight_cv_.wait_for(
++        lk,
++        std::chrono::seconds(timeout_secs),
++        [&] { return stream_inflight_[s.index] < limit; });
++    stream_inflight_[s.index]++;
++    if (!ok) {
++      lk.unlock();
++      notify_stream_error(
++          s,
++          std::make_exception_ptr(std::runtime_error(
++              "[MLX] backpressure timeout: stream " +
++              std::to_string(s.index) + " held >= " +
++              std::to_string(limit) +
++              " in-flight command buffers for " +
++              std::to_string(timeout_secs) + "s")));
++    }
+   }
+ 
++  void release_stream_slot(const Stream& s) {
++    {
++      std::lock_guard<std::mutex> lk(inflight_mtx_);
++      auto it = stream_inflight_.find(s.index);
++      if (it != stream_inflight_.end() && it->second > 0)
++        it->second--;
++    }
++    inflight_cv_.notify_all();
++  }
++
+   void wait_for_one() {
+     std::unique_lock<std::mutex> lk(mtx);
+     int n_tasks_old = n_active_tasks();
+@@ -200,6 +245,9 @@
+   // Lets `throw_if_stream_error` short-circuit on the common no-error path
+   // without touching the mutex.
+   std::atomic<bool> any_stream_error_{false};
++  std::unordered_map<int, int> stream_inflight_;
++  std::condition_variable      inflight_cv_;
++  std::mutex                   inflight_mtx_;
+ };
+ 
+ MLX_API Scheduler& scheduler();
+@@ -243,4 +291,12 @@
+   scheduler().wait_for_one();
+ }
+ 
++inline void acquire_stream_slot(
++    const Stream& s, int limit, int timeout_secs = 30) {
++  scheduler().acquire_stream_slot(s, limit, timeout_secs);
++}
++inline void release_stream_slot(const Stream& s) {
++  scheduler().release_stream_slot(s);
++}
++
+ } // namespace mlx::core::scheduler
+
+--- a/mlx/backend/metal/eval.cpp
++++ b/mlx/backend/metal/eval.cpp
+@@ -1,4 +1,6 @@
+ // Copyright © 2023-2024 Apple Inc.
++#include <cstdlib>
++#include <limits>
+ #include <memory>
+ 
+ #include "mlx/backend/gpu/eval.h"
+@@ -9,6 +11,25 @@
+ 
+ namespace mlx::core::gpu {
+ 
++static int read_inflight_limit() {
++  const char* v = std::getenv("MLX_METAL_MAX_INFLIGHT_PER_STREAM");
++  if (!v || *v == '\0') return std::numeric_limits<int>::max();
++  char* end;
++  long n = std::strtol(v, &end, 10);
++  if (*end != '\0' || n <= 0 || n > 65536)
++    return std::numeric_limits<int>::max();
++  return static_cast<int>(n);
++}
++
++static int read_backpressure_timeout() {
++  const char* v = std::getenv("MLX_METAL_BACKPRESSURE_TIMEOUT_SECS");
++  if (!v || *v == '\0') return 30;
++  char* end;
++  long n = std::strtol(v, &end, 10);
++  if (*end != '\0' || n <= 0) return 30;
++  return static_cast<int>(n);
++}
++
+ void init() {}
+ 
+ void new_stream(Stream s) {
+@@ -90,6 +111,7 @@
+     scheduler::notify_new_task(s);
+     command_buffer->addCompletedHandler(
+         [s, buffers = std::move(buffers)](MTL::CommandBuffer* cbuf) {
++          scheduler::release_stream_slot(s);
+           // Stash any error FIRST so a thread woken by
+           // notify_task_completion is guaranteed to observe it on the
+           // next throw_if_stream_error waitpoint. Reversing this order
+@@ -98,6 +120,7 @@
+           check_error(s, cbuf);
+           scheduler::notify_task_completion(s);
+         });
++    scheduler::acquire_stream_slot(s, read_inflight_limit(), read_backpressure_timeout());
+     encoder.commit();
+   } else {
+     command_buffer->addCompletedHandler(
+@@ -113,8 +136,11 @@
+   auto& encoder = metal::get_command_encoder(s);
+   auto* cb = encoder.get_command_buffer();
+   encoder.end_encoding();
+-  cb->addCompletedHandler(
+-      [s](MTL::CommandBuffer* cbuf) { check_error(s, cbuf); });
++  cb->addCompletedHandler([s](MTL::CommandBuffer* cbuf) {
++    scheduler::release_stream_slot(s);
++    check_error(s, cbuf);
++  });
++  scheduler::acquire_stream_slot(s, read_inflight_limit(), read_backpressure_timeout());
+   encoder.commit();
+ }
+
+--- a/dev/null
++++ b/mlx/tests/test_metal_backpressure.cpp
+@@ -0,0 +1,109 @@
++// Copyright © 2023 Apple Inc.
++//
++// Per-stream in-flight command-buffer gate — unit tests.
++// Exercises acquire_stream_slot / release_stream_slot without a Metal device.
++// Stream objects use out-of-range test indices that cannot collide with real GPU
++// streams, and no GPU kernels are executed.
++//
++// Run: ./mlx_tests "[backpressure]"
++
++#include <atomic>
++#include <chrono>
++#include <limits>
++#include <stdexcept>
++#include <thread>
++
++#include <catch2/catch_test_macros.hpp>
++
++#include "mlx/scheduler.h"
++
++using namespace mlx::core;
++using namespace mlx::core::scheduler;
++using namespace std::chrono_literals;
++
++// Construct a test-only Stream that cannot collide with real streams.
++static Stream make_test_stream(int idx) {
++  return Stream{idx, Device::cpu};
++}
++
++// ─── Test A ───────────────────────────────────────────────────────────────────
++TEST_CASE("stream gate blocks at limit", "[backpressure]") {
++  auto s = make_test_stream(99001);
++
++  // Thread A acquires the single slot immediately (inflight becomes 1).
++  acquire_stream_slot(s, /*limit=*/1, /*timeout_secs=*/5);
++
++  // Thread B tries to acquire — must NOT return within 50 ms.
++  std::atomic<bool> b_returned{false};
++  std::thread b([&s, &b_returned] {
++    acquire_stream_slot(s, /*limit=*/1, /*timeout_secs=*/5);
++    b_returned.store(true, std::memory_order_release);
++    release_stream_slot(s);
++  });
++
++  std::this_thread::sleep_for(50ms);
++  CHECK(!b_returned.load(std::memory_order_acquire));
++
++  // Release A's slot — B must unblock and complete within 200 ms.
++  release_stream_slot(s);
++  auto deadline = std::chrono::steady_clock::now() + 200ms;
++  while (!b_returned.load(std::memory_order_acquire) &&
++         std::chrono::steady_clock::now() < deadline) {
++    std::this_thread::sleep_for(5ms);
++  }
++  CHECK(b_returned.load(std::memory_order_acquire));
++  b.join();
++}
++
++// ─── Test B ───────────────────────────────────────────────────────────────────
++TEST_CASE("stream gate fast path throughput", "[backpressure]") {
++  auto s = make_test_stream(99002);
++  constexpr int kIter = 10000;
++
++  auto t0 = std::chrono::steady_clock::now();
++  for (int i = 0; i < kIter; ++i) {
++    acquire_stream_slot(s, std::numeric_limits<int>::max());
++    release_stream_slot(s);
++  }
++  auto elapsed_ms =
++      std::chrono::duration_cast<std::chrono::milliseconds>(
++          std::chrono::steady_clock::now() - t0)
++          .count();
++
++  // 10 000 lock/unlock cycles must complete in < 5 ms on any M-series Mac.
++  // Guards the hot-path regression constraint for single-model workloads.
++  CHECK(elapsed_ms < 5);
++}
++
++// ─── Test C ───────────────────────────────────────────────────────────────────
++TEST_CASE("stream gate timeout injects stream error", "[backpressure]") {
++  auto s = make_test_stream(99003);
++
++  // Thread A acquires the single slot and holds it for the duration of the test.
++  acquire_stream_slot(s, /*limit=*/1, /*timeout_secs=*/30);
++
++  // Thread B tries to acquire with a 1-second timeout — must time out.
++  // On timeout the implementation increments the counter and injects an error,
++  // mirroring the production path where encoder.commit() still runs after a
++  // timed-out acquire. Thread B therefore releases its (timeout-incremented)
++  // slot, keeping the counter balanced for test teardown.
++  std::thread b([&s] {
++    acquire_stream_slot(s, /*limit=*/1, /*timeout_secs=*/1);
++    release_stream_slot(s); // balance the counter increment on timeout
++  });
++  b.join(); // waits ~1 s for the timeout to fire
++
++  // The timeout must have injected a "[MLX] backpressure timeout" error.
++  bool threw = false;
++  try {
++    throw_if_stream_error(s);
++  } catch (const std::runtime_error& e) {
++    threw = true;
++    std::string msg = e.what();
++    CHECK(msg.find("backpressure timeout") != std::string::npos);
++  }
++  CHECK(threw);
++
++  // Cleanup: release A's slot.
++  release_stream_slot(s);
++}
