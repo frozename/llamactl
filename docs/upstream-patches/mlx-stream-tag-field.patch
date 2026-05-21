@@ -1,0 +1,105 @@
+From a7f3c2e8d1b4e9f0a5c8d2e7f4b1c6d9e2a5b8c1 Mon Sep 17 00:00:00 2001
+From: Alexandre Cordeiro <alexandre.s.b.cordeiro@gmail.com>
+Date: Thu, 21 May 2026 10:00:00 -0300
+Subject: [PATCH] Stream: add optional tag field for per-stream affinity
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds `std::optional<std::string> tag = std::nullopt;` to the `Stream`
+struct. Higher layers (oMLX, mlx-lm) can stamp a stream with a model
+name; the per-stream CommandQueue (B.2) and ResidencySet (B.3) patches
+use this to key per-model GPU resources without inventing a separate
+keying scheme.
+
+No changes to stream.cpp — `std::optional` zero-initialises to
+`std::nullopt` and the default copy/move semantics are correct. No
+changes to scheduler.h or eval.cpp — the field is purely advisory at
+this stage and is consumed only by the B.2/B.3 follow-up patches.
+
+Backward-compatible: `tag` defaults to `std::nullopt`, so all existing
+call sites and any struct literals that list only `{index, device,
+generation}` compile unchanged.
+
+Requires: mlx-stream-generation-counter.patch (A.1)
+---
+ mlx/stream.h                  |  3 +++
+ mlx/tests/CMakeLists.txt      |  1 +
+ mlx/tests/test_stream_tag.cpp | 36 +++++++++++++++++++++++++++++++++++
+ 3 files changed, 40 insertions(+)
+ create mode 100644 mlx/tests/test_stream_tag.cpp
+
+diff --git a/mlx/stream.h b/mlx/stream.h
+index 3a9d5e21..f8c2b047 100644
+--- a/mlx/stream.h
++++ b/mlx/stream.h
+@@ -3,5 +3,7 @@
+ #pragma once
+
+ #include <cstdint>
++#include <optional>
++#include <string>
+
+ #include "mlx/device.h"
+@@ -11,8 +13,9 @@ namespace mlx::core {
+ struct MLX_API Stream {
+   int index;
+   Device device;
+   uint64_t generation = 0;
++  std::optional<std::string> tag = std::nullopt;
+
+   bool operator==(const Stream& other) const {
+     return index == other.index;
+diff --git a/mlx/tests/CMakeLists.txt b/mlx/tests/CMakeLists.txt
+index 9b4d3ca1..e7f8a231 100644
+--- a/mlx/tests/CMakeLists.txt
++++ b/mlx/tests/CMakeLists.txt
+@@ -20,3 +20,4 @@ set(TESTS
+   test_stream_generation.cpp
++  test_stream_tag.cpp
+   test_compile.cpp
+ )
+diff --git a/mlx/tests/test_stream_tag.cpp b/mlx/tests/test_stream_tag.cpp
+new file mode 100644
+index 00000000..b3d9f274
+--- /dev/null
++++ b/mlx/tests/test_stream_tag.cpp
+@@ -0,0 +1,36 @@
++// Copyright © 2024 Apple Inc.
++
++#include <gtest/gtest.h>
++
++#include "mlx/mlx.h"
++
++using namespace mlx::core;
++
++TEST(StreamTag, DefaultTagIsEmpty) {
++  auto s = new_stream(Device::gpu);
++  ASSERT_FALSE(s.tag.has_value());
++}
++
++TEST(StreamTag, TagRoundTrips) {
++  Stream s = new_stream(Device::gpu);
++  s.tag = "granite-3b";
++  ASSERT_EQ(s.tag.value(), "granite-3b");
++}
++
++TEST(StreamTag, TagRoundsThroughCopy) {
++  Stream s = new_stream(Device::gpu);
++  s.tag = "qwen3-8b";
++  Stream s2 = s;
++  ASSERT_TRUE(s2.tag.has_value());
++  ASSERT_EQ(s2.tag.value(), "qwen3-8b");
++  // Mutating the copy must not affect the original.
++  s2.tag = "granite-3b";
++  ASSERT_EQ(s.tag.value(), "qwen3-8b");
++}
++
++TEST(StreamTag, UntaggedAndTaggedStreamsDifferentiate) {
++  Stream s1 = new_stream(Device::gpu);
++  Stream s2 = new_stream(Device::gpu);
++  s2.tag = "qwen3-8b";
++  ASSERT_NE(s1.tag.has_value(), s2.tag.has_value());
++}
+--
+2.53.0
