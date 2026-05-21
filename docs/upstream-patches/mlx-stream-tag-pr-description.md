@@ -25,11 +25,16 @@ resources.
 struct MLX_API Stream {
   int index;
   Device device;
-  uint64_t generation = 0;        // preceding A.1 patch
-  std::optional<std::string> tag = std::nullopt;  // ← this patch
+  // A.1 patch — per-incarnation counter for stale-handler detection
+  uint64_t generation{0};
+  // This patch — optional caller-supplied label
+  std::optional<std::string> tag = std::nullopt;
 
-  bool operator==(const Stream& other) const {
-    return index == other.index;
+  explicit Stream(int index, Device device) : index(index), device(device) {}
+
+  bool operator==(const Stream&) const = default;
+  bool operator<(const Stream& rhs) const {
+    return device < rhs.device || index < rhs.index;
   }
 };
 ```
@@ -47,33 +52,40 @@ s.tag = "qwen3-8b";
 - `tag` defaults to `std::nullopt`. No existing call site changes.
 - `Stream` retains value semantics; copy and move carry the tag correctly
   with no user-defined special members required.
-- `operator==` is unchanged (keyed on `index`), so stream identity in
-  maps and sets is unaffected.
+- The defaulted `operator==` now includes `tag` in comparison. In
+  practice this is a no-op: untagged streams (the common case) all carry
+  `std::nullopt`, so pairwise equality is unaffected for existing code.
+- `operator<` compares `device` and `index` only (unchanged); stream
+  ordering in maps and sets is unaffected.
 - The two new standard-library headers (`<optional>`, `<string>`) are
-  included in `stream.h`. Both are already present transitively in most
+  added to `stream.h`. Both are already present transitively in most
   translation units that include MLX headers; adding them explicitly is
-  correct hygiene.
+  correct hygiene and avoids depending on transitive inclusion order.
 
 ## Tests
 
-`mlx/tests/test_stream_tag.cpp` — four tests covering the struct-level
-contract (Metal hardware not required for these assertions):
+`tests/test_stream_tag.cpp` — two doctest cases covering the
+struct-level contract (Metal hardware not required):
 
-| Test | What it checks |
-|------|----------------|
-| `DefaultTagIsEmpty` | Fresh stream has `nullopt` tag |
-| `TagRoundTrips` | Assigned tag is readable back unchanged |
-| `TagRoundsThroughCopy` | Copy carries the tag; mutation of the copy does not affect the source |
-| `UntaggedAndTaggedStreamsDifferentiate` | Two independently managed streams can differ in tag presence |
+| Test case | What it checks |
+|-----------|----------------|
+| `A fresh stream has an empty tag` | `new_stream()` result has `nullopt` tag |
+| `Assigning a tag round-trips through stream copy` | Tag survives value-copy; copy is independent |
 
-Run:
+Run alongside the existing suite:
 
 ```bash
-cmake --build . -t mlx_tests && ./mlx_tests "[StreamTag]"
+cmake --build . --target tests && ctest -R tests
 ```
 
-Expected: all four `[StreamTag]` tests pass; prior back-pressure and
-generation-counter tests remain green.
+Or filter to the new cases only:
+
+```bash
+./tests --test-case="*tag*"
+```
+
+Expected: both new cases pass; existing back-pressure, generation-counter,
+and all other doctest cases remain green.
 
 ## Future work
 
