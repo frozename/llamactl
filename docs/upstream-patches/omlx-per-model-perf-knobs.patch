@@ -1,0 +1,403 @@
+From 7a44410048773b1b48b0ec46751e34fe7504af53 Mon Sep 17 00:00:00 2001
+From: Alexandre Cordeiro <nenisdeno@gmail.com>
+Date: Thu, 21 May 2026 18:57:18 -0300
+Subject: [PATCH] Add per-model max_completion_batch_size and prefill_step_size
+ overrides
+
+Extends the per-model knobs surface introduced by per_model_max_concurrent
+with two more dicts on SchedulerConfig: per_model_max_completion_batch_size
+and per_model_prefill_step_size. Same keying contract (basename or
+fully-qualified model_name) and same resolution shape (lookup in
+Scheduler.__init__ replaces the config field on the dedicated instance).
+
+Why
+===
+
+Different model sizes saturate at different batch-fusion ceilings (3B-class
+often happy at completion_batch_size=64 where 8B-class wants 16), and
+prefill-chunk sweet-spots also differ (smaller models tolerate smaller
+chunks for lower TTFT; larger models prefer bigger chunks). Operators
+running heterogeneous models in one oMLX process need to tune these
+per-model rather than carry one global compromise.
+
+Touchpoints
+===========
+
+- omlx/settings.py: two new dict fields on SchedulerSettings;
+  from_dict/to_dict round-trip; apply_args() parses
+  --per-model-max-completion-batch-size and --per-model-prefill-step-size
+  with the same shape as --per-model-max-concurrent;
+  to_scheduler_config() propagates both dicts.
+- omlx/cli.py: two new --per-model-... flags wired to argparse.
+- omlx/scheduler.py: two new dict fields on SchedulerConfig; per-model
+  lookup in Scheduler.__init__ that REPLACES the corresponding config
+  field on the dedicated Scheduler instance (mirrors the existing
+  per_model_max_concurrent block).
+- tests/test_per_model_perf_knobs.py: round-trip + CLI parsing +
+  propagation tests mirroring test_per_model_concurrency.py.
+
+Composition
+===========
+
+* Pairs with --per-model-max-concurrent (already in this branch); the
+  three knobs together cover the operationally-relevant per-model
+  surface for heterogeneous-model deployments.
+* Independent of the exception-safety + recovery patches; works at the
+  scheduler-admission layer, not the Metal command-buffer layer.
+---
+ omlx/cli.py                        |  23 +++++
+ omlx/scheduler.py                  |  36 +++++++
+ omlx/settings.py                   |  58 +++++++++++
+ tests/test_per_model_perf_knobs.py | 157 +++++++++++++++++++++++++++++
+ 4 files changed, 274 insertions(+)
+ create mode 100644 tests/test_per_model_perf_knobs.py
+
+diff --git a/omlx/cli.py b/omlx/cli.py
+index 0b4af76..9f8efe9 100644
+--- a/omlx/cli.py
++++ b/omlx/cli.py
+@@ -599,6 +599,29 @@ Example directory structure:
+         "--per-model-max-concurrent qwen3-8b=4,granite-3b=8 lets the smaller "
+         "model serve more parallel requests than a co-resident larger one.",
+     )
++    serve_parser.add_argument(
++        "--per-model-max-completion-batch-size",
++        type=str,
++        default=None,
++        help="Per-model overrides for --max-completion-batch-size. Same "
++        "key=value,key=value shape as --per-model-max-concurrent. Models "
++        "without an entry fall back to the global "
++        "--max-completion-batch-size (which itself defaults to "
++        "--max-concurrent-requests). Different model sizes saturate at "
++        "different batch sizes; this lets operators tune them "
++        "independently while sharing one oMLX process.",
++    )
++    serve_parser.add_argument(
++        "--per-model-prefill-step-size",
++        type=str,
++        default=None,
++        help="Per-model overrides for prefill chunk size (default 2048). "
++        "Same key=value,key=value shape as --per-model-max-concurrent. "
++        "Smaller models tolerate smaller chunks (lower TTFT, more "
++        "scheduling overhead); larger models often want bigger chunks. "
++        "Models without an entry use the global default. Example: "
++        "--per-model-prefill-step-size granite-3b=512,qwen3-8b=2048",
++    )
+ 
+     # paged SSD cache options
+     serve_parser.add_argument(
+diff --git a/omlx/scheduler.py b/omlx/scheduler.py
+index 024f138..e913cd5 100644
+--- a/omlx/scheduler.py
++++ b/omlx/scheduler.py
+@@ -566,6 +566,18 @@ class SchedulerConfig:
+     # operators run e.g. mcr=4 on a 3B model alongside mcr=1 on an
+     # 8B on the same shared GPU.
+     per_model_max_concurrent: dict[str, int] = field(default_factory=dict)
++    # Per-model overrides for ``completion_batch_size`` and
++    # ``prefill_step_size``. Same keying contract as
++    # ``per_model_max_concurrent``: basename or fully-qualified
++    # model_name. When a key is present, the value REPLACES the
++    # corresponding field on the Scheduler instance dedicated to that
++    # model; when absent, the global default is used. Lets operators
++    # decouple batch-fusion ceiling and prefill chunk sweet-spots per
++    # model on a shared GPU.
++    per_model_max_completion_batch_size: dict[str, int] = field(
++        default_factory=dict
++    )
++    per_model_prefill_step_size: dict[str, int] = field(default_factory=dict)
+ 
+     # GC/cleanup settings (memory optimization)
+     gc_cleanup_interval: int = 0  # Steps between gc.collect() calls (0=disabled)
+@@ -703,6 +715,30 @@ class Scheduler:
+             if isinstance(override, int) and override > 0:
+                 self.config.max_num_seqs = override
+ 
++        # Per-model batch-fusion + prefill-chunk overrides. Same keying
++        # contract as ``per_model_max_concurrent``: basename-first,
++        # full-name fallback. Each override REPLACES the field on the
++        # Scheduler instance dedicated to that model.
++        if self.config.model_name:
++            _model_id = os.path.basename(self.config.model_name.rstrip("/"))
++            for _source_dict, _target_attr in (
++                (
++                    self.config.per_model_max_completion_batch_size,
++                    "completion_batch_size",
++                ),
++                (
++                    self.config.per_model_prefill_step_size,
++                    "prefill_step_size",
++                ),
++            ):
++                if not _source_dict:
++                    continue
++                _override = _source_dict.get(_model_id)
++                if _override is None:
++                    _override = _source_dict.get(self.config.model_name)
++                if isinstance(_override, int) and _override > 0:
++                    setattr(self.config, _target_attr, _override)
++
+         # Load additional EOS tokens from generation_config.json.
+         # Some models (e.g. GLM-4.6V) define multiple EOS tokens there
+         # that are not in tokenizer.eos_token_id.
+diff --git a/omlx/settings.py b/omlx/settings.py
+index 46c9c64..d3937f1 100644
+--- a/omlx/settings.py
++++ b/omlx/settings.py
+@@ -238,6 +238,20 @@ class SchedulerSettings:
+     # operators run heterogeneous concurrency budgets across co-resident
+     # models on a shared GPU (e.g. mcr=4 on a 3B + mcr=1 on an 8B).
+     per_model_max_concurrent: dict[str, int] = field(default_factory=dict)
++    # Per-model overrides for `max_completion_batch_size` and
++    # `prefill_step_size`. Same keying contract as
++    # `per_model_max_concurrent`: model-id basename OR fully-qualified
++    # model_name. Models without an entry fall back to the global
++    # `max_completion_batch_size` (which itself defaults to
++    # `max_concurrent_requests` for back-compat) and the hardcoded
++    # `prefill_step_size=2048` respectively. Lets operators tune the
++    # batch-fusion ceiling and prefill chunk size per model — small
++    # models often saturate at larger batch sizes than 8B-class peers,
++    # and prefill chunk sweet-spots differ by model.
++    per_model_max_completion_batch_size: dict[str, int] = field(
++        default_factory=dict
++    )
++    per_model_prefill_step_size: dict[str, int] = field(default_factory=dict)
+ 
+     def to_dict(self) -> dict[str, Any]:
+         """Convert to dictionary."""
+@@ -260,11 +274,21 @@ class SchedulerSettings:
+         per_model_typed: dict[str, int] = {
+             str(k): int(v) for k, v in per_model.items()
+         }
++        per_model_mcb = data.get("per_model_max_completion_batch_size") or {}
++        per_model_mcb_typed: dict[str, int] = {
++            str(k): int(v) for k, v in per_model_mcb.items()
++        }
++        per_model_pss = data.get("per_model_prefill_step_size") or {}
++        per_model_pss_typed: dict[str, int] = {
++            str(k): int(v) for k, v in per_model_pss.items()
++        }
+         return cls(
+             max_concurrent_requests=value,
+             chunked_prefill=bool(data.get("chunked_prefill", False)),
+             max_completion_batch_size=(int(mcb) if mcb is not None else None),
+             per_model_max_concurrent=per_model_typed,
++            per_model_max_completion_batch_size=per_model_mcb_typed,
++            per_model_prefill_step_size=per_model_pss_typed,
+         )
+ 
+ 
+@@ -1004,6 +1028,34 @@ class GlobalSettings:
+                             f"{key!r} is not an integer: {value!r}"
+                         ) from e
+             self.scheduler.per_model_max_concurrent = parsed
++        for attr_name, flag_label in (
++            ("per_model_max_completion_batch_size", "--per-model-max-completion-batch-size"),
++            ("per_model_prefill_step_size", "--per-model-prefill-step-size"),
++        ):
++            if hasattr(args, attr_name) and getattr(args, attr_name) is not None:
++                raw = getattr(args, attr_name)
++                parsed_dict: dict[str, int] = {}
++                if isinstance(raw, dict):
++                    parsed_dict = {str(k): int(v) for k, v in raw.items()}
++                else:
++                    for pair in str(raw).split(","):
++                        if not pair.strip():
++                            continue
++                        if "=" not in pair:
++                            raise ValueError(
++                                f"{flag_label}: malformed pair "
++                                f"{pair!r}; expected key=value"
++                            )
++                        key, value_str = pair.split("=", 1)
++                        key = key.strip()
++                        try:
++                            parsed_dict[key] = int(value_str.strip())
++                        except ValueError as e:
++                            raise ValueError(
++                                f"{flag_label}: value for "
++                                f"{key!r} is not an integer: {value_str!r}"
++                            ) from e
++                setattr(self.scheduler, attr_name, parsed_dict)
+ 
+         # Cache settings
+         if hasattr(args, "cache_enabled") and args.cache_enabled is not None:
+@@ -1290,6 +1342,12 @@ class GlobalSettings:
+             paged_ssd_cache_max_size=self.cache.get_ssd_cache_max_size_bytes(self.base_path),
+             hot_cache_max_size=self.cache.get_hot_cache_max_size_bytes(),
+             per_model_max_concurrent=dict(self.scheduler.per_model_max_concurrent),
++            per_model_max_completion_batch_size=dict(
++                self.scheduler.per_model_max_completion_batch_size
++            ),
++            per_model_prefill_step_size=dict(
++                self.scheduler.per_model_prefill_step_size
++            ),
+         )
+ 
+     def to_dict(self) -> dict[str, Any]:
+diff --git a/tests/test_per_model_perf_knobs.py b/tests/test_per_model_perf_knobs.py
+new file mode 100644
+index 0000000..54fb5ca
+--- /dev/null
++++ b/tests/test_per_model_perf_knobs.py
+@@ -0,0 +1,157 @@
++"""Tests for per-model ``max_completion_batch_size`` and
++``prefill_step_size`` overrides on SchedulerSettings.
++
++Mirrors the shape of ``test_per_model_concurrency.py``. These two
++overrides let operators tune batch-fusion ceiling and prefill chunk
++size per model on a shared GPU — smaller models often saturate at
++larger batch sizes than 8B-class peers, and prefill chunk sweet-spots
++differ by model.
++"""
++
++from __future__ import annotations
++
++import argparse
++
++import pytest
++
++
++def test_settings_default_empty_dicts():
++    from omlx.settings import SchedulerSettings
++
++    s = SchedulerSettings()
++    assert s.per_model_max_completion_batch_size == {}
++    assert s.per_model_prefill_step_size == {}
++
++
++def test_settings_round_trip_via_to_from_dict():
++    from omlx.settings import SchedulerSettings
++
++    original = SchedulerSettings(
++        max_concurrent_requests=8,
++        per_model_max_completion_batch_size={"granite-3b": 64, "qwen3-8b": 16},
++        per_model_prefill_step_size={"granite-3b": 512, "qwen3-8b": 2048},
++    )
++    round_tripped = SchedulerSettings.from_dict(original.to_dict())
++    assert round_tripped.per_model_max_completion_batch_size == {
++        "granite-3b": 64,
++        "qwen3-8b": 16,
++    }
++    assert round_tripped.per_model_prefill_step_size == {
++        "granite-3b": 512,
++        "qwen3-8b": 2048,
++    }
++
++
++def test_from_dict_coerces_values_to_int():
++    from omlx.settings import SchedulerSettings
++
++    raw = {
++        "max_concurrent_requests": 8,
++        "per_model_max_completion_batch_size": {"granite-3b": "64"},
++        "per_model_prefill_step_size": {"granite-3b": "512"},
++    }
++    parsed = SchedulerSettings.from_dict(raw)
++    assert parsed.per_model_max_completion_batch_size == {"granite-3b": 64}
++    assert parsed.per_model_prefill_step_size == {"granite-3b": 512}
++
++
++def test_apply_args_parses_completion_batch_size_pairs():
++    from omlx.settings import Settings
++
++    settings = Settings()
++    args = argparse.Namespace(
++        per_model_max_completion_batch_size="granite-3b=64,qwen3-8b=16",
++        per_model_prefill_step_size=None,
++    )
++    settings.apply_args(args)
++    assert settings.scheduler.per_model_max_completion_batch_size == {
++        "granite-3b": 64,
++        "qwen3-8b": 16,
++    }
++
++
++def test_apply_args_parses_prefill_step_size_pairs():
++    from omlx.settings import Settings
++
++    settings = Settings()
++    args = argparse.Namespace(
++        per_model_max_completion_batch_size=None,
++        per_model_prefill_step_size="granite-3b=512,qwen3-8b=2048",
++    )
++    settings.apply_args(args)
++    assert settings.scheduler.per_model_prefill_step_size == {
++        "granite-3b": 512,
++        "qwen3-8b": 2048,
++    }
++
++
++def test_apply_args_rejects_malformed_pair():
++    from omlx.settings import Settings
++
++    settings = Settings()
++    args = argparse.Namespace(
++        per_model_max_completion_batch_size="granite-3b=64,bogus",
++        per_model_prefill_step_size=None,
++    )
++    with pytest.raises(ValueError, match="malformed pair"):
++        settings.apply_args(args)
++
++
++def test_apply_args_rejects_non_integer_value():
++    from omlx.settings import Settings
++
++    settings = Settings()
++    args = argparse.Namespace(
++        per_model_max_completion_batch_size=None,
++        per_model_prefill_step_size="granite-3b=not_a_number",
++    )
++    with pytest.raises(ValueError, match="not an integer"):
++        settings.apply_args(args)
++
++
++def test_apply_args_accepts_dict_directly():
++    """Pre-parsed dict (e.g. from JSON config) should pass through coerced."""
++    from omlx.settings import Settings
++
++    settings = Settings()
++    args = argparse.Namespace(
++        per_model_max_completion_batch_size={"granite-3b": 64, "qwen3-8b": "16"},
++        per_model_prefill_step_size={"granite-3b": "512"},
++    )
++    settings.apply_args(args)
++    assert settings.scheduler.per_model_max_completion_batch_size == {
++        "granite-3b": 64,
++        "qwen3-8b": 16,
++    }
++    assert settings.scheduler.per_model_prefill_step_size == {"granite-3b": 512}
++
++
++def test_to_scheduler_config_propagates_per_model_dicts():
++    from omlx.settings import Settings
++
++    settings = Settings()
++    settings.scheduler.per_model_max_completion_batch_size = {
++        "granite-3b": 64,
++        "qwen3-8b": 16,
++    }
++    settings.scheduler.per_model_prefill_step_size = {
++        "granite-3b": 512,
++        "qwen3-8b": 2048,
++    }
++    cfg = settings.to_scheduler_config()
++    assert cfg.per_model_max_completion_batch_size == {
++        "granite-3b": 64,
++        "qwen3-8b": 16,
++    }
++    assert cfg.per_model_prefill_step_size == {
++        "granite-3b": 512,
++        "qwen3-8b": 2048,
++    }
++
++
++def test_scheduler_config_default_empty_dicts():
++    from omlx.scheduler import SchedulerConfig
++
++    cfg = SchedulerConfig()
++    assert cfg.per_model_max_completion_batch_size == {}
++    assert cfg.per_model_prefill_step_size == {}
+-- 
+2.53.0
+
