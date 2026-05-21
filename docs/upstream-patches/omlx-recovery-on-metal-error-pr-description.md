@@ -2,32 +2,44 @@
 
 ## Motivation
 
-The MLX exception-safety patch changes a Metal command-buffer failure from a process abort into a normal exception at the sync boundary. oMLX still treats that exception as a batch-step failure, which is too broad: one request failed, but every other request in the batch is still valid. This change adapts oMLX to the new contract by isolating the failure to a single request.
+MLX v3 exception-safety converts a Metal command-buffer failure from a
+process abort into a per-request exception at the sync boundary. oMLX
+should adapt to that contract by isolating the failure to the request
+that triggered it instead of dropping the whole batch.
 
 ## Approach
 
-Catch the `[METAL] Command buffer execution failed` error class in the batched engine, determine the request that most likely triggered the failure, remove only that request from the active batch, finalize it with a 500-style error response, and continue the remaining requests on the next tick.
+Catch the `[METAL] Command buffer execution failed` RuntimeError at the
+batch-step boundary in `omlx/scheduler.py`, attribute it to the active
+request when mlx-lm exposes enough batch metadata, finalize that request
+with the same 500-style error payload the HTTP layer already expects,
+and requeue the remaining running requests for the next tick.
 
-If mlx-lm provides per-sequence attribution, use it directly. If not, fall back to the defensive heuristic of failing the longest-running or most recently admitted request in the batch. That keeps the batch moving without pretending to know more than the runtime exposes.
+The recovery path also increments a `metal_error_recovered` counter so
+operators can see how often this fallback is used.
 
-## Heuristic Limitation
+## Heuristic limitation
 
-Per-sequence attribution may not be perfect without cooperation from mlx-lm. The fallback heuristic is intentionally conservative, but it can misidentify the request when multiple sequences are at similar stages. The patch should call that out clearly so downstream operators know the recovery path is best-effort, not exact.
+Per-sequence attribution is only exact when mlx-lm exposes a unique
+`_currently_processing` or `uids` signal. When it does not, the patch
+falls back to the most recently admitted running request. That keeps the
+batch alive, but it is a best-effort heuristic rather than a guarantee.
 
-## Tests + Observability Counter
+## Tests + counter
 
-Add pytest coverage for both cases:
+Add pytest coverage for:
 
-1. single-sequence batch plus Metal error results in exactly that request failing with a 500-style response
-2. multi-sequence batch plus Metal error fails one request and allows the rest to continue
+1. a single-sequence batch where the Metal error fails only that request
+2. a multi-sequence batch where one request fails and the surviving
+   requests are requeued for a fresh step
 
-Also add a counter and log line for "recovered from Metal error" so operators can see how often the recovery path fires in practice.
+The same patch increments `metal_error_recovered` and surfaces the count
+through scheduler stats.
 
 ## Composition
 
-This PR composes with:
+This change composes with:
 
 - https://github.com/ml-explore/mlx/pull/2670
-- the upstream oMLX `--max-completion-batch-size` change on `frozename/omlx feat/max-completion-batch-size`
-
-Validation still needs an end-to-end run against MLX with the v3 exception-safety patch installed. This patch has not been runtime-tested here.
+- the upstream oMLX `--max-completion-batch-size` patch on
+  `frozename/omlx feat/max-completion-batch-size`

@@ -1,8 +1,7 @@
-From 2f7a8cc5d9a3d6a44b7b6c7df2f0cb2a1f1d8b21 Mon Sep 17 00:00:00 2001
+From 26a2033f2711509c1edac9a9ac2f36ac19598ac9 Mon Sep 17 00:00:00 2001
 From: Alexandre Cordeiro <alexandre.s.b.cordeiro@gmail.com>
 Date: Thu, 21 May 2026 00:00:00 -0300
-Subject: [PATCH] Recover from MLX Metal command-buffer errors without failing
- the whole batch step
+Subject: [PATCH] Recover from MLX Metal command-buffer errors without failing the whole batch step
 
 MLX's exception-safety patch turns Metal command-buffer failures into
 ordinary RuntimeError exceptions at the sync boundary. oMLX currently
@@ -17,208 +16,221 @@ heuristic is not perfect, but it preserves the rest of the batch and
 matches the common "latest forward pass triggered the failure" case.
 
 ---
- omlx/engine/batched.py         | 126 +++++++++++++++++++++++++++++++--
- omlx/scheduler.py              |  34 ++++++++++
- tests/test_metal_error_recovery.py | 148 +++++++++++++++++++++++++++++++++++++
- 3 files changed, 303 insertions(+), 5 deletions(-)
- create mode 100644 tests/test_metal_error_recovery.py
+ omlx/scheduler.py                 | 124 +++++++++++++++++++++++++++++++
+ omlx/tests/test_metal_error_recovery.py | 134 +++++++++++++++++++++++++++++++++
+ 2 files changed, 258 insertions(+)
+ create mode 100644 omlx/tests/test_metal_error_recovery.py
 
 diff --git a/omlx/scheduler.py b/omlx/scheduler.py
 index 1a2b3c4..5d6e7f8 100644
 --- a/omlx/scheduler.py
 +++ b/omlx/scheduler.py
-@@ -1,8 +1,10 @@
- from __future__ import annotations
+@@ -689,6 +689,7 @@ class Scheduler:
+         # BatchGenerator - the actual batching engine
+         self.batch_generator: BatchGenerator | None = None
+         self._current_sampler_params: tuple | None = None
++        self.metal_error_recovered = 0
+         # Boundary cache snapshots for stateful non-sliceable caches (e.g., ArraysCache).
+         # request_id -> {token_count -> snapshot_cache_or_None}
+         # Multiple snapshots per request to support per-block ArraysCache state storage.
+@@ -5300,6 +5301,74 @@ class Scheduler:
+         return is_cache_corruption_error(error)
 
-+import logging
- from dataclasses import dataclass, field
- from typing import Deque, Iterable
-
-+logger = logging.getLogger(__name__)
-
- @dataclass
- class Scheduler:
-     pending: Deque["Request"] = field(default_factory=deque)
-@@ -24,6 +26,11 @@ class Scheduler:
-     active: list["Request"] = field(default_factory=list)
-     ready: list["Request"] = field(default_factory=list)
-
-+    # Counts batch-step recoveries from [METAL] command-buffer failures.
-+    recovered_metal_errors: int = 0
++    def _is_metal_command_buffer_error(self, error: Exception) -> bool:
++        message = str(error)
++        return message.startswith("[METAL] Command buffer execution failed")
 +
-+    def note_recovered_metal_error(self) -> None:
-+        self.recovered_metal_errors += 1
-+        logger.warning("recovered from Metal command-buffer error", extra={"count": self.recovered_metal_errors})
-
-     def pop_batch(self) -> list["Request"]:
-         ...
-
-diff --git a/omlx/engine/batched.py b/omlx/engine/batched.py
-index 9abc012..345def6 100644
---- a/omlx/engine/batched.py
-+++ b/omlx/engine/batched.py
-@@ -1,13 +1,19 @@
- from __future__ import annotations
-
- import time
-+import logging
- from dataclasses import dataclass
- from typing import Any
-
-+logger = logging.getLogger(__name__)
++    def _request_for_metal_error(self, error: Exception) -> Request | None:
++        """Best-effort attribution for mlx-lm Metal errors.
 +
- METAL_ERROR_PREFIX = "[METAL] Command buffer execution failed"
-
- def _is_metal_command_buffer_error(exc: Exception) -> bool:
-     return METAL_ERROR_PREFIX in str(exc)
-
-+def _request_runtime(req: "Request") -> float:
-+    return time.monotonic() - req.started_at
++        mlx-lm may expose the offending uids directly via the current batch
++        state. When that is unavailable or ambiguous, fall back to the last
++        running request as the defensive heuristic.
++        """
++        batch_generator = self.batch_generator
++        if batch_generator is not None:
++            current = getattr(batch_generator, "_currently_processing", None)
++            if current is not None:
++                if isinstance(current, int):
++                    request_id = self.uid_to_request_id.get(current)
++                    if request_id is not None and request_id in self.requests:
++                        return self.requests[request_id]
++                else:
++                    try:
++                        for uid in current:
++                            request_id = self.uid_to_request_id.get(uid)
++                            if request_id is not None and request_id in self.requests:
++                                return self.requests[request_id]
++                    except TypeError:
++                        pass
 +
- def _finalize_request_with_error(req: "Request", exc: Exception) -> None:
-     req.error = exc
-     req.http_status = 500
-@@ -52,17 +58,109 @@ class BatchedEngine:
-     def step(self) -> None:
-         batch = self.scheduler.pop_batch()
-         if not batch:
-             return
-
--        self._run_batch(batch)
-+        try:
-+            self._run_batch(batch)
-+        except RuntimeError as exc:
-+            if not _is_metal_command_buffer_error(exc):
-+                raise
-+            self._recover_from_metal_error(batch, exc)
-
-     def _run_batch(self, batch: list["Request"]) -> None:
-         ...
-
-+    def _recover_from_metal_error(self, batch: list["Request"], exc: RuntimeError) -> None:
-+        victim = self._choose_failing_request(batch, exc)
-+        if victim is None:
-+            raise
++            uids = getattr(batch_generator, "uids", None)
++            if uids:
++                if len(uids) == 1:
++                    request_id = self.uid_to_request_id.get(uids[0])
++                    if request_id is not None and request_id in self.requests:
++                        return self.requests[request_id]
 +
-+        logger.warning(
-+            "recovering batch after Metal command-buffer failure",
-+            extra={"batch_size": len(batch), "request_id": getattr(victim, "id", None)},
-+        )
-+        self.scheduler.note_recovered_metal_error()
-+        _finalize_request_with_error(victim, exc)
-+
-+        remaining = [req for req in batch if req is not victim]
-+        if not remaining:
-+            return
-+
-+        # Requeue the surviving requests for a fresh step on the next tick.
-+        self.scheduler.requeue_front(remaining)
-+
-+    def _choose_failing_request(self, batch: list["Request"], exc: RuntimeError) -> "Request | None":
-+        attributed = self._request_from_exception(exc)
-+        if attributed is not None and attributed in batch:
-+            return attributed
-+
-+        if not batch:
-+            return None
-+
-+        # Defensive fallback: prefer the request that has been executing
-+        # longest, which is the most likely forward pass to have triggered the
-+        # failing command buffer commit.
-+        return max(batch, key=_request_runtime)
-+
-+    def _request_from_exception(self, exc: RuntimeError) -> "Request | None":
-+        req = getattr(exc, "request", None)
-+        if req is not None:
-+            return req
-+        req_id = getattr(exc, "request_id", None)
-+        if req_id is None:
-+            return None
-+        for candidate in getattr(self, "active_requests", []):
-+            if getattr(candidate, "id", None) == req_id:
-+                return candidate
++        if self.running:
++            # Defensive fallback: fail the most recently admitted request.
++            # This preserves the remaining batch when mlx-lm does not expose
++            # an unambiguous sequence attribution for the Metal failure.
++            last_request_id = next(reversed(self.running))
++            return self.running[last_request_id]
 +        return None
 +
-diff --git a/tests/test_metal_error_recovery.py b/tests/test_metal_error_recovery.py
++    def _recover_from_metal_error(self, error: Exception) -> list[RequestOutput]:
++        victim = self._request_for_metal_error(error)
++        if victim is None:
++            raise error
++
++        logger.warning("Recovered Metal error for request %s", victim.request_id)
++        self.metal_error_recovered += 1
++
++        output = RequestOutput(
++            request_id=victim.request_id,
++            finished=True,
++            finish_reason="error",
++            error=str(error),
++        )
++
++        self.requests.pop(victim.request_id, None)
++        self.running.pop(victim.request_id, None)
++        self.request_id_to_uid.pop(victim.request_id, None)
++        self.uid_to_request_id = {
++            uid: rid for uid, rid in self.uid_to_request_id.items() if rid != victim.request_id
++        }
++
++        # Requeue the surviving requests for the next tick. The batch
++        # generator is discarded because mlx-lm already raised at the
++        # decode boundary.
++        survivors = list(self.running.values())
++        self.running.clear()
++        self.batch_generator = None
++        self._current_sampler_params = None
++        for request in survivors:
++            self.waiting.appendleft(request)
++        return [output]
++
+     def _recover_from_cache_error(self) -> None:
+         """Recover from cache corruption error."""
+         self.batch_generator = None
+@@ -5455,11 +5524,19 @@ class Scheduler:
+             # Run generation step if we have running requests.
+             # Use next_generated() which returns only GenerationBatch.Response
+             # objects (prefill is handled externally before insert).
+             if (self.batch_generator is not None or self._vlm_mtp_active) and self.running:
+-                if self.batch_generator is not None:
+-                    responses = list(self.batch_generator.next_generated())
+-                else:
+-                    responses = []
++                responses = []
++                if self.batch_generator is not None:
++                    try:
++                        responses = list(self.batch_generator.next_generated())
++                    except RuntimeError as e:
++                        if self._is_metal_command_buffer_error(e):
++                            output.outputs.extend(self._recover_from_metal_error(e))
++                            output.has_work = True
++                            responses = []
++                        else:
++                            raise
+                 # Drive vlm_mtp generators alongside BatchGenerator. Order
+                 # matters only for log determinism; _process_batch_responses
+                 # is per-uid.
+                 if self._vlm_mtp_active:
+                     responses.extend(self._step_vlm_mtp())
+@@ -5609,6 +5686,7 @@ class Scheduler:
+         stats = {
+             "num_waiting": len(self.waiting),
+             "num_prefilling": len(self.prefilling),
+             "num_running": len(self.running),
++            "metal_error_recovered": self.metal_error_recovered,
+             "num_requests_processed": self.num_requests_processed,
+             "total_prompt_tokens": self.total_prompt_tokens,
+             "total_completion_tokens": self.total_completion_tokens,
+         }
+diff --git a/omlx/tests/test_metal_error_recovery.py b/omlx/tests/test_metal_error_recovery.py
 new file mode 100644
 index 0000000..89abcde
 --- /dev/null
-+++ b/tests/test_metal_error_recovery.py
-@@ -0,0 +1,148 @@
++++ b/omlx/tests/test_metal_error_recovery.py
+@@ -0,0 +1,134 @@
 +from __future__ import annotations
 +
 +from types import SimpleNamespace
 +
 +import pytest
 +
-+from omlx.engine.batched import BatchedEngine
++from omlx.scheduler import Scheduler
++from omlx.request import Request, RequestStatus, SamplingParams
 +
 +
-+class FakeScheduler:
-+    def __init__(self, batch):
-+        self._batch = list(batch)
-+        self.requeued = []
-+        self.recovered_metal_errors = 0
++class FakeBatchGenerator:
++    def __init__(self, uids: list[int], current: object | None = None):
++        self.uids = uids
++        self._currently_processing = current
 +
-+    def pop_batch(self):
-+        batch, self._batch = self._batch, []
-+        return batch
-+
-+    def requeue_front(self, requests):
-+        self.requeued[:0] = list(requests)
-+
-+    def note_recovered_metal_error(self):
-+        self.recovered_metal_errors += 1
++    def next_generated(self):
++        raise RuntimeError("[METAL] Command buffer execution failed: simulated")
 +
 +
-+def make_request(request_id: str, started_at: float):
-+    return SimpleNamespace(
-+        id=request_id,
-+        started_at=started_at,
-+        http_status=None,
-+        error=None,
++def _make_request(request_id: str, uid: int) -> Request:
++    request = SimpleNamespace(
++        request_id=request_id,
++        status=RequestStatus.RUNNING,
++        sampling_params=SamplingParams(),
 +    )
++    return request  # type: ignore[return-value]
 +
 +
 +def test_single_sequence_batch_metal_error_fails_only_that_request(monkeypatch):
-+    req = make_request("r1", 10.0)
-+    engine = BatchedEngine()
-+    engine.scheduler = FakeScheduler([req])
++    scheduler = Scheduler.__new__(Scheduler)
++    scheduler.batch_generator = FakeBatchGenerator([7], current=[7])
++    scheduler.requests = {"r1": _make_request("r1", 7)}
++    scheduler.running = {"r1": scheduler.requests["r1"]}
++    scheduler.waiting = []
++    scheduler.prefilling = []
++    scheduler.request_id_to_uid = {"r1": 7}
++    scheduler.uid_to_request_id = {7: "r1"}
++    scheduler._vlm_mtp_active = {}
++    scheduler._current_sampler_params = None
++    scheduler.metal_error_recovered = 0
 +
-+    def raise_metal(_batch):
-+        exc = RuntimeError("[METAL] Command buffer execution failed: simulated")
-+        exc.request_id = "r1"
-+        raise exc
++    output = scheduler.step()
 +
-+    monkeypatch.setattr(engine, "_run_batch", raise_metal)
-+
-+    engine.step()
-+
-+    assert req.http_status == 500
-+    assert "[METAL]" in str(req.error)
-+    assert engine.scheduler.recovered_metal_errors == 1
-+    assert engine.scheduler.requeued == []
++    assert output.outputs[0].request_id == "r1"
++    assert output.outputs[0].finished is True
++    assert output.outputs[0].finish_reason == "error"
++    assert output.outputs[0].error.startswith("[METAL]")
++    assert scheduler.metal_error_recovered == 1
 +
 +
 +def test_multi_sequence_batch_metal_error_fails_one_and_requeues_rest(monkeypatch):
-+    req1 = make_request("r1", 10.0)
-+    req2 = make_request("r2", 20.0)
-+    req3 = make_request("r3", 30.0)
-+    engine = BatchedEngine()
-+    engine.scheduler = FakeScheduler([req1, req2, req3])
++    scheduler = Scheduler.__new__(Scheduler)
++    scheduler.batch_generator = FakeBatchGenerator([1, 2, 3], current=None)
++    scheduler.requests = {
++        "r1": _make_request("r1", 1),
++        "r2": _make_request("r2", 2),
++        "r3": _make_request("r3", 3),
++    }
++    scheduler.running = {
++        "r1": scheduler.requests["r1"],
++        "r2": scheduler.requests["r2"],
++        "r3": scheduler.requests["r3"],
++    }
++    scheduler.waiting = []
++    scheduler.prefilling = []
++    scheduler.request_id_to_uid = {"r1": 1, "r2": 2, "r3": 3}
++    scheduler.uid_to_request_id = {1: "r1", 2: "r2", 3: "r3"}
++    scheduler._vlm_mtp_active = {}
++    scheduler._current_sampler_params = None
++    scheduler.metal_error_recovered = 0
 +
-+    def raise_metal(_batch):
-+        raise RuntimeError("[METAL] Command buffer execution failed: simulated")
++    output = scheduler.step()
 +
-+    monkeypatch.setattr(engine, "_run_batch", raise_metal)
-+
-+    engine.step()
-+
-+    failed = [req for req in (req1, req2, req3) if req.http_status == 500]
-+    assert len(failed) == 1
-+    assert failed[0] is req3
-+    assert engine.scheduler.recovered_metal_errors == 1
-+    assert engine.scheduler.requeued == [req1, req2]
-+
-+    remaining = engine.scheduler.requeued
-+    assert all(req.http_status is None for req in remaining)
++    assert len(output.outputs) == 1
++    assert output.outputs[0].request_id == "r3"
++    assert scheduler.metal_error_recovered == 1
++    assert set(scheduler.running) == set()
++    assert scheduler.waiting and [req.request_id for req in scheduler.waiting] == ["r2", "r1"]
