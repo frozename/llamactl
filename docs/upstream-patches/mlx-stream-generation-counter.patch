@@ -1,0 +1,306 @@
+From a79de975ac68339787eb4f3d0e71876da48aa5c5 Mon Sep 17 00:00:00 2001
+From: Alexandre Cordeiro <nenisdeno@gmail.com>
+Date: Thu, 21 May 2026 03:18:13 -0300
+Subject: [PATCH] Stream: add generation counter to prevent stale
+ completion-handler error attribution
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A Metal completion handler captures Stream by value at the time it is
+registered with addCompletedHandler. If the stream is later destroyed and
+a new stream is created that reuses the same index, any in-flight handler
+from the old stream will call notify_stream_error with the recycled index,
+incorrectly attributing the error to the new stream.
+
+This patch closes that window by embedding a per-instance generation token
+in Stream. Each call to new_stream() pre-increments a process-global
+std::atomic<uint64_t> (stream_generation_counter_) and stamps the freshly
+created stream with the new value (≥1), leaving 0 as the sentinel for
+default-constructed Stream objects.
+
+The scheduler stashes {generation, exception_ptr} pairs instead of bare
+exception_ptrs. throw_if_stream_error compares the stored generation
+against the current stream's generation: on mismatch the entry is silently
+erased rather than rethrown. clear_stream_error is by-key regardless of
+generation, which is correct: its callers (gpu::new_stream, clear_streams)
+want to sweep out any leftover state before the slot is reused.
+
+Closes the "Known limitation" noted in the notify_stream_error comment in
+the exception-safety patch (mlx-explore/mlx#2670).
+
+Tests: tests/test_stream_generation.cpp — a single doctest TEST_CASE that
+exercises the full scenario: stale-generation error is silently discarded,
+slot is erased, a fresh notify on the new generation is then surfaced, and
+a same-generation notify+throw baseline confirms the match branch fires.
+---
+ mlx/scheduler.h                  |  40 +++++++-----
+ mlx/stream.cpp                   |   8 +++
+ mlx/stream.h                     |  14 +++++
+ tests/CMakeLists.txt             |   1 +
+ tests/test_stream_generation.cpp | 102 +++++++++++++++++++++++++++++++
+ 5 files changed, 149 insertions(+), 16 deletions(-)
+ create mode 100644 tests/test_stream_generation.cpp
+
+diff --git a/mlx/scheduler.h b/mlx/scheduler.h
+index 9d51f013..40a0f62c 100644
+--- a/mlx/scheduler.h
++++ b/mlx/scheduler.h
+@@ -114,10 +114,10 @@ class MLX_API Scheduler {
+     if (!eptr) return;
+     std::lock_guard<std::mutex> lk(error_mtx_);
+     auto& slot = stream_errors_[stream.index];
+-    if (slot) {
++    if (slot.eptr) {
+       return; // first error wins; drop subsequent
+     }
+-    slot = std::move(eptr);
++    slot = {stream.generation, std::move(eptr)};
+     any_stream_error_.store(true, std::memory_order_release);
+   }
+ 
+@@ -140,7 +140,12 @@ class MLX_API Scheduler {
+       std::lock_guard<std::mutex> lk(error_mtx_);
+       auto it = stream_errors_.find(stream.index);
+       if (it != stream_errors_.end()) {
+-        eptr = std::move(it->second);
++        if (it->second.generation == stream.generation) {
++          eptr = std::move(it->second.eptr);
++        }
++        // Erase unconditionally: a stale entry (generation mismatch) from
++        // a previous stream incarnation is silently discarded rather than
++        // surfaced on the new stream.
+         stream_errors_.erase(it);
+       }
+       // Sentinel transition INSIDE the lock so a concurrent
+@@ -156,18 +161,12 @@ class MLX_API Scheduler {
+   }
+ 
+   // Drop any stashed error for `stream` without rethrowing. Called from
+-  // stream lifecycle hooks (creation / teardown / clear) to prevent a
+-  // stale exception from a previous stream incarnation surfacing on a new
+-  // stream that happens to reuse the same index.
+-  //
+-  // Known limitation: a Metal completion handler captured a Stream by
+-  // value before the stream was torn down will still call
+-  // notify_stream_error with the old index after this clear. If the
+-  // index was recycled to a new stream the new stream sees the error
+-  // on its next sync waitpoint. Closing that window requires embedding
+-  // a generation token in Stream, which is an upstream API change. In
+-  // practice user code synchronizes before destroying a stream, which
+-  // closes the window without an API change.
++  // stream lifecycle hooks (gpu::new_stream / clear_streams) to sweep out
++  // any leftover entry before the slot is recycled. The erase is by index
++  // only — not by generation — so it clears regardless of incarnation.
++  // Any late-arriving completion handler from the old incarnation that calls
++  // notify_stream_error after this point will store with the old generation;
++  // throw_if_stream_error on the new stream will then discard it on mismatch.
+   void clear_stream_error(const Stream& stream) {
+     {
+       std::lock_guard<std::mutex> lk(error_mtx_);
+@@ -282,7 +281,16 @@ class MLX_API Scheduler {
+   std::shared_mutex threads_mtx_;
+   std::condition_variable completion_cv;
+   std::mutex mtx;
+-  std::unordered_map<int, std::exception_ptr> stream_errors_;
++  // Value type for stream_errors_. Stores the generation of the stream that
++  // stashed the error alongside the exception_ptr so throw_if_stream_error
++  // can discard entries from a previous stream incarnation that reused the
++  // same index.
++  struct StreamErrorEntry {
++    uint64_t generation{0};
++    std::exception_ptr eptr;
++    explicit operator bool() const noexcept { return eptr != nullptr; }
++  };
++  std::unordered_map<int, StreamErrorEntry> stream_errors_;
+   std::mutex error_mtx_;
+   // Hot-path sentinel: true iff at least one stream has a stashed error.
+   // Lets `throw_if_stream_error` short-circuit on the common no-error path
+diff --git a/mlx/stream.cpp b/mlx/stream.cpp
+index 383cabc3..e4103805 100644
+--- a/mlx/stream.cpp
++++ b/mlx/stream.cpp
+@@ -12,6 +12,12 @@
+ 
+ namespace mlx::core {
+ 
++// Definition of the process-global stream generation counter declared in
++// mlx/stream.h. Starts at 0; new_stream() pre-increments before stamping
++// so every live stream carries generation ≥ 1, leaving 0 as the sentinel
++// for default-constructed or uninitialized Stream objects.
++std::atomic<uint64_t> stream_generation_counter_{0};
++
+ namespace {
+ 
+ auto& default_stream_storage(Device d) {
+@@ -68,6 +74,8 @@ Stream new_stream(Device d) {
+   std::unique_lock lock(mtx);
+   int index = streams.size();
+   auto& s = streams.emplace_back(index, d);
++  s.generation =
++      stream_generation_counter_.fetch_add(1, std::memory_order_relaxed) + 1;
+   if (d == Device::gpu) {
+     gpu::new_stream(s);
+   }
+diff --git a/mlx/stream.h b/mlx/stream.h
+index fd938955..b1bfdc61 100644
+--- a/mlx/stream.h
++++ b/mlx/stream.h
+@@ -2,6 +2,8 @@
+ 
+ #pragma once
+ 
++#include <atomic>
++#include <cstdint>
+ #include <vector>
+ 
+ #include "mlx/api.h"
+@@ -12,6 +14,11 @@ namespace mlx::core {
+ struct MLX_API Stream {
+   int index;
+   Device device;
++  // Per-incarnation counter assigned by new_stream(). A completion handler
++  // captures the Stream by value; if the stream is later destroyed and a new
++  // stream reuses the same index, the stale generation lets the scheduler
++  // distinguish the old handler's error from a real error on the new stream.
++  uint64_t generation{0};
+   explicit Stream(int index, Device device) : index(index), device(device) {}
+ 
+   // TODO: Use default three-way comparison when it gets supported in XCode.
+@@ -25,6 +32,13 @@ struct MLX_API ThreadLocalStream : public Stream {
+   using Stream::Stream;
+ };
+ 
++// Process-global counter incremented on each new_stream() call. The value
++// is stamped into Stream::generation so completion handlers captured before
++// a stream is destroyed carry the old generation, allowing the scheduler to
++// discard their errors rather than attributing them to a new stream that
++// reuses the same index. Defined in mlx/stream.cpp.
++extern std::atomic<uint64_t> stream_generation_counter_;
++
+ /** Get the default stream of current thread for the given device. */
+ MLX_API Stream default_stream(Device d);
+ 
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index d63c0a85..18318fd2 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -32,6 +32,7 @@ target_sources(
+           random_tests.cpp
+           scheduler_tests.cpp
+           test_metal_backpressure.cpp
++          test_stream_generation.cpp
+           utils_tests.cpp
+           vmap_tests.cpp
+           linalg_tests.cpp
+diff --git a/tests/test_stream_generation.cpp b/tests/test_stream_generation.cpp
+new file mode 100644
+index 00000000..3a41fad7
+--- /dev/null
++++ b/tests/test_stream_generation.cpp
+@@ -0,0 +1,102 @@
++// Copyright © 2026 Apple Inc.
++//
++// Unit tests for the Stream generation counter that prevents stale
++// completion-handler errors from being attributed to a new stream that
++// reuses the same index. Does not require a Metal device — test streams
++// use explicit high-numbered indices that cannot collide with streams
++// allocated by other tests in the same process.
++
++#include <stdexcept>
++#include <string>
++
++#include "doctest/doctest.h"
++
++#include "mlx/mlx.h"
++#include "mlx/scheduler.h"
++
++using namespace mlx::core;
++using namespace mlx::core::scheduler;
++
++// ── helpers ─────────────────────────────────────────────────────────────────
++
++// Build a detached Stream with an explicit index and generation.
++// Bypasses new_stream() so we can craft two incarnations that share an index.
++static Stream make_incarnation(int index, uint64_t generation) {
++  Stream s{index, Device::cpu};
++  s.generation = generation;
++  return s;
++}
++
++// ── test ────────────────────────────────────────────────────────────────────
++
++TEST_CASE(
++    "stream generation counter prevents stale error attribution" *
++    doctest::test_suite("[stream-generation]")) {
++  // Use a high-numbered index to avoid collisions with streams allocated
++  // elsewhere in the test suite (new_stream() allocates sequentially from 0).
++  constexpr int kTestIndex = 8'000'001;
++  constexpr uint64_t kOldGen = 7;
++  constexpr uint64_t kNewGen = 8;
++
++  auto old_s = make_incarnation(kTestIndex, kOldGen);
++  auto new_s = make_incarnation(kTestIndex, kNewGen);
++
++  // --- step 1: stash an error under the old generation ---
++
++  scheduler::notify_stream_error(
++      old_s,
++      std::make_exception_ptr(
++          std::runtime_error("stale error from old incarnation")));
++
++  // --- step 2: new stream (same index, later generation) must NOT see it ---
++
++  bool threw = false;
++  try {
++    scheduler::throw_if_stream_error(new_s);
++  } catch (...) {
++    threw = true;
++  }
++  CHECK_FALSE(threw);
++
++  // --- step 3: the stale slot was consumed; now stash a real error ---
++
++  // throw_if_stream_error erased the slot unconditionally, so new_s has no
++  // pending error and any_stream_error_ was lowered.  A fresh notify must go
++  // through.
++  scheduler::notify_stream_error(
++      new_s,
++      std::make_exception_ptr(
++          std::runtime_error("real error on new incarnation")));
++
++  // --- step 4: new stream's matching generation MUST surface the error ---
++
++  bool threw2 = false;
++  std::string msg;
++  try {
++    scheduler::throw_if_stream_error(new_s);
++  } catch (const std::runtime_error& e) {
++    threw2 = true;
++    msg = e.what();
++  }
++  CHECK(threw2);
++  CHECK(msg.find("real error on new incarnation") != std::string::npos);
++
++  // --- step 5: baseline — a notify + throw on old incarnation still works ---
++  // (Confirms the generation-match branch is not always skipping.)
++
++  // Slot was consumed in step 4; stash against old_s now.
++  scheduler::notify_stream_error(
++      old_s,
++      std::make_exception_ptr(std::runtime_error("error attributed to old")));
++
++  bool threw3 = false;
++  std::string msg3;
++  try {
++    scheduler::throw_if_stream_error(old_s);
++  } catch (const std::runtime_error& e) {
++    threw3 = true;
++    msg3 = e.what();
++  }
++  CHECK(threw3);
++  CHECK(msg3.find("error attributed to old") != std::string::npos);
++}
+-- 
+2.53.0
+
