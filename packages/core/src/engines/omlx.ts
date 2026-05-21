@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  renameSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from './types.js';
 import { gracefulShutdown, pollUntilModelIds } from './lifecycle.js';
@@ -13,6 +21,47 @@ function omxBasePath(env: EngineBootEnv, workloadName: string): string {
   }
   const resolved = resolveEnv();
   return join(ensureWorkloadRuntimeDir(resolved, { name: workloadName }), '.omlx');
+}
+
+// Per-workload isolated model dir: contains a single symlink pointing at the
+// declared hostedModel. Used as oMLX's `--model-dir` so each ModelHost process
+// only sees its own model on the Metal command queue.
+//
+// Background: oMLX's batched engine fuses concurrent requests into single
+// forward passes. When ONE oMLX process serves MULTIPLE models, the Metal
+// command buffers encode work that crosses model boundaries and exceeds
+// Apple's GPU watchdog (~5 s) on small GPUs (validated on mac-mini M4 base
+// 2026-05-21: 3 hot 8B-class MLX models, mcr=1 was the only safe setting).
+// Splitting into N processes — one per model — eliminates the cross-model
+// context switching at the OS level and unlocks mcr=4 with zero errors.
+//
+// The schema already constrains hostedModels to exactly one entry, so this
+// matches the intended single-model-per-ModelHost contract.
+function isolatedModelDir(basePath: string): string {
+  return join(basePath, 'models');
+}
+
+function ensureIsolatedModelSymlink(
+  isolatedDir: string,
+  modelsDir: string,
+  hostedRel: string,
+): void {
+  const sourceModelsDir = resolve(modelsDir);
+  const source = resolve(sourceModelsDir, hostedRel);
+  if (!source.startsWith(`${sourceModelsDir}${sep}`)) {
+    throw new Error(`hostedModel rel escapes models dir: ${hostedRel}`);
+  }
+  mkdirSync(isolatedDir, { recursive: true });
+  const target = join(isolatedDir, basename(hostedRel));
+  // Re-create the symlink each time to recover from a stale or broken link.
+  try {
+    if (lstatSync(target)) {
+      unlinkSync(target);
+    }
+  } catch {
+    /* not present — fine */
+  }
+  symlinkSync(source, target);
 }
 
 function writeAtomicJson(path: string, value: unknown): void {
@@ -65,15 +114,23 @@ export const omlxEngine: EngineAdapter = {
       throw new Error('hostedModels must have exactly one entry');
     }
     const workloadName = env.workloadName;
-    const modelSettings = workloadName ? buildDflashModelSettings(spec) : null;
-    if (workloadName && modelSettings) {
+    if (workloadName) {
       const basePath = omxBasePath(env, workloadName);
-      writeAtomicJson(join(basePath, 'model_settings.json'), {
-        version: 1,
-        models: {
-          [basename(hostedModel.rel)]: modelSettings,
-        },
-      });
+      const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS ?? '/tmp/models';
+      ensureIsolatedModelSymlink(
+        isolatedModelDir(basePath),
+        modelsDir,
+        hostedModel.rel,
+      );
+      const modelSettings = buildDflashModelSettings(spec);
+      if (modelSettings) {
+        writeAtomicJson(join(basePath, 'model_settings.json'), {
+          version: 1,
+          models: {
+            [basename(hostedModel.rel)]: modelSettings,
+          },
+        });
+      }
     }
   },
 
@@ -88,10 +145,18 @@ export const omlxEngine: EngineAdapter = {
     if (!normalizedModelPath.startsWith(`${resolve(modelsDir)}${sep}`)) {
       throw new Error(`hostedModel rel escapes models dir: ${sanitizedModelRel}`);
     }
+    const workloadName = env.workloadName;
+    // Default to the per-workload isolated dir created by prepareLaunch so
+    // oMLX only sees the declared hostedModel. Without `workloadName` (e.g.
+    // a unit test invoking buildBootCommand without going through the
+    // workload runtime) we fall back to the full models dir for back-compat.
+    const modelDirArg = workloadName
+      ? isolatedModelDir(omxBasePath(env, workloadName))
+      : modelsDir;
     const args: string[] = [
       'serve',
       '--model-dir',
-      modelsDir,
+      modelDirArg,
       '--host',
       spec.endpoint.host,
       '--port',
@@ -100,7 +165,6 @@ export const omlxEngine: EngineAdapter = {
     if (spec.resources?.expectedMemoryGiB !== undefined) {
       args.push('--max-model-memory', `${spec.resources.expectedMemoryGiB}GB`);
     }
-    const workloadName = env.workloadName;
     const modelSettings = workloadName ? buildDflashModelSettings(spec) : null;
     if (workloadName && modelSettings) {
       const basePath = omxBasePath(env, workloadName);

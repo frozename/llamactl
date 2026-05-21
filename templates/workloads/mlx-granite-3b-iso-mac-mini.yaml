@@ -1,0 +1,42 @@
+# Per-process isolated ModelHost: granite-4.1-3b-mlx-4bit on mac-mini.
+#
+# Part of the three-process Fleet L production design (one oMLX process per
+# model, each at mcr=4) that supersedes the single-process Fleet L. The
+# single-process design topped out at mcr=1 because multi-model context
+# switching in one oMLX process triggers the Apple GPU watchdog on M4 base.
+# Per-process isolation gives each model its own Metal command queue at the
+# OS level and unlocks mcr=4 with zero errors (validated 2026-05-21).
+#
+# The oMLX engine adapter (packages/core/src/engines/omlx.ts) creates a
+# per-workload isolated model dir under the workload runtime root and
+# points `--model-dir` at it, so only the declared hostedModel is visible
+# to this oMLX instance.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: mlx-granite-3b-iso-mac-mini
+  labels:
+    fleet: iso-l
+    family: granite-4.1
+    role: judge
+spec:
+  engine: omlx
+  node: mac-mini
+  enabled: true
+  binary: /Volumes/AI-DATA/src/omlx/.venv/bin/omlx
+  resources:
+    expectedMemoryGiB: 4
+  endpoint:
+    host: 0.0.0.0
+    port: 8194
+  hostedModels:
+    - rel: mlx-community/granite-4.1-3b-4bit
+  extraArgs:
+    - --max-concurrent-requests
+    - "4"
+    - --max-process-memory
+    - "25%"
+    - --paged-ssd-cache-dir
+    - /Volumes/AI-DATA/cache/omlx-iso-3b
+  restartPolicy: Always
+  timeoutSeconds: 180

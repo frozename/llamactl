@@ -2,8 +2,8 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { ENGINES } from '../../src/engines/index.js';
 import { gracefulShutdown } from '../../src/engines/lifecycle.js';
 import type { ModelHostSpecForEngine } from '../../src/engines/types.js';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 function makeFakeBinary(): string {
@@ -102,6 +102,80 @@ describe('omlx engine adapter', () => {
     expect(() => ENGINES.omlx.buildBootCommand(bad, { LLAMA_CPP_MODELS: '/tmp/models' } as any)).toThrow(
       /escapes models dir/,
     );
+  });
+
+  test('buildBootCommand uses per-workload isolated model dir when workloadName is set', () => {
+    const runtimeDir = join(tmpdir(), `omlx-iso-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    const built = ENGINES.omlx.buildBootCommand(baseSpec, {
+      LLAMACTL_MODELS_DIR: '/neutral/models',
+      LLAMACTL_RUNTIME_DIR: runtimeDir,
+      workloadName: 'iso-mlx-host',
+    } as any);
+    // Should NOT pass the full models dir — instead the isolated per-workload dir.
+    const modelDirIdx = built.args.indexOf('--model-dir');
+    expect(modelDirIdx).toBeGreaterThanOrEqual(0);
+    const modelDirValue = built.args[modelDirIdx + 1]!;
+    expect(modelDirValue).toContain('iso-mlx-host');
+    expect(modelDirValue).toContain('.omlx');
+    expect(modelDirValue).toContain('models');
+    expect(modelDirValue).not.toBe('/neutral/models');
+  });
+
+  test('prepareLaunch creates an isolated symlink to the hosted model', async () => {
+    // Mock models dir with the hosted model present.
+    const modelsDir = join(tmpdir(), `omlx-models-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    const hostedRel = baseSpec.hostedModels[0]!.rel;
+    mkdirSync(join(modelsDir, hostedRel), { recursive: true });
+    writeFileSync(join(modelsDir, hostedRel, 'config.json'), '{}');
+
+    const runtimeDir = join(tmpdir(), `omlx-iso-prep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    await ENGINES.omlx.prepareLaunch?.(baseSpec, {
+      LLAMACTL_MODELS_DIR: modelsDir,
+      LLAMACTL_RUNTIME_DIR: runtimeDir,
+      workloadName: 'iso-prep-host',
+    } as any);
+
+    const isolatedDir = join(runtimeDir, 'workloads', 'iso-prep-host', '.omlx', 'models');
+    const linkTarget = join(isolatedDir, basename(hostedRel));
+    // The symlink should resolve to the original model dir (i.e. config.json reachable through it).
+    expect(existsSync(linkTarget)).toBe(true);
+    expect(existsSync(join(linkTarget, 'config.json'))).toBe(true);
+    // And ONLY the hosted model is present (other models in modelsDir not visible).
+    const otherModelDir = join(modelsDir, 'mlx-community', 'some-other-model');
+    mkdirSync(otherModelDir, { recursive: true });
+    writeFileSync(join(otherModelDir, 'config.json'), '{}');
+    expect(existsSync(join(isolatedDir, 'some-other-model'))).toBe(false);
+
+    rmSync(runtimeDir, { recursive: true, force: true });
+    rmSync(modelsDir, { recursive: true, force: true });
+  });
+
+  test('prepareLaunch is idempotent (recreates a stale symlink)', async () => {
+    const modelsDir = join(tmpdir(), `omlx-models-2-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    const hostedRel = baseSpec.hostedModels[0]!.rel;
+    mkdirSync(join(modelsDir, hostedRel), { recursive: true });
+    writeFileSync(join(modelsDir, hostedRel, 'config.json'), '{}');
+
+    const runtimeDir = join(tmpdir(), `omlx-iso-idem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    const envBoot = {
+      LLAMACTL_MODELS_DIR: modelsDir,
+      LLAMACTL_RUNTIME_DIR: runtimeDir,
+      workloadName: 'iso-idem-host',
+    } as any;
+    await ENGINES.omlx.prepareLaunch?.(baseSpec, envBoot);
+    // Second call should not throw despite the symlink already existing.
+    await ENGINES.omlx.prepareLaunch?.(baseSpec, envBoot);
+    const linkTarget = join(
+      runtimeDir,
+      'workloads',
+      'iso-idem-host',
+      '.omlx',
+      'models',
+      basename(hostedRel),
+    );
+    expect(existsSync(linkTarget)).toBe(true);
+    rmSync(runtimeDir, { recursive: true, force: true });
+    rmSync(modelsDir, { recursive: true, force: true });
   });
 
   test('probeReady returns matching modelIds when /v1/models contains the rel basename', async () => {

@@ -1,0 +1,34 @@
+# Per-process isolated ModelHost: Qwen3-8B-MLX-4bit on mac-mini.
+# See mlx-granite-3b-iso-mac-mini.yaml header for the design rationale.
+#
+# Note: Qwen3-8B-MLX-4bit lives at /Volumes/AI-MODELS/llama.cpp/models/
+# Qwen3-8B-MLX-4bit (NOT under mlx-community/), so the `rel` is unprefixed.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: mlx-qwen3-8b-iso-mac-mini
+  labels:
+    fleet: iso-l
+    family: qwen3
+    role: tool-call
+spec:
+  engine: omlx
+  node: mac-mini
+  enabled: true
+  binary: /Volumes/AI-DATA/src/omlx/.venv/bin/omlx
+  resources:
+    expectedMemoryGiB: 6
+  endpoint:
+    host: 0.0.0.0
+    port: 8196
+  hostedModels:
+    - rel: Qwen3-8B-MLX-4bit
+  extraArgs:
+    - --max-concurrent-requests
+    - "4"
+    - --max-process-memory
+    - "35%"
+    - --paged-ssd-cache-dir
+    - /Volumes/AI-DATA/cache/omlx-iso-qwen3
+  restartPolicy: Always
+  timeoutSeconds: 180

@@ -78,6 +78,12 @@ const CHILD_ENV_ALLOWLIST = [
   // under high concurrency / multi-model load). Set to "1" in the host's
   // launchd plist to enable; harmless when unset.
   'AGX_RELAX_CDM_CTXSTORE_TIMEOUT',
+  // MLX back-pressure gate: caps in-flight Metal command buffers per
+  // stream. Set to a positive integer (e.g. "1") to enable the gate.
+  // Unset means INT_MAX (gate disabled, single mutex acquisition fast
+  // path). Tied to the per-stream gate added on top of issue #2670.
+  'MLX_METAL_MAX_INFLIGHT_PER_STREAM',
+  'MLX_METAL_BACKPRESSURE_TIMEOUT_SECS',
 ];
 
 function sanitizeChildEnv(parent: NodeJS.ProcessEnv, overrides: Record<string, string> | undefined): NodeJS.ProcessEnv {

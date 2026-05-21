@@ -1,0 +1,31 @@
+# Per-process isolated ModelHost: granite-4.1-8b-mlx-nvfp4 on mac-mini.
+# See mlx-granite-3b-iso-mac-mini.yaml header for the design rationale.
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: mlx-granite-8b-iso-mac-mini
+  labels:
+    fleet: iso-l
+    family: granite-4.1
+    role: refiner
+spec:
+  engine: omlx
+  node: mac-mini
+  enabled: true
+  binary: /Volumes/AI-DATA/src/omlx/.venv/bin/omlx
+  resources:
+    expectedMemoryGiB: 6
+  endpoint:
+    host: 0.0.0.0
+    port: 8195
+  hostedModels:
+    - rel: mlx-community/granite-4.1-8b-nvfp4
+  extraArgs:
+    - --max-concurrent-requests
+    - "4"
+    - --max-process-memory
+    - "35%"
+    - --paged-ssd-cache-dir
+    - /Volumes/AI-DATA/cache/omlx-iso-g8b
+  restartPolicy: Always
+  timeoutSeconds: 180
