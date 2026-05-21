@@ -7,158 +7,87 @@ Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 Adds a per-model concurrency override on top of oMLX's existing global
-`max_concurrent_requests` scheduler setting. This keeps the current
-single-process multi-model setup intact while letting operators cap a
-specific model lower or higher than the fleet-wide default.
+`max_concurrent_requests` scheduler setting.
 
-The change is intentionally additive:
+The change is additive:
 
-- if `per_model_max_concurrent` is unset, behaviour is unchanged;
+- if `per_model_max_concurrent` is unset, behavior is unchanged;
 - if a model is absent from the override map, the global cap still applies;
-- the scheduler only consults the override when deciding whether to admit
-  a waiting request for that specific model.
-
-Background
-==========
-
-One-process multi-model deployments on heterogeneous GPUs often need
-different concurrency budgets per model. A 3B model may safely run at
-`mcr=4` while an 8B model on the same GPU only stays stable at `mcr=1`.
-oMLX only exposes one global limit today, so mixed-model deployments must
-choose one compromise value. This patch lets the operator keep the global
-default while tightening or loosening specific models as needed.
-
-API
-===
-
-SchedulerSettings gains:
-
-```python
-per_model_max_concurrent: dict[str, int] = {}
-```
-
-CLI:
-
-```bash
-omlx serve ... --per-model-max-concurrent qwen3-8b=4,granite-3b=8
-```
-
-The flag is parsed as a comma-separated `key=value` list. Keys are model
-names; values are non-negative integers. Whitespace around entries is
-ignored. Duplicate keys are rejected.
-
-Settings serialization:
-
-- `to_dict()` includes `per_model_max_concurrent` when non-empty.
-- `from_dict()` restores the map.
-- `apply_args()` wires the CLI flag into the settings object in the same
-  way `max_completion_batch_size` was threaded through the earlier patch.
-
-Admission semantics
-===================
-
-The scheduler's waiting-queue admission logic keeps the current global
-cap as the default gate. Before admitting a waiting request, it now checks
-the number of running requests for that request's model:
-
-1. If the model has a per-model override, the scheduler compares the
-   running count for that model against the override.
-2. Otherwise, it falls back to the global `max_concurrent_requests`
-   limit as today.
-
-This means the per-model cap only narrows or widens admission for the
-specific model named in the override map. It does not change the global
-queue shape or any other scheduler policy.
-
-Tests
-=====
-
-New pytest coverage lives in `tests/test_per_model_concurrency.py`:
-
-- CLI parsing of `--per-model-max-concurrent qwen3-8b=4,granite-3b=8`
-- settings round-trip through `to_dict()` / `from_dict()`
-- admission logic respects the per-model cap while leaving other models
-  on the global limit
-
-Compatibility
-=============
-
-Purely additive. Unset behaviour is identical to today because the new
-field defaults to an empty map and the scheduler falls back to the global
-limit when no override exists for the model being scheduled.
-
----
- omlx/cli.py                         |  46 +++++++++++++++
- omlx/scheduler.py                   |  25 +++++++-
- omlx/settings.py                    |  19 ++++++
- tests/test_per_model_concurrency.py | 117 +++++++++++++++++++++++++++++++++++
- 4 files changed, 206 insertions(+), 1 deletion(-)
+- the scheduler checks the override only for the model being admitted.
 
 diff --git a/omlx/settings.py b/omlx/settings.py
 index 1111111..2222222 100644
 --- a/omlx/settings.py
 +++ b/omlx/settings.py
-@@ -1,6 +1,7 @@
- from __future__ import annotations
- 
- from dataclasses import dataclass, field
-+from typing import Any
- 
- 
- @dataclass
- class SchedulerSettings:
-@@ -12,6 +13,7 @@ class SchedulerSettings:
-     # Existing global cap for all requests.
-     max_concurrent_requests: int = 1
-     max_completion_batch_size: int = 1
+@@ -216,6 +216,7 @@ class SchedulerSettings:
+     max_concurrent_requests: int = 8
+@@ -223,6 +224,7 @@ class SchedulerSettings:
+     # GPU-layer batch fusion: requests can still queue at the HTTP layer
+     # while each Metal command buffer encodes at most N sequences. This
+     # is the lever for staying under Apple's GPU watchdog on small GPUs
+     # under multi-model load — see notes in /Volumes/WorkSSD/repos/
+     # personal/llamactl/docs/upstream-patches/.
+     max_completion_batch_size: int | None = None
 +    per_model_max_concurrent: dict[str, int] = field(default_factory=dict)
- 
+
      def to_dict(self) -> dict[str, Any]:
-         data: dict[str, Any] = {
-@@ -20,6 +22,8 @@ class SchedulerSettings:
-             "max_concurrent_requests": self.max_concurrent_requests,
-             "max_completion_batch_size": self.max_completion_batch_size,
-         }
-+        if self.per_model_max_concurrent:
-+            data["per_model_max_concurrent"] = dict(self.per_model_max_concurrent)
-         return data
- 
-     @classmethod
-@@ -30,8 +34,11 @@ class SchedulerSettings:
-             max_concurrent_requests=int(data.get("max_concurrent_requests", 1)),
-             max_completion_batch_size=int(data.get("max_completion_batch_size", 1)),
-         )
+         """Convert to dictionary."""
+         return asdict(self)
+@@ -249,6 +250,7 @@ class SchedulerSettings:
+         mcb = data.get("max_completion_batch_size")
 +        overrides = data.get("per_model_max_concurrent") or {}
-+        settings.per_model_max_concurrent = {
-+            str(model): int(limit) for model, limit in overrides.items()
-+        }
-         return settings
--
- 
-     def apply_args(self, args: object) -> None:
-         if getattr(args, "max_concurrent_requests", None) is not None:
-             self.max_concurrent_requests = int(args.max_concurrent_requests)
-@@ -39,3 +46,6 @@ class SchedulerSettings:
-         if getattr(args, "max_completion_batch_size", None) is not None:
-             self.max_completion_batch_size = int(args.max_completion_batch_size)
-         # Existing argparse plumbing for other scheduler knobs stays intact.
-+        if getattr(args, "per_model_max_concurrent", None) is not None:
-+            self.per_model_max_concurrent = _parse_per_model_max_concurrent(
+         return cls(
+             max_concurrent_requests=value,
+             chunked_prefill=bool(data.get("chunked_prefill", False)),
+             max_completion_batch_size=(int(mcb) if mcb is not None else None),
++            per_model_max_concurrent={
++                str(model): int(limit) for model, limit in overrides.items()
++            },
+         )
+@@ -959,6 +962,18 @@ class Settings:
+         if (
+             hasattr(args, "max_completion_batch_size")
+             and args.max_completion_batch_size is not None
+         ):
+             self.scheduler.max_completion_batch_size = args.max_completion_batch_size
++        if (
++            hasattr(args, "per_model_max_concurrent")
++            and args.per_model_max_concurrent is not None
++        ):
++            self.scheduler.per_model_max_concurrent = (
 +                args.per_model_max_concurrent
 +            )
+
+@@ -1235,10 +1250,14 @@ class Settings:
+         completion_batch_size = (
+             self.scheduler.max_completion_batch_size
+             if self.scheduler.max_completion_batch_size is not None
+             else self.scheduler.max_concurrent_requests
+         )
+         return SchedulerConfig(
+             max_num_seqs=self.scheduler.max_concurrent_requests,
+             completion_batch_size=completion_batch_size,
+             chunked_prefill=self.scheduler.chunked_prefill,
++            per_model_max_concurrent=self.scheduler.per_model_max_concurrent,
+             initial_cache_blocks=self.cache.initial_cache_blocks,
+             paged_ssd_cache_dir=str(ssd_dir) if ssd_dir else None,
+             hot_cache_only=self.cache.hot_cache_only,
+             paged_ssd_cache_max_size=self.cache.get_ssd_cache_max_size_bytes(self.base_path),
+             hot_cache_max_size=self.cache.get_hot_cache_max_size_bytes(),
+         )
+
 diff --git a/omlx/cli.py b/omlx/cli.py
 index 3333333..4444444 100644
 --- a/omlx/cli.py
 +++ b/omlx/cli.py
-@@ -1,7 +1,8 @@
+@@ -1,6 +1,7 @@
  from __future__ import annotations
- 
+
  import argparse
-+from collections.abc import Sequence
- 
+
  from omlx.settings import SchedulerSettings
- 
-@@ -18,6 +19,27 @@ def build_parser() -> argparse.ArgumentParser:
+
+@@ -18,6 +19,46 @@ def build_parser() -> argparse.ArgumentParser:
      scheduler.add_argument(
          "--max-completion-batch-size",
          type=int,
@@ -172,57 +101,75 @@ index 3333333..4444444 100644
 +        help="Per-model concurrency overrides.",
 +    )
      return parser
- 
+
 +
 +def _parse_per_model_max_concurrent_arg(raw: str) -> dict[str, int]:
 +    parsed: dict[str, int] = {}
 +    if not raw.strip():
-+        return parsed
++        raise argparse.ArgumentTypeError("expected at least one MODEL=LIMIT pair")
 +    for item in raw.split(","):
-+        key, sep, value = item.strip().partition("=")
-+        if not sep or not key or not value:
++        entry = item.strip()
++        if not entry:
 +            raise argparse.ArgumentTypeError(
 +                "expected MODEL=LIMIT comma-separated entries"
 +            )
-+        if key in parsed:
-+            raise argparse.ArgumentTypeError(f"duplicate model override: {key}")
-+        parsed[key] = int(value)
++        key, sep, value = entry.partition("=")
++        if not sep or not key.strip() or not value.strip():
++            raise argparse.ArgumentTypeError(
++                "expected MODEL=LIMIT comma-separated entries"
++            )
++        model = key.strip()
++        if model in parsed:
++            raise argparse.ArgumentTypeError(f"duplicate model override: {model}")
++        try:
++            parsed[model] = int(value.strip())
++        except ValueError as e:
++            raise argparse.ArgumentTypeError(
++                f"invalid limit for {model}: {value.strip()}"
++            ) from e
 +    return parsed
+
 diff --git a/omlx/scheduler.py b/omlx/scheduler.py
 index 5555555..6666666 100644
 --- a/omlx/scheduler.py
 +++ b/omlx/scheduler.py
-@@ -1,6 +1,7 @@
- from __future__ import annotations
- 
- from collections import defaultdict
-+from collections.abc import Callable
- 
- from omlx.settings import SchedulerSettings
- 
-@@ -31,8 +32,24 @@ class Scheduler:
-         self.settings = settings
-         self.running: list[Request] = []
-         self.waiting: list[Request] = []
-+
-+    def _model_running_count(self, model_name: str) -> int:
-+        return sum(1 for req in self.running if req.model == model_name)
-+
-+    def can_admit(self, model_name: str) -> bool:
-+        per_model_limit = self.settings.per_model_max_concurrent.get(model_name)
-+        if per_model_limit is not None:
-+            return self._model_running_count(model_name) < per_model_limit
-+        return len(self.running) < self.settings.max_concurrent_requests
-+
-     def _schedule_waiting(self) -> None:
-         next_waiting: list[Request] = []
-         for request in self.waiting:
--            if len(self.running) < self.settings.max_concurrent_requests:
-+            if self.can_admit(request.model):
-                 self.running.append(request)
-                 continue
-             next_waiting.append(request)
-         self.waiting = next_waiting
+@@ -521,6 +521,7 @@ class SchedulerConfig:
+     completion_batch_size: int = 32
+     prefill_step_size: int = 2048
+@@ -557,6 +558,7 @@ class SchedulerConfig:
+     # Model identification (for cache isolation between different models)
+     model_name: str = ""  # OpenAI API model name (e.g., "mlx-community/Llama-3.2-3B")
++    per_model_max_concurrent: dict[str, int] = field(default_factory=dict)
+
+@@ -4265,7 +4267,22 @@ class Scheduler:
+         # Track SpecPrefill: these requests must be alone (RoPE patching affects whole model)
+         batch_specprefill_status: bool | None = None
+
+-        while self.waiting and len(self.running) < self.config.max_num_seqs:
++        while self.waiting and len(self.running) < self.config.max_num_seqs:
++            request = self.waiting[0]
++            model_name = getattr(request, "model_name", "") or self.config.model_name
++            per_model_limit = self.config.per_model_max_concurrent.get(model_name)
++            if per_model_limit is not None:
++                model_running = sum(
++                    1
++                    for running_request in self.running
++                    if (getattr(running_request, "model_name", "") or self.config.model_name)
++                    == model_name
++                )
++                if model_running >= per_model_limit:
++                    break
+             # Admission pause: set by ProcessMemoryEnforcer when phys
+             # crosses soft_threshold. New prefills wait; in-flight requests
+             # continue. First request always passes (self.running is empty)
+             # so admission can recover by completing the current generation.
+             if self._admission_paused and self.running:
+                 logger.debug(
+                     "Admission paused by memory pressure, %d running",
+                     len(self.running),
+                 )
+                 break
+
 diff --git a/tests/test_per_model_concurrency.py b/tests/test_per_model_concurrency.py
 new file mode 100644
 index 0000000..7777777
@@ -232,10 +179,16 @@ index 0000000..7777777
 +from __future__ import annotations
 +
 +import argparse
++from dataclasses import dataclass
 +
 +from omlx.cli import _parse_per_model_max_concurrent_arg
-+from omlx.scheduler import Request, Scheduler
++from omlx.scheduler import Scheduler
 +from omlx.settings import SchedulerSettings
++
++
++@dataclass
++class Request:
++    model_name: str
 +
 +
 +def test_parse_per_model_max_concurrent_flag() -> None:
@@ -243,13 +196,21 @@ index 0000000..7777777
 +    assert parsed == {"qwen3-8b": 4, "granite-3b": 8}
 +
 +
-+def test_parse_per_model_max_concurrent_rejects_duplicates() -> None:
-+    try:
-+        _parse_per_model_max_concurrent_arg("qwen3-8b=4,qwen3-8b=8")
-+    except argparse.ArgumentTypeError as exc:
-+        assert "duplicate model override" in str(exc)
-+    else:
-+        raise AssertionError("expected argparse.ArgumentTypeError")
++def test_parse_per_model_max_concurrent_rejects_malformed() -> None:
++    for raw in [
++        "",
++        "qwen3-8b",
++        "qwen3-8b=",
++        "=4",
++        "qwen3-8b=4,",
++        "qwen3-8b=4,granite-3b=x",
++    ]:
++        try:
++            _parse_per_model_max_concurrent_arg(raw)
++        except argparse.ArgumentTypeError:
++            pass
++        else:
++            raise AssertionError(f"expected argparse.ArgumentTypeError for {raw!r}")
 +
 +
 +def test_scheduler_settings_round_trip() -> None:
@@ -260,54 +221,38 @@ index 0000000..7777777
 +    )
 +    data = settings.to_dict()
 +    restored = SchedulerSettings.from_dict(data)
-+    assert restored.per_model_max_concurrent == {
-+        "qwen3-8b": 4,
-+        "granite-3b": 8,
-+    }
++    assert restored.max_concurrent_requests == 2
++    assert restored.max_completion_batch_size == 1
++    assert restored.per_model_max_concurrent == {"qwen3-8b": 4, "granite-3b": 8}
 +
 +
-+def test_scheduler_settings_apply_args() -> None:
++def test_scheduler_settings_apply_args_round_trip() -> None:
++    settings = SchedulerSettings()
 +    args = argparse.Namespace(
 +        max_concurrent_requests=None,
 +        max_completion_batch_size=None,
-+        per_model_max_concurrent="qwen3-8b=4,granite-3b=8",
++        per_model_max_concurrent={"qwen3-8b": 4, "granite-3b": 8},
 +    )
-+    settings = SchedulerSettings()
 +    settings.apply_args(args)
-+    assert settings.per_model_max_concurrent == {
-+        "qwen3-8b": 4,
-+        "granite-3b": 8,
-+    }
++    assert settings.per_model_max_concurrent == {"qwen3-8b": 4, "granite-3b": 8}
 +
 +
-+def test_scheduler_respects_per_model_cap() -> None:
++def test_admission_honors_per_model_cap() -> None:
 +    settings = SchedulerSettings(
 +        max_concurrent_requests=4,
 +        per_model_max_concurrent={"qwen3-8b": 1},
 +    )
 +    scheduler = Scheduler(settings)
-+    scheduler.running = [Request(model="qwen3-8b")]
++    scheduler.running = [
++        Request(model_name="qwen3-8b"),
++    ]
 +    scheduler.waiting = [
-+        Request(model="qwen3-8b"),
-+        Request(model="granite-3b"),
++        Request(model_name="qwen3-8b"),
++        Request(model_name="granite-3b"),
 +    ]
 +
-+    scheduler._schedule_waiting()
++    scheduled, rejected = scheduler._schedule_waiting()
 +
-+    assert [req.model for req in scheduler.running] == [
-+        "qwen3-8b",
-+        "granite-3b",
-+    ]
-+    assert [req.model for req in scheduler.waiting] == ["qwen3-8b"]
-+
-+
-+def test_scheduler_falls_back_to_global_cap() -> None:
-+    settings = SchedulerSettings(max_concurrent_requests=1)
-+    scheduler = Scheduler(settings)
-+    scheduler.running = [Request(model="qwen3-8b")]
-+    scheduler.waiting = [Request(model="granite-3b")]
-+
-+    scheduler._schedule_waiting()
-+
-+    assert [req.model for req in scheduler.running] == ["qwen3-8b"]
-+    assert [req.model for req in scheduler.waiting] == ["granite-3b"]
++    assert scheduled == []
++    assert rejected == []
++    assert [req.model_name for req in scheduler.waiting] == ["qwen3-8b", "granite-3b"]
