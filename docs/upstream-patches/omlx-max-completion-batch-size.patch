@@ -1,0 +1,122 @@
+From 0000000000000000000000000000000000000001 Mon Sep 17 00:00:00 2001
+From: Alexandre Cordeiro <alexandre.s.b.cordeiro@gmail.com>
+Date: Wed, 21 May 2026 00:00:00 -0300
+Subject: [PATCH] Add --max-completion-batch-size to decouple HTTP-layer admission from batch fusion
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This patch adds a separate oMLX scheduler knob for the maximum number of
+sequences fused into a single decode step. It leaves the existing
+HTTP-layer admission limit untouched, so operators can cap GPU batch
+fusion without changing request concurrency semantics.
+
+Background
+==========
+
+Under multi-model load on small Apple Silicon GPUs, the Metal command-
+buffer watchdog is sensitive to how many sequences are fused into one
+decode step. A low completion batch size is a useful control knob, but
+it is orthogonal to the scheduler's request admission limit.
+
+This patch keeps the default behavior unchanged: if the new field is
+unset, oMLX continues to use `max_concurrent_requests` as the completion
+batch size. When set, the new field overrides only the decode fusion
+limit.
+
+Change
+======
+
+omlx/settings.py
+
+  - Add `max_completion_batch_size: int | None = None` to
+    `SchedulerSettings`.
+  - Include the field in `to_dict()` / `from_dict()` so persisted config
+    round-trips preserve it and missing keys migrate cleanly to `None`.
+  - Update `to_scheduler_config()` so `completion_batch_size` resolves to
+    `max_completion_batch_size` when present, otherwise falls back to
+    `max_concurrent_requests`.
+  - Wire `args.max_completion_batch_size` through `apply_args()` in the
+    same style as `max_concurrent_requests`.
+
+omlx/cli.py
+
+  - Add `--max-completion-batch-size` with help text explaining that it
+    caps the sequences fused into a single decode step while preserving
+    the HTTP admission limit.
+
+Compatibility
+=============
+
+The new field is optional and defaults to `None`, so existing config
+files continue to work unchanged. `from_dict()` handles missing keys by
+leaving the field unset, which preserves the old behavior.
+
+---
+diff --git a/omlx/settings.py b/omlx/settings.py
+index 1111111..2222222 100644
+--- a/omlx/settings.py
++++ b/omlx/settings.py
+@@ -1,6 +1,7 @@
+ from dataclasses import dataclass
+ 
+ @dataclass
+ class SchedulerSettings:
++    max_completion_batch_size: int | None = None
+     max_concurrent_requests: int = 4
+ 
+     def to_dict(self) -> dict[str, object]:
+@@ -8,6 +9,7 @@
+         return {
++            "max_completion_batch_size": self.max_completion_batch_size,
+             "max_concurrent_requests": self.max_concurrent_requests,
+         }
+ 
+@@ -15,7 +17,10 @@
+     def from_dict(cls, data: dict[str, object]) -> "SchedulerSettings":
+         return cls(
++            max_completion_batch_size=data.get("max_completion_batch_size"),
+             max_concurrent_requests=data.get("max_concurrent_requests", 4),
+         )
+ 
+@@ -31,7 +36,10 @@
+     def to_scheduler_config(self) -> SchedulerConfig:
+         return SchedulerConfig(
+-            completion_batch_size=self.scheduler.max_concurrent_requests,
++            completion_batch_size=(
++                self.scheduler.max_completion_batch_size
++                if self.scheduler.max_completion_batch_size is not None
++                else self.scheduler.max_concurrent_requests
++            ),
+         )
+ 
+@@ -52,6 +60,9 @@
+     def apply_args(self, args: argparse.Namespace) -> None:
+         if args.max_concurrent_requests is not None:
+             self.scheduler.max_concurrent_requests = args.max_concurrent_requests
++        if getattr(args, "max_completion_batch_size", None) is not None:
++            self.scheduler.max_completion_batch_size = (
++                args.max_completion_batch_size
++            )
+ 
+diff --git a/omlx/cli.py b/omlx/cli.py
+index 3333333..4444444 100644
+--- a/omlx/cli.py
++++ b/omlx/cli.py
+@@ -40,6 +40,16 @@
+     parser.add_argument(
+         "--max-concurrent-requests",
+         type=int,
+         default=None,
+         help="Maximum number of requests admitted concurrently.",
+     )
++    parser.add_argument(
++        "--max-completion-batch-size",
++        type=int,
++        default=None,
++        help=(
++            "Cap on sequences fused into a single decode step. "
++            "Defaults to max-concurrent-requests when unset."
++        ),
++    )
+     return parser
