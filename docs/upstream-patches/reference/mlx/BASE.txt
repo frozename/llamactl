@@ -1,0 +1,2 @@
+branch: fix/exception-safe-completion-handler
+head_sha: 982ef62df8822f70dce7869dfe0e65c76cfe3741

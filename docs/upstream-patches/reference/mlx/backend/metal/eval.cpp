@@ -1,0 +1,178 @@
+// Copyright © 2023-2024 Apple Inc.
+#include <cstdlib>
+#include <limits>
+#include <memory>
+
+#include "mlx/backend/gpu/eval.h"
+#include "mlx/backend/metal/device.h"
+#include "mlx/backend/metal/utils.h"
+#include "mlx/primitives.h"
+#include "mlx/scheduler.h"
+
+namespace mlx::core::gpu {
+
+namespace {
+
+// Read `MLX_METAL_MAX_INFLIGHT_PER_STREAM`. Unset, empty, or non-positive
+// values mean "no limit": back-pressure is disabled and the gate routes
+// through a single mutex acquisition with no condition-variable wait, so
+// the unthrottled hot path stays cheap.
+int read_inflight_limit() {
+  const char* env = std::getenv("MLX_METAL_MAX_INFLIGHT_PER_STREAM");
+  if (!env || !*env) {
+    return std::numeric_limits<int>::max();
+  }
+  int v = std::atoi(env);
+  return v > 0 ? v : std::numeric_limits<int>::max();
+}
+
+// Read `MLX_METAL_BACKPRESSURE_TIMEOUT_SECS`. Default 30 s. Non-positive
+// or unparseable values fall back to the default so a typo never wedges
+// the process indefinitely.
+int read_backpressure_timeout() {
+  const char* env = std::getenv("MLX_METAL_BACKPRESSURE_TIMEOUT_SECS");
+  if (!env || !*env) {
+    return 30;
+  }
+  int v = std::atoi(env);
+  return v > 0 ? v : 30;
+}
+
+} // namespace
+
+void init() {}
+
+void new_stream(Stream s) {
+  assert(s.device == Device::gpu);
+  // Defensive: if `s.index` is being reused after a prior stream was torn
+  // down, drop any stale error that may have been stashed against this
+  // index but never consumed. Prevents cross-stream error attribution
+  // when callers create / destroy / recreate streams.
+  scheduler::clear_stream_error(s);
+  auto& encoders = metal::get_command_encoders();
+  auto& d = metal::device(s.device);
+  encoders.try_emplace(s.index, d, s.index, d.residency_set());
+}
+
+// Capture a Metal command-buffer error into a stash on the owning stream
+// instead of throwing. Metal completion handlers run on
+// `com.Metal.CompletionQueueDispatch` (libdispatch); a C++ exception thrown
+// across a dispatch block aborts the process unrecoverably. The stash is
+// re-thrown on the caller thread at the next sync waitpoint (eval / finalize
+// / CommandEncoder::synchronize). See mlx-explore/mlx#2670.
+//
+// Must be called before any task-completion notification so a thread that
+// wakes on `notify_task_completion` is guaranteed to see the error already
+// stashed when it next reaches a `throw_if_stream_error` waitpoint.
+inline void check_error(Stream s, MTL::CommandBuffer* cbuf) {
+  if (cbuf->status() != MTL::CommandBufferStatusError) {
+    return;
+  }
+  std::ostringstream msg;
+  msg << "[METAL] Command buffer execution failed";
+  // Defensive null-checks: in practice both nodes are populated when the
+  // status is Error, but the Metal API does not statically guarantee it.
+  if (auto* err = cbuf->error()) {
+    if (auto* desc = err->localizedDescription()) {
+      if (auto* utf = desc->utf8String()) {
+        msg << ": " << utf;
+      }
+    }
+  }
+  scheduler::notify_stream_error(
+      s, std::make_exception_ptr(std::runtime_error(msg.str())));
+}
+
+void eval(array& arr) {
+  auto pool = metal::new_scoped_memory_pool();
+  auto s = arr.primitive().stream();
+  // Surface any error stashed asynchronously by a prior completion handler
+  // before queueing new work on this stream.
+  scheduler::throw_if_stream_error(s);
+  auto& encoder = metal::get_command_encoder(s);
+  auto* command_buffer = encoder.get_command_buffer();
+
+  auto outputs = arr.outputs();
+  {
+    // If the array is a tracer hold a reference
+    // to its inputs so they don't get donated
+    std::vector<array> inputs;
+    if (arr.is_tracer()) {
+      inputs = arr.inputs();
+    }
+
+    debug_set_primitive_buffer_label(command_buffer, arr.primitive());
+    arr.primitive().eval_gpu(arr.inputs(), outputs);
+  }
+  std::unordered_set<std::shared_ptr<array::Data>> buffers;
+  for (auto& in : arr.inputs()) {
+    buffers.insert(in.data_shared_ptr());
+  }
+  for (auto& s : arr.siblings()) {
+    buffers.insert(s.data_shared_ptr());
+  }
+  // Remove the output if it was donated to by an input
+  if (auto it = buffers.find(arr.data_shared_ptr()); it != buffers.end()) {
+    buffers.erase(it);
+  }
+
+  if (encoder.needs_commit()) {
+    encoder.end_encoding();
+    scheduler::notify_new_task(s);
+    command_buffer->addCompletedHandler(
+        [s, buffers = std::move(buffers)](MTL::CommandBuffer* cbuf) {
+          // Release the back-pressure slot first so a waiter blocked in
+          // acquire_stream_slot can advance before the v3 error-publish
+          // / task-completion chain runs. Then preserve v3 ordering:
+          // stash error before signaling task completion so a thread
+          // woken by notify_task_completion is guaranteed to see the
+          // error on its next throw_if_stream_error waitpoint.
+          scheduler::release_stream_slot(s);
+          check_error(s, cbuf);
+          scheduler::notify_task_completion(s);
+        });
+    // Block (if MLX_METAL_MAX_INFLIGHT_PER_STREAM caps in-flight
+    // buffers) until a slot is free. With no env var set the call is a
+    // single mutex acquire.
+    scheduler::acquire_stream_slot(
+        s, read_inflight_limit(), read_backpressure_timeout());
+    encoder.commit();
+  } else {
+    command_buffer->addCompletedHandler(
+        [s, buffers = std::move(buffers)](MTL::CommandBuffer* cbuf) {
+          check_error(s, cbuf);
+        });
+  }
+}
+
+void finalize(Stream s) {
+  auto pool = metal::new_scoped_memory_pool();
+  scheduler::throw_if_stream_error(s);
+  auto& encoder = metal::get_command_encoder(s);
+  auto* cb = encoder.get_command_buffer();
+  encoder.end_encoding();
+  cb->addCompletedHandler([s](MTL::CommandBuffer* cbuf) {
+    scheduler::release_stream_slot(s);
+    check_error(s, cbuf);
+  });
+  scheduler::acquire_stream_slot(
+      s, read_inflight_limit(), read_backpressure_timeout());
+  encoder.commit();
+}
+
+void synchronize(Stream s) {
+  // Surface any error stashed asynchronously by a prior completion handler
+  // before driving the synchronous wait. CommandEncoder::synchronize()
+  // already throws on its own command buffer's error status; this covers
+  // the case where the failing buffer was committed earlier.
+  scheduler::throw_if_stream_error(s);
+  metal::get_command_encoder(s).synchronize();
+}
+
+void clear_streams() {
+  metal::get_command_encoders().clear();
+  // Encoders are gone; drop any errors stashed against now-dead streams.
+  scheduler::clear_all_stream_errors();
+}
+
+} // namespace mlx::core::gpu

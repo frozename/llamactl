@@ -1,0 +1,101 @@
+// Copyright © 2026 Apple Inc.
+
+#include "mlx/stream.h"
+#include "mlx/backend/cpu/device_info.h"
+#include "mlx/backend/gpu/device_info.h"
+#include "mlx/backend/gpu/eval.h"
+
+#include <array>
+#include <map>
+#include <optional>
+#include <shared_mutex>
+
+namespace mlx::core {
+
+// Definition of the process-global stream generation counter declared in
+// mlx/stream.h. Starts at 0; new_stream() pre-increments before stamping
+// so every live stream carries generation ≥ 1, leaving 0 as the sentinel
+// for default-constructed or uninitialized Stream objects.
+std::atomic<uint64_t> stream_generation_counter_{0};
+
+namespace {
+
+auto& default_stream_storage(Device d) {
+  // Each device has its own default stream in each thread.
+  static thread_local auto default_streams = []() {
+    std::array<std::vector<std::optional<Stream>>, 2> streams;
+    streams[static_cast<size_t>(Device::cpu)].resize(cpu::device_count());
+    streams[static_cast<size_t>(Device::gpu)].resize(gpu::device_count());
+    return streams;
+  }();
+  return default_streams[static_cast<size_t>(d.type)].at(d.index);
+}
+
+auto& all_streams() {
+  static std::tuple<std::vector<Stream>, std::shared_mutex> streams_and_mtx;
+  return streams_and_mtx;
+}
+
+auto& thread_local_streams() {
+  static std::tuple<std::vector<ThreadLocalStream>, std::mutex> streams_and_mtx;
+  return streams_and_mtx;
+}
+
+} // namespace
+
+Stream default_stream(Device d) {
+  if (!gpu::is_available() && d.type == Device::gpu) {
+    throw std::invalid_argument(
+        "[default_stream] Cannot get gpu stream without gpu backend.");
+  }
+  auto& s = default_stream_storage(d);
+  if (!s.has_value()) {
+    s = new_stream(d.type);
+  }
+  return s.value();
+}
+
+void set_default_stream(Stream s) {
+  if (!gpu::is_available() && s.device == Device::gpu) {
+    throw std::invalid_argument(
+        "[set_default_stream] Cannot set gpu stream without gpu backend.");
+  }
+  default_stream_storage(s.device) = s;
+}
+
+std::vector<Stream> get_streams() {
+  auto& [streams, mtx] = all_streams();
+  std::shared_lock lock(mtx);
+  return streams;
+}
+
+Stream new_stream(Device d) {
+  auto& [streams, mtx] = all_streams();
+  std::unique_lock lock(mtx);
+  int index = streams.size();
+  auto& s = streams.emplace_back(index, d);
+  s.generation =
+      stream_generation_counter_.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (d == Device::gpu) {
+    gpu::new_stream(s);
+  }
+  return s;
+}
+
+ThreadLocalStream new_thread_local_stream(Device d) {
+  auto& [streams, mtx] = thread_local_streams();
+  std::lock_guard lock(mtx);
+  int index = streams.size();
+  return streams.emplace_back(index, d);
+}
+
+Stream stream_from_thread_local_stream(ThreadLocalStream tls) {
+  static thread_local std::map<ThreadLocalStream, Stream> streams;
+  auto it = streams.find(tls);
+  if (it == streams.end()) {
+    it = streams.emplace(tls, new_stream(tls.device)).first;
+  }
+  return it->second;
+}
+
+} // namespace mlx::core

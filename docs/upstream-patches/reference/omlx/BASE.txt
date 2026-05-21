@@ -1,0 +1,2 @@
+branch: feat/max-completion-batch-size
+head_sha: 26a2033f2711509c1edac9a9ac2f36ac19598ac9
