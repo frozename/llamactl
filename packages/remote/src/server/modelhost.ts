@@ -86,14 +86,24 @@ const CHILD_ENV_ALLOWLIST = [
   'MLX_METAL_BACKPRESSURE_TIMEOUT_SECS',
 ];
 
-function sanitizeChildEnv(parent: NodeJS.ProcessEnv, overrides: Record<string, string> | undefined): NodeJS.ProcessEnv {
+// Merge order: parent allowlist → engineOverrides → specEnv.
+// spec.env wins on conflict so manifests can declaratively override
+// both inherited host vars and engine-level boot overrides.
+function sanitizeChildEnv(
+  parent: NodeJS.ProcessEnv,
+  engineOverrides: Record<string, string> | undefined,
+  specEnv: Record<string, string> | undefined,
+): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const key of CHILD_ENV_ALLOWLIST) {
     const value = parent[key];
     if (value !== undefined) out[key] = value;
   }
-  if (overrides) {
-    for (const [key, value] of Object.entries(overrides)) out[key] = value;
+  if (engineOverrides) {
+    for (const [key, value] of Object.entries(engineOverrides)) out[key] = value;
+  }
+  if (specEnv) {
+    for (const [key, value] of Object.entries(specEnv)) out[key] = value;
   }
   return out;
 }
@@ -158,7 +168,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     child = spawn(launch.binary, launch.args, {
       detached: true,
       stdio: 'ignore',
-      env: sanitizeChildEnv(runtimeEnv, launch.envOverrides),
+      env: sanitizeChildEnv(runtimeEnv, launch.envOverrides, manifest.spec.env),
     });
     const pid = child.pid ?? null;
     if (pid === null) {

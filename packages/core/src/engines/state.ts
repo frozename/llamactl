@@ -41,6 +41,7 @@ export function computeModelHostSpecHash(spec: {
   resources?: { expectedMemoryGiB?: number } | undefined;
   restartPolicy: string;
   timeoutSeconds: number;
+  env?: Record<string, string> | undefined;
 }): string {
   return JSON.stringify({
     engine: spec.engine,
@@ -51,6 +52,7 @@ export function computeModelHostSpecHash(spec: {
     resources: spec.resources ?? null,
     restartPolicy: spec.restartPolicy,
     timeoutSeconds: spec.timeoutSeconds,
+    env: spec.env ?? null,
   });
 }
 

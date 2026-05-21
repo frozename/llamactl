@@ -98,4 +98,27 @@ describe('ModelHostManifestSchema', () => {
     const result = ModelHostManifestSchema.safeParse(bad);
     expect(result.success).toBe(false);
   });
+
+  test('accepts spec.env with string values', () => {
+    const manifest = { ...valid, spec: { ...valid.spec, env: { FOO: 'bar', MLX_METAL_MAX_INFLIGHT_PER_STREAM: '1' } } };
+    const result = ModelHostManifestSchema.safeParse(manifest);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.spec.env).toEqual({ FOO: 'bar', MLX_METAL_MAX_INFLIGHT_PER_STREAM: '1' });
+    }
+  });
+
+  test('rejects spec.env with non-string values', () => {
+    const bad = { ...valid, spec: { ...valid.spec, env: { FOO: 123 } } };
+    const result = ModelHostManifestSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+  });
+
+  test('accepts manifest without spec.env (back-compat)', () => {
+    const result = ModelHostManifestSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.spec.env).toBeUndefined();
+    }
+  });
 });

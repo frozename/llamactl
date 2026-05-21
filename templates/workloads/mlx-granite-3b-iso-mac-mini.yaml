@@ -40,3 +40,8 @@ spec:
     - /Volumes/AI-DATA/cache/omlx-iso-3b
   restartPolicy: Always
   timeoutSeconds: 180
+  # Declarative per-workload env overrides. Values here win over the host's
+  # inherited env (CHILD_ENV_ALLOWLIST). Not required for per-process isolation
+  # (isolation is handled by the oMLX engine adapter); shown here for reference.
+  env:
+    MLX_METAL_MAX_INFLIGHT_PER_STREAM: "1"

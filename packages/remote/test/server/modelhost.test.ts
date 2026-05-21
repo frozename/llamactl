@@ -275,6 +275,59 @@ describe('server/modelhost', () => {
     }
   });
 
+  test('spec.env values appear in the spawned child environment', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-specenv-'));
+    const workloadsDir = join(tmp, 'workloads');
+    const runtimeDir = join(tmp, 'runtime');
+    const fakeBinary = join(tmp, 'omlx');
+    mkdirSync(workloadsDir, { recursive: true });
+    writeFileSync(fakeBinary, '#!/bin/sh\nexit 0\n');
+    const spawn = mock(() => ({ pid: 4321 } as const));
+    const manifest = {
+      apiVersion: 'llamactl/v1',
+      kind: 'ModelHost',
+      metadata: { name: 'mlx-host-specenv' },
+      spec: {
+        engine: 'omlx',
+        node: 'local',
+        enabled: true,
+        binary: fakeBinary,
+        endpoint: { host: '127.0.0.1', port: 8099 },
+        hostedModels: [{ rel: 'mlx-community/Qwen3-8B-MLX-4bit' }],
+        extraArgs: [],
+        restartPolicy: 'Always',
+        timeoutSeconds: 60,
+        env: { MLX_METAL_MAX_INFLIGHT_PER_STREAM: '1', MY_CUSTOM: 'hello' },
+      },
+    } as const;
+    const env = {
+      PATH: '/usr/bin',
+      HOME: '/Users/test',
+      SECRET_TOKEN: 'leak',
+    } as NodeJS.ProcessEnv;
+
+    try {
+      const result = await startModelHost({
+        key: { name: 'mlx-host-specenv' },
+        manifest,
+        workloadsDir,
+        runtimeDir,
+        env,
+        spawn,
+        probeReady: async () => ({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const [, , options] = spawn.mock.calls[0]!;
+      expect(options.env?.MLX_METAL_MAX_INFLIGHT_PER_STREAM).toBe('1');
+      expect(options.env?.MY_CUSTOM).toBe('hello');
+      expect(options.env?.SECRET_TOKEN).toBeUndefined();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test('statusModelHost reports Stopped when there is no sidecar', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-status-'));
     try {

@@ -46,6 +46,7 @@ function hostSpecSnapshot(manifest: ModelHostManifest): Record<string, unknown> 
     resources: spec.resources,
     restartPolicy: spec.restartPolicy,
     timeoutSeconds: spec.timeoutSeconds,
+    env: spec.env,
   };
 }
 
@@ -59,6 +60,7 @@ function liveHostSpecSnapshot(current: Record<string, unknown>): Record<string, 
     resources: current.resources,
     restartPolicy: current.restartPolicy,
     timeoutSeconds: current.timeoutSeconds,
+    env: current.env,
   };
 }
 
