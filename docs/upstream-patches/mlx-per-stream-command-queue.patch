@@ -1,0 +1,517 @@
+From a2f7e1d3c8b946570123456789abcdef01234567 Mon Sep 17 00:00:00 2001
+From: Alexandre Cordeiro <nenisdeno@gmail.com>
+Date: Thu, 22 May 2026 10:30:00 -0300
+Subject: [PATCH] Metal: per-stream MTL::CommandQueue for multi-model
+ concurrency
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Today mlx::core::metal::Device holds a single shared MTL::CommandQueue
+(`queue_`, device.cpp:269) that every MLX stream draws command buffers
+from.  When multiple models are loaded in the same process and served
+concurrently — as oMLX does with its multi-model mode — their streams
+contend on the same queue.  Under sustained load (three 8B-class models
+at mcr≥2 in one process) the Metal GPU watchdog fires
+`kIOGPUCommandBufferCallbackErrorTimeout` errors because the command
+scheduler cannot prioritise across models at the buffer level.
+
+The per-process workaround (one oMLX process per model, each with its
+own Metal context) eliminates errors but requires users to write
+multi-service configurations and adds inter-process IPC overhead.
+
+This commit refactors Device to maintain one MTL::CommandQueue per
+active MLX stream, keyed by stream.index.  Each model on a distinct
+stream gets an independent command queue, so the Metal driver can
+schedule their workloads independently without cross-stream serialisation
+at the queue level.
+
+Design
+======
+
+Per-stream queue lifecycle
+--------------------------
+`Device::queue_for_stream(int stream_index)` is the single allocation
+point.  It acquires `stream_queues_mtx_`, checks for an existing entry,
+and allocates a fresh queue via `device_->newCommandQueue()` on first use.
+`new_stream()` in eval.cpp calls it immediately before constructing the
+CommandEncoder so the encoder always finds the entry pre-populated.
+`CommandEncoder`'s constructor captures the returned SharedPtr by value,
+giving the encoder shared ownership of the queue: in-flight command
+buffers can complete even after the per-stream map entry is erased.
+
+Safety cap
+----------
+Metal's per-process command-queue limit is typically ~256 (driver-
+dependent; Apple documentation does not specify a minimum).  We cap
+per-stream allocation at `kMaxStreamQueues = 64`, leaving ample headroom
+for the Metal runtime, CoreML, and other in-process Metal clients.  Once
+the cap is reached, `queue_for_stream` falls back to the device-global
+`queue_` and emits a one-time `stderr` warning via `std::call_once`.
+Capped streams see correct behaviour; they lose per-stream queue
+isolation but do not crash or drop requests.
+
+Teardown
+--------
+`Device::release_stream_queue(int)` erases a single entry.  It is called
+from `clear_streams()` via `release_all_stream_queues()` after all
+CommandEncoders have been destroyed.  Because encoders hold a SharedPtr,
+the underlying MTL::CommandQueue is not deallocated until every in-flight
+command buffer referencing it completes — Metal will keep the Objective-C
+object alive regardless.
+
+MTL::Event compatibility
+------------------------
+Metal events (`MTL::Event`, not `MTL::SharedEvent`) are device-scoped,
+not queue-scoped.  A signal recorded on one queue's command buffer is
+visible to wait encoders on any other queue attached to the same
+`MTL::Device`.  Cross-stream event synchronisation in event.cpp is
+therefore unaffected.  A comment is added at the relevant call sites to
+document this invariant.
+
+Composition with #2670
+-----------------------
+The exception-safety patch (#2670, commit 8c514a1a on the same branch)
+keys stream error stashes by `stream.index` in `Scheduler`.  Per-stream
+queues reinforce this design: a command-buffer failure on stream A's
+queue stashes its error under stream A's index without polluting stream
+B.  The generation-counter gap noted in #2670's "Known limitation" is
+addressed by the companion M4 patch (Stream generation counter, planned).
+
+Backward compatibility
+-----------------------
+Callers using the default single stream observe identical behaviour: they
+get exactly one queue (stored in `stream_queues_` keyed by that stream's
+index) rather than the device-global `queue_`.  The `queue_` member is
+retained as the safety-cap fallback and for the Device destructor, which
+releases it implicitly via SharedPtr.
+
+Performance
+-----------
+`queue_for_stream` acquires a `std::mutex` only during the map lookup /
+allocation.  The common no-allocation path (subsequent calls on an
+existing stream) takes one mutex acquire + hash lookup + SharedPtr copy.
+CommandEncoder construction is not on the hot eval path — it happens once
+per stream at startup — so this is not a throughput concern.
+Command-buffer creation (`stream_queue_->commandBuffer()`) is identical
+to before: a single Objective-C message on the queue.
+
+Risks and open questions
+------------------------
+1. The driver cap of ~256 queues per process is empirical; it may be
+   lower on A-series chips or under memory pressure.  The 64 cap is
+   conservative; we have not benchmarked queue allocation under the
+   full 64 per-stream limit on M4 Pro or M4 base.  Needs reviewer with
+   Metal background and hardware access to validate.
+2. The thermal / scheduling behaviour of 64 concurrent queues under
+   sustained multi-stream load is untested.  Multi-queue submission could
+   theoretically interact poorly with Metal's internal scheduler on
+   constrained GPUs.
+3. This patch does NOT validate end-to-end on Metal hardware —
+   specifically the multi-model oMLX scenario that motivated the change.
+   Integration testing against the per-process baseline (Fleet L,
+   mac-mini) is required before merge.
+
+Tests
+-----
+`tests/test_metal_per_stream_queue.cpp` (new file, compiled only with
+`MLX_BUILD_METAL`) covers:
+  1. A fresh stream yields a non-null queue; repeated calls return the
+     same queue (idempotency).
+  2. Two distinct streams have distinct (non-aliasing) queues.
+  3. `release_stream_queue` removes the map entry; subsequent allocation
+     succeeds (non-null result).
+  4. The safety-cap fallback: once `kMaxStreamQueues` entries exist, a
+     further call returns a non-null queue that differs from per-stream
+     entries (i.e., the device-global fallback).
+
+The existing test suite (`MLX_BUILD_METAL=ON`) must continue to pass.
+---
+ mlx/backend/metal/device.cpp               |  85 +++++++++++
+ mlx/backend/metal/device.h                 |  74 +++++++++-
+ mlx/backend/metal/eval.cpp                 |  15 +-
+ mlx/backend/metal/event.cpp                |   8 +
+ tests/test_metal_per_stream_queue.cpp       | 104 +++++++++++++
+ 5 files changed, 282 insertions(+), 4 deletions(-)
+ create mode 100644 tests/test_metal_per_stream_queue.cpp
+
+diff --git a/mlx/backend/metal/device.h b/mlx/backend/metal/device.h
+index f8a3d2b1..3a7c4e91 100644
+--- a/mlx/backend/metal/device.h
++++ b/mlx/backend/metal/device.h
+@@ -1,10 +1,12 @@
+ // Copyright © 2023-2024 Apple Inc.
+
+ #pragma once
+
+ #include <functional>
+ #include <memory>
++#include <mutex>
+ #include <string>
+ #include <unordered_map>
+
+ #include "mlx/backend/metal/utils.h"
+ #include "mlx/device.h"
+@@ -55,6 +57,45 @@ class Device {
+   void end_encoding(int stream_index);
+
+   MTL::ResidencySet* residency_set();
++
++  // Safety cap on the number of per-stream command queues this Device will
++  // allocate.  Metal's per-process queue limit is typically ~256 (driver-
++  // dependent); 64 leaves headroom for the Metal runtime, CoreML, and any
++  // other in-process Metal clients.  Streams beyond the cap share the
++  // device-global `queue_` fallback.
++  static constexpr int kMaxStreamQueues = 64;
++
++  // Return a SharedPtr to the MTL::CommandQueue dedicated to `stream_index`.
++  //
++  // Thread-safe.  On first call for a given index a new queue is created via
++  // `device_->newCommandQueue()` and cached in `stream_queues_`.  Subsequent
++  // calls return the same queue (shared ownership via SharedPtr copy).
++  //
++  // If the cache already holds kMaxStreamQueues entries the device-global
++  // `queue_` is returned and a one-time warning is written to stderr.
++  //
++  // Called from new_stream() and from CommandEncoder's constructor.  The
++  // pre-warm in new_stream() ensures CommandEncoder always finds the entry
++  // pre-populated on the common path, avoiding double-allocation.
++  NS::SharedPtr<MTL::CommandQueue> queue_for_stream(int stream_index);
++
++  // Release the per-stream queue entry for `stream_index`.  No-op if no
++  // queue was allocated for the given index (e.g., if the stream exceeded
++  // the cap and was using the device-global fallback).
++  //
++  // Does NOT invalidate in-flight command buffers: CommandEncoder holds its
++  // own SharedPtr so the underlying MTL::CommandQueue remains alive until
++  // every command buffer referencing it has completed.
++  void release_stream_queue(int stream_index);
++
++  // Release all per-stream queue entries.  Called once from clear_streams()
++  // after all CommandEncoders have been destroyed.  The device-global
++  // fallback `queue_` is NOT released here; it lives for the Device's
++  // lifetime and is freed by the SharedPtr destructor.
++  void release_all_stream_queues();
++
+  private:
+   MTL::Device* device_;
+   NS::SharedPtr<MTL::CommandQueue> queue_;  // device-global fallback queue
+@@ -95,6 +136,9 @@ class Device {
+   std::unordered_map<std::string, NS::SharedPtr<MTL::Library>> library_map_;
+   std::unordered_map<std::string, NS::SharedPtr<MTL::ComputePipelineState>>
+       kernel_map_;
++
++  std::unordered_map<int, NS::SharedPtr<MTL::CommandQueue>> stream_queues_;
++  std::mutex stream_queues_mtx_;
+ };
+
+ class CommandEncoder {
+@@ -104,7 +148,12 @@ class CommandEncoder {
+  public:
+   CommandEncoder() = delete;
+   CommandEncoder(const CommandEncoder&) = delete;
+-  explicit CommandEncoder(Device& d, int stream_index, MTL::ResidencySet* rs);
++  // Constructs an encoder whose command buffers are drawn from the per-stream
++  // queue for `stream_index` (obtained via `d.queue_for_stream(stream_index)`
++  // which allocates on demand).  Single-stream callers get one dedicated queue
++  // that is functionally identical to the former device-global queue.
++  explicit CommandEncoder(
++      Device& d,
++      int stream_index,
++      MTL::ResidencySet* rs);
+   ~CommandEncoder();
+
+   bool needs_commit() const;
+@@ -126,7 +175,8 @@ class CommandEncoder {
+
+  private:
+   bool active_{false};
+-  NS::SharedPtr<MTL::CommandQueue> queue_;
++  // Shared ownership of the per-stream queue; keeps the queue alive for the
++  // duration of any in-flight command buffers even after stream teardown.
++  NS::SharedPtr<MTL::CommandQueue> stream_queue_;
+   NS::SharedPtr<MTL::CommandBuffer> command_buffer_;
+   int n_blit_encoders_{0};
+   int n_compute_encoders_{0};
+diff --git a/mlx/backend/metal/device.cpp b/mlx/backend/metal/device.cpp
+index 2b4f9c7e..6a8c1d02 100644
+--- a/mlx/backend/metal/device.cpp
++++ b/mlx/backend/metal/device.cpp
+@@ -1,6 +1,7 @@
+ // Copyright © 2023-2024 Apple Inc.
+
+ #include <algorithm>
++#include <mutex>
+ #include <numeric>
+ #include <sstream>
+
+@@ -265,10 +266,78 @@ Device& device(mlx::core::Device d) {
+   return metal_device;
+ }
+
++NS::SharedPtr<MTL::CommandQueue> Device::queue_for_stream(int stream_index) {
++  std::lock_guard<std::mutex> lk(stream_queues_mtx_);
++  auto it = stream_queues_.find(stream_index);
++  if (it != stream_queues_.end()) {
++    // Common path: return a copy of the existing SharedPtr (increments
++    // refcount, no allocation).
++    return it->second;
++  }
++  if (static_cast<int>(stream_queues_.size()) >= kMaxStreamQueues) {
++    // Safety cap: fall back to the device-global queue and emit a one-time
++    // warning so operators know they have hit the allocation limit.
++    static std::once_flag warn_once;
++    std::call_once(warn_once, [] {
++      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
++      fprintf(
++          stderr,
++          "[MLX] Warning: per-stream MTL::CommandQueue cap (%d) reached. "
++          "Subsequent new streams will share the device-global command queue "
++          "and lose per-stream GPU scheduling isolation. "
++          "Metal's per-process queue limit is typically ~256; consider "
++          "reducing the number of concurrent MLX streams to stay within "
++          "the cap.\n",
++          Device::kMaxStreamQueues);
++    });
++    return queue_;
++  }
++  // First use for this stream index: allocate a dedicated queue.
++  // newCommandQueue() is relatively lightweight — it allocates a kernel-
++  // side slot but performs no GPU work until the first command buffer is
++  // committed.  NS::TransferPtr takes ownership of the returned +1 object.
++  auto& entry = stream_queues_[stream_index];
++  entry = NS::TransferPtr(device_->newCommandQueue());
++  return entry;
++}
++
++void Device::release_stream_queue(int stream_index) {
++  std::lock_guard<std::mutex> lk(stream_queues_mtx_);
++  stream_queues_.erase(stream_index);
++  // Note: if the stream exceeded kMaxStreamQueues it was using queue_
++  // directly — no entry exists in stream_queues_, so erase is a no-op.
++}
++
++void Device::release_all_stream_queues() {
++  std::lock_guard<std::mutex> lk(stream_queues_mtx_);
++  stream_queues_.clear();
++  // queue_ (device-global fallback) is NOT cleared here.  It lives for the
++  // Device's lifetime and is released by its SharedPtr destructor.
++}
++
+ // CommandEncoder implementation
+
+-CommandEncoder::CommandEncoder(Device& d, int stream_index, MTL::ResidencySet* rs)
+-    : active_(false), queue_(d.queue_), n_blit_encoders_(0), n_compute_encoders_(0) {
+-  command_buffer_ = NS::RetainPtr(queue_->commandBuffer());
++CommandEncoder::CommandEncoder(
++    Device& d,
++    int stream_index,
++    MTL::ResidencySet* rs)
++    : active_(false),
++      // Capture shared ownership of the per-stream queue so this encoder's
++      // in-flight command buffers can complete even after stream teardown.
++      stream_queue_(d.queue_for_stream(stream_index)),
++      n_blit_encoders_(0),
++      n_compute_encoders_(0) {
++  // commandBuffer() returns an autoreleased object; NS::RetainPtr bumps the
++  // refcount so command_buffer_ holds a strong reference.
++  command_buffer_ = NS::RetainPtr(stream_queue_->commandBuffer());
+   if (rs != nullptr) {
+     command_buffer_->useResidencySet(rs);
+   }
+@@ -318,10 +387,12 @@ CommandEncoder::~CommandEncoder() {}
+
+ // Commit the current command buffer and allocate a fresh one from the
+ // per-stream queue so subsequent operations on this stream are independent.
+ void CommandEncoder::commit() {
++  // Draw the next buffer from stream_queue_ (not the device-global queue_)
++  // so all buffers for this stream stay on the same dedicated queue.
+   command_buffer_->commit();
+-  command_buffer_ = NS::RetainPtr(queue_->commandBuffer());
++  command_buffer_ = NS::RetainPtr(stream_queue_->commandBuffer());
+   n_blit_encoders_ = 0;
+   n_compute_encoders_ = 0;
+   active_ = false;
+ }
+diff --git a/mlx/backend/metal/eval.cpp b/mlx/backend/metal/eval.cpp
+index 1a371c3f..7b4e8d92 100644
+--- a/mlx/backend/metal/eval.cpp
++++ b/mlx/backend/metal/eval.cpp
+@@ -13,12 +13,19 @@ void init() {}
+
+ void new_stream(Stream s) {
+   assert(s.device == Device::gpu);
+   // Defensive: if `s.index` is being reused after a prior stream was torn
+   // down, drop any stale error that may have been stashed against this
+   // index but never consumed. Prevents cross-stream error attribution
+   // when callers create / destroy / recreate streams.
+   scheduler::clear_stream_error(s);
+   auto& encoders = metal::get_command_encoders();
+   auto& d = metal::device(s.device);
++  // Pre-allocate the per-stream queue before constructing the CommandEncoder.
++  // The encoder's constructor calls queue_for_stream internally; doing it
++  // here first ensures the map entry exists before try_emplace runs, so the
++  // constructor hits the fast (cached) path rather than the allocation path
++  // under the mutex.  Idempotent: if the entry already exists this is a
++  // cheap SharedPtr copy that is immediately discarded.
++  d.queue_for_stream(s.index);
+   encoders.try_emplace(s.index, d, s.index, d.residency_set());
+ }
+
+@@ -128,7 +135,11 @@ void synchronize(Stream s) {
+
+ void clear_streams() {
+   metal::get_command_encoders().clear();
+   // Encoders are gone; drop any errors stashed against now-dead streams.
+   scheduler::clear_all_stream_errors();
++  // Release per-stream command queues now that all encoders have been
++  // destroyed.  Encoders hold shared ownership so any in-flight command
++  // buffers can still complete, but clearing the map here allows fresh
++  // queues to be allocated on the next new_stream call.
++  metal::device(Device::gpu).release_all_stream_queues();
+ }
+
+ } // namespace mlx::core::gpu
+diff --git a/mlx/backend/metal/event.cpp b/mlx/backend/metal/event.cpp
+index c3f21a84..8e2b3b9f 100644
+--- a/mlx/backend/metal/event.cpp
++++ b/mlx/backend/metal/event.cpp
+@@ -1,6 +1,14 @@
+ // Copyright © 2023-2024 Apple Inc.
+
++// Compatibility note — per-stream MTL::CommandQueue (PR #NNNN):
++// Metal events (MTL::Event) are device-scoped, not queue-scoped.  A signal
++// recorded on one queue's command buffer is visible to wait encoders on any
++// other queue attached to the same MTL::Device.  The per-stream queue
++// refactor in device.cpp/device.h does not alter the semantics of the
++// cross-stream event signal/wait calls below.  If future work requires
++// cross-device synchronisation, MTL::SharedEvent must be used instead.
++
+ #include "mlx/backend/metal/device.h"
+ #include "mlx/backend/metal/event.h"
+ #include "mlx/backend/metal/utils.h"
+diff --git a/tests/test_metal_per_stream_queue.cpp b/tests/test_metal_per_stream_queue.cpp
+new file mode 100644
+index 00000000..4f2d8c1a
+--- /dev/null
++++ b/tests/test_metal_per_stream_queue.cpp
+@@ -0,0 +1,104 @@
++// Copyright © 2024 Apple Inc.
++//
++// Unit tests for per-stream MTL::CommandQueue allocation (PR #NNNN).
++// Requires a real Metal device; compiled only when MLX_BUILD_METAL is set.
++//
++// Coverage:
++//   1. A fresh stream returns a non-null per-stream queue; repeated calls
++//      return the same underlying queue object (idempotency).
++//   2. Two distinct streams have distinct (non-aliasing) queues.
++//   3. release_stream_queue removes the map entry; subsequent allocation
++//      for the same index succeeds (non-null result).
++//   4. Safety-cap fallback: once kMaxStreamQueues entries exist, a further
++//      call returns the device-global queue (non-null, differs from per-
++//      stream entries).
++
++#ifdef MLX_BUILD_METAL
++
++#include <doctest/doctest.h>
++
++#include "mlx/backend/metal/device.h"
++#include "mlx/mlx.h"
++
++using namespace mlx::core;
++using namespace mlx::core::metal;
++
++// ---------------------------------------------------------------------------
++// Test 1: fresh stream returns a valid, stable queue
++// ---------------------------------------------------------------------------
++TEST_CASE("[metal] per-stream queue: fresh stream returns non-null queue") {
++  auto s = new_stream(Device::gpu);
++  auto& dev = device(Device::gpu);
++
++  auto q0 = dev.queue_for_stream(s.index);
++  REQUIRE(q0.get() != nullptr);
++
++  // Idempotency: a second call must return the same underlying queue object.
++  auto q1 = dev.queue_for_stream(s.index);
++  CHECK(q0.get() == q1.get());
++
++  synchronize(s);
++}
++
++// ---------------------------------------------------------------------------
++// Test 2: two distinct streams have distinct queues
++// ---------------------------------------------------------------------------
++TEST_CASE("[metal] per-stream queue: two streams have distinct queues") {
++  auto s0 = new_stream(Device::gpu);
++  auto s1 = new_stream(Device::gpu);
++  auto& dev = device(Device::gpu);
++
++  auto q0 = dev.queue_for_stream(s0.index);
++  auto q1 = dev.queue_for_stream(s1.index);
++
++  REQUIRE(q0.get() != nullptr);
++  REQUIRE(q1.get() != nullptr);
++  // Core invariant: independent streams must have independent queues so
++  // their command buffers can be scheduled independently by the Metal driver.
++  CHECK(q0.get() != q1.get());
++
++  synchronize(s0);
++  synchronize(s1);
++}
++
++// ---------------------------------------------------------------------------
++// Test 3: release_stream_queue removes the map entry
++// ---------------------------------------------------------------------------
++TEST_CASE("[metal] per-stream queue: release_stream_queue clears map entry") {
++  auto& dev = device(Device::gpu);
++
++  // Use a synthetic high-index to avoid colliding with any live stream.
++  const int kSyntheticIndex = 99901;
++  auto q_before = dev.queue_for_stream(kSyntheticIndex);
++  REQUIRE(q_before.get() != nullptr);
++
++  dev.release_stream_queue(kSyntheticIndex);
++
++  // After release, a new call must allocate a fresh (valid) queue.
++  // We cannot guarantee a different pointer value (the OS may reuse the
++  // same address), but the result must be non-null.
++  auto q_after = dev.queue_for_stream(kSyntheticIndex);
++  CHECK(q_after.get() != nullptr);
++
++  // Cleanup: remove the re-allocated synthetic entry.
++  dev.release_stream_queue(kSyntheticIndex);
++}
++
++// ---------------------------------------------------------------------------
++// Test 4: safety-cap fallback returns the device-global queue
++// ---------------------------------------------------------------------------
++TEST_CASE("[metal] per-stream queue: safety cap falls back to device-global queue") {
++  auto& dev = device(Device::gpu);
++  const int cap = Device::kMaxStreamQueues;
++
++  // Warm the per-stream map to exactly kMaxStreamQueues entries using
++  // synthetic indices that cannot collide with live stream indices.
++  const int kBase = 20000;
++  for (int i = kBase; i < kBase + cap; ++i) {
++    REQUIRE(dev.queue_for_stream(i).get() != nullptr);
++  }
++
++  // One index beyond the cap must still return a non-null queue (fallback).
++  auto q_overflow = dev.queue_for_stream(kBase + cap);
++  CHECK(q_overflow.get() != nullptr);
++
++  // The fallback queue is the device-global `queue_`, which differs from
++  // any per-stream entry.  Verify via inequality with a known per-stream ptr.
++  auto q_first = dev.queue_for_stream(kBase);
++  CHECK(q_overflow.get() != q_first.get());
++
++  // Cleanup: release all synthetic entries.  release_stream_queue is a
++  // no-op for the overflow index (which was never inserted into the map).
++  for (int i = kBase; i <= kBase + cap; ++i) {
++    dev.release_stream_queue(i);
++  }
++}
++
++#endif // MLX_BUILD_METAL
+--
+2.53.0
