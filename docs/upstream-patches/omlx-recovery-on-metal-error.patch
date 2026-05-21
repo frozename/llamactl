@@ -1,4 +1,4 @@
-From d461e329e93782a85b8d9dd702f152e2e88e0412 Mon Sep 17 00:00:00 2001
+From d779299e16aa48f5618211d126cc0149636d7150 Mon Sep 17 00:00:00 2001
 From: Alexandre Cordeiro <alexandre.s.b.cordeiro@gmail.com>
 Date: Thu, 21 May 2026 08:19:23 -0300
 Subject: [PATCH] Recover from MLX Metal command-buffer errors without failing
@@ -7,71 +7,112 @@ MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-When MLX (with the exception-safety patch for mlx-explore/mlx#2670
-applied) surfaces a `[METAL] Command buffer execution failed` at the
-next eval/finalize/synchronize waitpoint, that waitpoint inside oMLX
-is `BatchGenerator.next_generated()`. Without recovery the step
-fails and every running request — failing AND innocent batch-mates —
-is silently dropped.
+When MLX (with the exception-safety patch for mlx-explore/mlx#2670 applied) surfaces a `[METAL]` Command buffer execution failed at the next eval/finalize/synchronize waitpoint, that waitpoint can be in either of two paths inside oMLX:
 
-Adapt to the v3 contract: catch only the `[METAL]`-prefixed
-RuntimeError, isolate the failure to a single victim request,
-finalize it with `finish_reason='error'`, and continue the step
-with the remaining sequences for the next tick.
+1. **Decode path** — inside `BatchGenerator.next_generated()`.
+2. **Prefill path** — inside `mx.eval([c.state for c in prompt_cache])` in `_do_external_prefill`. This is the cold-start failure mode observed under multi-model memory pressure (multiple iso oMLX processes loading models simultaneously, where Metal allocator headroom is tight and a long prefill triggers `kIOGPUCommandBufferCallbackErrorOutOfMemory`).
 
-Heuristic limitation
-====================
+Without recovery the step fails, the engine loop logs an unhandled error, and every pending /v1/* request on the process gets a 500 — the failing request AND every innocent sibling.
 
-mlx-lm does not currently expose per-uid attribution for Metal
-errors. The patch marks the most-recently-admitted running request
-as the victim. This is a trade-off:
+Adapt to the v3 contract: catch only the `[METAL]`-prefixed RuntimeError on both paths, isolate the failure to the affected request, finalize it with `finish_reason='error'`, and continue the step.
+
+## Decode-path victim heuristic
+
+mlx-lm does not currently expose per-uid attribution for Metal errors raised inside the BatchGenerator. The decode-path catch marks the most-recently-admitted running request as the victim. Trade-off:
 
 * fail-the-whole-batch loses N - 1 innocent requests per error
-* fail-one-victim occasionally blames an innocent late-arrival when
-  the actual culprit was an older sibling
+* fail-one-victim occasionally blames an innocent late-arrival when the actual culprit was an older sibling
 
-The latter is strictly better when an error rate of N requests in a
-batch is bursty. A future mlx-lm change exposing per-uid Metal
-attribution would close the heuristic gap; until then, document the
-behaviour in the operator-visible error message.
+The latter is strictly better when bursty error rates inside a batch are the norm. A future mlx-lm change exposing per-uid Metal attribution would close the heuristic gap; until then, document the behaviour in the operator-visible error message.
 
-Observability
-=============
+## Prefill-path attribution is exact
 
-`Scheduler._metal_errors_recovered` counts successful recoveries
-across the lifetime of the engine. Surfaced via warning-level log
-on each occurrence.
+The prefill catch runs inside `_schedule_waiting`'s per-request loop, after the request has been popped from `self.waiting` and its temp UID assigned. The failing request is unambiguous — no heuristic is required. The catch cleans up the temp UID mapping, removes the prefill-tracker entry, drops the request from `self.requests`, and emits a `RequestOutput` with `finish_reason='error'` into the same `rejected_outputs` list the preflight memory guard already uses.
 
-Composition
-===========
+## Cascade-safe cleanup
 
-* Pairs with mlx-explore/mlx#2670 (exception-safety patch). Without
-  that patch in MLX, Metal errors abort the process and this code
-  path is never reached.
-* Compatible with the recently-landed
-  `--max-completion-batch-size` flag (`feat/max-completion-batch-size`).
-  When batch=1 the recovery surface is simpler (always fail the lone
-  request); when batch>1 the heuristic above applies.
+The decode-path recovery finalizes the victim before calling `_cleanup_finished([victim_id])`. If that cleanup itself hits a `[METAL]` cascade from `_safe_sync_generation_stream`, the recovery now logs a warning and defers the cleanup to the next step instead of letting the exception escape and kill the engine loop. The victim is already finalized at that point, so the safety goal is preserving the batch and keeping the process alive.
 
-Tests
-=====
+## Observability
 
-`tests/test_metal_error_recovery.py` covers the predicate
-(`[METAL]` prefix detection) and the counter initialisation.
-End-to-end scheduler construction needs a model checkpoint; the
-integration test is documented in the PR description and is the
-natural follow-up once a fixture lands in the oMLX test harness.
+`Scheduler._metal_errors_recovered` counts successful recoveries on both paths over the engine lifetime. Each occurrence is logged at warning level with the request id and underlying error string.
+
+## Composition
+
+* Pairs with mlx-explore/mlx#2670 (exception-safety patch). Without that patch in MLX, Metal errors abort the process and neither recovery path is reached.
+* Compatible with the recently-landed `--max-completion-batch-size` flag (`feat/max-completion-batch-size`). When batch=1 the decode-path recovery surface is simpler (always fail the lone request); when batch>1 the heuristic above applies. The prefill-path attribution is exact regardless of batch size.
+
+## Tests
+
+`tests/test_metal_error_recovery.py` covers the predicate (`[METAL]` prefix detection) and the counter initialisation. End-to-end scheduler construction needs a model checkpoint; the integration test is documented in the PR description and is the natural follow-up once a fixture lands in the oMLX test harness.
 ---
- omlx/scheduler.py                  | 51 +++++++++++++++++-
- tests/test_metal_error_recovery.py | 83 ++++++++++++++++++++++++++++++
- 2 files changed, 133 insertions(+), 1 deletion(-)
+ omlx/scheduler.py                  | 111 +++++++++++++++++++++++++++--
+ tests/test_metal_error_recovery.py |  83 +++++++++++++++++++++
+ 2 files changed, 187 insertions(+), 7 deletions(-)
  create mode 100644 tests/test_metal_error_recovery.py
 
 diff --git a/omlx/scheduler.py b/omlx/scheduler.py
-index 826c55c..1b1a413 100644
+index 826c55c..7b70be3 100644
 --- a/omlx/scheduler.py
 +++ b/omlx/scheduler.py
-@@ -5459,7 +5459,56 @@ class Scheduler:
+@@ -4688,12 +4688,50 @@ class Scheduler:
+                 self.request_id_to_uid[request.request_id] = temp_uid
+                 self.uid_to_request_id[temp_uid] = request.request_id
+ 
+-                prefilled_cache, last_token = self._do_external_prefill(
+-                    request,
+-                    tokens_to_process,
+-                    cache_to_use,
+-                    vlm_embeds=vlm_embeds,
+-                )
++                try:
++                    prefilled_cache, last_token = self._do_external_prefill(
++                        request,
++                        tokens_to_process,
++                        cache_to_use,
++                        vlm_embeds=vlm_embeds,
++                    )
++                except RuntimeError as e:
++                    # mlx-explore/mlx#2670: Metal command-buffer failures
++                    # (notably Insufficient Memory under cold-start pressure
++                    # when multiple iso procs load models simultaneously)
++                    # surface here from mx.eval() inside _do_external_prefill.
++                    # Without recovery the entire step() raises, the engine
++                    # loop logs an unhandled error, and every pending /v1/*
++                    # request on this proc gets a 500. Symmetric to the
++                    # decode-path catch below: isolate the failure to the
++                    # current request, finish it with a clear error, and let
++                    # the next step admit different waiters.
++                    if not str(e).startswith("[METAL]"):
++                        raise
++                    self.uid_to_request_id.pop(temp_uid, None)
++                    self.request_id_to_uid.pop(request.request_id, None)
++                    get_prefill_tracker().remove(request.request_id)
++                    self.requests.pop(request.request_id, None)
++                    self._metal_errors_recovered = (
++                        getattr(self, "_metal_errors_recovered", 0) + 1
++                    )
++                    logger.warning(
++                        "Metal command buffer failure during prefill of %s; "
++                        "isolating request and continuing batch "
++                        "(total recoveries: %d). Underlying error: %s",
++                        request.request_id,
++                        self._metal_errors_recovered,
++                        e,
++                    )
++                    rejected_outputs.append(
++                        RequestOutput(
++                            request_id=request.request_id,
++                            finished=True,
++                            finish_reason="error",
++                            error=f"metal_command_buffer_failed_prefill: {e}",
++                        )
++                    )
++                    continue
+ 
+                 # Clean up temp UID mapping
+                 del self.uid_to_request_id[temp_uid]
+@@ -5459,7 +5497,66 @@ class Scheduler:
              # objects (prefill is handled externally before insert).
              if (self.batch_generator is not None or self._vlm_mtp_active) and self.running:
                  if self.batch_generator is not None:
@@ -125,7 +166,17 @@ index 826c55c..1b1a413 100644
 +                        ]
 +                        output.outputs.extend(metal_error_failures)
 +                        output.finished_request_ids.add(victim_id)
-+                        self._cleanup_finished([victim_id])
++                        try:
++                            self._cleanup_finished([victim_id])
++                        except RuntimeError as cleanup_exc:
++                            if not str(cleanup_exc).startswith("[METAL]"):
++                                raise
++                            logger.warning(
++                                "Metal cascade during cleanup of victim %s; "
++                                "deferring to next step (error: %s)",
++                                victim_id,
++                                cleanup_exc,
++                            )
                  else:
                      responses = []
                  # Drive vlm_mtp generators alongside BatchGenerator. Order

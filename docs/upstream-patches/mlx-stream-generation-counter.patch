@@ -1,47 +1,105 @@
-From a79de975ac68339787eb4f3d0e71876da48aa5c5 Mon Sep 17 00:00:00 2001
-From: Alexandre Cordeiro <nenisdeno@gmail.com>
-Date: Thu, 21 May 2026 03:18:13 -0300
-Subject: [PATCH] Stream: add generation counter to prevent stale
- completion-handler error attribution
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
+From 996f6dd6df27c270ef1d83ff5cc00ad3edf32694 Mon Sep 17 00:00:00 2001
+From: Alexandre Cordeiro <alexandre.s.b.cordeiro@gmail.com>
+Date: Thu, 21 May 2026 08:37:28 -0300
+Subject: [PATCH] Stream: add generation counter (A.1)
 
-A Metal completion handler captures Stream by value at the time it is
-registered with addCompletedHandler. If the stream is later destroyed and
-a new stream is created that reuses the same index, any in-flight handler
-from the old stream will call notify_stream_error with the recycled index,
-incorrectly attributing the error to the new stream.
-
-This patch closes that window by embedding a per-instance generation token
-in Stream. Each call to new_stream() pre-increments a process-global
-std::atomic<uint64_t> (stream_generation_counter_) and stamps the freshly
-created stream with the new value (≥1), leaving 0 as the sentinel for
-default-constructed Stream objects.
-
-The scheduler stashes {generation, exception_ptr} pairs instead of bare
-exception_ptrs. throw_if_stream_error compares the stored generation
-against the current stream's generation: on mismatch the entry is silently
-erased rather than rethrown. clear_stream_error is by-key regardless of
-generation, which is correct: its callers (gpu::new_stream, clear_streams)
-want to sweep out any leftover state before the slot is reused.
-
-Closes the "Known limitation" noted in the notify_stream_error comment in
-the exception-safety patch (mlx-explore/mlx#2670).
-
-Tests: tests/test_stream_generation.cpp — a single doctest TEST_CASE that
-exercises the full scenario: stale-generation error is silently discarded,
-slot is erased, a fresh notify on the new generation is then surfaced, and
-a same-generation notify+throw baseline confirms the match branch fires.
 ---
+ .gitignore                       |  81 +-----------------------
  mlx/scheduler.h                  |  40 +++++++-----
  mlx/stream.cpp                   |   8 +++
  mlx/stream.h                     |  14 +++++
  tests/CMakeLists.txt             |   1 +
  tests/test_stream_generation.cpp | 102 +++++++++++++++++++++++++++++++
- 5 files changed, 149 insertions(+), 16 deletions(-)
+ 6 files changed, 150 insertions(+), 96 deletions(-)
  create mode 100644 tests/test_stream_generation.cpp
 
+diff --git a/.gitignore b/.gitignore
+index 1daaa46d..ccd6991b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,81 +1,2 @@
+-# Byte-compiled / optimized / DLL files
+-__pycache__/
+-*.py[cod]
+-*$py.class
+-
+-# tensor files
+-*.safe
+-*.safetensors
+-
+-# Metal libraries
+-*.metallib
+-
+-# Distribution / packaging
+-python/mlx/core
+-python/mlx/share
+-python/mlx/include
+-.Python
+ build/
+-develop-eggs/
+-dist/
+-downloads/
+-eggs/
+-.eggs/
+-lib/
+-lib64/
+-parts/
+-sdist/
+-var/
+-venv/
+-wheels/
+-share/python-wheels/
+-*.egg-info/
+-.installed.cfg
+-*.egg
+-MANIFEST
+-uv.lock
+-.DS_Store
+-
+-# Prerequisites
+-*.d
+-
+-# Compiled Object files
+-*.slo
+-*.lo
+-*.o
+-*.obj
+-*.ilk
+-
+-# Precompiled Headers
+-*.gch
+-*.pch
+-
+-# Compiled Dynamic libraries
+-*.so
+-*.dylib
+-*.dll
+-
+-# Fortran module files
+-*.mod
+-*.smod
+-
+-# Compiled Static libraries
+-*.lai
+-*.la
+-*.a
+-*.lib
+-
+-# Executables
+-*.exe
+-*.out
+-*.app
+-
+-# Debug symbols
+-*.pdb
+-
+-# VSCode
+-.vscode/
+-# Jetbrains
+-.cache/
+-# vim
+-*.swp
++build-test/
 diff --git a/mlx/scheduler.h b/mlx/scheduler.h
 index 9d51f013..40a0f62c 100644
 --- a/mlx/scheduler.h

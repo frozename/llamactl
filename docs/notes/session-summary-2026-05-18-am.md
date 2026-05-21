@@ -1,6 +1,6 @@
 # Session summary — 2026-05-18 am
 
-Project: `llamactl`. Session started: `2026-05-18T00:08:03.790Z`.
+Project: `llamactl`. Session started: `2026-05-18T10:12:37.637Z`.
 
 ## What was learned / observed
 
@@ -11,217 +11,202 @@ Recent t2 observations (promoted from this session's t0 events). Conventional-co
 ## Commits this session
 
 ```
-cdaa920 docs(notes): maestro continuation 2026-05-18 night — matrix workloads + 26 commits shipped
-dede87c docs(notes): accumulate session summaries + continuation notes 2026-05-14 → 2026-05-18
-136aef2 feat(eval/matrix): memory-recall workload scaffold (NDCG@5)
-976681f feat(eval/matrix): mean_exact_match aggregator for small-corpus workloads
-d727a88 feat(eval/matrix): tool-call-grammar workload (set-equality of name + arg keys)
-9d3f0d0 fix(core/pull): propagate HF token to hf-cli child so authenticated downloads resume properly
-5d74321 feat(eval/matrix): --run-id and --report-all-runs CLI flags
-b0914c6 feat(eval/matrix): /v1 boot-probe to catch boots-green-infers-red
-cc19bdc fix(eval/matrix): derive task-refiner judge URL from judge_model spec (:8094)
+639c603 feat(eval/matrix): memory-recall fleet-fill — gemma4-e4b + granite-3b-Q8
+01c2e46 feat(eval/matrix): memory-recall Qwen-relabel control — corpus validated
 ```
 
 ## Dispatch events
 
 
-- 2026-05-18T00:15:30.561Z `dispatch.start` handoff `580a0bb9-44c7-4394-884d-b39514e52d09`
+- 2026-05-18T10:20:21.025Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:30.647Z `acp.server.start` handoff `580a0bb9-44c7-4394-884d-b39514e52d09`
+- 2026-05-18T10:20:21.153Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:30.908Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:21.354Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:30.908Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:22.213Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:31.069Z `acp.session.start` handoff `580a0bb9-44c7-4394-884d-b39514e52d09`
+- 2026-05-18T10:20:22.345Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:31.125Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:26.057Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:31.333Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:26.057Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:31.543Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:26.276Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:31.755Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:26.485Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:31.967Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:27.384Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:32.180Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:27.419Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:33.765Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:27.459Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:33.765Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:27.482Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:33.956Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:27.617Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:34.201Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:27.834Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:34.496Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:28.066Z `agent.thought` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:34.644Z `agent.thought` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:28.406Z `acp.session.end` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:34.725Z `acp.session.end` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:20:36.797Z `dispatch.end` handoff `8e180aa8-c080-4cae-a44d-86d38fd50bfc`
 
-- 2026-05-18T00:15:35.094Z `dispatch.end` handoff `288e285a-643c-496f-ba62-b2574f8e81bd`
+- 2026-05-18T10:22:37.611Z `claim` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:15:35.307Z `agent.thought` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:37.611Z `dispatch.start` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:15:35.342Z `agent.thought` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:37.649Z `acp.server.start` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:15:35.727Z `agent.thought` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:39.605Z `acp.session.start` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:15:35.732Z `agent.thought` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:42.722Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:15:35.949Z `agent.thought` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:42.723Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:15:36.138Z `agent.thought` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:43.120Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:15:36.374Z `agent.thought` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:43.721Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:15:36.620Z `agent.thought` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:43.989Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:15:51.455Z `acp.session.end` handoff `580a0bb9-44c7-4394-884d-b39514e52d09`
+- 2026-05-18T10:22:46.249Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:16:01.465Z `agent.thought` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:46.477Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:16:01.465Z `agent.thought` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:46.762Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:16:01.465Z `agent.thought` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:46.893Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:16:01.465Z `agent.thought` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:47.095Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:16:01.465Z `agent.thought` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:47.300Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:16:01.468Z `dispatch.end` handoff `580a0bb9-44c7-4394-884d-b39514e52d09`
+- 2026-05-18T10:22:47.646Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:16:04.981Z `acp.session.end` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:49.605Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:16:04.995Z `dispatch.end` handoff `48021e56-3905-42f7-93bd-a704e6a51b8e`
+- 2026-05-18T10:22:49.808Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:01.557Z `claim` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:50.028Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:01.557Z `dispatch.start` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:50.236Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:05.306Z `acp.server.start` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:50.449Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:06.635Z `acp.session.start` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:50.581Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:07.753Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:53.839Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:07.757Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:54.048Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:07.961Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:54.256Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:08.422Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:54.468Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:08.456Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:54.676Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:08.641Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:54.879Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:08.809Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:58.435Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:09.018Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:59.109Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:09.254Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:59.526Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:09.471Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:22:59.806Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:09.710Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:23:00.067Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:09.931Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:23:00.159Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:10.099Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:23:00.173Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:10.342Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:23:02.409Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:10.519Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:23:02.674Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:10.731Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:23:03.024Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:10.943Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:23:03.104Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:11.194Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:23:03.249Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:12.893Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:23:04.219Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:12.893Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:23:04.579Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:12.893Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:23:04.641Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:13.112Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:23:04.691Z `agent.thought` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:13.323Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:24:07.200Z `acp.session.end` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:13.563Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:24:07.215Z `dispatch.end` handoff `7faa7689-df9f-4c24-9dd6-5031da3e13ac`
 
-- 2026-05-18T00:20:13.745Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:07.298Z `claim` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:13.981Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:07.299Z `dispatch.start` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:17.424Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:07.306Z `acp.server.start` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:17.424Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:08.658Z `acp.session.start` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:17.650Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:09.768Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:17.859Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:09.768Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:18.147Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:09.944Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:18.298Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:10.198Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:18.564Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:10.505Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:18.730Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:10.638Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:19.007Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:10.916Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:19.293Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:11.084Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:19.479Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:11.294Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:19.724Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:11.538Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:19.775Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:11.746Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:19.970Z `agent.thought` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:11.981Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:20.789Z `acp.session.end` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:12.223Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:20:35.197Z `dispatch.end` handoff `83228cf0-ad15-4a48-8e7e-7805d6e46252`
+- 2026-05-18T10:26:12.473Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:30:49.649Z `claim` handoff `dadc5f50-3154-41d6-b4e4-2b12d15713d2`
+- 2026-05-18T10:26:12.740Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:30:49.651Z `dispatch.start` handoff `dadc5f50-3154-41d6-b4e4-2b12d15713d2`
+- 2026-05-18T10:26:12.984Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:30:49.652Z `claim` handoff `a0a4a599-272b-4bff-8331-bfeef452a5d8`
+- 2026-05-18T10:26:13.129Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:30:49.652Z `dispatch.start` handoff `a0a4a599-272b-4bff-8331-bfeef452a5d8`
+- 2026-05-18T10:26:15.127Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:30:59.700Z `claim` handoff `27083cd4-ebe8-49cb-9d87-cb1154751883`
+- 2026-05-18T10:26:15.127Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:30:59.701Z `dispatch.start` handoff `27083cd4-ebe8-49cb-9d87-cb1154751883`
+- 2026-05-18T10:26:15.127Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:31:23.523Z `acp.server.start` handoff `dadc5f50-3154-41d6-b4e4-2b12d15713d2`
+- 2026-05-18T10:26:15.362Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:31:23.528Z `acp.server.start` handoff `a0a4a599-272b-4bff-8331-bfeef452a5d8`
+- 2026-05-18T10:26:15.575Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:31:28.286Z `acp.server.start` handoff `27083cd4-ebe8-49cb-9d87-cb1154751883`
+- 2026-05-18T10:26:15.782Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:31:28.618Z `acp.session.start` handoff `a0a4a599-272b-4bff-8331-bfeef452a5d8`
+- 2026-05-18T10:26:16.002Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:31:28.620Z `acp.session.start` handoff `dadc5f50-3154-41d6-b4e4-2b12d15713d2`
+- 2026-05-18T10:26:16.207Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:31:29.568Z `agent.thought` handoff `a0a4a599-272b-4bff-8331-bfeef452a5d8`
+- 2026-05-18T10:26:16.514Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
-- 2026-05-18T00:31:29.569Z `agent.thought` handoff `a0a4a599-272b-4bff-8331-bfeef452a5d8`
-
-- 2026-05-18T00:31:29.718Z `agent.thought` handoff `a0a4a599-272b-4bff-8331-bfeef452a5d8`
-
-- 2026-05-18T00:31:29.941Z `agent.thought` handoff `a0a4a599-272b-4bff-8331-bfeef452a5d8`
-
-- 2026-05-18T00:31:30.172Z `agent.thought` handoff `dadc5f50-3154-41d6-b4e4-2b12d15713d2`
-
-- 2026-05-18T00:31:30.172Z `agent.thought` handoff `dadc5f50-3154-41d6-b4e4-2b12d15713d2`
+- 2026-05-18T10:26:16.752Z `agent.thought` handoff `6c7ba626-9ab1-49a4-bea9-7e60f059a669`
 
 
 ## Pending follow-ups

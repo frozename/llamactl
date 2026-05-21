@@ -28,7 +28,7 @@ spec:
     - rel: mlx-community/granite-4.1-3b-4bit
   extraArgs:
     - --max-concurrent-requests
-    - "4"
+    - "1"
     - --max-process-memory
     - "88%"
     - --paged-ssd-cache-dir
