@@ -1,28 +1,67 @@
 ## Motivation
 
-Under multi-model concurrent load on small Apple Silicon GPUs (such as the M4 base model), the OS GPU watchdog can trigger when command buffers are too large. A recent per-process Fleet L investigation demonstrated that the static limit of 40 operations and 40 MB per buffer is too high when multiple distinct models are multiplexing the GPU execution units, leading to unrecoverable watchdog timeouts. This PR makes these limits configurable without requiring a recompile.
+Under multi-model concurrent load on small Apple Silicon GPUs (M4 base and
+similar 'g'-tier chips), the OS GPU watchdog fires when a single Metal
+command buffer accumulates too many operations.  The per-architecture
+defaults set in `Device::Device()` (20 ops on phone, 40 on base/pro, 50 on
+max/ultra) are calibrated for single-model workloads.  When two or more
+models share the GPU simultaneously the effective per-model budget halves or
+thirds, and 40 ops/buffer crosses the watchdog threshold.
+
+A Fleet L investigation with `oMLX` running two 8B models on M4 base (16 GB)
+confirmed that reducing `max_ops_per_buffer` to 20 eliminates watchdog
+timeouts with no measurable throughput regression at typical inference batch
+sizes.  This PR makes both limits tunable at runtime without recompiling.
 
 ## Change
 
-This PR introduces two new environment variables that allow operators to dynamically scale down the maximum operations and size per Metal command buffer:
-- `MLX_METAL_MAX_OPS_PER_BUFFER` (default 40, range 1-4096)
-- `MLX_METAL_MAX_MB_PER_BUFFER` (default 40, range 1-65536)
+Two new functions are added to `mlx::core::metal::env` in `device.cpp`:
 
-The change is fully default-preserving. If the environment variables are not set or contain invalid values (non-integer, negative, or out-of-range), the system safely falls back to the original default of 40.
+```cpp
+int max_ops_per_buffer(int dflt);   // reads MLX_METAL_MAX_OPS_PER_BUFFER
+int max_mb_per_buffer(int dflt);    // reads MLX_METAL_MAX_MB_PER_BUFFER
+```
+
+Both are called at the end of `Device::Device()`, after the switch statement
+sets the architecture-derived default, and receive that default as `dflt`.
+If the environment variable is absent, non-numeric, zero, or out of range,
+the function returns `dflt` unchanged.  Valid ranges: ops 1–4096, mb 1–65536.
+
+The helper `get_env_int(name, dflt, lo, hi)` in the anonymous namespace uses
+`std::strtol` (no exceptions, no extra headers) for safe parsing.
 
 ## Operator guidance
 
-For deployments on small Apple Silicon GPUs (M1-M4 base variants) running concurrent workloads or multi-model applications, the empirical evidence chain tracked in `docs/upstream-patches/mlx-omlx-improvements-plan.md` points to command buffer execution times exceeding the watchdog timeout window when large fused operators pile up.
+On M-series base GPUs running concurrent workloads, start with:
 
-**Recommendation:** If you encounter `[METAL] Command buffer execution failed` errors under concurrent load on base-tier hardware, set a recommended starting value of `MLX_METAL_MAX_OPS_PER_BUFFER=20` to force more frequent command-buffer submissions and relieve pressure on the watchdog.
+```
+MLX_METAL_MAX_OPS_PER_BUFFER=20
+```
+
+This halves the accumulated work per submission relative to the 'g'-tier
+default and has eliminated watchdog timeouts in observed Fleet L deployments.
+Max/ultra GPUs (default 50) are unlikely to need tuning for typical workloads.
+
+`MLX_METAL_MAX_MB_PER_BUFFER` targets memory-bandwidth pressure rather than
+op count; leave it at the architecture default unless profiling shows
+buffer-size is the binding constraint.
 
 ## Compatibility
 
-This change is 100% backward compatible. Existing setups without these environment variables will continue to use the exact same limits (`40` ops, `40` MB) as before.
+Fully backward-compatible.  With neither variable set, `Device::Device()`
+produces identical values to the pre-patch code at every architecture tier.
 
 ## Tests
 
-Added a new dedicated unit test file (`tests/test_metal_device_knobs.cpp`) with three test cases:
-1. Validates the default behavior when environment variables are unset.
-2. Confirms overrides are correctly applied when valid values are provided.
-3. Tests parsing resilience by asserting fallback to the default on invalid inputs (non-integers, negative numbers, and out-of-bounds values).
+`tests/test_metal_device_knobs.cpp` — three doctest cases:
+
+1. **Default behaviour** — verifies that with both variables unset,
+   `max_ops_per_buffer(dflt)` and `max_mb_per_buffer(dflt)` return `dflt`
+   for multiple representative default values (20, 40, 50).
+
+2. **Env-var override** — sets `MLX_METAL_MAX_OPS_PER_BUFFER=20` and
+   `MLX_METAL_MAX_MB_PER_BUFFER=16`; confirms the overrides are applied.
+
+3. **Invalid-env fallback** — exercises non-integer input, value below lo
+   (0 < 1), value above hi for ops (4097 > 4096), and value above hi for mb
+   (65537 > 65536); all four cases must return `dflt`.
