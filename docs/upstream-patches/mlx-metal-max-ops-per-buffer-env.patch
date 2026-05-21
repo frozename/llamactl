@@ -1,0 +1,116 @@
+From 1b249a5b3a887a0c7c0001000000000000000000 Mon Sep 17 00:00:00 2001
+From: llamactl bot <bot@example.com>
+Date: Thu, 21 May 2026 12:00:00 +0000
+Subject: [PATCH] Metal: env-driven max_ops_per_buffer / max_mb_per_buffer
+
+Motivation: Apple GPU watchdog under multi-model load on M4 base requires tuning the maximum ops and megabytes per buffer. This implements a per-process Fleet L finding that surfaced the need to dial down these limits dynamically on small Apple Silicon GPUs.
+---
+ mlx/backend/metal/device.cpp      | 20 +++++++++++++++++-
+ tests/CMakeLists.txt              |  1 +
+ tests/test_metal_device_knobs.cpp | 44 +++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 64 insertions(+), 1 deletion(-)
+
+diff --git a/mlx/backend/metal/device.cpp b/mlx/backend/metal/device.cpp
+index 1111111..2222222 100644
+--- a/mlx/backend/metal/device.cpp
++++ b/mlx/backend/metal/device.cpp
+@@ -10,6 +10,8 @@
+ #include <mach/mach.h>
+ #include <mach/machine.h>
+ #include <mach/machine/boolean.h>
++#include <cstdlib>
++#include <string>
+ 
+ #include "mlx/backend/metal/device.h"
+ #include "mlx/backend/metal/utils.h"
+@@ -40,6 +42,20 @@
+ 
+ namespace mlx::core::metal {
+ 
++int get_env_int(const char* name, int default_value, int min_val, int max_val) {
++  const char* env_str = std::getenv(name);
++  if (!env_str) return default_value;
++  try {
++    int val = std::stoi(env_str);
++    if (val >= min_val && val <= max_val) {
++      return val;
++    }
++  } catch (...) {
++    // Fallback on parsing error
++  }
++  return default_value;
++}
++
+ Device& Device::get_device() {
+   static Device device;
+   return device;
+@@ -442,8 +458,8 @@ Device::Device() {
+   // existing code
+   
+-  max_ops_per_buffer_ = 40;
+-  max_mb_per_buffer_ = 40;
++  max_ops_per_buffer_ = get_env_int("MLX_METAL_MAX_OPS_PER_BUFFER", 40, 1, 4096);
++  max_mb_per_buffer_ = get_env_int("MLX_METAL_MAX_MB_PER_BUFFER", 40, 1, 65536);
+ 
+   // existing code
+ }
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 3333333..4444444 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -34,6 +34,7 @@ if(MLX_BUILD_METAL)
+     test_metal_kernel
+     test_metal_memory
++    test_metal_device_knobs
+   )
+ endif()
+ 
+diff --git a/tests/test_metal_device_knobs.cpp b/tests/test_metal_device_knobs.cpp
+new file mode 100644
+index 0000000..5555555
+--- /dev/null
++++ b/tests/test_metal_device_knobs.cpp
+@@ -0,0 +1,44 @@
++// Copyright © 2026 Apple Inc.
++
++#include "catch2/catch.hpp"
++#include <cstdlib>
++
++namespace mlx::core::metal {
++int get_env_int(const char* name, int default_value, int min_val, int max_val);
++}
++
++using namespace mlx::core::metal;
++
++TEST_CASE("Test get_env_int default behaviour") {
++    unsetenv("MLX_TEST_KNOB");
++    REQUIRE(get_env_int("MLX_TEST_KNOB", 40, 1, 4096) == 40);
++}
++
++TEST_CASE("Test get_env_int env-var override") {
++    setenv("MLX_TEST_KNOB", "20", 1);
++    REQUIRE(get_env_int("MLX_TEST_KNOB", 40, 1, 4096) == 20);
++    unsetenv("MLX_TEST_KNOB");
++}
++
++TEST_CASE("Test get_env_int invalid-env fallback") {
++    // Non-integer
++    setenv("MLX_TEST_KNOB", "invalid", 1);
++    REQUIRE(get_env_int("MLX_TEST_KNOB", 40, 1, 4096) == 40);
++    
++    // Negative
++    setenv("MLX_TEST_KNOB", "-5", 1);
++    REQUIRE(get_env_int("MLX_TEST_KNOB", 40, 1, 4096) == 40);
++
++    // Out of range (high)
++    setenv("MLX_TEST_KNOB", "9999", 1);
++    REQUIRE(get_env_int("MLX_TEST_KNOB", 40, 1, 4096) == 40);
++
++    // Out of range (low)
++    setenv("MLX_TEST_KNOB", "0", 1);
++    REQUIRE(get_env_int("MLX_TEST_KNOB", 40, 1, 4096) == 40);
++
++    unsetenv("MLX_TEST_KNOB");
++}
+-- 
+2.39.3
