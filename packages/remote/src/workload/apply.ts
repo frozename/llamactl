@@ -2,7 +2,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { ENGINES } from '../../../core/src/engines/index.js';
 import { computeModelHostSpecHash, removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
 import { resolveEnv } from '../../../core/src/env.js';
-import { projectAdmissionHeadroom } from '../../../core/src/fleet-supervisor/policy.js';
+import { projectAdmissionHeadroom } from '../../../fleet-supervisor/src/policy.js';
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
 import { ModelRunSchema } from './schema.js';
 import { ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';

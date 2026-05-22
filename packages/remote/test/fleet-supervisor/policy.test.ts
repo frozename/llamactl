@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   classifyFleetPressure,
   projectAdmissionHeadroom,
-} from '../../../core/src/fleet-supervisor/policy.js';
+} from '../../../fleet-supervisor/src/policy.js';
 
 describe('fleet supervisor policy', () => {
   test('classifies HIGH pressure when free pages are low and compressor is high for N ticks', () => {
