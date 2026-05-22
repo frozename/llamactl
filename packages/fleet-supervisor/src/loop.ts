@@ -1,7 +1,10 @@
 import { probeNodeMem as defaultProbeNodeMem } from './node-probe.js';
 import { probeWorkload as defaultProbeWorkload, type WorkloadTarget } from './workload-probe.js';
 import { appendFleetJournal, defaultFleetJournalPath } from './journal.js';
-import { PressureWindow, detectPressure, type PressureThresholds } from './policy.js';
+import {
+  PressureWindow, detectPressure, detectDegradation,
+  type PressureThresholds, type DegradationThresholds, type WorkloadHealthState,
+} from './policy.js';
 import type {
   FleetHeartbeatEntry,
   FleetJournalEntry,
@@ -16,6 +19,11 @@ export const DEFAULT_PRESSURE_THRESHOLDS: PressureThresholds = {
   headroomMinMb: 512,
   compressorWarnMb: 2048,
   consecutiveTicks: 3,
+};
+
+export const DEFAULT_DEGRADATION_THRESHOLDS: DegradationThresholds = {
+  consecutiveErrorsForDegraded: 3,
+  p95DegradedMs: 5000,
 };
 
 export interface SupervisorLoopOptions {
@@ -41,6 +49,8 @@ export interface SupervisorLoopOptions {
   onTick?: (snapshot: FleetSnapshotEntry) => void;
   /** Pressure thresholds for L2 detection. Defaults to DEFAULT_PRESSURE_THRESHOLDS. */
   pressureThresholds?: PressureThresholds;
+  /** Degradation thresholds for L2 per-workload health. Defaults to DEFAULT_DEGRADATION_THRESHOLDS. */
+  degradationThresholds?: DegradationThresholds;
 }
 
 export interface SupervisorLoopHandle {
@@ -58,6 +68,8 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const pressureThresholds = opts.pressureThresholds ?? DEFAULT_PRESSURE_THRESHOLDS;
   const pressureWindow = new PressureWindow(pressureThresholds.consecutiveTicks);
   let lastPressureLevel: 'NORMAL' | 'HIGH' = 'NORMAL';
+  const degradationThresholds = opts.degradationThresholds ?? DEFAULT_DEGRADATION_THRESHOLDS;
+  const workloadHealth = new Map<string, WorkloadHealthState>();
 
   const probeWorkloadFn = opts.probeWorkload ?? (async (target) => {
     const result = await defaultProbeWorkload(target, {
@@ -150,6 +162,36 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
         writeJournal(proposal);
       }
       lastPressureLevel = nextLevel;
+    }
+
+    for (const workload of workloads) {
+      const prior = workloadHealth.get(workload.name) ?? 'healthy';
+      const result = detectDegradation(workload, prior, degradationThresholds);
+      if (result) {
+        const transition: FleetTransitionEntry = {
+          kind: 'fleet-transition',
+          ts,
+          node: opts.node,
+          subject: result.transition.subject,
+          subjectKind: result.transition.subjectKind,
+          signal: result.transition.signal,
+          from: result.transition.from,
+          to: result.transition.to,
+        };
+        writeJournal(transition);
+        if (result.proposal) {
+          const proposal: FleetProposalEntry = {
+            kind: 'fleet-proposal',
+            ts,
+            node: opts.node,
+            proposalId: `degradation-${workload.name}-${ts}`,
+            transition: result.proposal.transition,
+            action: result.proposal.action,
+          };
+          writeJournal(proposal);
+        }
+        workloadHealth.set(workload.name, result.to);
+      }
     }
 
     opts.onTick?.(snapshot);

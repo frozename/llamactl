@@ -86,6 +86,65 @@ function pickEvictionCandidate(workloads: WorkloadSnapshot[]): WorkloadSnapshot 
     })[0];
 }
 
+export interface DegradationThresholds {
+  consecutiveErrorsForDegraded: number;
+  p95DegradedMs: number;
+}
+
+export type WorkloadHealthState = 'healthy' | 'degraded';
+
+export interface DegradationResult {
+  to: WorkloadHealthState;
+  transition: Pick<FleetTransitionEntry, 'subject' | 'subjectKind' | 'signal' | 'from' | 'to'>;
+  proposal?: Pick<FleetProposalEntry, 'transition' | 'action'>;
+}
+
+/**
+ * Per-workload degradation detector. Returns null when the state hasn't
+ * changed from `priorState`. On healthy→degraded flip, includes a
+ * restart proposal. On degraded→healthy recovery flip, transition only
+ * (no proposal needed — the workload recovered on its own).
+ */
+export function detectDegradation(
+  workload: WorkloadSnapshot,
+  priorState: WorkloadHealthState,
+  thresholds: DegradationThresholds,
+): DegradationResult | null {
+  const unhealthy =
+    workload.consecutiveErrors >= thresholds.consecutiveErrorsForDegraded ||
+    workload.p95_ms > thresholds.p95DegradedMs;
+  const recovered = workload.reachable && workload.consecutiveErrors === 0;
+
+  if (unhealthy && priorState !== 'degraded') {
+    const transition = {
+      subject: workload.name,
+      subjectKind: 'workload' as const,
+      signal: 'degraded' as const,
+      from: priorState,
+      to: 'degraded' as const,
+    };
+    const action: FleetProposalAction = {
+      type: 'restart',
+      workload: workload.name,
+      reason: workload.consecutiveErrors >= thresholds.consecutiveErrorsForDegraded
+        ? `consecutive errors ${workload.consecutiveErrors} ≥ ${thresholds.consecutiveErrorsForDegraded}`
+        : `p95 ${workload.p95_ms}ms > ${thresholds.p95DegradedMs}ms`,
+    };
+    return { to: 'degraded', transition, proposal: { transition, action } };
+  }
+  if (recovered && priorState === 'degraded') {
+    const transition = {
+      subject: workload.name,
+      subjectKind: 'workload' as const,
+      signal: 'degraded' as const,
+      from: 'degraded' as const,
+      to: 'healthy' as const,
+    };
+    return { to: 'healthy', transition };
+  }
+  return null;
+}
+
 export function classifyFleetPressure(
   history: Array<{ freeMb: number; compressorMb: number }>,
   threshold: { freeMb: number; compressorMb: number; consecutiveTicks: number },

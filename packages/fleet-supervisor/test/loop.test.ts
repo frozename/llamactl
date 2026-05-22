@@ -132,6 +132,39 @@ describe('startSupervisorLoop', () => {
     }
   });
 
+  it('emits fleet-transition + fleet-proposal on healthy→degraded workload flip', async () => {
+    const entries: FleetJournalEntry[] = [];
+    let calls = 0;
+    const handle = startSupervisorLoop({
+      node: 'mac-mini',
+      once: true,
+      workloads: [TARGET],
+      probeNodeMem: async () => FAKE_NODE_MEM,
+      probeWorkload: async (t) => ({
+        ...makeReachable(t),
+        reachable: false,
+        consecutiveErrors: 4,
+      }),
+      writeJournal: (entry) => entries.push(entry),
+      onTick: () => { calls++; },
+    });
+    await handle.done;
+    expect(calls).toBe(1);
+    const transitions = entries.filter((e) => e.kind === 'fleet-transition');
+    const proposals = entries.filter((e) => e.kind === 'fleet-proposal');
+    expect(transitions.length).toBe(1);
+    expect(proposals.length).toBe(1);
+    if (transitions[0]!.kind === 'fleet-transition') {
+      expect(transitions[0]!.signal).toBe('degraded');
+      expect(transitions[0]!.from).toBe('healthy');
+      expect(transitions[0]!.to).toBe('degraded');
+      expect(transitions[0]!.subject).toBe('qwen-host');
+    }
+    if (proposals[0]!.kind === 'fleet-proposal' && proposals[0]!.action.type === 'restart') {
+      expect(proposals[0]!.action.workload).toBe('qwen-host');
+    }
+  });
+
   it('onTick callback receives the snapshot', async () => {
     const observed: Array<{ kind: string; node: string }> = [];
     const handle = startSupervisorLoop({
