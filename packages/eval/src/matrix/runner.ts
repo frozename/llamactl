@@ -106,7 +106,8 @@ export async function runMatrix(
               const structuredOutputsSupported = model.structured_outputs_supported !== false;
               const req = buildCompletionRequest({
                 messages: built.messages as any[],
-                maxTokens: 256,
+                maxTokens: workload.maxTokens ?? 256,
+                temperature: workload.temperature,
                 ...(model.request_model_id ? { model: model.request_model_id } : {}),
                 ...(model.disable_thinking ? { enableThinking: false } : {}),
                 ...(built.tools ? { tools: built.tools as any[], tool_choice: built.tool_choice } : {}),
@@ -227,6 +228,34 @@ export async function runMatrix(
                 return {
                   primary_metric_value: mean,
                   per_class_metrics_json: JSON.stringify({ mean_ndcg5: mean, n_scored: n, n_parse_error: nParseErrors }),
+                };
+              })()
+            : workload.primary_metric_name === 'mean_brief_quality'
+            ? (() => {
+                let sum = 0;
+                let n = 0;
+                let sumTcs = 0;
+                let sumSs = 0;
+                let sumPs = 0;
+                for (const metrics of rowMetrics) {
+                  if (typeof metrics.brief_quality === 'number') {
+                    sum += metrics.brief_quality;
+                    sumTcs += metrics.token_count_score ?? 0;
+                    sumSs += metrics.structure_score ?? 0;
+                    sumPs += metrics.paragraph_score ?? 0;
+                    n += 1;
+                  }
+                }
+                const mean = n > 0 ? sum / n : 0;
+                return {
+                  primary_metric_value: mean,
+                  per_class_metrics_json: JSON.stringify({
+                    mean_brief_quality: mean,
+                    mean_token_count_score: n > 0 ? sumTcs / n : 0,
+                    mean_structure_score: n > 0 ? sumSs / n : 0,
+                    mean_paragraph_score: n > 0 ? sumPs / n : 0,
+                    n_scored: n,
+                  }),
                 };
               })()
             : (() => {

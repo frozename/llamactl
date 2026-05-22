@@ -43,6 +43,10 @@ export interface WorkloadEval {
   name: string;
   corpus_path: string;
   response_format?: ResponseFormat;
+  /** Override the default max_tokens (256) for this workload. Set higher for long-gen workloads. */
+  maxTokens?: number;
+  /** Override the default temperature (0) for this workload. */
+  temperature?: number;
   /**
    * Returns the body shape passed to llama-server: string for `/completion`,
    * `{messages: ...}` for `/chat/completions`. Concrete typing lands in v1.

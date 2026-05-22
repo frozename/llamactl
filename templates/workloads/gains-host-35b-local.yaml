@@ -1,0 +1,35 @@
+# Per-process isolated ModelHost: Qwen3.6-35B-A3B-4bit (MLX) on M4 Pro local.
+#
+# Production endpoint for the "memory-recall + task-refiner-rubric" routing
+# win validated 2026-05-21 (NDCG +7.9 pp / +8.9 pp vs the prior local choice
+# at c=4 mcr=4). See `project_gains_2026-05-21` memory.
+#
+# Note: model dir lives at /Volumes/WorkSSD/ai-models/llama.cpp/models/
+# Qwen3.6-35B-A3B-4bit directly (no HF org subdir), so the `rel` is
+# unprefixed (matches the mlx-qwen3-8b-iso-mac-mini convention).
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: gains-host-35b-local
+  labels:
+    family: qwen36
+    role: memory-recall-ranker
+spec:
+  engine: omlx
+  node: local
+  enabled: true
+  binary: /Volumes/WorkSSD/src/omlx/.venv/bin/omlx
+  resources:
+    expectedMemoryGiB: 21
+  endpoint:
+    host: 127.0.0.1
+    port: 8096
+  hostedModels:
+    - rel: Qwen3.6-35B-A3B-4bit
+  extraArgs:
+    - --max-concurrent-requests
+    - "4"
+    - --paged-ssd-cache-dir
+    - /Volumes/WorkSSD/cache/omlx-35b
+  restartPolicy: Always
+  timeoutSeconds: 180

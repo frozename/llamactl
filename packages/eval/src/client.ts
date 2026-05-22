@@ -62,6 +62,7 @@ export interface CompletionResponse {
 export function buildCompletionRequest(opts: {
   messages: ChatMessage[];
   maxTokens: number;
+  temperature?: number;
   seed?: number;
   tools?: ToolDef[];
   tool_choice?: unknown;
@@ -76,7 +77,7 @@ export function buildCompletionRequest(opts: {
     body: {
       model: opts.model ?? 'local',
       messages: opts.messages,
-      temperature: 0,
+      temperature: opts.temperature ?? 0,
       max_tokens: opts.maxTokens,
       seed: opts.seed,
       stream: false,

@@ -7,6 +7,7 @@ import { memoryEfficacy4wayBalancedWorkload } from './workloads/memory-efficacy-
 import { taskRefinerRubricWorkload } from './workloads/task-refiner-rubric.js';
 import { toolCallGrammarWorkload } from './workloads/tool-call-grammar.js';
 import { memoryRecallWorkload } from './workloads/memory-recall.js';
+import { projectBriefGenWorkload } from './workloads/project-brief-gen.js';
 import { renderCsvReport, renderMarkdownReport } from './report.js';
 import type { ModelSpec, WorkloadEval } from './types.js';
 
@@ -130,6 +131,7 @@ function getKnownWorkloads(): Record<string, WorkloadEval> {
     'task-refiner-rubric': taskRefinerRubricWorkload,
     'tool-call-grammar': toolCallGrammarWorkload,
     'memory-recall': memoryRecallWorkload,
+    'project-brief-gen': projectBriefGenWorkload,
   };
 }
 
