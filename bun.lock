@@ -144,6 +144,7 @@
         "@kubernetes/client-node": "^1.4.0",
         "@llamactl/agents": "workspace:*",
         "@llamactl/core": "workspace:*",
+        "@llamactl/fleet-supervisor": "workspace:*",
         "@modelcontextprotocol/sdk": "1.29.0",
         "@nova/contracts": "file:../../../nova/packages/contracts",
         "@nova/mcp": "file:../../../nova/packages/mcp",

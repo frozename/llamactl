@@ -15,12 +15,12 @@ const NORMAL: NodeMemSnapshot = {
 
 const WLS: WorkloadSnapshot[] = [
   {
-    name: 'gains-host-35b-local', kind: 'ModelHost', endpoint: 'http://127.0.0.1:8096',
+    name: 'gains-host-35b-local', kind: 'ModelHost', priority: 50, endpoint: 'http://127.0.0.1:8096',
     rss_mb: 36864, reachable: true, consecutiveErrors: 0,
     request_rate_5m: 2, error_rate_5m: 0, p50_ms: 240, p95_ms: 480, models: [],
   },
   {
-    name: 'granite-3b-local', kind: 'ModelHost', endpoint: 'http://127.0.0.1:8083',
+    name: 'granite-3b-local', kind: 'ModelHost', priority: 50, endpoint: 'http://127.0.0.1:8083',
     rss_mb: 4096, reachable: true, consecutiveErrors: 0,
     request_rate_5m: 1, error_rate_5m: 0, p50_ms: 100, p95_ms: 200, models: [],
   },
@@ -65,6 +65,20 @@ describe('detectPressure', () => {
     expect(result).not.toBeNull();
     if (result!.proposal.action.type === 'evict') {
       expect(result!.proposal.action.workload).toBe('aaa');
+    }
+  });
+
+  it('priority overrides RSS: lower-priority workload evicted first even if smaller', () => {
+    const window = new PressureWindow(3);
+    const mixed: WorkloadSnapshot[] = [
+      { ...WLS[0]!, name: 'protected-large', rss_mb: 36864, priority: 90 },
+      { ...WLS[1]!, name: 'sacrificial-small', rss_mb: 1024, priority: 10 },
+    ];
+    for (let i = 0; i < 3; i++) window.push(HIGH, mixed);
+    const result = detectPressure(window, THRESHOLDS);
+    expect(result).not.toBeNull();
+    if (result!.proposal.action.type === 'evict') {
+      expect(result!.proposal.action.workload).toBe('sacrificial-small');
     }
   });
 

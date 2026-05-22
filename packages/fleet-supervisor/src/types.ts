@@ -8,6 +8,8 @@ export interface WorkloadSnapshot {
   name: string;
   kind: 'ModelHost' | 'ModelRun';
   endpoint: string;
+  /** Eviction priority (0-100). Lower = evict first. Defaults to 50 when omitted. */
+  priority: number;
   rss_mb: number | null;
   request_rate_5m: number | null;
   error_rate_5m: number;

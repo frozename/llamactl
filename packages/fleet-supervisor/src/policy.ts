@@ -79,6 +79,10 @@ function pickEvictionCandidate(workloads: WorkloadSnapshot[]): WorkloadSnapshot 
   return [...workloads]
     .filter((w) => w.reachable)
     .sort((a, b) => {
+      // Lowest priority first (operators set higher priority to protect from eviction).
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      // Then highest RSS (frees the most memory). Null RSS is treated as 0 — no preference
+      // among workloads that didn't report RSS; the alphabetical tie-break below decides.
       const rb = b.rss_mb ?? 0;
       const ra = a.rss_mb ?? 0;
       if (rb !== ra) return rb - ra;
@@ -145,26 +149,57 @@ export function detectDegradation(
   return null;
 }
 
-export function classifyFleetPressure(
-  history: Array<{ freeMb: number; compressorMb: number }>,
-  threshold: { freeMb: number; compressorMb: number; consecutiveTicks: number },
-): { pressure: 'HIGH' | 'NORMAL' } {
-  const tail = history.slice(-threshold.consecutiveTicks);
-  const hot =
-    tail.length === threshold.consecutiveTicks &&
-    tail.every((row) => row.freeMb <= threshold.freeMb && row.compressorMb >= threshold.compressorMb);
-  return { pressure: hot ? 'HIGH' : 'NORMAL' };
-}
+export type AdmissionDenyReason =
+  | 'projected_free_below_headroom'
+  | 'compressor_above_threshold';
 
-export function projectAdmissionHeadroom(input: {
+export interface AdmissionInput {
   currentFreeGiB: number;
   expectedMemoryGiB: number;
   headroomMinGiB: number;
   safetyFactor?: number;
-}): { projectedFreeGiB: number; allowed: true } | { projectedFreeGiB: number; allowed: false; reason: 'projected_free_below_headroom' } {
+  /**
+   * Optional compressor signal — when provided, admission also denies when
+   * compressor pressure is already above threshold (matches supervisor's
+   * detectPressure model). Pass both to evaluate the gemma-incident shape
+   * (free is OK but compressor=2600 MB indicates pressure).
+   */
+  currentCompressorGiB?: number;
+  compressorMaxGiB?: number;
+}
+
+export type AdmissionResult =
+  | { projectedFreeGiB: number; allowed: true; currentCompressorGiB?: number }
+  | { projectedFreeGiB: number; allowed: false; reason: AdmissionDenyReason; currentCompressorGiB?: number };
+
+export function projectAdmissionHeadroom(input: AdmissionInput): AdmissionResult {
   const projectedFreeGiB = input.currentFreeGiB - input.expectedMemoryGiB * (input.safetyFactor ?? 1.3);
-  if (projectedFreeGiB >= input.headroomMinGiB) {
-    return { projectedFreeGiB, allowed: true };
+
+  if (projectedFreeGiB < input.headroomMinGiB) {
+    return {
+      projectedFreeGiB,
+      allowed: false,
+      reason: 'projected_free_below_headroom',
+      ...(input.currentCompressorGiB !== undefined ? { currentCompressorGiB: input.currentCompressorGiB } : {}),
+    };
   }
-  return { projectedFreeGiB, allowed: false, reason: 'projected_free_below_headroom' };
+
+  if (
+    input.currentCompressorGiB !== undefined &&
+    input.compressorMaxGiB !== undefined &&
+    input.currentCompressorGiB >= input.compressorMaxGiB
+  ) {
+    return {
+      projectedFreeGiB,
+      allowed: false,
+      reason: 'compressor_above_threshold',
+      currentCompressorGiB: input.currentCompressorGiB,
+    };
+  }
+
+  return {
+    projectedFreeGiB,
+    allowed: true,
+    ...(input.currentCompressorGiB !== undefined ? { currentCompressorGiB: input.currentCompressorGiB } : {}),
+  };
 }

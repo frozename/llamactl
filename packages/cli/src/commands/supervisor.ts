@@ -2,11 +2,14 @@ import {
   startSupervisorLoop,
   defaultFleetJournalPath,
   appendFleetJournal,
+  redactEndpoint,
   type SupervisorLoopOptions,
   type WorkloadTarget,
 } from '@llamactl/fleet-supervisor';
 
-const USAGE = `llamactl supervisor — fleet observability + reactive remediation
+const USAGE = `llamactl supervisor — fleet observability + propose-only remediation
+  (PROPOSALS WRITE TO JSONL; NO ACTIONS ARE EXECUTED IN V1 — see admit for the
+  gate that actually blocks bad loads.)
 
 USAGE:
   llamactl supervisor serve [flags]
@@ -48,7 +51,13 @@ export async function runSupervisor(args: string[]): Promise<number> {
     console.error(USAGE);
     return 1;
   }
-  const flags = parseFlags(rest);
+  let flags: Flags;
+  try {
+    flags = parseFlags(rest);
+  } catch (err) {
+    console.error((err as Error).message);
+    return 2;
+  }
   const once = sub === 'tick' || flags.once;
 
   const journalPath = flags.journal ?? defaultFleetJournalPath();
@@ -75,9 +84,12 @@ export async function runSupervisor(args: string[]): Promise<number> {
   if (!flags.quiet) {
     const wlSummary = flags.workloads.length === 0
       ? '(mem-only)'
-      : flags.workloads.map((w) => `${w.name}@${w.endpoint}`).join(', ');
+      : flags.workloads.map((w) => `${w.name}@${redactEndpoint(w.endpoint)}`).join(', ');
     process.stderr.write(`supervisor: node=${flags.node} interval=${flags.intervalMs}ms once=${once} workloads=${wlSummary}\n`);
     process.stderr.write(`supervisor: journal=${journalPath}\n`);
+  }
+  if (flags.noWorkloadsConflict) {
+    process.stderr.write('supervisor: warning — both --no-workloads and --workload= were passed; --no-workloads wins, workloads ignored.\n');
   }
 
   const handle = startSupervisorLoop(loopOpts);
@@ -100,7 +112,16 @@ interface Flags {
   p95DegradedMs: number;
   consecutiveErrors: number;
   workloads: WorkloadTarget[];
+  noWorkloadsConflict: boolean;
   quiet: boolean;
+}
+
+function num(raw: string, prefix: string, fallback: number): number {
+  const v = Number(raw.slice(prefix.length));
+  if (!Number.isFinite(v) || v < 0) {
+    throw new Error(`supervisor: ${prefix.replace(/=$/, '')} must be finite non-negative (got ${raw.slice(prefix.length)})`);
+  }
+  return v || fallback;
 }
 
 function parseFlags(argv: string[]): Flags {
@@ -122,14 +143,14 @@ function parseFlags(argv: string[]): Flags {
     if (raw === '--once') { once = true; continue; }
     if (raw === '--no-workloads') { noWorkloads = true; continue; }
     if (raw === '--quiet') { quiet = true; continue; }
-    if (raw.startsWith('--interval=')) { intervalMs = Number(raw.slice('--interval='.length)) * 1000; continue; }
+    if (raw.startsWith('--interval=')) { intervalMs = num(raw, '--interval=', 30) * 1000; continue; }
     if (raw.startsWith('--journal=')) { journal = raw.slice('--journal='.length); continue; }
     if (raw.startsWith('--node=')) { node = raw.slice('--node='.length); continue; }
-    if (raw.startsWith('--headroom-mb=')) { headroomMb = Number(raw.slice('--headroom-mb='.length)); continue; }
-    if (raw.startsWith('--compressor-mb=')) { compressorMb = Number(raw.slice('--compressor-mb='.length)); continue; }
-    if (raw.startsWith('--consecutive-ticks=')) { consecutiveTicks = Number(raw.slice('--consecutive-ticks='.length)); continue; }
-    if (raw.startsWith('--p95-degraded-ms=')) { p95DegradedMs = Number(raw.slice('--p95-degraded-ms='.length)); continue; }
-    if (raw.startsWith('--consecutive-errors=')) { consecutiveErrors = Number(raw.slice('--consecutive-errors='.length)); continue; }
+    if (raw.startsWith('--headroom-mb=')) { headroomMb = num(raw, '--headroom-mb=', 512); continue; }
+    if (raw.startsWith('--compressor-mb=')) { compressorMb = num(raw, '--compressor-mb=', 2048); continue; }
+    if (raw.startsWith('--consecutive-ticks=')) { consecutiveTicks = num(raw, '--consecutive-ticks=', 3); continue; }
+    if (raw.startsWith('--p95-degraded-ms=')) { p95DegradedMs = num(raw, '--p95-degraded-ms=', 5000); continue; }
+    if (raw.startsWith('--consecutive-errors=')) { consecutiveErrors = num(raw, '--consecutive-errors=', 3); continue; }
     if (raw.startsWith('--kind=')) {
       const v = raw.slice('--kind='.length);
       if (v === 'ModelHost' || v === 'ModelRun') kind = v;
@@ -154,6 +175,7 @@ function parseFlags(argv: string[]): Flags {
     p95DegradedMs,
     consecutiveErrors,
     workloads: noWorkloads ? [] : workloads,
+    noWorkloadsConflict: noWorkloads && workloads.length > 0,
     quiet,
   };
 }

@@ -1,43 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { classifyFleetPressure, projectAdmissionHeadroom } from '../src/policy.js';
-
-describe('classifyFleetPressure', () => {
-  test('HIGH when all ticks breach both thresholds', () => {
-    const history = [
-      { freeMb: 120, compressorMb: 1800 },
-      { freeMb: 110, compressorMb: 1900 },
-      { freeMb: 95,  compressorMb: 2100 },
-    ];
-    expect(classifyFleetPressure(history, { freeMb: 128, compressorMb: 1500, consecutiveTicks: 3 }))
-      .toEqual({ pressure: 'HIGH' });
-  });
-
-  test('NORMAL when only 2 of 3 ticks breach', () => {
-    const history = [
-      { freeMb: 200, compressorMb: 1000 },
-      { freeMb: 110, compressorMb: 1900 },
-      { freeMb: 95,  compressorMb: 2100 },
-    ];
-    expect(classifyFleetPressure(history, { freeMb: 128, compressorMb: 1500, consecutiveTicks: 3 }))
-      .toEqual({ pressure: 'NORMAL' });
-  });
-
-  test('NORMAL when free pages are below threshold but compressor is fine', () => {
-    const history = [
-      { freeMb: 50, compressorMb: 500 },
-      { freeMb: 40, compressorMb: 600 },
-      { freeMb: 30, compressorMb: 700 },
-    ];
-    expect(classifyFleetPressure(history, { freeMb: 128, compressorMb: 1500, consecutiveTicks: 3 }))
-      .toEqual({ pressure: 'NORMAL' });
-  });
-
-  test('NORMAL when history is shorter than consecutiveTicks', () => {
-    const history = [{ freeMb: 50, compressorMb: 2000 }];
-    expect(classifyFleetPressure(history, { freeMb: 128, compressorMb: 1500, consecutiveTicks: 3 }))
-      .toEqual({ pressure: 'NORMAL' });
-  });
-});
+import { projectAdmissionHeadroom } from '../src/policy.js';
 
 describe('projectAdmissionHeadroom', () => {
   test('rejects when projected free drops below headroom minimum', () => {

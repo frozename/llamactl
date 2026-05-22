@@ -1,5 +1,5 @@
 import { probeNodeMem as defaultProbeNodeMem } from './node-probe.js';
-import { probeWorkload as defaultProbeWorkload, type WorkloadTarget } from './workload-probe.js';
+import { probeWorkload as defaultProbeWorkload, redactEndpoint, type WorkloadTarget } from './workload-probe.js';
 import { appendFleetJournal, defaultFleetJournalPath } from './journal.js';
 import {
   PressureWindow, detectPressure, detectDegradation,
@@ -81,7 +81,8 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
     return {
       name: target.name,
       kind: target.kind,
-      endpoint: target.endpoint,
+      endpoint: redactEndpoint(target.endpoint),
+      priority: target.priority ?? 50,
       rss_mb: null,
       request_rate_5m: null,
       error_rate_5m: 0,
@@ -100,7 +101,8 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const unreachableFallback = (target: WorkloadTarget): WorkloadSnapshot => ({
     name: target.name,
     kind: target.kind,
-    endpoint: target.endpoint,
+    endpoint: redactEndpoint(target.endpoint),
+    priority: target.priority ?? 50,
     rss_mb: null,
     request_rate_5m: null,
     error_rate_5m: 1,

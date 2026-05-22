@@ -11,7 +11,7 @@ const FAKE_NODE_MEM: NodeMemSnapshot = {
 const TARGET: WorkloadTarget = {
   name: 'qwen-host',
   endpoint: 'http://127.0.0.1:8090',
-  kind: 'ModelHost',
+  kind: 'ModelHost', priority: 50,
 };
 
 describe('startSupervisorLoop', () => {
@@ -186,6 +186,7 @@ function makeReachable(target: WorkloadTarget): WorkloadSnapshot {
     name: target.name,
     kind: target.kind,
     endpoint: target.endpoint,
+    priority: target.priority ?? 50,
     rss_mb: null,
     request_rate_5m: null,
     error_rate_5m: 0,
