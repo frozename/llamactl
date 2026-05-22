@@ -27,6 +27,7 @@ import { runEmbersynth } from './commands/embersynth.js';
 import { runRunbookCmd } from './commands/runbook.js';
 import { runHeal } from './commands/heal.js';
 import { runSupervisor } from './commands/supervisor.js';
+import { runAdmit } from './commands/admit.js';
 import { runDeployNode } from './commands/deploy.js';
 import { runArtifacts } from './commands/artifacts.js';
 import { runEval } from './commands/eval.js';
@@ -281,6 +282,8 @@ async function main(argv: string[]): Promise<number> {
       return runHeal(rest);
     case 'supervisor':
       process.exit(await runSupervisor(rest));
+    case 'admit':
+      process.exit(await runAdmit(rest));
     case 'cost-guardian':
       return runCostGuardian(rest);
     case 'plan':
