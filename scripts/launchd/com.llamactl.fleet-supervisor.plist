@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Per-user launchd agent for the M4 Pro fleet supervisor.
+
+  Runs `llamactl supervisor serve` continuously, ticking every 30s.
+  Probes node memory (vm_stat) + each declared workload's HTTP health,
+  appends snapshots + proposals to ~/.llamactl/fleet-supervisor/journal.jsonl.
+  Propose-only (v1) — no remediation is executed.
+
+  Workload set is the M4 Pro production fleet as of 2026-05-22:
+    - gains-host        :8096  (oMLX 35B-A3B, primary brief-synth + judge tie-breaker)
+    - granite-3b        :8083  (llama.cpp Q8 long-lived judge)
+
+  Install:
+    cp scripts/launchd/com.llamactl.fleet-supervisor.plist \
+       ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.llamactl.fleet-supervisor.plist
+
+  Uninstall:
+    launchctl bootout gui/$(id -u)/com.llamactl.fleet-supervisor || true
+    rm ~/Library/LaunchAgents/com.llamactl.fleet-supervisor.plist
+
+  Smoke check after install:
+    sleep 35
+    tail -2 ~/.llamactl/fleet-supervisor/journal.jsonl
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.llamactl.fleet-supervisor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/acordeiro/.bun/bin/bun</string>
+    <string>/Volumes/WorkSSD/repos/personal/llamactl/packages/cli/src/bin.ts</string>
+    <string>supervisor</string>
+    <string>serve</string>
+    <string>--node=m4-pro-local</string>
+    <string>--interval=30</string>
+    <string>--workload=gains-host@http://127.0.0.1:8096</string>
+    <string>--workload=granite-3b@http://127.0.0.1:8083</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/Users/acordeiro/.llamactl/logs/fleet-supervisor.stdout.log</string>
+  <key>StandardErrorPath</key><string>/Users/acordeiro/.llamactl/logs/fleet-supervisor.stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>/Users/acordeiro</string>
+    <key>PATH</key><string>/Users/acordeiro/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>DEV_STORAGE</key><string>/Users/acordeiro/DevStorage</string>
+  </dict>
+</dict>
+</plist>

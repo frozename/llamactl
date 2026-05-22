@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Per-user launchd agent for the mac-mini iso-pool fleet supervisor.
+
+  Workload set is the mac-mini iso fleet as of 2026-05-22:
+    - granite-3b-mlx    :8194  (oMLX MLX-4bit, memory-refiner + judge)
+    - granite-8b-nvfp4  :8195  (oMLX nvfp4)
+    - qwen3-8b-mlx      :8196  (oMLX MLX, brief-synth fallback)
+
+  Two mac-mini-specific quirks vs the M4 Pro plist:
+
+  1. Invokes the compiled `~/.local/bin/llamactl-agent` binary, NOT
+     `bun packages/cli/src/bin.ts`. Required because launchd-spawned
+     bun against the .ts source hangs at openat$NOCANCEL when
+     traversing /Volumes/AI-DATA at import time (TCC). Run
+     `tools/install-agent-macos.sh` first and grant Full Disk Access
+     to the compiled binary.
+
+  2. Sets USER + TMPDIR + LANG explicitly. Without these, bun under
+     launchd parks at openat$NOCANCEL during module init even after
+     the compiled-binary fix. PATH must also include the bun bin dir.
+
+  Install (on the mac-mini, as user aimastermind):
+    cp scripts/launchd/com.llamactl.fleet-supervisor.mac-mini.plist \
+       ~/Library/LaunchAgents/com.llamactl.fleet-supervisor.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.llamactl.fleet-supervisor.plist
+
+  Uninstall:
+    launchctl bootout gui/$(id -u)/com.llamactl.fleet-supervisor || true
+    rm ~/Library/LaunchAgents/com.llamactl.fleet-supervisor.plist
+
+  Smoke check after install:
+    sleep 35
+    tail -2 ~/.llamactl/fleet-supervisor/journal.jsonl
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.llamactl.fleet-supervisor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/aimastermind/.local/bin/llamactl-agent</string>
+    <string>supervisor</string>
+    <string>serve</string>
+    <string>--node=mac-mini-iso</string>
+    <string>--interval=30</string>
+    <string>--workload=granite-3b-mlx@http://127.0.0.1:8194</string>
+    <string>--workload=granite-8b-nvfp4@http://127.0.0.1:8195</string>
+    <string>--workload=qwen3-8b-mlx@http://127.0.0.1:8196</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/Users/aimastermind/.llamactl/logs/fleet-supervisor.stdout.log</string>
+  <key>StandardErrorPath</key><string>/Users/aimastermind/.llamactl/logs/fleet-supervisor.stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>/Users/aimastermind</string>
+    <key>USER</key><string>aimastermind</string>
+    <key>TMPDIR</key><string>/var/folders/_/tmp</string>
+    <key>LANG</key><string>en_US.UTF-8</string>
+    <key>PATH</key><string>/Users/aimastermind/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>

@@ -6,6 +6,7 @@ import {
   type SupervisorLoopOptions,
   type WorkloadTarget,
 } from '@llamactl/fleet-supervisor';
+import { getGlobals } from '../dispatcher.js';
 
 const USAGE = `llamactl supervisor — fleet observability + propose-only remediation
   (PROPOSALS WRITE TO JSONL; NO ACTIONS ARE EXECUTED IN V1 — see admit for the
@@ -19,8 +20,12 @@ FLAGS:
   --interval=<s>            Seconds between ticks. Default 30.
   --once                    One tick then exit.
   --journal=<path>          Override journal path.
-                            Default ~/.llamactl/fleet-supervisor/journal.jsonl
-  --node=<name>             Node label. Default 'local'.
+                            Default $DEV_STORAGE/fleet-supervisor/journal.jsonl
+                            (falls back to ~/.llamactl/fleet-supervisor/journal.jsonl
+                            when DEV_STORAGE is unset).
+  --node=<name>             Node label. Consumed as a llamactl-global flag
+                            (see 'llamactl --help'); supervisor reads it from
+                            the dispatcher. Default 'local'.
   --headroom-mb=<n>         Pressure free_mb threshold. Default 512.
   --compressor-mb=<n>       Pressure compressor_mb threshold. Default 2048.
   --consecutive-ticks=<n>   Pressure consecutive-tick window. Default 3.
@@ -58,6 +63,11 @@ export async function runSupervisor(args: string[]): Promise<number> {
     console.error((err as Error).message);
     return 2;
   }
+  // `--node=<name>` is consumed by extractGlobalFlags before parseFlags ever
+  // sees it. Read it back here so the plist's `--node=m4-pro-local` actually
+  // labels journal entries instead of silently falling back to 'local'.
+  const globalNode = getGlobals().nodeName;
+  if (globalNode) flags.node = globalNode;
   const once = sub === 'tick' || flags.once;
 
   const journalPath = flags.journal ?? defaultFleetJournalPath();
