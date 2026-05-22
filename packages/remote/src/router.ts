@@ -1207,17 +1207,19 @@ export const router = t.router({
 
   modelHostStart: t.procedure
     .input(modelHostStartInput)
-    .subscription(({ input, signal }) => {
-      const clientSignal = signal ?? new AbortController().signal;
-      return bridgeEventStream(clientSignal, async (emit, subSignal) => {
-        await startModelHost({
-          key: { name: input.workload },
-          timeoutSeconds: input.timeoutSeconds,
-          manifest: input.manifest,
-          signal: subSignal,
-          onEvent: emit,
-        });
-      });
+    .subscription(async function* ({ input, signal }) {
+      yield* bridgeEventStream(
+        signal ?? new AbortController().signal,
+        async (emit, subSignal) => {
+          await startModelHost({
+            key: { name: input.workload },
+            timeoutSeconds: input.timeoutSeconds,
+            manifest: input.manifest,
+            signal: subSignal,
+            onEvent: emit,
+          });
+        },
+      );
     }),
 
   workloadDelete: t.procedure

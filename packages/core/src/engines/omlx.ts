@@ -116,7 +116,12 @@ export const omlxEngine: EngineAdapter = {
     const workloadName = env.workloadName;
     if (workloadName) {
       const basePath = omxBasePath(env, workloadName);
-      const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS ?? '/tmp/models';
+      const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS;
+      if (!modelsDir) {
+        throw new Error(
+          'omlx prepareLaunch requires LLAMACTL_MODELS_DIR or LLAMA_CPP_MODELS in the boot env — otherwise the per-workload isolated symlink targets a path that does not exist and oMLX serves /v1/models=[] forever',
+        );
+      }
       ensureIsolatedModelSymlink(
         isolatedModelDir(basePath),
         modelsDir,
@@ -135,7 +140,12 @@ export const omlxEngine: EngineAdapter = {
   },
 
   buildBootCommand(spec: ModelHostSpecForEngine, env: EngineBootEnv) {
-    const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS ?? '/tmp/models';
+    const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS;
+    if (!modelsDir) {
+      throw new Error(
+        'omlx prepareLaunch/buildBootCommand requires LLAMACTL_MODELS_DIR or LLAMA_CPP_MODELS in the boot env — otherwise the per-workload isolated symlink targets a path that does not exist and oMLX serves /v1/models=[] forever',
+      );
+    }
     const hostedModel = spec.hostedModels[0];
     if (!hostedModel) {
       throw new Error('hostedModels must have exactly one entry');
