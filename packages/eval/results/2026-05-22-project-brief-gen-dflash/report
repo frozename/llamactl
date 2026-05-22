@@ -1,0 +1,36 @@
+# Matrix report
+
+Run: 2026-05-22T14:34:54.285Z-d8817f3a
+Cells: 2
+
+## Primary metric (mean_brief_quality)
+
+| Model | project-brief-gen |
+| -- | -- |
+| qwen36-35b-a3b-mlx-dflash | 0.8971 |
+| qwen36-35b-a3b-mlx-vanilla | 0.9447 |
+
+## Latency (p50 / p95, ms)
+
+| Model | project-brief-gen |
+| -- | -- |
+| qwen36-35b-a3b-mlx-dflash | 15656 / 19134 |
+| qwen36-35b-a3b-mlx-vanilla | 12242 / 14666 |
+
+## Throughput (tps)
+
+| Model | project-brief-gen |
+| -- | -- |
+| qwen36-35b-a3b-mlx-dflash | 52.78 |
+| qwen36-35b-a3b-mlx-vanilla | 70.14 |
+
+## Errors
+
+| Model | project-brief-gen |
+| -- | -- |
+| qwen36-35b-a3b-mlx-dflash | 0 |
+| qwen36-35b-a3b-mlx-vanilla | 0 |
+
+## Per-workload winner
+
+- project-brief-gen: **qwen36-35b-a3b-mlx-vanilla** (0.9447)
