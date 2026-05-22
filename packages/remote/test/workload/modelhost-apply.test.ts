@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyManifest, type WorkloadClient } from '../../src/workload/apply.js';
+import { applyManifest, applyOneModelHost, type WorkloadClient } from '../../src/workload/apply.js';
 import { reconcileOnce } from '../../src/workload/reconciler.js';
 import { listModelHosts, saveModelHost } from '../../src/workload/modelhost-store.js';
 import { setWorkloadEnabledWithDeps } from '../../../cli/src/commands/setEnabled.js';
@@ -26,7 +26,7 @@ function makeModelRunClient(): WorkloadClient {
     },
     serverStop: { mutate: async () => ({ ok: true }) },
     serverStart: {
-      subscribe: async (_input, callbacks) => {
+      subscribe: (_input, callbacks) => {
         queueMicrotask(() => {
           callbacks.onData({ type: 'done', result: { ok: true, pid: 111, endpoint: 'http://127.0.0.1:18080' } });
           callbacks.onComplete();
@@ -34,10 +34,10 @@ function makeModelRunClient(): WorkloadClient {
         return { unsubscribe() {} };
       },
     },
-    modelHostStart: { subscribe: async () => ({ unsubscribe() {} }) },
+    modelHostStart: { subscribe: () => ({ unsubscribe() {} }) },
     modelHostStop: { mutate: async () => ({ ok: true }) },
     modelHostStatus: { query: async () => ({ state: 'Running' }) },
-    rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+    rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
     rpcServerStop: { mutate: async () => ({ ok: true }) },
     rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
   };
@@ -84,9 +84,9 @@ describe('applyManifest — kind dispatch', () => {
         }),
       },
       serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
       modelHostStart: {
-        subscribe: async (input, callbacks) => {
+        subscribe: (input, callbacks) => {
           captured.startInput = input;
           queueMicrotask(() => {
             callbacks.onData({ type: 'done', result: { ok: true } });
@@ -102,7 +102,7 @@ describe('applyManifest — kind dispatch', () => {
           return { state: 'Running', pid: 3333 };
         },
       },
-      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
       rpcServerStop: { mutate: async () => ({ ok: true }) },
       rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
     };
@@ -178,9 +178,9 @@ describe('applyManifest — kind dispatch', () => {
         }),
       },
       serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
       modelHostStart: {
-        subscribe: async (_input, callbacks) => {
+        subscribe: (_input, callbacks) => {
           queueMicrotask(() => {
             callbacks.onData({ type: 'done', result: { ok: true, pid: 123, state: 'Running' } });
             callbacks.onComplete();
@@ -190,7 +190,7 @@ describe('applyManifest — kind dispatch', () => {
       },
       modelHostStop: { mutate: async () => ({ ok: true }) },
       modelHostStatus: { query: async () => ({ state: 'Running', pid: 123 }) },
-      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
       rpcServerStop: { mutate: async () => ({ ok: true }) },
       rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
     };
@@ -231,9 +231,9 @@ describe('applyManifest — kind dispatch', () => {
         }),
       },
       serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
       modelHostStart: {
-        subscribe: async (_input, callbacks) => {
+        subscribe: (_input, callbacks) => {
           queueMicrotask(() => {
             callbacks.onData({ type: 'done', result: { ok: true, pid: 123, state: 'Running' } });
             callbacks.onComplete();
@@ -243,7 +243,7 @@ describe('applyManifest — kind dispatch', () => {
       },
       modelHostStop: { mutate: async () => ({ ok: true }) },
       modelHostStatus: { query: async () => ({ state: 'Running', pid: 123 }) },
-      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
       rpcServerStop: { mutate: async () => ({ ok: true }) },
       rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
     };
@@ -283,15 +283,15 @@ describe('applyManifest — kind dispatch', () => {
         }),
       },
       serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
-      modelHostStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
+      modelHostStart: { subscribe: () => ({ unsubscribe() {} }) },
       modelHostStop: {
         mutate: async () => {
           throw new Error('upstream unavailable');
         },
       },
       modelHostStatus: { query: async () => ({ state: 'Running', pid: 123 }) },
-      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
       rpcServerStop: { mutate: async () => ({ ok: true }) },
       rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
     };
@@ -338,11 +338,11 @@ describe('applyManifest — kind dispatch', () => {
         }),
       },
       serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
-      modelHostStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
+      modelHostStart: { subscribe: () => ({ unsubscribe() {} }) },
       modelHostStop: { mutate: async () => ({ ok: true }) },
       modelHostStatus: { query: async () => ({ state: 'Stopped', pid: null }) },
-      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
       rpcServerStop: { mutate: async () => ({ ok: true }) },
       rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
     };
@@ -393,9 +393,9 @@ describe('applyManifest — kind dispatch', () => {
         }),
       },
       serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
       modelHostStart: {
-        subscribe: async (_input, callbacks) => {
+        subscribe: (_input, callbacks) => {
           queueMicrotask(() => {
             callbacks.onData({ type: 'done', result: { ok: true, pid: 99, state: 'Running' } });
             callbacks.onComplete();
@@ -410,7 +410,7 @@ describe('applyManifest — kind dispatch', () => {
           return { state: 'Running', pid: 123 };
         },
       },
-      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
       rpcServerStop: { mutate: async () => ({ ok: true }) },
       rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
     };
@@ -493,9 +493,9 @@ describe('applyManifest — kind dispatch', () => {
           return { ok: true };
         },
       },
-      serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
       modelHostStart: {
-        subscribe: async (_input, callbacks) => {
+        subscribe: (_input, callbacks) => {
           queueMicrotask(() => {
             callbacks.onData({ type: 'done', result: { ok: true, pid: pid++, endpoint: 'http://127.0.0.1:8094' } });
             callbacks.onComplete();
@@ -515,7 +515,7 @@ describe('applyManifest — kind dispatch', () => {
           pid: readModelHostState({ name: 'mlx-host-smoke' }, runtimeEnv)?.pid ?? null,
         }),
       },
-      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
       rpcServerStop: { mutate: async () => ({ ok: true }) },
       rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
     };
@@ -579,6 +579,53 @@ describe('applyManifest — kind dispatch', () => {
     } finally {
       if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
       else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('applyOneModelHost rejects when supervisor headroom check fails before launch', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-supervisor-'));
+    try {
+      const workloadsDir = join(tmp, 'workloads');
+      const manifest = {
+        apiVersion: 'llamactl/v1',
+        kind: 'ModelHost',
+        metadata: { name: 'mlx-host-big' },
+        spec: {
+          engine: 'omlx',
+          node: 'local',
+          enabled: true,
+          binary: '/usr/bin/true',
+          endpoint: { host: '127.0.0.1', port: 18094 },
+          resources: { expectedMemoryGiB: 12 },
+          hostedModels: [{ rel: 'mlx-community/big-model' }],
+          extraArgs: [],
+          restartPolicy: 'Always',
+          timeoutSeconds: 60,
+        },
+      } as const;
+
+      let launchCalled = false;
+      const client: WorkloadClient = {
+        ...makeModelRunClient(),
+        modelHostStart: {
+          subscribe: (_input, callbacks) => {
+            launchCalled = true;
+            queueMicrotask(() => { callbacks.onComplete(); });
+            return { unsubscribe() {} };
+          },
+        },
+      };
+
+      const result = await applyOneModelHost(manifest, () => client, undefined, {
+        workloadsDir,
+        supervisor: { currentFreeGiB: 18, headroomMinGiB: 8, safetyFactor: 1.3 },
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('projected_free_below_headroom');
+      expect(launchCalled).toBe(false);
+    } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });

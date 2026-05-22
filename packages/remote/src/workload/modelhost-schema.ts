@@ -43,6 +43,7 @@ export const ModelHostSpecSchema = z.object({
   restartPolicy: z.enum(['Always', 'OnFailure', 'Never']).default('Always'),
   timeoutSeconds: z.number().int().positive().max(600).default(60),
   env: z.record(z.string(), z.string()).optional(),
+  priority: z.number().int().min(0).max(100).optional(),
 }).strict();
 
 export const ModelHostManifestSchema = z.object({

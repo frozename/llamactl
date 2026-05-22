@@ -2,6 +2,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { ENGINES } from '../../../core/src/engines/index.js';
 import { computeModelHostSpecHash, removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
 import { resolveEnv } from '../../../core/src/env.js';
+import { projectAdmissionHeadroom } from '../../../core/src/fleet-supervisor/policy.js';
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
 import { ModelRunSchema } from './schema.js';
 import { ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
@@ -132,6 +133,11 @@ export interface ApplyManifestOptions {
   getNodeBudgetGiB?: (nodeName: string) => number;
   /** Bubble up per-workload progress events for logging. */
   onEvent?: (event: ApplyEvent) => void;
+  supervisor?: {
+    currentFreeGiB: number;
+    headroomMinGiB: number;
+    safetyFactor?: number;
+  };
 }
 
 export type ApplyManifestOutcome =
@@ -184,6 +190,17 @@ async function applyModelHostManifest(
   manifest: ModelHostManifest,
   opts: Omit<ApplyManifestOptions, 'manifest'>,
 ): Promise<ApplyManifestOutcome> {
+  if (opts.supervisor && manifest.spec.resources?.expectedMemoryGiB) {
+    const projected = projectAdmissionHeadroom({
+      currentFreeGiB: opts.supervisor.currentFreeGiB,
+      expectedMemoryGiB: manifest.spec.resources.expectedMemoryGiB,
+      headroomMinGiB: opts.supervisor.headroomMinGiB,
+      safetyFactor: opts.supervisor.safetyFactor,
+    });
+    if (!projected.allowed) {
+      return { ok: false, error: projected.reason };
+    }
+  }
   const engine = ENGINES[manifest.spec.engine];
   if (manifest.spec.node === 'local') {
     const validation = engine.validateSpec({
@@ -348,6 +365,11 @@ export async function applyOneModelHost(
     env?: NodeJS.ProcessEnv;
     workloadsDir?: string;
     getNodeBudgetGiB?: (nodeName: string) => number;
+    supervisor?: {
+      currentFreeGiB: number;
+      headroomMinGiB: number;
+      safetyFactor?: number;
+    };
   },
 ): Promise<ApplyManifestOutcome> {
   return applyModelHostManifest(manifest, {
@@ -356,6 +378,7 @@ export async function applyOneModelHost(
     env: opts?.env,
     workloadsDir: opts?.workloadsDir,
     getNodeBudgetGiB: opts?.getNodeBudgetGiB,
+    supervisor: opts?.supervisor,
   });
 }
 

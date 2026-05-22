@@ -121,4 +121,25 @@ describe('ModelHostManifestSchema', () => {
       expect(result.data.spec.env).toBeUndefined();
     }
   });
+
+  test('accepts optional priority in 0-100 range', () => {
+    const result = ModelHostManifestSchema.safeParse({ ...valid, spec: { ...valid.spec, priority: 80 } });
+    expect(result.success).toBe(true);
+  });
+
+  test('rejects priority above 100', () => {
+    const result = ModelHostManifestSchema.safeParse({ ...valid, spec: { ...valid.spec, priority: 101 } });
+    expect(result.success).toBe(false);
+  });
+
+  test('rejects priority below 0', () => {
+    const result = ModelHostManifestSchema.safeParse({ ...valid, spec: { ...valid.spec, priority: -1 } });
+    expect(result.success).toBe(false);
+  });
+
+  test('omitting priority leaves it undefined (no forced default)', () => {
+    const result = ModelHostManifestSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.spec.priority).toBeUndefined();
+  });
 });
