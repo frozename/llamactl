@@ -1,13 +1,22 @@
 import { probeNodeMem as defaultProbeNodeMem } from './node-probe.js';
 import { probeWorkload as defaultProbeWorkload, type WorkloadTarget } from './workload-probe.js';
 import { appendFleetJournal, defaultFleetJournalPath } from './journal.js';
+import { PressureWindow, detectPressure, type PressureThresholds } from './policy.js';
 import type {
   FleetHeartbeatEntry,
   FleetJournalEntry,
+  FleetProposalEntry,
   FleetSnapshotEntry,
+  FleetTransitionEntry,
   NodeMemSnapshot,
   WorkloadSnapshot,
 } from './types.js';
+
+export const DEFAULT_PRESSURE_THRESHOLDS: PressureThresholds = {
+  headroomMinMb: 512,
+  compressorWarnMb: 2048,
+  consecutiveTicks: 3,
+};
 
 export interface SupervisorLoopOptions {
   node: string;
@@ -30,6 +39,8 @@ export interface SupervisorLoopOptions {
   journalPath?: string;
   /** Callback after each completed snapshot. */
   onTick?: (snapshot: FleetSnapshotEntry) => void;
+  /** Pressure thresholds for L2 detection. Defaults to DEFAULT_PRESSURE_THRESHOLDS. */
+  pressureThresholds?: PressureThresholds;
 }
 
 export interface SupervisorLoopHandle {
@@ -44,6 +55,9 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const journalPath = opts.journalPath ?? defaultFleetJournalPath();
   const writeJournal = opts.writeJournal ?? ((entry: FleetJournalEntry) => appendFleetJournal(entry, journalPath));
   const consecutiveErrors = new Map<string, number>();
+  const pressureThresholds = opts.pressureThresholds ?? DEFAULT_PRESSURE_THRESHOLDS;
+  const pressureWindow = new PressureWindow(pressureThresholds.consecutiveTicks);
+  let lastPressureLevel: 'NORMAL' | 'HIGH' = 'NORMAL';
 
   const probeWorkloadFn = opts.probeWorkload ?? (async (target) => {
     const result = await defaultProbeWorkload(target, {
@@ -108,6 +122,36 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
     };
     writeJournal(snapshot);
     writeJournal(heartbeat);
+
+    pressureWindow.push(node_mem, workloads);
+    const pressure = detectPressure(pressureWindow, pressureThresholds);
+    const nextLevel: 'NORMAL' | 'HIGH' = pressure ? 'HIGH' : 'NORMAL';
+    if (nextLevel !== lastPressureLevel) {
+      const transition: FleetTransitionEntry = {
+        kind: 'fleet-transition',
+        ts,
+        node: opts.node,
+        subject: 'node',
+        subjectKind: 'node',
+        signal: 'pressure',
+        from: lastPressureLevel,
+        to: nextLevel,
+      };
+      writeJournal(transition);
+      if (pressure) {
+        const proposal: FleetProposalEntry = {
+          kind: 'fleet-proposal',
+          ts,
+          node: opts.node,
+          proposalId: `pressure-${opts.node}-${ts}`,
+          transition: pressure.transition,
+          action: pressure.proposal.action,
+        };
+        writeJournal(proposal);
+      }
+      lastPressureLevel = nextLevel;
+    }
+
     opts.onTick?.(snapshot);
   };
 

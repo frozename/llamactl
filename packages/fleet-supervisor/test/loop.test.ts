@@ -98,6 +98,40 @@ describe('startSupervisorLoop', () => {
     }
   });
 
+  it('emits fleet-transition + fleet-proposal on NORMAL→HIGH pressure flip', async () => {
+    const entries: FleetJournalEntry[] = [];
+    const HIGH_MEM: NodeMemSnapshot = {
+      free_mb: 30, compressor_mb: 4000,
+      active_mb: 0, inactive_mb: 0, wired_mb: 0, swap_in: 0, swap_out: 0,
+    };
+    let tickIdx = 0;
+    const handle = startSupervisorLoop({
+      node: 'local',
+      once: false,
+      intervalMs: 1,
+      workloads: [TARGET],
+      probeNodeMem: async () => {
+        if (tickIdx++ >= 3) handle.stop();
+        return HIGH_MEM;
+      },
+      probeWorkload: async (t) => ({ ...makeReachable(t), rss_mb: 12000 }),
+      writeJournal: (entry) => entries.push(entry),
+      pressureThresholds: { headroomMinMb: 512, compressorWarnMb: 2048, consecutiveTicks: 3 },
+    });
+    await handle.done;
+    const transitions = entries.filter((e) => e.kind === 'fleet-transition');
+    const proposals = entries.filter((e) => e.kind === 'fleet-proposal');
+    expect(transitions.length).toBe(1);
+    expect(proposals.length).toBe(1);
+    if (transitions[0]!.kind === 'fleet-transition') {
+      expect(transitions[0]!.from).toBe('NORMAL');
+      expect(transitions[0]!.to).toBe('HIGH');
+    }
+    if (proposals[0]!.kind === 'fleet-proposal' && proposals[0]!.action.type === 'evict') {
+      expect(proposals[0]!.action.workload).toBe('qwen-host');
+    }
+  });
+
   it('onTick callback receives the snapshot', async () => {
     const observed: Array<{ kind: string; node: string }> = [];
     const handle = startSupervisorLoop({

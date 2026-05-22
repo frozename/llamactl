@@ -1,3 +1,91 @@
+import type {
+  FleetProposalAction,
+  FleetProposalEntry,
+  FleetTransitionEntry,
+  NodeMemSnapshot,
+  WorkloadSnapshot,
+} from './types.js';
+
+export interface PressureThresholds {
+  headroomMinMb: number;
+  compressorWarnMb: number;
+  consecutiveTicks: number;
+}
+
+interface PressureWindowEntry {
+  node_mem: NodeMemSnapshot;
+  workloads: WorkloadSnapshot[];
+}
+
+export class PressureWindow {
+  private buf: PressureWindowEntry[] = [];
+  constructor(private readonly capacity: number) {}
+  push(node_mem: NodeMemSnapshot, workloads: WorkloadSnapshot[]): void {
+    this.buf.push({ node_mem, workloads });
+    if (this.buf.length > this.capacity) this.buf.shift();
+  }
+  size(): number { return this.buf.length; }
+  tail(n: number): PressureWindowEntry[] { return this.buf.slice(-n); }
+}
+
+export interface PressureResult {
+  level: 'HIGH';
+  transition: Pick<FleetTransitionEntry, 'subject' | 'subjectKind' | 'signal' | 'from' | 'to'>;
+  proposal: Pick<FleetProposalEntry, 'transition' | 'action'>;
+}
+
+/**
+ * Returns a HIGH pressure result when the last `consecutiveTicks` entries
+ * all satisfy `free_mb <= headroomMinMb AND compressor_mb >= compressorWarnMb`.
+ * Eviction proposal target = workload with max `rss_mb`, then alphabetical.
+ */
+export function detectPressure(
+  window: PressureWindow,
+  thresholds: PressureThresholds,
+): PressureResult | null {
+  const tail = window.tail(thresholds.consecutiveTicks);
+  if (tail.length < thresholds.consecutiveTicks) return null;
+  const allHot = tail.every((entry) =>
+    entry.node_mem.free_mb <= thresholds.headroomMinMb &&
+    entry.node_mem.compressor_mb >= thresholds.compressorWarnMb,
+  );
+  if (!allHot) return null;
+
+  const lastWorkloads = tail[tail.length - 1]!.workloads;
+  const evictTarget = pickEvictionCandidate(lastWorkloads);
+  if (!evictTarget) return null;
+
+  const action: FleetProposalAction = {
+    type: 'evict',
+    workload: evictTarget.name,
+    reason: `sustained memory pressure: ${thresholds.consecutiveTicks} ticks below headroom + above compressor threshold`,
+  };
+  const transition = {
+    subject: 'node',
+    subjectKind: 'node' as const,
+    signal: 'pressure' as const,
+    from: 'NORMAL',
+    to: 'HIGH',
+  };
+  return {
+    level: 'HIGH',
+    transition,
+    proposal: { transition, action },
+  };
+}
+
+function pickEvictionCandidate(workloads: WorkloadSnapshot[]): WorkloadSnapshot | undefined {
+  if (workloads.length === 0) return undefined;
+  return [...workloads]
+    .filter((w) => w.reachable)
+    .sort((a, b) => {
+      const rb = b.rss_mb ?? 0;
+      const ra = a.rss_mb ?? 0;
+      if (rb !== ra) return rb - ra;
+      return a.name.localeCompare(b.name);
+    })[0];
+}
+
 export function classifyFleetPressure(
   history: Array<{ freeMb: number; compressorMb: number }>,
   threshold: { freeMb: number; compressorMb: number; consecutiveTicks: number },
