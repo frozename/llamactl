@@ -3,6 +3,7 @@ import {
   defaultFleetJournalPath,
   appendFleetJournal,
   redactEndpoint,
+  readSupervisorStatus,
   type SupervisorLoopOptions,
   type WorkloadTarget,
   type FleetJournalEntry,
@@ -16,6 +17,7 @@ const USAGE = `llamactl supervisor — fleet observability + severity-gated reme
 USAGE:
   llamactl supervisor serve [flags]
   llamactl supervisor tick  [flags]    (alias for --once)
+  llamactl supervisor status [flags]   (show current pressure state)
 
 FLAGS:
   --interval=<s>              Seconds between ticks. Default 30.
@@ -38,6 +40,10 @@ FLAGS:
   --kind=ModelHost|ModelRun   Kind for subsequent --workload entries. Default ModelHost.
   --quiet                     Suppress per-tick stderr summary.
 
+STATUS FLAGS:
+  --json                      Emit JSON instead of human format.
+  --limit=<n>                 How many recent pressure-status entries to show. Default 20.
+
 EXECUTOR FLAGS (opt-in — no actions taken without these):
   --auto                      Enable the proposal executor after each tick.
   --severity-threshold=<1|2|3>
@@ -49,21 +55,18 @@ EXECUTOR FLAGS (opt-in — no actions taken without these):
 
 EXAMPLES:
   llamactl supervisor serve --once
-  llamactl supervisor serve --once --no-workloads --quiet
   llamactl supervisor tick --auto --severity-threshold=2
-  llamactl supervisor tick --execute=pressure-local-2026-05-22T10:00:00.000Z
-  llamactl supervisor serve --interval=30 \\
-    --workload=gains-host@http://127.0.0.1:8096 \\
-    --workload=granite-3b@http://127.0.0.1:8083
+  llamactl supervisor status
+  llamactl supervisor status --json --limit=5
 `;
 
 export async function runSupervisor(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
-  if (!sub || sub === '--help' || sub === '-h') {
+  if (!sub || sub === '--help' || sub === '-h' || rest.includes('--help') || rest.includes('-h')) {
     console.log(USAGE);
     return sub ? 0 : 1;
   }
-  if (sub !== 'serve' && sub !== 'tick') {
+  if (sub !== 'serve' && sub !== 'tick' && sub !== 'status') {
     console.error(`Unknown supervisor subcommand: ${sub}`);
     console.error(USAGE);
     return 1;
@@ -75,14 +78,53 @@ export async function runSupervisor(args: string[]): Promise<number> {
     console.error((err as Error).message);
     return 2;
   }
-  // `--node=<name>` is consumed by extractGlobalFlags before parseFlags ever
-  // sees it. Read it back here so the plist's `--node=m4-pro-local` actually
-  // labels journal entries instead of silently falling back to 'local'.
+  
   const globalNode = getGlobals().nodeName;
   if (globalNode) flags.node = globalNode;
-  const once = sub === 'tick' || flags.once;
-
   const journalPath = flags.journal ?? defaultFleetJournalPath();
+
+  if (sub === 'status') {
+    const report = await readSupervisorStatus({
+      journalPath,
+      node: globalNode && rest.some(r => r.startsWith('--node=')) ? flags.node : undefined,
+      limit: flags.limit,
+    });
+
+    if (flags.json) {
+      console.log(JSON.stringify(report));
+      return 0;
+    }
+
+    if (report.nodes.length === 0) {
+      console.log(`No entries found in journal: ${journalPath}`);
+      return 0;
+    }
+
+    for (const node of report.nodes) {
+      if (node.state === 'NORMAL') {
+        console.log(`node ${node.node}: NORMAL  (no recent pressure event)`);
+        console.log();
+      } else {
+        const mins = Math.floor(node.durationMs / 60000);
+        console.log(`node ${node.node}: HIGH for ${mins}m (since ${node.enteredAt})`);
+        console.log(`  clear progress: ${node.consecutiveClearTicks}/${node.clearTicksNeeded}`);
+        console.log(`  free_mb=${node.free_mb} (breach<512: ${node.headroomBreach ? 'yes' : 'no'})  compressor_mb=${node.compressor_mb} (breach>2048: ${node.compressorBreach ? 'yes' : 'no'})`);
+        console.log(`  last ${node.recent.length} pressure-status:`);
+        for (const recent of node.recent) {
+          const t = new Date(recent.ts).toLocaleTimeString('en-US', { hour12: false });
+          let hits = [];
+          if (recent.headroomBreach) hits.push('headroom');
+          if (recent.compressorBreach) hits.push('compressor');
+          const hitsStr = hits.length > 0 ? hits.join(',') : '(none)';
+          console.log(`    ${t}  free=${recent.free_mb}  comp=${recent.compressor_mb}  clear=${recent.consecutiveClearTicks}/${recent.clearTicksNeeded}  hits=${hitsStr}`);
+        }
+        console.log();
+      }
+    }
+    return 0;
+  }
+
+  const once = sub === 'tick' || flags.once;
   const writeJournal = (entry: FleetJournalEntry) =>
     appendFleetJournal(entry, journalPath);
 
@@ -98,6 +140,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
       headroomMinMb: flags.headroomMb,
       compressorWarnMb: flags.compressorMb,
       consecutiveTicks: flags.consecutiveTicks,
+      clearTicks: 5,
     },
     degradationThresholds: {
       consecutiveErrorsForDegraded: flags.consecutiveErrors,
@@ -173,6 +216,8 @@ interface Flags {
   auto: boolean;
   severityThreshold: 1 | 2 | 3;
   executeId?: string;
+  json: boolean;
+  limit: number;
 }
 
 function num(raw: string, prefix: string, fallback: number): number {
@@ -200,12 +245,16 @@ function parseFlags(argv: string[]): Flags {
   let auto = false;
   let severityThreshold: 1 | 2 | 3 = 2;
   let executeId: string | undefined;
+  let json = false;
+  let limit = 20;
 
   for (const raw of argv) {
     if (raw === '--once') { once = true; continue; }
     if (raw === '--no-workloads') { noWorkloads = true; continue; }
     if (raw === '--quiet') { quiet = true; continue; }
     if (raw === '--auto') { auto = true; continue; }
+    if (raw === '--json') { json = true; continue; }
+    if (raw.startsWith('--limit=')) { limit = num(raw, '--limit=', 20); continue; }
     if (raw.startsWith('--interval=')) { intervalMs = num(raw, '--interval=', 30) * 1000; continue; }
     if (raw.startsWith('--journal=')) { journal = raw.slice('--journal='.length); continue; }
     if (raw.startsWith('--node=')) { node = raw.slice('--node='.length); continue; }
@@ -249,5 +298,7 @@ function parseFlags(argv: string[]): Flags {
     auto,
     severityThreshold,
     executeId,
+    json,
+    limit,
   };
 }

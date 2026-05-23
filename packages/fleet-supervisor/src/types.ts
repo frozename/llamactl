@@ -62,6 +62,22 @@ export function actionTier(action: FleetProposalAction): 1 | 2 | 3 {
   return 3; // evict | restart
 }
 
+export interface FleetPressureStatusEntry {
+  kind: 'fleet-pressure-status';
+  ts: string;
+  node: string;
+  state: 'NORMAL' | 'HIGH';
+  enteredAt: string;          // ISO ts of last NORMAL→HIGH transition (or supervisor start)
+  durationMs: number;         // ts - enteredAt
+  consecutiveClearTicks: number;
+  clearTicksNeeded: number;
+  free_mb: number;            // latest probe free_mb
+  compressor_mb: number;      // latest probe compressor_mb
+  headroomBreach: boolean;    // free_mb < headroomMinMb
+  compressorBreach: boolean;  // compressor_mb > compressorWarnMb
+}
+
 export type FleetJournalEntry =
   | FleetSnapshotEntry | FleetHeartbeatEntry
-  | FleetTransitionEntry | FleetProposalEntry | FleetExecutionEntry;
+  | FleetTransitionEntry | FleetProposalEntry | FleetExecutionEntry
+  | FleetPressureStatusEntry;

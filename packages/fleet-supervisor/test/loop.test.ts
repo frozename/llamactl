@@ -14,7 +14,58 @@ const TARGET: WorkloadTarget = {
   kind: 'ModelHost', priority: 50,
 };
 
+function makeReachableLocal(t: WorkloadTarget): WorkloadSnapshot { return { name: t.name, kind: t.kind, endpoint: t.endpoint, priority: t.priority ?? 50, rss_mb: null, request_rate_5m: null, error_rate_5m: 0, p50_ms: 10, p95_ms: 10, models: [], reachable: true, consecutiveErrors: 0 }; }
+
 describe('startSupervisorLoop', () => {
+
+  it('emits fleet-pressure-status while HIGH at the configured cadence', async () => {
+    const entries: any[] = [];
+    let tickCount = 0;
+    const handle = startSupervisorLoop({
+      node: 'local',
+      intervalMs: 1,
+      workloads: [TARGET],
+      probeNodeMem: async () => {
+        if (tickCount++ >= 7) handle.stop();
+        return { ...FAKE_NODE_MEM, free_mb: 100, compressor_mb: 4000 };
+      },
+      probeWorkload: async (t) => makeReachableLocal(t),
+      writeJournal: (entry) => entries.push(entry),
+      pressureStatusEveryTicks: 2,
+    });
+    await handle.done;
+    
+    const statuses = entries.filter(e => e.kind === 'fleet-pressure-status');
+    expect(statuses.length).toBeGreaterThanOrEqual(2);
+    expect(statuses[0].state).toBe('HIGH');
+    expect(statuses[0].free_mb).toBe(100);
+    expect(statuses[0].durationMs).toBeGreaterThanOrEqual(0);
+    expect(statuses[0].consecutiveClearTicks).toBe(0);
+  });
+  
+  it('resets ticksInHigh on HIGH->NORMAL clear', async () => {
+    const entries: any[] = [];
+    let tickCount = 0;
+    const handle = startSupervisorLoop({
+      node: 'local',
+      intervalMs: 1,
+      workloads: [TARGET],
+      probeNodeMem: async () => {
+        tickCount++;
+        if (tickCount >= 11) handle.stop();
+        if (tickCount <= 3 || tickCount >= 9) return { ...FAKE_NODE_MEM, free_mb: 100, compressor_mb: 4000 };
+        return FAKE_NODE_MEM;
+      },
+      probeWorkload: async (t) => makeReachableLocal(t),
+      writeJournal: (entry) => entries.push(entry),
+      pressureStatusEveryTicks: 2,
+    });
+    await handle.done;
+    
+    const transitions = entries.filter(e => e.kind === 'fleet-transition' && e.subjectKind === 'node');
+    expect(transitions).toHaveLength(3); // NORMAL->HIGH, HIGH->NORMAL, NORMAL->HIGH
+  });
+
   const isTransition = (entry: FleetJournalEntry): entry is FleetTransitionEntry =>
     entry.kind === 'fleet-transition';
   it('one tick emits fleet-snapshot + fleet-heartbeat to writeJournal', async () => {

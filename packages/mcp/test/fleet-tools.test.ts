@@ -325,7 +325,33 @@ describe('llamactl_fleet_proposals', () => {
 
 // ── llamactl_fleet_executions ────────────────────────────────────────────────
 
-describe('llamactl_fleet_executions', () => {
+
+
+  describe('llamactl_fleet_supervisor_status', () => {
+    test('empty journal -> empty nodes', async () => {
+      const path = writeJournal([]);
+      const { client } = await connected();
+      const result = await call(client, 'llamactl_fleet_supervisor_status', { journalPath: path });
+      const parsed = JSON.parse(textOf(result));
+      expect(parsed).toEqual({ nodes: [] });
+    });
+
+    test('returns derived status from transitions and status entries', async () => {
+      const path = writeJournal([
+        { kind: 'fleet-transition', ts: '2026-05-23T10:00:00.000Z', node: 'local', subject: 'node', subjectKind: 'node', signal: 'pressure', from: 'NORMAL', to: 'HIGH' },
+        { kind: 'fleet-pressure-status', ts: '2026-05-23T10:01:00.000Z', node: 'local', state: 'HIGH', enteredAt: '2026-05-23T10:00:00.000Z', durationMs: 60000, consecutiveClearTicks: 2, clearTicksNeeded: 5, free_mb: 100, compressor_mb: 200, headroomBreach: true, compressorBreach: false }
+      ] as any);
+      const { client } = await connected();
+      const result = await call(client, 'llamactl_fleet_supervisor_status', { journalPath: path });
+      const parsed = JSON.parse(textOf(result));
+      expect(parsed.nodes).toHaveLength(1);
+      expect(parsed.nodes[0].state).toBe('HIGH');
+      expect(parsed.nodes[0].consecutiveClearTicks).toBe(2);
+      expect(parsed.nodes[0].recent).toHaveLength(1);
+    });
+  });
+
+  describe('llamactl_fleet_executions', () => {
   test('empty journal → empty executions', async () => {
     const path = writeJournal([]);
     const { client } = await connected();

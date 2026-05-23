@@ -132,6 +132,7 @@ describe('@llamactl/mcp read surface', () => {
       'llamactl_fleet_pressure',
       'llamactl_fleet_proposals',
       'llamactl_fleet_snapshot',
+      'llamactl_fleet_supervisor_status',
       'llamactl_models_leaderboard',
       'llamactl_supervisor_execute',
     ]);
@@ -190,6 +191,7 @@ describe('@llamactl/mcp read surface', () => {
       'llamactl_fleet_pressure',
       'llamactl_fleet_proposals',
       'llamactl_fleet_snapshot',
+      'llamactl_fleet_supervisor_status',
       'llamactl_models_leaderboard',
       'llamactl_supervisor_execute',
     ]);

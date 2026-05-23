@@ -1,0 +1,115 @@
+import * as fs from 'fs';
+import * as readline from 'readline';
+import type { FleetJournalEntry, FleetPressureStatusEntry, FleetTransitionEntry } from './types.js';
+
+export interface NodePressureStatus {
+  node: string;
+  state: 'NORMAL' | 'HIGH';
+  enteredAt: string | null;
+  durationMs: number;
+  consecutiveClearTicks: number;
+  clearTicksNeeded: number;
+  free_mb: number;
+  compressor_mb: number;
+  headroomBreach: boolean;
+  compressorBreach: boolean;
+  recent: FleetPressureStatusEntry[];
+}
+
+export interface SupervisorStatusReport {
+  nodes: NodePressureStatus[];
+}
+
+export interface ReadSupervisorStatusOptions {
+  journalPath: string;
+  node?: string;
+  limit?: number;
+}
+
+export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): Promise<SupervisorStatusReport> {
+  const limit = opts.limit ?? 20;
+
+  const nodeStates = new Map<string, {
+    state: 'NORMAL' | 'HIGH';
+    enteredAt: string | null;
+    lastStatus: FleetPressureStatusEntry | null;
+    recent: FleetPressureStatusEntry[];
+  }>();
+
+  const ensureNode = (node: string) => {
+    if (!nodeStates.has(node)) {
+      nodeStates.set(node, {
+        state: 'NORMAL',
+        enteredAt: null,
+        lastStatus: null,
+        recent: [],
+      });
+    }
+    return nodeStates.get(node)!;
+  };
+
+  if (!fs.existsSync(opts.journalPath)) {
+    return { nodes: [] };
+  }
+
+  const stream = fs.createReadStream(opts.journalPath, { encoding: 'utf8' });
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line) as FleetJournalEntry;
+      if (opts.node && entry.node !== opts.node) continue;
+
+      if (entry.kind === 'fleet-transition' && entry.subjectKind === 'node') {
+        const trans = entry as FleetTransitionEntry;
+        if (trans.signal === 'pressure' && trans.to === 'HIGH') {
+          const state = ensureNode(entry.node);
+          state.state = 'HIGH';
+          state.enteredAt = trans.ts;
+        } else if (trans.signal === 'pressure-cleared' && trans.to === 'NORMAL') {
+          const state = ensureNode(entry.node);
+          state.state = 'NORMAL';
+          state.enteredAt = null;
+        }
+      } else if (entry.kind === 'fleet-pressure-status') {
+        const status = entry as FleetPressureStatusEntry;
+        const state = ensureNode(entry.node);
+        state.lastStatus = status;
+        state.recent.push(status);
+        if (state.recent.length > limit) {
+          state.recent.shift();
+        }
+      }
+    } catch (err) {
+      // Ignore unparseable lines
+    }
+  }
+
+  const report: SupervisorStatusReport = { nodes: [] };
+  const now = Date.now();
+
+  for (const [node, state] of nodeStates.entries()) {
+    // Determine duration: if NORMAL, it's 0. If HIGH, it's duration since enteredAt.
+    // However, if we just parse the log, `now` might not be the best reference for "duration" if the log is old,
+    // but the spec says "durationMs: ts - enteredAt" which implies time since enteredAt until now.
+    report.nodes.push({
+      node,
+      state: state.state,
+      enteredAt: state.enteredAt,
+      durationMs: state.enteredAt ? now - new Date(state.enteredAt).getTime() : 0,
+      consecutiveClearTicks: state.lastStatus ? state.lastStatus.consecutiveClearTicks : 0,
+      clearTicksNeeded: state.lastStatus ? state.lastStatus.clearTicksNeeded : 5,
+      free_mb: state.lastStatus ? state.lastStatus.free_mb : 0,
+      compressor_mb: state.lastStatus ? state.lastStatus.compressor_mb : 0,
+      headroomBreach: state.lastStatus ? state.lastStatus.headroomBreach : false,
+      compressorBreach: state.lastStatus ? state.lastStatus.compressorBreach : false,
+      recent: state.recent.reverse(), // most recent first
+    });
+  }
+
+  // Sort nodes alphabetically
+  report.nodes.sort((a, b) => a.node.localeCompare(b.node));
+
+  return report;
+}

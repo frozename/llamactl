@@ -52,6 +52,8 @@ export interface SupervisorLoopOptions {
   pressureThresholds?: PressureThresholds;
   /** Degradation thresholds for L2 per-workload health. Defaults to DEFAULT_DEGRADATION_THRESHOLDS. */
   degradationThresholds?: DegradationThresholds;
+  /** Emit a fleet-pressure-status entry every Nth tick while in HIGH. 0 disables. Default 5. */
+  pressureStatusEveryTicks?: number;
 }
 
 export interface SupervisorLoopHandle {
@@ -70,6 +72,9 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const pressureWindow = new PressureWindow(pressureThresholds.consecutiveTicks);
   let lastPressureLevel: 'NORMAL' | 'HIGH' = 'NORMAL';
   let consecutiveClearTicks = 0;
+  let enteredHighAt: string | null = null;
+  let ticksInHigh = 0;
+  const pressureStatusEveryTicks = opts.pressureStatusEveryTicks ?? 5;
   const degradationThresholds = opts.degradationThresholds ?? DEFAULT_DEGRADATION_THRESHOLDS;
   const workloadHealth = new Map<string, WorkloadHealthState>();
 
@@ -163,8 +168,11 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       };
       writeJournal(proposal);
       lastPressureLevel = 'HIGH';
-    consecutiveClearTicks = 0;
+      consecutiveClearTicks = 0;
+      enteredHighAt = ts;
+      ticksInHigh = 0;
   } else if (lastPressureLevel === 'HIGH') {
+    ticksInHigh++;
     const latestWindowEntry = pressureWindow.tail(1)[0];
     if (latestWindowEntry && isPressureHot(latestWindowEntry, pressureThresholds)) {
       consecutiveClearTicks = 0;
@@ -185,8 +193,28 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
           writeJournal(transition);
           lastPressureLevel = 'NORMAL';
           consecutiveClearTicks = 0;
+          enteredHighAt = null;
+          ticksInHigh = 0;
         }
       }
+    }
+
+    if (lastPressureLevel === 'HIGH' && pressureStatusEveryTicks > 0 && ticksInHigh % pressureStatusEveryTicks === 0) {
+      const statusEntry: import('./types.js').FleetPressureStatusEntry = {
+        kind: 'fleet-pressure-status',
+        ts,
+        node: opts.node,
+        state: 'HIGH',
+        enteredAt: enteredHighAt!,
+        durationMs: new Date(ts).getTime() - new Date(enteredHighAt!).getTime(),
+        consecutiveClearTicks,
+        clearTicksNeeded: pressureThresholds.clearTicks,
+        free_mb: node_mem.free_mb,
+        compressor_mb: node_mem.compressor_mb,
+        headroomBreach: node_mem.free_mb < pressureThresholds.headroomMinMb,
+        compressorBreach: node_mem.compressor_mb > pressureThresholds.compressorWarnMb,
+      };
+      writeJournal(statusEntry);
     }
 
     for (const workload of workloads) {

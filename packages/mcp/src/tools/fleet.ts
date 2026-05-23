@@ -8,6 +8,7 @@ import { toTextContent } from '@nova/mcp-shared';
 import {
   appendFleetJournal,
   defaultFleetJournalPath,
+  readSupervisorStatus,
   type FleetJournalEntry,
   type FleetProposalEntry,
   type FleetSnapshotEntry,
@@ -268,6 +269,25 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     },
   );
 
+
+  server.registerTool(
+    'llamactl_fleet_supervisor_status',
+    {
+      title: 'Fleet supervisor status',
+      description: 'Current pressure status per node derived from the fleet-supervisor journal: state, time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status entries.',
+      inputSchema: {
+        journalPath: z.string().optional(),
+        node: z.string().optional(),
+        limit: z.number().optional(),
+      },
+    },
+    async ({ journalPath, node, limit }) => {
+      const path = journalPath ?? defaultFleetJournalPath();
+      const report = await readSupervisorStatus({ journalPath: path, node, limit });
+      return toTextContent(report as any);
+    },
+  );
+
   server.registerTool(
     'llamactl_fleet_proposals',
     {
@@ -353,6 +373,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
               'fleet-transition',
               'fleet-proposal',
               'fleet-execution',
+              'fleet-pressure-status',
             ]),
           )
           .optional(),
