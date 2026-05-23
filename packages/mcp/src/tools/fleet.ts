@@ -129,7 +129,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         } else if (
           e.kind === 'fleet-transition' &&
           e.subjectKind === 'node' &&
-          e.signal === 'pressure'
+          (e.signal === 'pressure' || e.signal === 'pressure-cleared')
         ) {
           const cur = latestTransition.get(e.node);
           if (!cur || e.ts > cur.ts) {
@@ -301,9 +301,8 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
       if (hasProposal === hasAuto) {
         return toTextContent({ ok: false, error: 'must specify exactly one of proposalId or auto' });
       }
-      const args = ['packages/cli/src/bin.ts', 'supervisor'];
+      const args = ['packages/cli/src/bin.ts', 'supervisor', 'tick'];
       if (node) args.push(`--node=${node}`);
-      args.push('--once');
       if (hasAuto) {
         args.push('--auto');
         if (severityThreshold != null) args.push(`--severity-threshold=${severityThreshold}`);

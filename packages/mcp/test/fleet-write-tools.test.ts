@@ -100,7 +100,7 @@ describe('llamactl_supervisor_execute', () => {
     expect(parsed.ok).toBe(true);
 
     expect(calls[0]!.args).toContain('supervisor');
-    expect(calls[0]!.args).toContain('--once');
+    expect(calls[0]!.args).toContain('tick');
     expect(calls[0]!.args).toContain('--execute=prop-42');
     expect(calls[0]!.args).not.toContain('--auto');
   });

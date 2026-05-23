@@ -74,7 +74,7 @@ const heartbeat = (node: string, ts: string): FleetHeartbeatEntry => ({
 const transition = (
   node: string,
   ts: string,
-  signal: 'pressure' | 'degraded',
+  signal: 'pressure' | 'pressure-cleared' | 'degraded',
   from: string,
   to: string,
   subjectKind: 'node' | 'workload' = 'node',
@@ -221,7 +221,7 @@ describe('llamactl_fleet_pressure', () => {
     const path = writeJournal([
       snapshot('node-a', '2026-01-01T00:00:00Z'),
       transition('node-a', '2026-01-01T00:01:00Z', 'pressure', 'NORMAL', 'HIGH'),
-      transition('node-a', '2026-01-01T00:02:00Z', 'pressure', 'HIGH', 'NORMAL'),
+      transition('node-a', '2026-01-01T00:02:00Z', 'pressure-cleared', 'HIGH', 'NORMAL'),
     ]);
     const { client } = await connected();
     const result = await call(client, 'llamactl_fleet_pressure', { journalPath: path });
