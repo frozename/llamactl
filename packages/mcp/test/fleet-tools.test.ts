@@ -327,11 +327,11 @@ describe('llamactl_fleet_proposals', () => {
 
 
 
-  describe('llamactl_fleet_supervisor_status', () => {
+  describe('llamactl_fleet_pressure_status', () => {
     test('empty journal -> empty nodes', async () => {
       const path = writeJournal([]);
       const { client } = await connected();
-      const result = await call(client, 'llamactl_fleet_supervisor_status', { journalPath: path });
+      const result = await call(client, 'llamactl_fleet_pressure_status', { journalPath: path });
       const parsed = JSON.parse(textOf(result));
       expect(parsed).toEqual({ nodes: [] });
     });
@@ -342,7 +342,7 @@ describe('llamactl_fleet_proposals', () => {
         { kind: 'fleet-pressure-status', ts: '2026-05-23T10:01:00.000Z', node: 'local', state: 'HIGH', enteredAt: '2026-05-23T10:00:00.000Z', durationMs: 60000, consecutiveClearTicks: 2, clearTicksNeeded: 5, free_mb: 100, compressor_mb: 200, headroomBreach: true, compressorBreach: false }
       ] as any);
       const { client } = await connected();
-      const result = await call(client, 'llamactl_fleet_supervisor_status', { journalPath: path });
+      const result = await call(client, 'llamactl_fleet_pressure_status', { journalPath: path });
       const parsed = JSON.parse(textOf(result));
       expect(parsed.nodes).toHaveLength(1);
       expect(parsed.nodes[0].state).toBe('HIGH');
@@ -352,13 +352,13 @@ describe('llamactl_fleet_proposals', () => {
   });
 
   
-  describe('llamactl_fleet_supervisor_audit', () => {
+  describe('llamactl_fleet_audit', () => {
     test('empty journal -> empty entries', async () => {
       const path = writeJournal([]);
       const { client } = await connected();
-      const result = await call(client, 'llamactl_fleet_supervisor_audit', { auditPath: path });
+      const result = await call(client, 'llamactl_fleet_audit', { auditPath: path });
       const parsed = JSON.parse(textOf(result));
-      expect(parsed).toEqual({ entries: [], total: 0, auditPath: path });
+      expect(parsed).toEqual({ entries: [], total: 0, auditPath: path, malformedLines: 0 });
     });
 
     test('returns derived status from audit entries', async () => {
@@ -366,7 +366,7 @@ describe('llamactl_fleet_proposals', () => {
         { kind: 'mcp-audit', ts: '2026-05-23T10:00:00.000Z', tool: 'test-tool', input: { a: 1 }, outcome: 'success', detail: {} }
       ] as any);
       const { client } = await connected();
-      const result = await call(client, 'llamactl_fleet_supervisor_audit', { auditPath: path });
+      const result = await call(client, 'llamactl_fleet_audit', { auditPath: path });
       const parsed = JSON.parse(textOf(result));
       expect(parsed.entries).toHaveLength(1);
       expect(parsed.entries[0].tool).toBe('test-tool');

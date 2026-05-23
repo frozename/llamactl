@@ -277,7 +277,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
 
 
   server.registerTool(
-    'llamactl_fleet_supervisor_audit',
+    'llamactl_fleet_audit',
     {
       title: 'Fleet supervisor audit',
       description: 'Read recent MCP write-tool audit entries from the fleet-supervisor audit log. Supports filters by tool name, outcome, and timestamp.',
@@ -285,21 +285,21 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         auditPath: z.string().optional(),
         tool: z.string().optional(),
         outcome: z.enum(['denied', 'success', 'error']).optional(),
-        sinceIsoTs: z.string().optional(),
+        since: z.string().optional(),
         limit: z.number().optional(),
       },
     },
-    async ({ auditPath, tool, outcome, sinceIsoTs, limit }) => {
-      const result = await readAuditEntries({ auditPath, tool, outcome, sinceIsoTs, limit });
+    async ({ auditPath, tool, outcome, since, limit }) => {
+      const result = await readAuditEntries({ auditPath, tool, outcome, since, limit });
       return toTextContent(result as any);
     },
   );
 
   server.registerTool(
-    'llamactl_fleet_supervisor_status',
+    'llamactl_fleet_pressure_status',
     {
       title: 'Fleet supervisor status',
-      description: 'Current pressure status per node derived from the fleet-supervisor journal: state, time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status entries.',
+      description: 'Current pressure status per node derived from the fleet-supervisor journal: state, time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status entries. Complementary to llamactl_fleet_pressure (transition-derived current state). This tool returns richer periodic fields: time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status journal entries.',
       inputSchema: {
         journalPath: z.string().optional(),
         node: z.string().optional(),

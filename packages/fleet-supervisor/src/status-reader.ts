@@ -3,7 +3,7 @@ import * as readline from 'readline';
 import type { FleetJournalEntry, FleetPressureStatusEntry, FleetTransitionEntry } from './types.js';
 
 export interface NodePressureStatus {
-  node: string;
+  name: string;
   state: 'NORMAL' | 'HIGH';
   enteredAt: string | null;
   durationMs: number;
@@ -102,7 +102,7 @@ export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): P
     // However, if we just parse the log, `now` might not be the best reference for "duration" if the log is old,
     // but the spec says "durationMs: ts - enteredAt" which implies time since enteredAt until now.
     report.nodes.push({
-      node,
+      name: node,
       state: state.state,
       enteredAt: state.enteredAt,
       durationMs: state.enteredAt ? Math.max(0, now - new Date(state.enteredAt).getTime()) : 0,
@@ -117,7 +117,7 @@ export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): P
   }
 
   // Sort nodes alphabetically
-  report.nodes.sort((a, b) => a.node.localeCompare(b.node));
+  report.nodes.sort((a, b) => a.name.localeCompare(b.name));
 
   return report;
 }

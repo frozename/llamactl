@@ -15,7 +15,7 @@ export interface AuditReadOptions {
   auditPath?: string;     // default defaultFleetAuditPath()
   tool?: string;          // exact-match filter on `tool`
   outcome?: 'denied' | 'success' | 'error';
-  sinceIsoTs?: string;    // entries with ts >= sinceIsoTs
+  since?: string;    // entries with ts >= since
   limit?: number;         // most-recent-first; default 50, cap 500
 }
 
@@ -49,7 +49,7 @@ export async function readAuditEntries(opts?: AuditReadOptions): Promise<AuditRe
       
       if (opts?.tool && entry.tool !== opts.tool) continue;
       if (opts?.outcome && entry.outcome !== opts.outcome) continue;
-      if (opts?.sinceIsoTs && entry.ts < opts.sinceIsoTs) continue;
+      if (opts?.since && entry.ts < opts.since) continue;
       
       total++;
       filtered.push(entry);

@@ -8,6 +8,7 @@ import {
   type SupervisorLoopOptions,
   type WorkloadTarget,
   type FleetJournalEntry,
+  DEFAULT_PRESSURE_THRESHOLDS,
 } from '@llamactl/fleet-supervisor';
 import { runExecutor } from '../../../fleet-supervisor/src/executor.js';
 import { getGlobals } from '../dispatcher.js';
@@ -35,6 +36,7 @@ FLAGS:
   --headroom-mb=<n>           Pressure free_mb threshold. Default 512.
   --compressor-mb=<n>         Pressure compressor_mb threshold. Default 2048.
   --consecutive-ticks=<n>     Pressure consecutive-tick window. Default 3.
+  --clear-ticks=<n>           Pressure clear-tick hysteresis window. Default 5.
   --p95-degraded-ms=<n>       Per-workload p95 degradation threshold. Default 5000.
   --consecutive-errors=<n>    Per-workload consecutive-errors threshold. Default 3.
   --no-workloads              Skip workload probing (mem-only mode).
@@ -49,7 +51,7 @@ STATUS FLAGS:
 
 
 AUDIT FLAGS:
-  --audit=<path>          Override audit path. Default $HOME/.llamactl/fleet-supervisor/audit.jsonl.
+  --audit-path=<path>          Override audit path. Default $HOME/.llamactl/fleet-supervisor/audit.jsonl.
   --tool=<name>           Filter to one tool (exact match).
   --outcome=<denied|success|error>
                           Filter by outcome.
@@ -115,11 +117,11 @@ export async function runSupervisor(args: string[]): Promise<number> {
 
     for (const node of report.nodes) {
       if (node.state === 'NORMAL') {
-        console.log(`node ${node.node}: NORMAL  (no recent pressure event)`);
+        console.log(`node ${node.name}: NORMAL  (no recent pressure event)`);
         console.log();
       } else {
         const mins = Math.floor(node.durationMs / 60000);
-        console.log(`node ${node.node}: HIGH for ${mins}m (since ${node.enteredAt})`);
+        console.log(`node ${node.name}: HIGH for ${mins}m (since ${node.enteredAt})`);
         console.log(`  clear progress: ${node.consecutiveClearTicks}/${node.clearTicksNeeded}`);
         console.log(`  free_mb=${node.free_mb} (breach<512: ${node.headroomBreach ? 'yes' : 'no'})  compressor_mb=${node.compressor_mb} (breach>2048: ${node.compressorBreach ? 'yes' : 'no'})`);
         console.log(`  last ${node.recent.length} pressure-status:`);
@@ -139,10 +141,10 @@ export async function runSupervisor(args: string[]): Promise<number> {
 
   if (sub === 'audit') {
     const res = await readAuditEntries({
-      auditPath: flags.audit,
+      auditPath: flags.auditPath,
       tool: flags.tool,
       outcome: flags.outcome,
-      sinceIsoTs: flags.sinceIsoTs,
+      since: flags.since,
       limit: flags.limit ?? 50,
     });
 
@@ -205,7 +207,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
       headroomMinMb: flags.headroomMb,
       compressorWarnMb: flags.compressorMb,
       consecutiveTicks: flags.consecutiveTicks,
-      clearTicks: 5,
+      clearTicks: flags.clearTicks ?? DEFAULT_PRESSURE_THRESHOLDS.clearTicks,
     },
     degradationThresholds: {
       consecutiveErrorsForDegraded: flags.consecutiveErrors,
@@ -273,6 +275,7 @@ interface Flags {
   headroomMb: number;
   compressorMb: number;
   consecutiveTicks: number;
+  clearTicks?: number;
   p95DegradedMs: number;
   consecutiveErrors: number;
   workloads: WorkloadTarget[];
@@ -284,10 +287,10 @@ interface Flags {
 
   json: boolean;
   limit?: number;
-  audit?: string;
+  auditPath?: string;
   tool?: string;
   outcome?: "denied" | "success" | "error";
-  sinceIsoTs?: string;
+  since?: string;
 
 }
 
@@ -307,6 +310,7 @@ function parseFlags(argv: string[]): Flags {
   let headroomMb = 512;
   let compressorMb = 2048;
   let consecutiveTicks = 3;
+  let clearTicks: number | undefined;
   let p95DegradedMs = 5000;
   let consecutiveErrors = 3;
   let kind: 'ModelHost' | 'ModelRun' = 'ModelHost';
@@ -319,10 +323,10 @@ function parseFlags(argv: string[]): Flags {
 
   let json = false;
   let limit: number | undefined;
-  let audit: string | undefined;
+  let auditPath: string | undefined;
   let tool: string | undefined;
   let outcome: "denied" | "success" | "error" | undefined;
-  let sinceIsoTs: string | undefined;
+  let since: string | undefined;
 
 
   for (const raw of argv) {
@@ -332,20 +336,21 @@ function parseFlags(argv: string[]): Flags {
     if (raw === '--auto') { auto = true; continue; }
     if (raw === '--json') { json = true; continue; }
     if (raw.startsWith('--limit=')) { limit = num(raw, '--limit=', 0) || undefined; continue; }
-    if (raw.startsWith('--audit=')) { audit = raw.slice('--audit='.length); continue; }
+    if (raw.startsWith('--audit-path=')) { auditPath = raw.slice('--audit-path='.length); continue; }
     if (raw.startsWith('--tool=')) { tool = raw.slice('--tool='.length); continue; }
     if (raw.startsWith('--outcome=')) {
       const v = raw.slice('--outcome='.length);
       if (v === 'denied' || v === 'success' || v === 'error') outcome = v;
       continue;
     }
-    if (raw.startsWith('--since=')) { sinceIsoTs = raw.slice('--since='.length); continue; }
+    if (raw.startsWith('--since=')) { since = raw.slice('--since='.length); continue; }
     if (raw.startsWith('--interval=')) { intervalMs = num(raw, '--interval=', 30) * 1000; continue; }
     if (raw.startsWith('--journal=')) { journal = raw.slice('--journal='.length); continue; }
     if (raw.startsWith('--node=')) { node = raw.slice('--node='.length); continue; }
     if (raw.startsWith('--headroom-mb=')) { headroomMb = num(raw, '--headroom-mb=', 512); continue; }
     if (raw.startsWith('--compressor-mb=')) { compressorMb = num(raw, '--compressor-mb=', 2048); continue; }
     if (raw.startsWith('--consecutive-ticks=')) { consecutiveTicks = num(raw, '--consecutive-ticks=', 3); continue; }
+    if (raw.startsWith('--clear-ticks=')) { const v = Number(raw.slice('--clear-ticks='.length)); if (!Number.isFinite(v) || v < 0) throw new Error('supervisor: clear-ticks must be finite non-negative'); clearTicks = v; continue; }
     if (raw.startsWith('--p95-degraded-ms=')) { p95DegradedMs = num(raw, '--p95-degraded-ms=', 5000); continue; }
     if (raw.startsWith('--consecutive-errors=')) { consecutiveErrors = num(raw, '--consecutive-errors=', 3); continue; }
     if (raw.startsWith('--severity-threshold=')) {
@@ -375,6 +380,7 @@ function parseFlags(argv: string[]): Flags {
     headroomMb,
     compressorMb,
     consecutiveTicks,
+    clearTicks,
     p95DegradedMs,
     consecutiveErrors,
     workloads: noWorkloads ? [] : workloads,
@@ -386,10 +392,10 @@ function parseFlags(argv: string[]): Flags {
     executeId,
     json,
     limit,
-    audit,
+    auditPath,
     tool,
     outcome,
-    sinceIsoTs,
+    since,
   };
 
 }

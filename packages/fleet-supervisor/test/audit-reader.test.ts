@@ -72,7 +72,7 @@ describe("audit-reader", () => {
       JSON.stringify({ kind: "mcp-audit", ts: "2026-05-03T00:00:00.000Z", tool: "B", input: {}, outcome: "success", detail: {} })
     ].join("\n");
     await withTempAudit(lines, async (auditPath) => {
-      const res = await readAuditEntries({ auditPath, sinceIsoTs: "2026-05-02T00:00:00.000Z" });
+      const res = await readAuditEntries({ auditPath, since: "2026-05-02T00:00:00.000Z" });
       expect(res.total).toBe(1);
       expect(res.entries[0]!.tool).toBe("B");
     });
