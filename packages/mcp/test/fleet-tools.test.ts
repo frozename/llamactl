@@ -349,6 +349,35 @@ describe('llamactl_fleet_proposals', () => {
       expect(parsed.nodes[0].consecutiveClearTicks).toBe(2);
       expect(parsed.nodes[0].recent).toHaveLength(1);
     });
+
+    test('deprecated alias returns same shape and warns once', async () => {
+      const path = writeJournal([
+        { kind: 'fleet-pressure-status', ts: '2026-05-23T10:01:00.000Z', node: 'local', state: 'NORMAL', enteredAt: '2026-05-23T10:00:00.000Z', durationMs: 60000, consecutiveClearTicks: 2, clearTicksNeeded: 5, free_mb: 100, compressor_mb: 200, headroomBreach: false, compressorBreach: false },
+      ] as any);
+      const { client } = await connected();
+
+      const baseline = await call(client, 'llamactl_fleet_pressure_status', { journalPath: path });
+      const expected = JSON.parse(textOf(baseline));
+      const previous = console.error;
+      const errorLines: string[] = [];
+      console.error = ((...args: unknown[]) => errorLines.push(args.map((arg) => String(arg)).join(' '))) as typeof console.error;
+
+      try {
+        const first = await call(client, 'llamactl_fleet_supervisor_status', { journalPath: path });
+        const second = await call(client, 'llamactl_fleet_supervisor_status', { journalPath: path });
+        const aliasedFirst = JSON.parse(textOf(first));
+        const aliasedSecond = JSON.parse(textOf(second));
+
+        expect(aliasedFirst).toEqual(expected);
+        expect(aliasedSecond).toEqual(expected);
+        const warningLines = errorLines.filter(
+          (line) => line.includes('[llamactl-mcp] deprecated: llamactl_fleet_supervisor_status -> llamactl_fleet_pressure_status; will be removed'),
+        );
+        expect(warningLines).toHaveLength(1);
+      } finally {
+        console.error = previous;
+      }
+    });
   });
 
   
