@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import yaml from 'yaml';
-import { probeNodeMem, projectAdmissionHeadroom, readMeasuredMemoryCache } from '@llamactl/fleet-supervisor';
+import { probeNodeMem, projectAdmissionHeadroom } from '@llamactl/fleet-supervisor';
+import { readMeasuredMemoryCache } from '../../../fleet-supervisor/src/measured-memory.js';
+import { runAdmitMeasure } from './admit-measure.js';
 
 function requireFinite(value: number, flag: string): number {
   if (!Number.isFinite(value) || value < 0) {
@@ -41,6 +43,7 @@ EXIT CODES:
 `;
 
 export async function runAdmit(args: string[]): Promise<number> {
+  if (args[0] === 'measure') return runAdmitMeasure(args.slice(1));
   if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
     console.log(USAGE);
     return args.length === 0 ? 2 : 0;
