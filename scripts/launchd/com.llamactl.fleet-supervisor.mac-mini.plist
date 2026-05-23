@@ -8,6 +8,12 @@
     - granite-8b-nvfp4  :8195  (oMLX nvfp4)
     - qwen3-8b-mlx      :8196  (oMLX MLX, brief-synth fallback)
 
+  Auto-execute is ON at severity threshold 2 (Tier 2 = mark-degraded
+  only). Tier 3 actions (evict/restart) remain propose-only at this
+  threshold. Hysteresis on pressure exit (clearTicks=5) prevents
+  flap-driven duplicate proposals. Raise the threshold to 3 once
+  Tier-2 behavior has been observed for a baseline window.
+
   Two mac-mini-specific quirks vs the M4 Pro plist:
 
   1. Invokes the compiled `~/.local/bin/llamactl-agent` binary, NOT
@@ -44,6 +50,8 @@
     <string>serve</string>
     <string>--node=mac-mini-iso</string>
     <string>--interval=30</string>
+    <string>--auto</string>
+    <string>--severity-threshold=2</string>
     <string>--workload=granite-3b-mlx@http://127.0.0.1:8194</string>
     <string>--workload=granite-8b-nvfp4@http://127.0.0.1:8195</string>
     <string>--workload=qwen3-8b-mlx@http://127.0.0.1:8196</string>
