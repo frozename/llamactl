@@ -46,7 +46,7 @@ export interface SupervisorLoopOptions {
   /** Journal path when writeJournal is not injected. Defaults to ~/.llamactl/fleet-supervisor/journal.jsonl. */
   journalPath?: string;
   /** Callback after each completed snapshot. */
-  onTick?: (snapshot: FleetSnapshotEntry) => void;
+  onTick?: (snapshot: FleetSnapshotEntry) => void | Promise<void>;
   /** Pressure thresholds for L2 detection. Defaults to DEFAULT_PRESSURE_THRESHOLDS. */
   pressureThresholds?: PressureThresholds;
   /** Degradation thresholds for L2 per-workload health. Defaults to DEFAULT_DEGRADATION_THRESHOLDS. */
@@ -196,7 +196,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       }
     }
 
-    opts.onTick?.(snapshot);
+    await opts.onTick?.(snapshot);
   };
 
   const run = async (): Promise<void> => {

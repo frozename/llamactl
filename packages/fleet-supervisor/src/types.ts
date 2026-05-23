@@ -48,6 +48,20 @@ export interface FleetProposalEntry {
   action: FleetProposalAction;
 }
 
+export interface FleetExecutionEntry {
+  kind: 'fleet-execution';
+  ts: string; node: string; proposalId: string;
+  action: FleetProposalAction;
+  status: 'executed' | 'skipped' | 'failed';
+  reason?: string;
+  exitCode?: number;
+}
+
+export function actionTier(action: FleetProposalAction): 1 | 2 | 3 {
+  if (action.type === 'mark-degraded') return 2;
+  return 3; // evict | restart
+}
+
 export type FleetJournalEntry =
   | FleetSnapshotEntry | FleetHeartbeatEntry
-  | FleetTransitionEntry | FleetProposalEntry;
+  | FleetTransitionEntry | FleetProposalEntry | FleetExecutionEntry;
