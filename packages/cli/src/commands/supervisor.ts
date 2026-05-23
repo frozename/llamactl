@@ -5,41 +5,53 @@ import {
   redactEndpoint,
   type SupervisorLoopOptions,
   type WorkloadTarget,
+  type FleetJournalEntry,
 } from '@llamactl/fleet-supervisor';
+import { runExecutor } from '../../../fleet-supervisor/src/executor.js';
 import { getGlobals } from '../dispatcher.js';
+import { setWorkloadEnabled } from './setEnabled.js';
 
-const USAGE = `llamactl supervisor — fleet observability + propose-only remediation
-  (PROPOSALS WRITE TO JSONL; NO ACTIONS ARE EXECUTED IN V1 — see admit for the
-  gate that actually blocks bad loads.)
+const USAGE = `llamactl supervisor — fleet observability + severity-gated remediation
 
 USAGE:
   llamactl supervisor serve [flags]
   llamactl supervisor tick  [flags]    (alias for --once)
 
 FLAGS:
-  --interval=<s>            Seconds between ticks. Default 30.
-  --once                    One tick then exit.
-  --journal=<path>          Override journal path.
-                            Default $DEV_STORAGE/fleet-supervisor/journal.jsonl
-                            (falls back to ~/.llamactl/fleet-supervisor/journal.jsonl
-                            when DEV_STORAGE is unset).
-  --node=<name>             Node label. Consumed as a llamactl-global flag
-                            (see 'llamactl --help'); supervisor reads it from
-                            the dispatcher. Default 'local'.
-  --headroom-mb=<n>         Pressure free_mb threshold. Default 512.
-  --compressor-mb=<n>       Pressure compressor_mb threshold. Default 2048.
-  --consecutive-ticks=<n>   Pressure consecutive-tick window. Default 3.
-  --p95-degraded-ms=<n>     Per-workload p95 degradation threshold. Default 5000.
-  --consecutive-errors=<n>  Per-workload consecutive-errors threshold. Default 3.
-  --no-workloads            Skip workload probing (mem-only mode).
-  --workload=<name@url>     Add a workload target (repeatable).
-                            Format: name@url, e.g. gains-host@http://127.0.0.1:8096
-  --kind=ModelHost|ModelRun Kind for subsequent --workload entries. Default ModelHost.
-  --quiet                   Suppress per-tick stderr summary.
+  --interval=<s>              Seconds between ticks. Default 30.
+  --once                      One tick then exit.
+  --journal=<path>            Override journal path.
+                              Default $DEV_STORAGE/fleet-supervisor/journal.jsonl
+                              (falls back to ~/.llamactl/fleet-supervisor/journal.jsonl
+                              when DEV_STORAGE is unset).
+  --node=<name>               Node label. Consumed as a llamactl-global flag
+                              (see 'llamactl --help'); supervisor reads it from
+                              the dispatcher. Default 'local'.
+  --headroom-mb=<n>           Pressure free_mb threshold. Default 512.
+  --compressor-mb=<n>         Pressure compressor_mb threshold. Default 2048.
+  --consecutive-ticks=<n>     Pressure consecutive-tick window. Default 3.
+  --p95-degraded-ms=<n>       Per-workload p95 degradation threshold. Default 5000.
+  --consecutive-errors=<n>    Per-workload consecutive-errors threshold. Default 3.
+  --no-workloads              Skip workload probing (mem-only mode).
+  --workload=<name@url>       Add a workload target (repeatable).
+                              Format: name@url, e.g. gains-host@http://127.0.0.1:8096
+  --kind=ModelHost|ModelRun   Kind for subsequent --workload entries. Default ModelHost.
+  --quiet                     Suppress per-tick stderr summary.
+
+EXECUTOR FLAGS (opt-in — no actions taken without these):
+  --auto                      Enable the proposal executor after each tick.
+  --severity-threshold=<1|2|3>
+                              Execute proposals at or below this tier. Default 2.
+                              Tier 2 = mark-degraded (auto-safe).
+                              Tier 3 = evict / restart (destructive).
+  --execute=<proposalId>      Execute one specific proposal by ID regardless of
+                              --auto or tier (manual one-shot override).
 
 EXAMPLES:
   llamactl supervisor serve --once
   llamactl supervisor serve --once --no-workloads --quiet
+  llamactl supervisor tick --auto --severity-threshold=2
+  llamactl supervisor tick --execute=pressure-local-2026-05-22T10:00:00.000Z
   llamactl supervisor serve --interval=30 \\
     --workload=gains-host@http://127.0.0.1:8096 \\
     --workload=granite-3b@http://127.0.0.1:8083
@@ -71,8 +83,10 @@ export async function runSupervisor(args: string[]): Promise<number> {
   const once = sub === 'tick' || flags.once;
 
   const journalPath = flags.journal ?? defaultFleetJournalPath();
-  const writeJournal = (entry: Parameters<NonNullable<SupervisorLoopOptions['writeJournal']>>[0]) =>
+  const writeJournal = (entry: FleetJournalEntry) =>
     appendFleetJournal(entry, journalPath);
+
+  const executorEnabled = flags.auto || flags.executeId !== undefined;
 
   const loopOpts: SupervisorLoopOptions = {
     node: flags.node,
@@ -89,6 +103,35 @@ export async function runSupervisor(args: string[]): Promise<number> {
       consecutiveErrorsForDegraded: flags.consecutiveErrors,
       p95DegradedMs: flags.p95DegradedMs,
     },
+    onTick: executorEnabled
+      ? async () => {
+          const results = await runExecutor({
+            node: flags.node,
+            auto: flags.auto,
+            severityThreshold: flags.severityThreshold,
+            executeId: flags.executeId,
+            journalPath,
+            writeJournal,
+            disable: async (name) => {
+              const r = await setWorkloadEnabled(name, false);
+              if (r.message && !flags.quiet) process.stderr.write(`supervisor: executor: ${r.message}`);
+              return r.code;
+            },
+            enable: async (name) => {
+              const r = await setWorkloadEnabled(name, true);
+              if (r.message && !flags.quiet) process.stderr.write(`supervisor: executor: ${r.message}`);
+              return r.code;
+            },
+          });
+          if (!flags.quiet && results.length > 0) {
+            for (const r of results) {
+              process.stderr.write(
+                `supervisor: executor: ${r.status} proposal=${r.proposalId} action=${r.action.type}${r.reason ? ` reason=${r.reason}` : ''}${r.exitCode != null ? ` exitCode=${r.exitCode}` : ''}\n`,
+              );
+            }
+          }
+        }
+      : undefined,
   };
 
   if (!flags.quiet) {
@@ -97,6 +140,9 @@ export async function runSupervisor(args: string[]): Promise<number> {
       : flags.workloads.map((w) => `${w.name}@${redactEndpoint(w.endpoint)}`).join(', ');
     process.stderr.write(`supervisor: node=${flags.node} interval=${flags.intervalMs}ms once=${once} workloads=${wlSummary}\n`);
     process.stderr.write(`supervisor: journal=${journalPath}\n`);
+    if (executorEnabled) {
+      process.stderr.write(`supervisor: executor=on auto=${flags.auto} threshold=${flags.severityThreshold}${flags.executeId ? ` executeId=${flags.executeId}` : ''}\n`);
+    }
   }
   if (flags.noWorkloadsConflict) {
     process.stderr.write('supervisor: warning — both --no-workloads and --workload= were passed; --no-workloads wins, workloads ignored.\n');
@@ -124,6 +170,9 @@ interface Flags {
   workloads: WorkloadTarget[];
   noWorkloadsConflict: boolean;
   quiet: boolean;
+  auto: boolean;
+  severityThreshold: 1 | 2 | 3;
+  executeId?: string;
 }
 
 function num(raw: string, prefix: string, fallback: number): number {
@@ -148,11 +197,15 @@ function parseFlags(argv: string[]): Flags {
   const workloads: WorkloadTarget[] = [];
   let noWorkloads = false;
   let quiet = false;
+  let auto = false;
+  let severityThreshold: 1 | 2 | 3 = 2;
+  let executeId: string | undefined;
 
   for (const raw of argv) {
     if (raw === '--once') { once = true; continue; }
     if (raw === '--no-workloads') { noWorkloads = true; continue; }
     if (raw === '--quiet') { quiet = true; continue; }
+    if (raw === '--auto') { auto = true; continue; }
     if (raw.startsWith('--interval=')) { intervalMs = num(raw, '--interval=', 30) * 1000; continue; }
     if (raw.startsWith('--journal=')) { journal = raw.slice('--journal='.length); continue; }
     if (raw.startsWith('--node=')) { node = raw.slice('--node='.length); continue; }
@@ -161,6 +214,12 @@ function parseFlags(argv: string[]): Flags {
     if (raw.startsWith('--consecutive-ticks=')) { consecutiveTicks = num(raw, '--consecutive-ticks=', 3); continue; }
     if (raw.startsWith('--p95-degraded-ms=')) { p95DegradedMs = num(raw, '--p95-degraded-ms=', 5000); continue; }
     if (raw.startsWith('--consecutive-errors=')) { consecutiveErrors = num(raw, '--consecutive-errors=', 3); continue; }
+    if (raw.startsWith('--severity-threshold=')) {
+      const v = Number(raw.slice('--severity-threshold='.length));
+      if (v === 1 || v === 2 || v === 3) severityThreshold = v;
+      continue;
+    }
+    if (raw.startsWith('--execute=')) { executeId = raw.slice('--execute='.length); continue; }
     if (raw.startsWith('--kind=')) {
       const v = raw.slice('--kind='.length);
       if (v === 'ModelHost' || v === 'ModelRun') kind = v;
@@ -187,5 +246,8 @@ function parseFlags(argv: string[]): Flags {
     workloads: noWorkloads ? [] : workloads,
     noWorkloadsConflict: noWorkloads && workloads.length > 0,
     quiet,
+    auto,
+    severityThreshold,
+    executeId,
   };
 }
