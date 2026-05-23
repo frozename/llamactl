@@ -4,10 +4,12 @@ import {
   appendFleetJournal,
   redactEndpoint,
   readSupervisorStatus,
+  readAuditEntries,
   type SupervisorLoopOptions,
   type WorkloadTarget,
   type FleetJournalEntry,
 } from '@llamactl/fleet-supervisor';
+import { defaultFleetAuditPath } from "@llamactl/fleet-supervisor";
 import { runExecutor } from '../../../fleet-supervisor/src/executor.js';
 import { getGlobals } from '../dispatcher.js';
 import { setWorkloadEnabled } from './setEnabled.js';
@@ -15,9 +17,11 @@ import { setWorkloadEnabled } from './setEnabled.js';
 const USAGE = `llamactl supervisor — fleet observability + severity-gated remediation
 
 USAGE:
+
   llamactl supervisor serve [flags]
   llamactl supervisor tick  [flags]    (alias for --once)
   llamactl supervisor status [flags]   (show current pressure state)
+  llamactl supervisor audit [flags]    (show recent MCP write-tool audit entries)
 
 FLAGS:
   --interval=<s>              Seconds between ticks. Default 30.
@@ -44,6 +48,16 @@ STATUS FLAGS:
   --json                      Emit JSON instead of human format.
   --limit=<n>                 How many recent pressure-status entries to show. Default 20.
 
+
+AUDIT FLAGS:
+  --audit=<path>          Override audit path. Default $HOME/.llamactl/fleet-supervisor/audit.jsonl.
+  --tool=<name>           Filter to one tool (exact match).
+  --outcome=<denied|success|error>
+                          Filter by outcome.
+  --since=<iso-ts>        Entries with ts >= this value.
+  --limit=<n>             Default 50, cap 500.
+  --json                  Emit JSON instead of human format.
+
 EXECUTOR FLAGS (opt-in — no actions taken without these):
   --auto                      Enable the proposal executor after each tick.
   --severity-threshold=<1|2|3>
@@ -66,7 +80,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
     console.log(USAGE);
     return sub ? 0 : 1;
   }
-  if (sub !== 'serve' && sub !== 'tick' && sub !== 'status') {
+  if (sub !== 'serve' && sub !== 'tick' && sub !== 'status' && sub !== 'audit') {
     console.error(`Unknown supervisor subcommand: ${sub}`);
     console.error(USAGE);
     return 1;
@@ -120,6 +134,55 @@ export async function runSupervisor(args: string[]): Promise<number> {
         }
         console.log();
       }
+    }
+    return 0;
+  }
+
+  if (sub === 'audit') {
+    const res = readAuditEntries({
+      auditPath: flags.audit,
+      tool: flags.tool,
+      outcome: flags.outcome,
+      sinceIsoTs: flags.sinceIsoTs,
+      limit: flags.limit ?? 50,
+    });
+
+    if (flags.json) {
+      console.log(JSON.stringify(res, null, 2));
+      return 0;
+    }
+
+    console.log(`audit: ${res.auditPath}  total=${res.total} shown=${res.entries.length}\n`);
+    
+    const summarize = (obj: any) => {
+      if (!obj || typeof obj !== "object" || Object.keys(obj).length === 0) return "{}";
+      
+      let out = "";
+      if ("proposalId" in obj) out += `proposalId:"${obj.proposalId}" `;
+      if ("name" in obj) out += `name:"${obj.name}" `;
+      if ("error" in obj && typeof obj.error === "string") out += `error:"${obj.error.slice(0, 40)}" `;
+      if ("auto" in obj) out += `auto:${obj.auto} `;
+      if ("memMb" in obj) out += `memMb=${obj.memMb} `;
+      if ("action" in obj && typeof obj.action === "string") out += `action:"${obj.action}" `;
+
+      out = out.trim();
+      if (!out) {
+        const str = JSON.stringify(obj);
+        return str.length > 80 ? str.slice(0, 80) + "..." : str;
+      }
+      return "{" + out + "}";
+    };
+
+    for (const e of res.entries) {
+      const inStr = summarize(e.input);
+      let detStr = "";
+      if (e.detail && typeof e.detail === "object" && e.detail.error) {
+        detStr = String(e.detail.error);
+      } else {
+        detStr = summarize(e.detail);
+      }
+      
+      console.log(`${e.ts}  ${e.outcome.padEnd(7)}  ${e.tool.padEnd(30)}  input=${inStr}  detail=${detStr}`);
     }
     return 0;
   }
@@ -216,8 +279,14 @@ interface Flags {
   auto: boolean;
   severityThreshold: 1 | 2 | 3;
   executeId?: string;
+
   json: boolean;
-  limit: number;
+  limit?: number;
+  audit?: string;
+  tool?: string;
+  outcome?: "denied" | "success" | "error";
+  sinceIsoTs?: string;
+
 }
 
 function num(raw: string, prefix: string, fallback: number): number {
@@ -245,8 +314,14 @@ function parseFlags(argv: string[]): Flags {
   let auto = false;
   let severityThreshold: 1 | 2 | 3 = 2;
   let executeId: string | undefined;
+
   let json = false;
-  let limit = 20;
+  let limit: number | undefined;
+  let audit: string | undefined;
+  let tool: string | undefined;
+  let outcome: "denied" | "success" | "error" | undefined;
+  let sinceIsoTs: string | undefined;
+
 
   for (const raw of argv) {
     if (raw === '--once') { once = true; continue; }
@@ -254,7 +329,15 @@ function parseFlags(argv: string[]): Flags {
     if (raw === '--quiet') { quiet = true; continue; }
     if (raw === '--auto') { auto = true; continue; }
     if (raw === '--json') { json = true; continue; }
-    if (raw.startsWith('--limit=')) { limit = num(raw, '--limit=', 20); continue; }
+    if (raw.startsWith('--limit=')) { limit = num(raw, '--limit=', 0) || undefined; continue; }
+    if (raw.startsWith('--audit=')) { audit = raw.slice('--audit='.length); continue; }
+    if (raw.startsWith('--tool=')) { tool = raw.slice('--tool='.length); continue; }
+    if (raw.startsWith('--outcome=')) {
+      const v = raw.slice('--outcome='.length);
+      if (v === 'denied' || v === 'success' || v === 'error') outcome = v;
+      continue;
+    }
+    if (raw.startsWith('--since=')) { sinceIsoTs = raw.slice('--since='.length); continue; }
     if (raw.startsWith('--interval=')) { intervalMs = num(raw, '--interval=', 30) * 1000; continue; }
     if (raw.startsWith('--journal=')) { journal = raw.slice('--journal='.length); continue; }
     if (raw.startsWith('--node=')) { node = raw.slice('--node='.length); continue; }
@@ -297,8 +380,14 @@ function parseFlags(argv: string[]): Flags {
     quiet,
     auto,
     severityThreshold,
+
     executeId,
     json,
     limit,
+    audit,
+    tool,
+    outcome,
+    sinceIsoTs,
   };
+
 }

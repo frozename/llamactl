@@ -13,6 +13,7 @@ import {
   type FleetProposalEntry,
   type FleetSnapshotEntry,
   type FleetExecutionEntry,
+  readAuditEntries,
 } from '@llamactl/fleet-supervisor';
 import { defaultFleetAuditPath } from '../../../fleet-supervisor/src/journal.js';
 
@@ -269,6 +270,25 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     },
   );
 
+
+  server.registerTool(
+    'llamactl_fleet_supervisor_audit',
+    {
+      title: 'Fleet supervisor audit',
+      description: 'Read recent MCP write-tool audit entries from the fleet-supervisor audit log. Supports filters by tool name, outcome, and timestamp.',
+      inputSchema: {
+        auditPath: z.string().optional(),
+        tool: z.string().optional(),
+        outcome: z.enum(['denied', 'success', 'error']).optional(),
+        sinceIsoTs: z.string().optional(),
+        limit: z.number().optional(),
+      },
+    },
+    async ({ auditPath, tool, outcome, sinceIsoTs, limit }) => {
+      const result = readAuditEntries({ auditPath, tool, outcome, sinceIsoTs, limit });
+      return toTextContent(result as any);
+    },
+  );
 
   server.registerTool(
     'llamactl_fleet_supervisor_status',

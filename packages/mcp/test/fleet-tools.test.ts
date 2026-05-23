@@ -351,6 +351,29 @@ describe('llamactl_fleet_proposals', () => {
     });
   });
 
+  
+  describe('llamactl_fleet_supervisor_audit', () => {
+    test('empty journal -> empty entries', async () => {
+      const path = writeJournal([]);
+      const { client } = await connected();
+      const result = await call(client, 'llamactl_fleet_supervisor_audit', { auditPath: path });
+      const parsed = JSON.parse(textOf(result));
+      expect(parsed).toEqual({ entries: [], total: 0, auditPath: path });
+    });
+
+    test('returns derived status from audit entries', async () => {
+      const path = writeJournal([
+        { kind: 'mcp-audit', ts: '2026-05-23T10:00:00.000Z', tool: 'test-tool', input: { a: 1 }, outcome: 'success', detail: {} }
+      ] as any);
+      const { client } = await connected();
+      const result = await call(client, 'llamactl_fleet_supervisor_audit', { auditPath: path });
+      const parsed = JSON.parse(textOf(result));
+      expect(parsed.entries).toHaveLength(1);
+      expect(parsed.entries[0].tool).toBe('test-tool');
+      expect(parsed.total).toBe(1);
+    });
+  });
+
   describe('llamactl_fleet_executions', () => {
   test('empty journal → empty executions', async () => {
     const path = writeJournal([]);

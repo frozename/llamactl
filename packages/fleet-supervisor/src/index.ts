@@ -7,3 +7,4 @@ export * from './loop.js';
 export * from './executor.js';
 export * from './measured-memory.js';
 export * from './status-reader.js';
+export * from './audit-reader.js';
