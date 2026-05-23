@@ -6,7 +6,12 @@
   Runs `llamactl supervisor serve` continuously, ticking every 30s.
   Probes node memory (vm_stat) + each declared workload's HTTP health,
   appends snapshots + proposals to ~/.llamactl/fleet-supervisor/journal.jsonl.
-  Propose-only (v1) — no remediation is executed.
+
+  Auto-execute is ON at severity threshold 2 (Tier 2 = mark-degraded
+  only). Tier 3 actions (evict/restart) remain propose-only at this
+  threshold. Hysteresis on pressure exit (clearTicks=5) prevents
+  flap-driven duplicate proposals. Raise the threshold to 3 once
+  Tier-2 behavior has been observed for a baseline window.
 
   Workload set is the M4 Pro production fleet as of 2026-05-22:
     - gains-host        :8096  (oMLX 35B-A3B, primary brief-synth + judge tie-breaker)
@@ -36,6 +41,8 @@
     <string>serve</string>
     <string>--node=m4-pro-local</string>
     <string>--interval=30</string>
+    <string>--auto</string>
+    <string>--severity-threshold=2</string>
     <string>--workload=gains-host@http://127.0.0.1:8096</string>
     <string>--workload=granite-3b@http://127.0.0.1:8083</string>
   </array>
