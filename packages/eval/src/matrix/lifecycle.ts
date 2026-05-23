@@ -117,7 +117,7 @@ export function buildBootCommandForModelSpec(model: ModelSpec): { binary: string
       extraArgs: model.extra_args ?? [],
       timeoutSeconds: 60,
     };
-    const env: EngineBootEnv = {};
+    const env: EngineBootEnv = { ...process.env } as EngineBootEnv;
     if (model.mlx_model_dir) env.LLAMACTL_MODELS_DIR = model.mlx_model_dir;
     env.workloadName = model.name;
     return ENGINES.omlx.buildBootCommand(spec, env);
@@ -146,7 +146,7 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
       extraArgs: model.extra_args ?? [],
       timeoutSeconds: 60,
     };
-    const env: EngineBootEnv = {};
+    const env: EngineBootEnv = { ...process.env } as EngineBootEnv;
     if (model.mlx_model_dir) env.LLAMACTL_MODELS_DIR = model.mlx_model_dir;
     env.workloadName = model.name;
     await ENGINES.omlx.prepareLaunch?.(spec, env);

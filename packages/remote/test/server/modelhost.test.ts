@@ -304,6 +304,7 @@ describe('server/modelhost', () => {
       PATH: '/usr/bin',
       HOME: '/Users/test',
       SECRET_TOKEN: 'leak',
+      LLAMACTL_MODELS_DIR: '/tmp/models',
     } as NodeJS.ProcessEnv;
 
     try {

@@ -137,7 +137,7 @@ describe('applyManifest — kind dispatch', () => {
       });
 
       expect(fakeSpawn).not.toHaveBeenCalled();
-      expect(result.ok).toBe(true);
+      if (!result.ok) console.log('ERROR:', result); expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.kind).toBe('ModelHost');
       expect(result.pid).toBe(3333);
@@ -204,7 +204,7 @@ describe('applyManifest — kind dispatch', () => {
         env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
       });
 
-      expect(result.ok).toBe(true);
+      if (!result.ok) console.log('ERROR:', result); expect(result.ok).toBe(true);
       expect(readdirSpy).toHaveBeenCalledTimes(1);
     } finally {
       readdirSpy.mockRestore();
@@ -362,7 +362,7 @@ describe('applyManifest — kind dispatch', () => {
         env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
       });
 
-      expect(result.ok).toBe(true);
+      if (!result.ok) console.log('ERROR:', result); expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.kind).toBe('ModelHost');
       // Disable removes the controller-side sidecar; there is no
@@ -421,9 +421,10 @@ describe('applyManifest — kind dispatch', () => {
         getClient: () => client,
         spawn: mock(() => ({ pid: 99999 } as any)) as any,
         env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+        workloadsDir: tmp,
       });
 
-      expect(result.ok).toBe(true);
+      if (!result.ok) console.log('ERROR:', result); expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.pid).toBe(99);
       expect(captured.statusCalls).toBe(0);
@@ -457,7 +458,7 @@ describe('applyManifest — kind dispatch', () => {
       getClient: () => makeModelRunClient(),
       spawn: fakeSpawn as any,
     });
-    expect(result.ok).toBe(true);
+    if (!result.ok) console.log('ERROR:', result); expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.kind).toBe('ModelRun');
       expect(result.result.action).toBe('started');

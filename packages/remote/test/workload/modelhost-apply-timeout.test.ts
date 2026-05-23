@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { applyManifest, type WorkloadClient } from '../../src/workload/apply.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 describe('applyManifest — ModelHost timeout cleanup', () => {
   test('unsubscribes the modelHostStart subscription when apply times out', async () => {
@@ -33,7 +36,10 @@ describe('applyManifest — ModelHost timeout cleanup', () => {
       rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
     };
 
-    const result = await applyManifest({
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-timeout-test-'));
+    let result;
+    try {
+      result = await applyManifest({
       manifest: {
         apiVersion: 'llamactl/v1',
         kind: 'ModelHost',
@@ -51,7 +57,11 @@ describe('applyManifest — ModelHost timeout cleanup', () => {
         },
       },
       getClient: () => client,
+      workloadsDir: tmp,
     });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
 
     expect(result.ok).toBe(false);
     if (result.ok) return;

@@ -39,10 +39,17 @@ describe('matrix lifecycle - engine dispatch', () => {
       extra_args: ['--max-concurrent-requests', '1'],
       start_args: [],
     };
-    const built = buildBootCommandForModelSpec(spec);
-    expect(built.args[0]).toBe('serve');
-    expect(built.args).toContain('--model-dir');
-    expect(built.args).toContain('/tmp/mlx');
+    const prevRuntimeDir = process.env.LLAMACTL_RUNTIME_DIR;
+    process.env.LLAMACTL_RUNTIME_DIR = '/tmp/runtime';
+    try {
+      const built = buildBootCommandForModelSpec(spec);
+      expect(built.args[0]).toBe('serve');
+      expect(built.args).toContain('--model-dir');
+      expect(built.args).toContain('/tmp/runtime/workloads/qwen3-8b-mlx-4bit/.omlx/models');
+    } finally {
+      if (prevRuntimeDir === undefined) delete process.env.LLAMACTL_RUNTIME_DIR;
+      else process.env.LLAMACTL_RUNTIME_DIR = prevRuntimeDir;
+    }
   });
 
   test('omlx ModelSpec without mlx_model_dir falls through to LLAMA_CPP_MODELS', () => {
@@ -59,10 +66,17 @@ describe('matrix lifecycle - engine dispatch', () => {
       extra_args: ['--max-concurrent-requests', '1'],
       start_args: [],
     };
-    const built = buildBootCommandForModelSpec(spec);
-    const modelDirIdx = built.args.indexOf('--model-dir');
-    expect(modelDirIdx).toBeGreaterThan(-1);
-    expect(built.args[modelDirIdx + 1]).not.toBe('');
+    const prevModels = process.env.LLAMA_CPP_MODELS;
+    process.env.LLAMA_CPP_MODELS = '/tmp/models';
+    try {
+      const built = buildBootCommandForModelSpec(spec);
+      const modelDirIdx = built.args.indexOf('--model-dir');
+      expect(modelDirIdx).toBeGreaterThan(-1);
+      expect(built.args[modelDirIdx + 1]).not.toBe('');
+    } finally {
+      if (prevModels === undefined) delete process.env.LLAMA_CPP_MODELS;
+      else process.env.LLAMA_CPP_MODELS = prevModels;
+    }
   });
 
   test('default engine (undefined) routes to llama.cpp path (back-compat)', () => {
