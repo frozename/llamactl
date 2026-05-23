@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { PressureWindow, detectPressure } from '../src/policy.js';
+import { PressureWindow, detectPressure, isPressureHot } from '../src/policy.js';
 import type { NodeMemSnapshot, WorkloadSnapshot } from '../src/types.js';
 
 const THRESHOLDS = { headroomMinMb: 512, compressorWarnMb: 2048, consecutiveTicks: 3 };
@@ -93,6 +93,28 @@ describe('detectPressure', () => {
     expect(result).not.toBeNull();
     if (result!.proposal.action.type === 'evict') {
       expect(result!.proposal.action.workload).toBe('granite-3b-local');
+    }
+  });
+});
+
+describe('isPressureHot', () => {
+  it('matches the detectPressure hot predicate', () => {
+    const window = new PressureWindow(1);
+    window.push(HIGH, WLS);
+    const entry = window.tail(1)[0];
+    expect(entry).toBeDefined();
+    if (entry) {
+      expect(isPressureHot(entry, THRESHOLDS)).toBe(true);
+    }
+  });
+
+  it('returns false when either headroom or compressor misses the threshold', () => {
+    const window = new PressureWindow(1);
+    window.push({ ...HIGH, free_mb: 600 }, WLS);
+    const entry = window.tail(1)[0];
+    expect(entry).toBeDefined();
+    if (entry) {
+      expect(isPressureHot(entry, THRESHOLDS)).toBe(false);
     }
   });
 });

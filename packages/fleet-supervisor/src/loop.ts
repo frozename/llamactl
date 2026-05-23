@@ -2,7 +2,7 @@ import { probeNodeMem as defaultProbeNodeMem } from './node-probe.js';
 import { probeWorkload as defaultProbeWorkload, redactEndpoint, type WorkloadTarget } from './workload-probe.js';
 import { appendFleetJournal, defaultFleetJournalPath } from './journal.js';
 import {
-  PressureWindow, detectPressure, detectDegradation,
+  PressureWindow, detectPressure, detectDegradation, isPressureHot,
   type PressureThresholds, type DegradationThresholds, type WorkloadHealthState,
 } from './policy.js';
 import type {
@@ -19,6 +19,7 @@ export const DEFAULT_PRESSURE_THRESHOLDS: PressureThresholds = {
   headroomMinMb: 512,
   compressorWarnMb: 2048,
   consecutiveTicks: 3,
+  clearTicks: 3,
 };
 
 export const DEFAULT_DEGRADATION_THRESHOLDS: DegradationThresholds = {
@@ -68,6 +69,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const pressureThresholds = opts.pressureThresholds ?? DEFAULT_PRESSURE_THRESHOLDS;
   const pressureWindow = new PressureWindow(pressureThresholds.consecutiveTicks);
   let lastPressureLevel: 'NORMAL' | 'HIGH' = 'NORMAL';
+  let consecutiveClearTicks = 0;
   const degradationThresholds = opts.degradationThresholds ?? DEFAULT_DEGRADATION_THRESHOLDS;
   const workloadHealth = new Map<string, WorkloadHealthState>();
 
@@ -139,8 +141,8 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
 
     pressureWindow.push(node_mem, workloads);
     const pressure = detectPressure(pressureWindow, pressureThresholds);
-    const nextLevel: 'NORMAL' | 'HIGH' = pressure ? 'HIGH' : 'NORMAL';
-    if (nextLevel !== lastPressureLevel) {
+    const latestWindowEntry = pressureWindow.tail(1)[0];
+    if (pressure && lastPressureLevel === 'NORMAL') {
       const transition: FleetTransitionEntry = {
         kind: 'fleet-transition',
         ts,
@@ -148,22 +150,43 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
         subject: 'node',
         subjectKind: 'node',
         signal: 'pressure',
-        from: lastPressureLevel,
-        to: nextLevel,
+        from: 'NORMAL',
+        to: 'HIGH',
       };
       writeJournal(transition);
-      if (pressure) {
-        const proposal: FleetProposalEntry = {
-          kind: 'fleet-proposal',
-          ts,
-          node: opts.node,
-          proposalId: `pressure-${opts.node}-${ts}`,
-          transition: pressure.transition,
-          action: pressure.proposal.action,
-        };
-        writeJournal(proposal);
+      const proposal: FleetProposalEntry = {
+        kind: 'fleet-proposal',
+        ts,
+        node: opts.node,
+        proposalId: `pressure-${opts.node}-${ts}`,
+        transition: pressure.transition,
+        action: pressure.proposal.action,
+      };
+      writeJournal(proposal);
+      lastPressureLevel = 'HIGH';
+      consecutiveClearTicks = 0;
+    } else if (lastPressureLevel === 'HIGH') {
+      if (latestWindowEntry && isPressureHot(latestWindowEntry, pressureThresholds)) {
+        consecutiveClearTicks = 0;
+      } else {
+        consecutiveClearTicks++;
+        const clearTicks = pressureThresholds.clearTicks ?? 3;
+        if (consecutiveClearTicks >= clearTicks) {
+          const transition: FleetTransitionEntry = {
+            kind: 'fleet-transition',
+            ts,
+            node: opts.node,
+            subject: 'node',
+            subjectKind: 'node',
+            signal: 'pressure-cleared',
+            from: 'HIGH',
+            to: 'NORMAL',
+          };
+          writeJournal(transition);
+          lastPressureLevel = 'NORMAL';
+          consecutiveClearTicks = 0;
+        }
       }
-      lastPressureLevel = nextLevel;
     }
 
     for (const workload of workloads) {

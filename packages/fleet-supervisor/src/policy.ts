@@ -10,6 +10,8 @@ export interface PressureThresholds {
   headroomMinMb: number;
   compressorWarnMb: number;
   consecutiveTicks: number;
+  /** Consecutive non-hot ticks required to exit HIGH. Default 3. */
+  clearTicks?: number;
 }
 
 interface PressureWindowEntry {
@@ -26,6 +28,16 @@ export class PressureWindow {
   }
   size(): number { return this.buf.length; }
   tail(n: number): PressureWindowEntry[] { return this.buf.slice(-n); }
+}
+
+export function isPressureHot(
+  entry: PressureWindowEntry,
+  thresholds: PressureThresholds,
+): boolean {
+  return (
+    entry.node_mem.free_mb <= thresholds.headroomMinMb &&
+    entry.node_mem.compressor_mb >= thresholds.compressorWarnMb
+  );
 }
 
 export interface PressureResult {
@@ -45,10 +57,7 @@ export function detectPressure(
 ): PressureResult | null {
   const tail = window.tail(thresholds.consecutiveTicks);
   if (tail.length < thresholds.consecutiveTicks) return null;
-  const allHot = tail.every((entry) =>
-    entry.node_mem.free_mb <= thresholds.headroomMinMb &&
-    entry.node_mem.compressor_mb >= thresholds.compressorWarnMb,
-  );
+  const allHot = tail.every((entry) => isPressureHot(entry, thresholds));
   if (!allHot) return null;
 
   const lastWorkloads = tail[tail.length - 1]!.workloads;

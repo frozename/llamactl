@@ -132,6 +132,69 @@ describe('startSupervisorLoop', () => {
     }
   });
 
+  it('applies pressure hysteresis before clearing HIGH and reopening', async () => {
+    const entries: FleetJournalEntry[] = [];
+    const HIGH_MEM: NodeMemSnapshot = {
+      free_mb: 30, compressor_mb: 4000,
+      active_mb: 0, inactive_mb: 0, wired_mb: 0, swap_in: 0, swap_out: 0,
+    };
+    const NORMAL_MEM: NodeMemSnapshot = {
+      free_mb: 4096, compressor_mb: 100,
+      active_mb: 0, inactive_mb: 0, wired_mb: 0, swap_in: 0, swap_out: 0,
+    };
+    const sequence: NodeMemSnapshot[] = [
+      HIGH_MEM, HIGH_MEM, HIGH_MEM,
+      NORMAL_MEM,
+      HIGH_MEM, HIGH_MEM, HIGH_MEM,
+      NORMAL_MEM, NORMAL_MEM, NORMAL_MEM,
+      HIGH_MEM, HIGH_MEM, HIGH_MEM,
+    ];
+    let tickIdx = 0;
+    const handle = startSupervisorLoop({
+      node: 'local',
+      once: false,
+      intervalMs: 1,
+      workloads: [TARGET],
+      probeNodeMem: async () => {
+        const next = sequence[tickIdx] ?? NORMAL_MEM;
+        tickIdx++;
+        if (tickIdx >= sequence.length) handle.stop();
+        return next;
+      },
+      probeWorkload: async (t) => ({ ...makeReachable(t), rss_mb: 12000 }),
+      writeJournal: (entry) => entries.push(entry),
+      pressureThresholds: {
+        headroomMinMb: 512,
+        compressorWarnMb: 2048,
+        consecutiveTicks: 3,
+        clearTicks: 3,
+      },
+    });
+    await handle.done;
+
+    const transitions = entries.filter((e) => e.kind === 'fleet-transition' && e.signal === 'pressure');
+    const proposals = entries.filter((e) => e.kind === 'fleet-proposal');
+
+    expect(transitions.length).toBe(2);
+    expect(proposals.length).toBe(2);
+
+    const pressureTransitions = transitions.filter((e) => e.kind === 'fleet-transition' && e.signal === 'pressure');
+    expect(pressureTransitions[0]!.from).toBe('NORMAL');
+    expect(pressureTransitions[0]!.to).toBe('HIGH');
+    expect(pressureTransitions[1]!.from).toBe('NORMAL');
+    expect(pressureTransitions[1]!.to).toBe('HIGH');
+
+    const clearTransitions = entries.filter(
+      (e) => e.kind === 'fleet-transition' && e.signal === 'pressure-cleared',
+    );
+    expect(clearTransitions.length).toBe(1);
+    expect(clearTransitions[0]!.from).toBe('HIGH');
+    expect(clearTransitions[0]!.to).toBe('NORMAL');
+
+    expect(proposals[0]!.kind).toBe('fleet-proposal');
+    expect(proposals[1]!.kind).toBe('fleet-proposal');
+  });
+
   it('emits fleet-transition + fleet-proposal on healthy→degraded workload flip', async () => {
     const entries: FleetJournalEntry[] = [];
     let calls = 0;
