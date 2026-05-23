@@ -18,8 +18,13 @@ import {
 import { defaultFleetAuditPath } from '../../../fleet-supervisor/src/journal.js';
 
 const CLI_BIN_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../../../cli/src/bin.ts');
-if (!existsSync(CLI_BIN_PATH)) {
-  throw new Error(`llamactl CLI not found at ${CLI_BIN_PATH}`);
+let cliBinChecked = false;
+function ensureCliBin(): void {
+  if (cliBinChecked) return;
+  if (!existsSync(CLI_BIN_PATH)) {
+    throw new Error(`llamactl CLI not found at ${CLI_BIN_PATH}`);
+  }
+  cliBinChecked = true;
 }
 
 const MAX_OUTPUT_BYTES = 512 * 1024;
@@ -442,6 +447,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
       admitMeasureInFlight.add(key);
       const boundedTimeoutMs = toTimeoutMs(timeoutMs, MAX_TIMEOUT_MS_ADMIT);
       try {
+        ensureCliBin();
         const args = [CLI_BIN_PATH, 'admit', 'measure', workload];
         if (node) args.push(`--node=${node}`);
         const result = await runProcess(spawnFn, 'bun', args, boundedTimeoutMs);
@@ -508,6 +514,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         return toTextContent(outcome);
       }
 
+      ensureCliBin();
       const args = [CLI_BIN_PATH, 'supervisor', 'tick'];
       if (node) args.push(`--node=${node}`);
       if (hasAuto) {
