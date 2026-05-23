@@ -26,7 +26,7 @@ describe("supervisor status - CII regressions", () => {
       expect(res.nodes.length).toBe(1);
       const firstNode = res.nodes[0];
       if (!firstNode) throw new Error("no nodes");
-      expect(firstNode.node).toBe("local");
+      expect(firstNode.name).toBe("local");
       expect(firstNode.state).toBe("HIGH");
     });
   });

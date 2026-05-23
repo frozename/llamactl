@@ -123,7 +123,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
         const mins = Math.floor(node.durationMs / 60000);
         console.log(`node ${node.name}: HIGH for ${mins}m (since ${node.enteredAt})`);
         console.log(`  clear progress: ${node.consecutiveClearTicks}/${node.clearTicksNeeded}`);
-        console.log(`  free_mb=${node.free_mb} (breach<512: ${node.headroomBreach ? 'yes' : 'no'})  compressor_mb=${node.compressor_mb} (breach>2048: ${node.compressorBreach ? 'yes' : 'no'})`);
+        console.log(`  free_mb=${node.free_mb} (breach: ${node.headroomBreach ? 'yes' : 'no'})  compressor_mb=${node.compressor_mb} (breach: ${node.compressorBreach ? 'yes' : 'no'})`);
         console.log(`  last ${node.recent.length} pressure-status:`);
         for (const recent of node.recent) {
           const t = new Date(recent.ts).toLocaleTimeString('en-US', { hour12: false });
@@ -156,7 +156,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
     if (res.malformedLines > 0) {
       console.log(`audit: ${res.malformedLines} malformed lines skipped`);
     }
-    console.log(`audit: ${res.auditPath}  total=${res.total} shown=${res.entries.length}\n`);
+    console.log(`audit: ${res.auditPath}  total=${res.total} entries=${res.entries.length}\n`);
     
     const summarize = (obj: any) => {
       if (!obj || typeof obj !== "object" || Object.keys(obj).length === 0) return "{}";

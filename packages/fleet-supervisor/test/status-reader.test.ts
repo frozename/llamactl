@@ -163,5 +163,19 @@ describe("status-reader", () => {
     });
   });
 
-});
 
+  test("fleet-pressure-status with state:NORMAL written after HIGH transition correctly transitions node to NORMAL", async () => {
+    const lines = [
+      JSON.stringify({ kind: "fleet-transition", ts: "2026-05-01T00:01:05Z", node: "local", subjectKind: "node", subject: "node", signal: "pressure", from: "NORMAL", to: "HIGH" }),
+      JSON.stringify({ kind: "fleet-pressure-status", ts: "2026-05-01T00:01:10Z", node: "local", state: "NORMAL", enteredAt: "2026-05-01T00:01:05Z", durationMs: 0, consecutiveClearTicks: 5, clearTicksNeeded: 5, free_mb: 2000, compressor_mb: 500, headroomBreach: false, compressorBreach: false })
+    ].join("\n");
+    await withTempJournal(lines, async (journalPath) => {
+      const res = await readSupervisorStatus({ journalPath });
+      expect(res.nodes.length).toBe(1);
+      const firstNode = res.nodes[0];
+      if (!firstNode) throw new Error("no nodes");
+      expect(firstNode.state).toBe("NORMAL");
+      expect(firstNode.enteredAt).toBeNull();
+    });
+  });
+});

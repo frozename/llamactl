@@ -167,7 +167,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
         action: pressure.proposal.action,
       };
       writeJournal(proposal);
-     lastPressureLevel = 'HIGH';
+      lastPressureLevel = 'HIGH';
       consecutiveClearTicks = 0;
       enteredHighAt = ts;
       ticksInHigh = 0;

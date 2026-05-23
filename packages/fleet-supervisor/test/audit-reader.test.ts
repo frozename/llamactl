@@ -155,5 +155,19 @@ describe("audit-reader", () => {
       expect(res.entries[1]!.tool).toBe("A");
     });
   });
-});
 
+  test("since filter handles mixed offsets robustly using Date.parse", async () => {
+    const lines = [
+      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-22T23:00:00Z", tool: "A", input: {}, outcome: "success", detail: {} }),
+      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-22T23:00:01Z", tool: "B", input: {}, outcome: "success", detail: {} })
+    ].join("\n");
+    await withTempAudit(lines, async (auditPath) => {
+      // 2026-05-23T00:00:00+02:00 is exactly 2026-05-22T22:00:00Z
+      // A lexicographical compare of "2026-05-22T23:00:00Z" < "2026-05-23T00:00:00+02:00" would be true (and filter it out).
+      // A semantic compare correctly identifies 23:00Z > 22:00Z.
+      const res = await readAuditEntries({ auditPath, since: "2026-05-23T00:00:00+02:00" });
+      expect(res.total).toBe(2);
+      expect(res.entries.length).toBe(2);
+    });
+  });
+});

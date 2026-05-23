@@ -195,7 +195,7 @@ describe('llamactl_fleet_pressure', () => {
     const { client } = await connected();
     const result = await call(client, 'llamactl_fleet_pressure', { journalPath: path });
     const parsed = JSON.parse(textOf(result)) as {
-      nodes: { node: string; state: string; lastTransitionAt: string | null }[];
+      nodes: { name: string; state: string; lastTransitionAt: string | null }[];
     };
     expect(parsed.nodes).toHaveLength(1);
     expect(parsed.nodes[0]!.state).toBe('NORMAL');
@@ -210,9 +210,9 @@ describe('llamactl_fleet_pressure', () => {
     const { client } = await connected();
     const result = await call(client, 'llamactl_fleet_pressure', { journalPath: path });
     const parsed = JSON.parse(textOf(result)) as {
-      nodes: { node: string; state: string; lastTransitionAt: string | null }[];
+      nodes: { name: string; state: string; lastTransitionAt: string | null }[];
     };
-    const a = parsed.nodes.find((n) => n.node === 'node-a')!;
+    const a = parsed.nodes.find((n) => n.name === 'node-a')!;
     expect(a.state).toBe('HIGH');
     expect(a.lastTransitionAt).toBe('2026-01-01T00:01:00Z');
   });
@@ -226,9 +226,9 @@ describe('llamactl_fleet_pressure', () => {
     const { client } = await connected();
     const result = await call(client, 'llamactl_fleet_pressure', { journalPath: path });
     const parsed = JSON.parse(textOf(result)) as {
-      nodes: { node: string; state: string }[];
+      nodes: { name: string; state: string }[];
     };
-    expect(parsed.nodes.find((n) => n.node === 'node-a')!.state).toBe('NORMAL');
+    expect(parsed.nodes.find((n) => n.name === 'node-a')!.state).toBe('NORMAL');
   });
 
   test('node filter restricts to single node', async () => {
@@ -242,8 +242,8 @@ describe('llamactl_fleet_pressure', () => {
       journalPath: path,
       node: 'node-a',
     });
-    const parsed = JSON.parse(textOf(result)) as { nodes: { node: string }[] };
-    expect(parsed.nodes.every((n) => n.node === 'node-a')).toBe(true);
+    const parsed = JSON.parse(textOf(result)) as { nodes: { name: string }[] };
+    expect(parsed.nodes.every((n) => n.name === 'node-a')).toBe(true);
   });
 });
 

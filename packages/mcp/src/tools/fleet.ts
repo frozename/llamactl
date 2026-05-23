@@ -265,7 +265,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
       const nodes = [...knownNodes].map((nodeName) => {
         const t = latestTransition.get(nodeName);
         return {
-          node: nodeName,
+          name: nodeName,
           state: (t?.state === 'HIGH' ? 'HIGH' : 'NORMAL') as 'NORMAL' | 'HIGH',
           lastTransitionAt: t?.ts ?? null,
         };

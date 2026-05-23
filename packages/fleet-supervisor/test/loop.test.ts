@@ -360,7 +360,7 @@ describe('startSupervisorLoop', () => {
     expect(observed).toEqual([{ kind: 'fleet-snapshot', node: 'local' }]);
   });
 
-  it('emits a fleet-pressure-status entry on the same tick as the NORMALéHIGH transition', async () => {
+  it('emits a fleet-pressure-status entry on the same tick as the NORMAL->HIGH transition', async () => {
     const entries: any[] = [];
     let tickCount = 0;
     const handle = startSupervisorLoop({

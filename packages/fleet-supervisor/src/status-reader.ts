@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as readline from 'readline';
 import type { FleetJournalEntry, FleetPressureStatusEntry, FleetTransitionEntry } from './types.js';
+import { DEFAULT_PRESSURE_THRESHOLDS } from './loop.js';
 
 export interface NodePressureStatus {
   name: string;
@@ -84,7 +85,7 @@ export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): P
         if (state.recent.length > limit) {
           state.recent.shift();
         }
-        if (state.lastTransitionTs === null || status.enteredAt > state.lastTransitionTs) {
+        if (state.lastTransitionTs === null || status.ts > state.lastTransitionTs) {
           state.state = status.state;
           state.enteredAt = status.state === 'HIGH' ? status.enteredAt : null;
         }
@@ -100,14 +101,14 @@ export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): P
   for (const [node, state] of nodeStates.entries()) {
     // Determine duration: if NORMAL, it's 0. If HIGH, it's duration since enteredAt.
     // However, if we just parse the log, `now` might not be the best reference for "duration" if the log is old,
-    // but the spec says "durationMs: ts - enteredAt" which implies time since enteredAt until now.
+    // but the spec says "durationMs: now - enteredAt" which implies time since enteredAt until now.
     report.nodes.push({
       name: node,
       state: state.state,
       enteredAt: state.enteredAt,
       durationMs: state.enteredAt ? Math.max(0, now - new Date(state.enteredAt).getTime()) : 0,
       consecutiveClearTicks: state.lastStatus ? state.lastStatus.consecutiveClearTicks : 0,
-      clearTicksNeeded: state.lastStatus ? state.lastStatus.clearTicksNeeded : 5,
+      clearTicksNeeded: state.lastStatus ? state.lastStatus.clearTicksNeeded : DEFAULT_PRESSURE_THRESHOLDS.clearTicks,
       free_mb: state.lastStatus ? state.lastStatus.free_mb : 0,
       compressor_mb: state.lastStatus ? state.lastStatus.compressor_mb : 0,
       headroomBreach: state.lastStatus ? state.lastStatus.headroomBreach : false,
