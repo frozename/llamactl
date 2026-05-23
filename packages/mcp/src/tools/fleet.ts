@@ -232,7 +232,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     {
       title: 'Fleet pressure state',
       description:
-        'Current pressure state (NORMAL | HIGH) per node, derived from fleet-transition entries where subjectKind=node and signal=pressure. Nodes that never transitioned appear as NORMAL with lastTransitionAt: null.',
+        'Current pressure state (NORMAL | HIGH) per node, derived from fleet-transition entries where subjectKind=node and signal in (pressure, pressure-cleared). Nodes that never transitioned appear as NORMAL with lastTransitionAt: null.',
       inputSchema: {
         node: z.string().optional(),
         journalPath: z.string().optional(),
