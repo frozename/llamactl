@@ -139,10 +139,9 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
     writeJournal(snapshot);
     writeJournal(heartbeat);
 
-    pressureWindow.push(node_mem, workloads);
-    const pressure = detectPressure(pressureWindow, pressureThresholds);
-    const latestWindowEntry = pressureWindow.tail(1)[0];
-    if (pressure && lastPressureLevel === 'NORMAL') {
+  pressureWindow.push(node_mem, workloads);
+  const pressure = detectPressure(pressureWindow, pressureThresholds);
+  if (pressure && lastPressureLevel === 'NORMAL') {
       const transition: FleetTransitionEntry = {
         kind: 'fleet-transition',
         ts,
@@ -164,14 +163,15 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       };
       writeJournal(proposal);
       lastPressureLevel = 'HIGH';
+    consecutiveClearTicks = 0;
+  } else if (lastPressureLevel === 'HIGH') {
+    const latestWindowEntry = pressureWindow.tail(1)[0];
+    if (latestWindowEntry && isPressureHot(latestWindowEntry, pressureThresholds)) {
       consecutiveClearTicks = 0;
-    } else if (lastPressureLevel === 'HIGH') {
-      if (latestWindowEntry && isPressureHot(latestWindowEntry, pressureThresholds)) {
-        consecutiveClearTicks = 0;
-      } else {
-        consecutiveClearTicks++;
-        const clearTicks = pressureThresholds.clearTicks ?? 5;
-        if (consecutiveClearTicks >= clearTicks) {
+    } else {
+      consecutiveClearTicks++;
+      const clearTicks = pressureThresholds.clearTicks;
+      if (consecutiveClearTicks >= clearTicks) {
           const transition: FleetTransitionEntry = {
             kind: 'fleet-transition',
             ts,

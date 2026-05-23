@@ -19,6 +19,7 @@ describe('appendFleetJournal', () => {
       node_mem: { free_mb: 1031, active_mb: 912, inactive_mb: 839,
                   wired_mb: 320, compressor_mb: 2600, swap_in: 0, swap_out: 0 },
       workloads: [{ name: 'qwen-host', kind: 'ModelHost', endpoint: 'http://127.0.0.1:8090',
+                    priority: 50,
                     rss_mb: null, request_rate_5m: null, error_rate_5m: 0,
                     p50_ms: 240, p95_ms: 480, models: ['Qwen3-8B'], reachable: true,
                     consecutiveErrors: 0 }],

@@ -11,10 +11,10 @@ export interface PressureThresholds {
   compressorWarnMb: number;
   consecutiveTicks: number;
   /** Consecutive non-hot ticks required to exit HIGH. Default 5. */
-  clearTicks?: number;
+  clearTicks: number;
 }
 
-interface PressureWindowEntry {
+export interface PressureWindowEntry {
   node_mem: NodeMemSnapshot;
   workloads: WorkloadSnapshot[];
 }

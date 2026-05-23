@@ -67,7 +67,9 @@ describe('probeWorkload SSRF guard', () => {
     let fetched = false;
     const result = await probeWorkload(
       { name: 'metadata', endpoint: 'http://169.254.169.254', kind: 'ModelHost' },
-      { fetch: (async () => { fetched = true; return new Response('{}'); }) as typeof globalThis.fetch },
+      {
+        fetch: (async () => { fetched = true; return new Response('{}'); }) as unknown as typeof fetch,
+      },
     );
     expect(fetched).toBe(false);
     expect(result.reachable).toBe(false);

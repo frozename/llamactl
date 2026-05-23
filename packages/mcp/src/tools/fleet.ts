@@ -1,85 +1,201 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { toTextContent } from '@nova/mcp-shared';
 import {
+  appendFleetJournal,
   defaultFleetJournalPath,
   type FleetJournalEntry,
-  type FleetSnapshotEntry,
   type FleetProposalEntry,
+  type FleetSnapshotEntry,
   type FleetExecutionEntry,
 } from '@llamactl/fleet-supervisor';
+import { defaultFleetAuditPath } from '../../../fleet-supervisor/src/journal.js';
 
-function readJournal(journalPath: string): FleetJournalEntry[] {
-  if (!existsSync(journalPath)) return [];
-  const raw = readFileSync(journalPath, 'utf8');
-  const entries: FleetJournalEntry[] = [];
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      entries.push(JSON.parse(trimmed) as FleetJournalEntry);
-    } catch {
-      console.warn('[fleet-tools] skipping malformed journal line:', trimmed.slice(0, 80));
-    }
-  }
-  return entries;
+const CLI_BIN_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../../../cli/src/bin.ts');
+if (!existsSync(CLI_BIN_PATH)) {
+  throw new Error(`llamactl CLI not found at ${CLI_BIN_PATH}`);
 }
 
-type SpawnFn = typeof spawn;
+const MAX_OUTPUT_BYTES = 512 * 1024;
+const MAX_TIMEOUT_MS_ADMIT = 300_000;
+const MAX_TIMEOUT_MS_EXECUTE = 120_000;
+const MAX_TIMEOUT_FOLLOWUP_MS = 5_000;
+const KILL_TIMEOUT_MS = 2_000;
+const OUTPUT_TRUNCATION_SENTINEL = '[output truncated]';
 
-interface FleetToolDeps {
-  spawn?: SpawnFn;
+function readProcessOutput(chunks: Buffer[]): string {
+  const merged = Buffer.concat(chunks);
+  if (merged.length <= MAX_OUTPUT_BYTES) return merged.toString();
+
+  const suffix = Buffer.from(`\\n${OUTPUT_TRUNCATION_SENTINEL}`);
+  const trimTo = Math.max(0, MAX_OUTPUT_BYTES - suffix.length);
+  return Buffer.concat([merged.slice(0, trimTo), suffix]).toString();
 }
 
-async function runProcess(
+function appendAudit(
+  tool: string,
+  input: Record<string, unknown>,
+  outcome: 'success' | 'error' | 'denied',
+  detail: unknown = {},
+): void {
+  try {
+    appendFleetJournal(
+      {
+        kind: 'mcp-audit',
+        ts: new Date().toISOString(),
+        tool,
+        input,
+        outcome,
+        detail,
+      } as unknown as FleetJournalEntry,
+      defaultFleetAuditPath(),
+    );
+  } catch {}
+}
+
+interface RunProcessResult {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  code?: number;
+  timedOut: boolean;
+}
+
+function toTimeoutMs(value: number | undefined, maxMs: number): number {
+  if (typeof value !== 'number' || value <= 0) return maxMs;
+  return Math.min(value, maxMs);
+}
+
+function makeResultError(
+  message: string,
+  result: RunProcessResult,
+): { ok: false; error: string; code?: number; timedOut: boolean; stdout: string; stderr: string } {
+  return {
+    ok: false,
+    error: message,
+    code: result.code,
+    timedOut: result.timedOut,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
+function getRunProcessFailureMessage(result: RunProcessResult): string {
+  if (result.timedOut) return 'command timed out';
+  if (result.stderr) return result.stderr.trim();
+  if (result.stdout) return result.stdout.trim();
+  return `command failed with code ${result.code ?? -1}`;
+}
+
+function runProcess(
   spawnFn: SpawnFn,
   cmd: string,
   args: string[],
   timeoutMs: number,
-): Promise<{ ok: boolean; stdout: string; stderr: string; code?: number }> {
+): Promise<RunProcessResult> {
   return new Promise((resolve) => {
     const proc = spawnFn(cmd, args, { cwd: process.cwd() });
-    let stdout = '';
-    let stderr = '';
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
     let settled = false;
+    let timedOut = false;
+    let killTimeout: ReturnType<typeof setTimeout> | undefined;
 
-    const timer = setTimeout(() => {
+    const resolveResult = (value: RunProcessResult): void => {
       if (!settled) {
         settled = true;
-        proc.kill();
-        resolve({ ok: false, code: -1, stdout, stderr });
+        resolve(value);
       }
+    };
+
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      timedOut = true;
+      resolveResult({
+        ok: false,
+        code: -1,
+        stdout: readProcessOutput(stdoutChunks),
+        stderr: readProcessOutput(stderrChunks),
+        timedOut: true,
+      });
+      proc.kill();
+      killTimeout = setTimeout(() => {
+        proc.kill('SIGKILL');
+      }, KILL_TIMEOUT_MS);
     }, timeoutMs);
 
     proc.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
+      stdoutChunks.push(chunk);
     });
     proc.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
+      stderrChunks.push(chunk);
     });
 
     proc.on('close', (code) => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        resolve(code === 0 ? { ok: true, stdout, stderr } : { ok: false, code: code ?? -1, stdout, stderr });
+      if (settled) {
+        if (killTimeout) clearTimeout(killTimeout);
+        return;
       }
+      clearTimeout(timeout);
+      if (killTimeout) clearTimeout(killTimeout);
+      resolveResult({
+        ok: code === 0,
+        code: code ?? -1,
+        stdout: readProcessOutput(stdoutChunks),
+        stderr: readProcessOutput(stderrChunks),
+        timedOut,
+      });
     });
 
     proc.on('error', (err: Error) => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        resolve({ ok: false, code: -1, stdout, stderr: stderr + (stderr ? '\n' : '') + err.message });
-      }
+      if (settled) return;
+      clearTimeout(timeout);
+      if (killTimeout) clearTimeout(killTimeout);
+      resolveResult({
+        ok: false,
+        code: -1,
+        stdout: readProcessOutput(stdoutChunks),
+        stderr: `${readProcessOutput(stderrChunks)}${readProcessOutput(stderrChunks) ? '\\n' : ''}${err.message}`,
+        timedOut: false,
+      });
     });
   });
 }
 
+type SpawnFn = typeof spawn;
+
+type DetectExistingSupervisor = () => Promise<{ running: boolean; pid?: number }>;
+
+interface FleetToolDeps {
+  spawn?: SpawnFn;
+  detectExistingSupervisor?: DetectExistingSupervisor;
+}
+
+async function detectExistingSupervisorDefault(spawnFn: SpawnFn): Promise<{ running: boolean; pid?: number }> {
+  const result = await runProcess(spawnFn, 'pgrep', ['-f', 'supervisor serve'], MAX_TIMEOUT_FOLLOWUP_MS);
+  if (!result.ok) return { running: false };
+  const first = result.stdout.trim().split('\\n')[0];
+  if (!first) return { running: false };
+  const pid = Number.parseInt(first, 10);
+  if (Number.isNaN(pid)) return { running: false };
+  return { running: true, pid };
+}
+
+const admitMeasureInFlight = new Set<string>();
+
+function snapshotInput(input: unknown): Record<string, unknown> {
+  if (input === null || typeof input !== 'object') return {};
+  return input as Record<string, unknown>;
+}
+
 export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): void {
   const spawnFn = deps?.spawn ?? spawn;
+  const detectExistingSupervisor = deps?.detectExistingSupervisor ?? (() => detectExistingSupervisorDefault(spawnFn));
+
   server.registerTool(
     'llamactl_fleet_snapshot',
     {
@@ -91,13 +207,13 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         journalPath: z.string().optional(),
       },
     },
-    async (input) => {
-      const path = input.journalPath ?? defaultFleetJournalPath();
+    async ({ node, journalPath }) => {
+      const path = journalPath ?? defaultFleetJournalPath();
       const entries = readJournal(path);
       const latest = new Map<string, FleetSnapshotEntry>();
       for (const e of entries) {
         if (e.kind !== 'fleet-snapshot') continue;
-        if (input.node !== undefined && e.node !== input.node) continue;
+        if (node !== undefined && e.node !== node) continue;
         latest.set(e.node, e);
       }
       return toTextContent({ snapshots: [...latest.values()] });
@@ -115,15 +231,15 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         journalPath: z.string().optional(),
       },
     },
-    async (input) => {
-      const path = input.journalPath ?? defaultFleetJournalPath();
+    async ({ node, journalPath }) => {
+      const path = journalPath ?? defaultFleetJournalPath();
       const entries = readJournal(path);
 
       const knownNodes = new Set<string>();
       const latestTransition = new Map<string, { state: string; ts: string }>();
 
       for (const e of entries) {
-        if (input.node !== undefined && e.node !== input.node) continue;
+        if (node !== undefined && e.node !== node) continue;
         if (e.kind === 'fleet-snapshot') {
           knownNodes.add(e.node);
         } else if (
@@ -139,10 +255,10 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
       }
       for (const node of latestTransition.keys()) knownNodes.add(node);
 
-      const nodes = [...knownNodes].map((node) => {
-        const t = latestTransition.get(node);
+      const nodes = [...knownNodes].map((nodeName) => {
+        const t = latestTransition.get(nodeName);
         return {
-          node,
+          node: nodeName,
           state: (t?.state === 'HIGH' ? 'HIGH' : 'NORMAL') as 'NORMAL' | 'HIGH',
           lastTransitionAt: t?.ts ?? null,
         };
@@ -166,10 +282,8 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         journalPath: z.string().optional(),
       },
     },
-    async (input) => {
-      const path = input.journalPath ?? defaultFleetJournalPath();
-      const pendingOnly = input.pendingOnly ?? true;
-      const limit = input.limit ?? 50;
+    async ({ node, pendingOnly = true, limit = 50, sinceIsoTs, journalPath }) => {
+      const path = journalPath ?? defaultFleetJournalPath();
       const entries = readJournal(path);
 
       const executedIds = new Set<string>();
@@ -180,8 +294,8 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
       const proposals: FleetProposalEntry[] = [];
       for (const e of entries) {
         if (e.kind !== 'fleet-proposal') continue;
-        if (input.node !== undefined && e.node !== input.node) continue;
-        if (input.sinceIsoTs !== undefined && e.ts < input.sinceIsoTs) continue;
+        if (node !== undefined && e.node !== node) continue;
+        if (sinceIsoTs !== undefined && e.ts < sinceIsoTs) continue;
         if (pendingOnly && executedIds.has(e.proposalId)) continue;
         proposals.push(e);
       }
@@ -205,16 +319,15 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         journalPath: z.string().optional(),
       },
     },
-    async (input) => {
-      const path = input.journalPath ?? defaultFleetJournalPath();
-      const limit = input.limit ?? 50;
+    async ({ node, sinceIsoTs, limit = 50, journalPath }) => {
+      const path = journalPath ?? defaultFleetJournalPath();
       const entries = readJournal(path);
 
       const executions: FleetExecutionEntry[] = [];
       for (const e of entries) {
         if (e.kind !== 'fleet-execution') continue;
-        if (input.node !== undefined && e.node !== input.node) continue;
-        if (input.sinceIsoTs !== undefined && e.ts < input.sinceIsoTs) continue;
+        if (node !== undefined && e.node !== node) continue;
+        if (sinceIsoTs !== undefined && e.ts < sinceIsoTs) continue;
         executions.push(e);
       }
 
@@ -247,14 +360,13 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         journalPath: z.string().optional(),
       },
     },
-    async (input) => {
-      const path = input.journalPath ?? defaultFleetJournalPath();
-      const limit = input.limit ?? 20;
+    async ({ node, kinds, limit = 20, journalPath }) => {
+      const path = journalPath ?? defaultFleetJournalPath();
       const entries = readJournal(path);
-      const kindSet = input.kinds ? new Set(input.kinds) : null;
+      const kindSet = kinds ? new Set(kinds) : null;
 
       const filtered = entries.filter((e) => {
-        if (input.node !== undefined && e.node !== input.node) return false;
+        if (node !== undefined && e.node !== node) return false;
         if (kindSet && !kindSet.has(e.kind)) return false;
         return true;
       });
@@ -275,10 +387,34 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
       },
     },
     async ({ workload, node, timeoutMs }) => {
-      const args = ['packages/cli/src/bin.ts', 'admit', 'measure', workload];
-      if (node) args.push(`--node=${node}`);
-      const result = await runProcess(spawnFn, 'bun', args, timeoutMs ?? 120_000);
-      return toTextContent(result);
+      const input = snapshotInput({ workload, node });
+      const key = `${workload}:${node ?? ''}`;
+      if (admitMeasureInFlight.has(key)) {
+        const outcome = {
+          ok: false,
+          error: 'admit measure already running for this workload',
+          preview: input,
+        };
+        appendAudit('llamactl_admit_measure', input, 'denied', outcome);
+        return toTextContent(outcome);
+      }
+      admitMeasureInFlight.add(key);
+      const boundedTimeoutMs = toTimeoutMs(timeoutMs, MAX_TIMEOUT_MS_ADMIT);
+      try {
+        const args = [CLI_BIN_PATH, 'admit', 'measure', workload];
+        if (node) args.push(`--node=${node}`);
+        const result = await runProcess(spawnFn, 'bun', args, boundedTimeoutMs);
+        if (!result.ok) {
+          const error = makeResultError(getRunProcessFailureMessage(result), result);
+          const outcome = { ...error, preview: input };
+          appendAudit('llamactl_admit_measure', input, 'error', outcome);
+          return toTextContent(error);
+        }
+        appendAudit('llamactl_admit_measure', input, 'success', result as unknown as Record<string, unknown>);
+        return toTextContent(result);
+      } finally {
+        admitMeasureInFlight.delete(key);
+      }
     },
   );
 
@@ -292,16 +428,46 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         auto: z.boolean().optional(),
         severityThreshold: z.number().int().min(1).max(3).optional(),
         node: z.string().optional(),
+        confirm: z.boolean().optional(),
         timeoutMs: z.number().int().positive().optional(),
       },
     },
-    async ({ proposalId, auto, severityThreshold, node, timeoutMs }) => {
-      const hasProposal = proposalId != null;
+    async ({ proposalId, auto, severityThreshold, node, confirm, timeoutMs }) => {
+      const hasProposalId = proposalId != null;
       const hasAuto = auto === true;
-      if (hasProposal === hasAuto) {
-        return toTextContent({ ok: false, error: 'must specify exactly one of proposalId or auto' });
+      if (hasProposalId === hasAuto) {
+        const outcome = {
+          ok: false,
+          error: 'must specify exactly one of proposalId or auto',
+          preview: snapshotInput({ proposalId, auto, severityThreshold, node }),
+        };
+        appendAudit('llamactl_supervisor_execute', snapshotInput({ proposalId, auto, severityThreshold, node }), 'denied', outcome);
+        return toTextContent(outcome);
       }
-      const args = ['packages/cli/src/bin.ts', 'supervisor', 'tick'];
+      if (confirm !== true) {
+        const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
+        const outcome = {
+          ok: false,
+          error: 'destructive operation requires confirm:true',
+          preview,
+        };
+        appendAudit('llamactl_supervisor_execute', preview, 'denied', outcome);
+        return toTextContent(outcome);
+      }
+
+      const running = await detectExistingSupervisor();
+      if (running.running) {
+        const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
+        const outcome = {
+          ok: false,
+          error: 'supervisor execute blocked by running supervisor',
+          preview: { ...preview, runningPid: running.pid },
+        };
+        appendAudit('llamactl_supervisor_execute', preview, 'denied', outcome);
+        return toTextContent(outcome);
+      }
+
+      const args = [CLI_BIN_PATH, 'supervisor', 'tick'];
       if (node) args.push(`--node=${node}`);
       if (hasAuto) {
         args.push('--auto');
@@ -309,8 +475,36 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
       } else {
         args.push(`--execute=${proposalId}`);
       }
-      const result = await runProcess(spawnFn, 'bun', args, timeoutMs ?? 60_000);
-      return toTextContent(result);
+      const boundedTimeoutMs = toTimeoutMs(timeoutMs, MAX_TIMEOUT_MS_EXECUTE);
+      const result = await runProcess(spawnFn, 'bun', args, boundedTimeoutMs);
+      const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
+      if (!result.ok) {
+        const outcome = makeResultError(getRunProcessFailureMessage(result), result);
+        appendAudit('llamactl_supervisor_execute', preview, 'error', outcome);
+        return toTextContent({
+          ...outcome,
+          preview,
+        });
+      }
+
+      appendAudit('llamactl_supervisor_execute', preview, 'success', result as unknown as Record<string, unknown>);
+      return toTextContent({ ...result, preview });
     },
   );
+}
+
+function readJournal(journalPath: string): FleetJournalEntry[] {
+  if (!existsSync(journalPath)) return [];
+  const raw = readFileSync(journalPath, 'utf8');
+  const entries: FleetJournalEntry[] = [];
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      entries.push(JSON.parse(trimmed) as FleetJournalEntry);
+    } catch {
+      console.warn('[fleet-tools] skipping malformed journal line:', trimmed.slice(0, 80));
+    }
+  }
+  return entries;
 }

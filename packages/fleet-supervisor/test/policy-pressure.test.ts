@@ -2,7 +2,12 @@ import { describe, it, expect } from 'bun:test';
 import { PressureWindow, detectPressure, isPressureHot } from '../src/policy.js';
 import type { NodeMemSnapshot, WorkloadSnapshot } from '../src/types.js';
 
-const THRESHOLDS = { headroomMinMb: 512, compressorWarnMb: 2048, consecutiveTicks: 3 };
+const THRESHOLDS = {
+  headroomMinMb: 512,
+  compressorWarnMb: 2048,
+  consecutiveTicks: 3,
+  clearTicks: 5,
+};
 
 const HIGH: NodeMemSnapshot = {
   free_mb: 30, compressor_mb: 4000,

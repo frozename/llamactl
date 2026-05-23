@@ -8,6 +8,11 @@ export function defaultFleetJournalPath(): string {
   return `${base}/fleet-supervisor/journal.jsonl`;
 }
 
+export function defaultFleetAuditPath(): string {
+  const base = process.env['LLAMACTL_FLEET_DIR'] ?? `${homedir()}/.llamactl/fleet-supervisor`;
+  return `${base}/audit.jsonl`;
+}
+
 export function appendFleetJournal(entry: FleetJournalEntry, path: string): void {
   mkdirSync(dirname(path), { recursive: true });
   appendFileSync(path, JSON.stringify(entry) + '\n');

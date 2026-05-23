@@ -11,7 +11,7 @@ describe('probeWorkload', () => {
     };
     const result = await probeWorkload(
       { name: 'qwen-host', endpoint: 'http://127.0.0.1:8090', kind: 'ModelHost' },
-      { fetch: fakeFetch as typeof fetch, timeoutMs: 500 },
+      { fetch: fakeFetch as unknown as typeof fetch, timeoutMs: 500 },
     );
     expect(result.reachable).toBe(true);
     expect(result.healthLatencyMs).toBeGreaterThanOrEqual(0);
@@ -23,7 +23,7 @@ describe('probeWorkload', () => {
     const fakeFetch = async () => new Response('Bad Gateway', { status: 502 });
     const result = await probeWorkload(
       { name: 'granite-mini-3b', endpoint: 'http://mac-mini.ai:8086', kind: 'ModelRun' },
-      { fetch: fakeFetch as typeof fetch, timeoutMs: 500, priorConsecutiveErrors: 3 },
+      { fetch: fakeFetch as unknown as typeof fetch, timeoutMs: 500, priorConsecutiveErrors: 3 },
     );
     expect(result.reachable).toBe(false);
     expect(result.consecutiveErrors).toBe(4);

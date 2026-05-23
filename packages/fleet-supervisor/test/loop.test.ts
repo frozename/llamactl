@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import { startSupervisorLoop } from '../src/loop.js';
-import type { FleetJournalEntry, NodeMemSnapshot, WorkloadSnapshot } from '../src/types.js';
+import type { FleetJournalEntry, FleetTransitionEntry, NodeMemSnapshot, WorkloadSnapshot } from '../src/types.js';
 import type { WorkloadTarget } from '../src/workload-probe.js';
 
 const FAKE_NODE_MEM: NodeMemSnapshot = {
@@ -15,6 +15,8 @@ const TARGET: WorkloadTarget = {
 };
 
 describe('startSupervisorLoop', () => {
+  const isTransition = (entry: FleetJournalEntry): entry is FleetTransitionEntry =>
+    entry.kind === 'fleet-transition';
   it('one tick emits fleet-snapshot + fleet-heartbeat to writeJournal', async () => {
     const entries: FleetJournalEntry[] = [];
     const handle = startSupervisorLoop({
@@ -116,10 +118,15 @@ describe('startSupervisorLoop', () => {
       },
       probeWorkload: async (t) => ({ ...makeReachable(t), rss_mb: 12000 }),
       writeJournal: (entry) => entries.push(entry),
-      pressureThresholds: { headroomMinMb: 512, compressorWarnMb: 2048, consecutiveTicks: 3 },
+      pressureThresholds: {
+        headroomMinMb: 512,
+        compressorWarnMb: 2048,
+        consecutiveTicks: 3,
+        clearTicks: 5,
+      },
     });
     await handle.done;
-    const transitions = entries.filter((e) => e.kind === 'fleet-transition');
+    const transitions = entries.filter(isTransition);
     const proposals = entries.filter((e) => e.kind === 'fleet-proposal');
     expect(transitions.length).toBe(1);
     expect(proposals.length).toBe(1);
@@ -172,27 +179,86 @@ describe('startSupervisorLoop', () => {
     });
     await handle.done;
 
-    const transitions = entries.filter((e) => e.kind === 'fleet-transition' && e.signal === 'pressure');
-    const proposals = entries.filter((e) => e.kind === 'fleet-proposal');
+    const pressureTransitions = entries.filter(isTransition).filter((entry) => entry.signal === 'pressure');
+    const proposals = entries.filter((entry) => entry.kind === 'fleet-proposal');
 
-    expect(transitions.length).toBe(2);
     expect(proposals.length).toBe(2);
+    expect(pressureTransitions.length).toBe(2);
 
-    const pressureTransitions = transitions.filter((e) => e.kind === 'fleet-transition' && e.signal === 'pressure');
     expect(pressureTransitions[0]!.from).toBe('NORMAL');
     expect(pressureTransitions[0]!.to).toBe('HIGH');
     expect(pressureTransitions[1]!.from).toBe('NORMAL');
     expect(pressureTransitions[1]!.to).toBe('HIGH');
 
-    const clearTransitions = entries.filter(
-      (e) => e.kind === 'fleet-transition' && e.signal === 'pressure-cleared',
-    );
+    const clearTransitions = entries.filter(isTransition).filter((entry) => entry.signal === 'pressure-cleared');
     expect(clearTransitions.length).toBe(1);
     expect(clearTransitions[0]!.from).toBe('HIGH');
     expect(clearTransitions[0]!.to).toBe('NORMAL');
 
     expect(proposals[0]!.kind).toBe('fleet-proposal');
     expect(proposals[1]!.kind).toBe('fleet-proposal');
+  });
+
+  it('applies oscillation hysteresis requiring clearTicks consecutive non-hot ticks', async () => {
+    const entries: FleetJournalEntry[] = [];
+    const HIGH_MEM: NodeMemSnapshot = {
+      free_mb: 30, compressor_mb: 4000,
+      active_mb: 0, inactive_mb: 0, wired_mb: 0, swap_in: 0, swap_out: 0,
+    };
+    const NORMAL_MEM: NodeMemSnapshot = {
+      free_mb: 4096, compressor_mb: 100,
+      active_mb: 0, inactive_mb: 0, wired_mb: 0, swap_in: 0, swap_out: 0,
+    };
+    const sequence = [
+      HIGH_MEM, HIGH_MEM, HIGH_MEM, HIGH_MEM,
+      NORMAL_MEM, HIGH_MEM, NORMAL_MEM, HIGH_MEM,
+      NORMAL_MEM, NORMAL_MEM, NORMAL_MEM, NORMAL_MEM, NORMAL_MEM,
+    ];
+    const transitionsByTick: Array<{ tick: number; transition: string }> = [];
+    let tickIdx = 0;
+    const handle = startSupervisorLoop({
+      node: 'local',
+      once: false,
+      intervalMs: 1,
+      workloads: [TARGET],
+      pressureThresholds: {
+        headroomMinMb: 512,
+        compressorWarnMb: 2048,
+        consecutiveTicks: 3,
+        clearTicks: 5,
+      },
+      probeNodeMem: async () => {
+        const next = sequence[tickIdx] ?? NORMAL_MEM;
+        tickIdx++;
+        if (tickIdx >= sequence.length) handle.stop();
+        return next;
+      },
+      probeWorkload: async (t) => ({ ...makeReachable(t), rss_mb: 12000 }),
+      writeJournal: (entry) => {
+        entries.push(entry);
+        if (isTransition(entry)) {
+          transitionsByTick.push({ tick: tickIdx, transition: `${entry.signal}:${entry.from}->${entry.to}` });
+        }
+      },
+    });
+    await handle.done;
+
+    const pressureTransitions = entries.filter(isTransition).filter((entry) => entry.signal === 'pressure');
+    const pressureClearTransitions = entries
+      .filter(isTransition)
+      .filter((entry) => entry.signal === 'pressure-cleared');
+    const pressurePressureTransitions = transitionsByTick.filter(
+      ({ transition }) => transition.startsWith('pressure:'),
+    );
+    const pressureClearTicks = transitionsByTick
+      .filter(({ transition }) => transition.startsWith('pressure-cleared:'))
+      .map(({ tick }) => tick);
+
+    expect(pressureTransitions.length).toBe(1);
+    expect(pressurePressureTransitions.map(({ tick }) => tick)[0]).toBe(3);
+    expect(pressureClearTransitions.length).toBe(1);
+    expect(pressureClearTicks).toEqual([13]);
+    expect(entries.filter((entry) => entry.kind === 'fleet-proposal').length).toBe(1);
   });
 
   it('emits fleet-transition + fleet-proposal on healthy→degraded workload flip', async () => {
