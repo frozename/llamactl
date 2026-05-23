@@ -13,6 +13,7 @@ describe('projectAdmissionHeadroom', () => {
       projectedFreeGiB: expect.closeTo(2.4, 5),
       allowed: false,
       reason: 'projected_free_below_headroom',
+      source: 'declared',
     });
   });
 

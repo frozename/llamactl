@@ -166,20 +166,32 @@ export interface AdmissionInput {
    */
   currentCompressorGiB?: number;
   compressorMaxGiB?: number;
+  /**
+   * When set (from a prior `llamactl admit measure` probe), the measured
+   * peak RSS in MiB is used directly instead of expectedMemoryGiB × safetyFactor.
+   * A 5% safety bump is applied: peakMb × 1.05 / 1024 → GiB projection.
+   * This catches hand-maintained YAML underestimates (e.g. qwen3-8b declared
+   * 7 GiB, actual peak 10 GiB).
+   */
+  measuredPeakMb?: number;
 }
 
 export type AdmissionResult =
-  | { projectedFreeGiB: number; allowed: true; currentCompressorGiB?: number }
-  | { projectedFreeGiB: number; allowed: false; reason: AdmissionDenyReason; currentCompressorGiB?: number };
+  | { projectedFreeGiB: number; allowed: true; currentCompressorGiB?: number; source: 'measured' | 'declared' }
+  | { projectedFreeGiB: number; allowed: false; reason: AdmissionDenyReason; currentCompressorGiB?: number; source: 'measured' | 'declared' };
 
 export function projectAdmissionHeadroom(input: AdmissionInput): AdmissionResult {
-  const projectedFreeGiB = input.currentFreeGiB - input.expectedMemoryGiB * (input.safetyFactor ?? 1.3);
+  const source: 'measured' | 'declared' = input.measuredPeakMb !== undefined ? 'measured' : 'declared';
+  const projectedFreeGiB = source === 'measured'
+    ? input.currentFreeGiB - (input.measuredPeakMb! * 1.05) / 1024
+    : input.currentFreeGiB - input.expectedMemoryGiB * (input.safetyFactor ?? 1.3);
 
   if (projectedFreeGiB < input.headroomMinGiB) {
     return {
       projectedFreeGiB,
       allowed: false,
       reason: 'projected_free_below_headroom',
+      source,
       ...(input.currentCompressorGiB !== undefined ? { currentCompressorGiB: input.currentCompressorGiB } : {}),
     };
   }
@@ -193,6 +205,7 @@ export function projectAdmissionHeadroom(input: AdmissionInput): AdmissionResult
       projectedFreeGiB,
       allowed: false,
       reason: 'compressor_above_threshold',
+      source,
       currentCompressorGiB: input.currentCompressorGiB,
     };
   }
@@ -200,6 +213,7 @@ export function projectAdmissionHeadroom(input: AdmissionInput): AdmissionResult
   return {
     projectedFreeGiB,
     allowed: true,
+    source,
     ...(input.currentCompressorGiB !== undefined ? { currentCompressorGiB: input.currentCompressorGiB } : {}),
   };
 }
