@@ -29,6 +29,7 @@ import {
 import { createOpenAICompatProvider } from '@nova/contracts';
 import { appendAudit, toTextContent } from '@nova/mcp-shared';
 import { registerPipelineTools } from './pipelines.js';
+import { registerFleetTools } from './tools/fleet.js';
 import { registerModelsLeaderboardTool } from './tools/models-leaderboard.js';
 
 /**
@@ -1238,6 +1239,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   // `LLAMACTL_MCP_PIPELINES_DIR` overrides the scan path (tests use
   // this to avoid touching the real home directory).
   registerPipelineTools(server);
+  registerFleetTools(server);
 
   return server;
 }

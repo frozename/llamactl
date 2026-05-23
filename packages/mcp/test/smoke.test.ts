@@ -126,6 +126,11 @@ describe('@llamactl/mcp read surface', () => {
       'llamactl.embersynth.sync',
       'llamactl.embersynth.set-default-profile',
       'llamactl.node.budget',
+      'llamactl_fleet_executions',
+      'llamactl_fleet_journal_tail',
+      'llamactl_fleet_pressure',
+      'llamactl_fleet_proposals',
+      'llamactl_fleet_snapshot',
       'llamactl_models_leaderboard',
     ]);
     const OPS_CHAT_ONLY_EXCLUDED = new Set([
@@ -177,6 +182,11 @@ describe('@llamactl/mcp read surface', () => {
       'llamactl.server.status',
       'llamactl.workload.delete',
       'llamactl.workload.list',
+      'llamactl_fleet_executions',
+      'llamactl_fleet_journal_tail',
+      'llamactl_fleet_pressure',
+      'llamactl_fleet_proposals',
+      'llamactl_fleet_snapshot',
       'llamactl_models_leaderboard',
     ]);
   });
