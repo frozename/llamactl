@@ -10,7 +10,7 @@ export interface PressureThresholds {
   headroomMinMb: number;
   compressorWarnMb: number;
   consecutiveTicks: number;
-  /** Consecutive non-hot ticks required to exit HIGH. Default 3. */
+  /** Consecutive non-hot ticks required to exit HIGH. Default 5. */
   clearTicks?: number;
 }
 

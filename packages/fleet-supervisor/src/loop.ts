@@ -19,7 +19,7 @@ export const DEFAULT_PRESSURE_THRESHOLDS: PressureThresholds = {
   headroomMinMb: 512,
   compressorWarnMb: 2048,
   consecutiveTicks: 3,
-  clearTicks: 3,
+  clearTicks: 5,
 };
 
 export const DEFAULT_DEGRADATION_THRESHOLDS: DegradationThresholds = {
@@ -170,7 +170,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
         consecutiveClearTicks = 0;
       } else {
         consecutiveClearTicks++;
-        const clearTicks = pressureThresholds.clearTicks ?? 3;
+        const clearTicks = pressureThresholds.clearTicks ?? 5;
         if (consecutiveClearTicks >= clearTicks) {
           const transition: FleetTransitionEntry = {
             kind: 'fleet-transition',

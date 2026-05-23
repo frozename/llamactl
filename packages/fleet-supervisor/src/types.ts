@@ -32,7 +32,7 @@ export interface FleetTransitionEntry {
   kind: 'fleet-transition';
   ts: string; node: string;
   subject: string; subjectKind: 'workload' | 'node';
-  signal: 'pressure' | 'degraded';
+  signal: 'pressure' | 'pressure-cleared' | 'degraded';
   from: string; to: string;
 }
 
