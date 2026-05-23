@@ -15,7 +15,9 @@ export interface AuditReadOptions {
   auditPath?: string;     // default defaultFleetAuditPath()
   tool?: string;          // exact-match filter on `tool`
   outcome?: "denied" | "success" | "error";
+  /** ISO 8601 timestamp; entries with ts >= since are included. Compared via Date.parse (timezone-aware). */
   since?: string;    // entries with ts >= since
+  /** Values <1 are clamped to 1 (no count-only mode). */
   limit?: number;         // most-recent-first; default 50, cap 500
 }
 

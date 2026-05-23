@@ -33,6 +33,7 @@ const MAX_TIMEOUT_MS_EXECUTE = 120_000;
 const MAX_TIMEOUT_FOLLOWUP_MS = 5_000;
 const KILL_TIMEOUT_MS = 2_000;
 const OUTPUT_TRUNCATION_SENTINEL = '[output truncated]';
+const deprecatedToolWarnings = new Set<string>();
 
 function readProcessOutput(chunks: Buffer[]): string {
   const merged = Buffer.concat(chunks);
@@ -41,6 +42,12 @@ function readProcessOutput(chunks: Buffer[]): string {
   const suffix = Buffer.from(`\\n${OUTPUT_TRUNCATION_SENTINEL}`);
   const trimTo = Math.max(0, MAX_OUTPUT_BYTES - suffix.length);
   return Buffer.concat([merged.slice(0, trimTo), suffix]).toString();
+}
+
+function warnDeprecatedToolAlias(oldName: string, newName: string): void {
+  if (deprecatedToolWarnings.has(oldName)) return;
+  deprecatedToolWarnings.add(oldName);
+  console.error(`[llamactl-mcp] deprecated: ${oldName} -> ${newName}; will be removed`);
 }
 
 function appendAudit(
@@ -199,6 +206,47 @@ function snapshotInput(input: unknown): Record<string, unknown> {
   return input as Record<string, unknown>;
 }
 
+const pressureStatusInputSchema = {
+  journalPath: z.string().optional(),
+  node: z.string().optional(),
+  limit: z.number().optional(),
+};
+
+async function handleFleetPressureStatus(
+  { journalPath, node, limit }: { journalPath?: string; node?: string; limit?: number },
+): Promise<{ content: { type: 'text'; text: string }[] }> {
+  const path = journalPath ?? defaultFleetJournalPath();
+  const report = await readSupervisorStatus({ journalPath: path, node, limit });
+  return toTextContent(report as any);
+}
+
+const auditInputSchema = {
+  auditPath: z.string().optional(),
+  tool: z.string().optional(),
+  outcome: z.enum(['denied', 'success', 'error']).optional(),
+  since: z.string().optional(),
+  limit: z.number().optional(),
+};
+
+async function handleFleetAudit(
+  {
+    auditPath,
+    tool,
+    outcome,
+    since,
+    limit,
+  }: {
+    auditPath?: string;
+    tool?: string;
+    outcome?: 'denied' | 'success' | 'error';
+    since?: string;
+    limit?: number;
+  },
+): Promise<{ content: { type: 'text'; text: string }[] }> {
+  const result = await readAuditEntries({ auditPath, tool, outcome, since, limit });
+  return toTextContent(result as any);
+}
+
 export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): void {
   const spawnFn = deps?.spawn ?? spawn;
   const detectExistingSupervisor = deps?.detectExistingSupervisor ?? (() => detectExistingSupervisorDefault(spawnFn));
@@ -281,17 +329,21 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     {
       title: 'Fleet supervisor audit',
       description: 'Read recent MCP write-tool audit entries from the fleet-supervisor audit log. Supports filters by tool name, outcome, and timestamp.',
-      inputSchema: {
-        auditPath: z.string().optional(),
-        tool: z.string().optional(),
-        outcome: z.enum(['denied', 'success', 'error']).optional(),
-        since: z.string().optional(),
-        limit: z.number().optional(),
-      },
+      inputSchema: auditInputSchema,
     },
-    async ({ auditPath, tool, outcome, since, limit }) => {
-      const result = await readAuditEntries({ auditPath, tool, outcome, since, limit });
-      return toTextContent(result as any);
+    handleFleetAudit,
+  );
+
+  server.registerTool(
+    'llamactl_fleet_supervisor_audit',
+    {
+      title: 'Fleet supervisor audit (deprecated)',
+      description: '[DEPRECATED — use llamactl_fleet_audit] Backward-compatible alias for llamactl_fleet_audit.',
+      inputSchema: auditInputSchema,
+    },
+    async (input) => {
+      warnDeprecatedToolAlias('llamactl_fleet_supervisor_audit', 'llamactl_fleet_audit');
+      return handleFleetAudit(input);
     },
   );
 
@@ -300,16 +352,22 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     {
       title: 'Fleet supervisor status',
       description: 'Current pressure status per node derived from the fleet-supervisor journal: state, time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status entries. Complementary to llamactl_fleet_pressure (transition-derived current state). This tool returns richer periodic fields: time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status journal entries.',
-      inputSchema: {
-        journalPath: z.string().optional(),
-        node: z.string().optional(),
-        limit: z.number().optional(),
-      },
+      inputSchema: pressureStatusInputSchema,
     },
-    async ({ journalPath, node, limit }) => {
-      const path = journalPath ?? defaultFleetJournalPath();
-      const report = await readSupervisorStatus({ journalPath: path, node, limit });
-      return toTextContent(report as any);
+    handleFleetPressureStatus,
+  );
+
+  server.registerTool(
+    'llamactl_fleet_supervisor_status',
+    {
+      title: 'Fleet supervisor status (deprecated)',
+      description:
+        '[DEPRECATED — use llamactl_fleet_pressure_status] Backward-compatible alias for llamactl_fleet_pressure_status.',
+      inputSchema: pressureStatusInputSchema,
+    },
+    async (input) => {
+      warnDeprecatedToolAlias('llamactl_fleet_supervisor_status', 'llamactl_fleet_pressure_status');
+      return handleFleetPressureStatus(input);
     },
   );
 

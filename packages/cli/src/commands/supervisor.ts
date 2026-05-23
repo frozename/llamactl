@@ -117,13 +117,13 @@ export async function runSupervisor(args: string[]): Promise<number> {
 
     for (const node of report.nodes) {
       if (node.state === 'NORMAL') {
-        console.log(`node ${node.name}: NORMAL  (no recent pressure event)`);
+        console.log(`node ${node.name}: NORMAL (no recent pressure event)`);
         console.log();
       } else {
         const mins = Math.floor(node.durationMs / 60000);
         console.log(`node ${node.name}: HIGH for ${mins}m (since ${node.enteredAt})`);
         console.log(`  clear progress: ${node.consecutiveClearTicks}/${node.clearTicksNeeded}`);
-        console.log(`  free_mb=${node.free_mb} (breach: ${node.headroomBreach ? 'yes' : 'no'})  compressor_mb=${node.compressor_mb} (breach: ${node.compressorBreach ? 'yes' : 'no'})`);
+        console.log(`  free_mb=${node.free_mb} (breach: ${node.headroomBreach ? 'yes' : 'no'}) compressor_mb=${node.compressor_mb} (breach: ${node.compressorBreach ? 'yes' : 'no'})`);
         console.log(`  last ${node.recent.length} pressure-status:`);
         for (const recent of node.recent) {
           const t = new Date(recent.ts).toLocaleTimeString('en-US', { hour12: false });
@@ -294,6 +294,8 @@ interface Flags {
 
 }
 
+const warnedDeprecatedAuditFlagNames = new Set<string>();
+
 function num(raw: string, prefix: string, fallback: number): number {
   const v = Number(raw.slice(prefix.length));
   if (!Number.isFinite(v) || v < 0) {
@@ -337,6 +339,14 @@ function parseFlags(argv: string[]): Flags {
     if (raw === '--json') { json = true; continue; }
     if (raw.startsWith('--limit=')) { limit = num(raw, '--limit=', 0) || undefined; continue; }
     if (raw.startsWith('--audit-path=')) { auditPath = raw.slice('--audit-path='.length); continue; }
+    if (raw.startsWith('--audit=')) {
+      if (!warnedDeprecatedAuditFlagNames.has('--audit')) {
+        console.error('supervisor audit: --audit is deprecated; use --audit-path');
+        warnedDeprecatedAuditFlagNames.add('--audit');
+      }
+      auditPath = raw.slice('--audit='.length);
+      continue;
+    }
     if (raw.startsWith('--tool=')) { tool = raw.slice('--tool='.length); continue; }
     if (raw.startsWith('--outcome=')) {
       const v = raw.slice('--outcome='.length);
