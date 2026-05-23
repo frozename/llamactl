@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { toTextContent } from '@nova/mcp-shared';
@@ -26,7 +27,59 @@ function readJournal(journalPath: string): FleetJournalEntry[] {
   return entries;
 }
 
-export function registerFleetTools(server: McpServer): void {
+type SpawnFn = typeof spawn;
+
+interface FleetToolDeps {
+  spawn?: SpawnFn;
+}
+
+async function runProcess(
+  spawnFn: SpawnFn,
+  cmd: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<{ ok: boolean; stdout: string; stderr: string; code?: number }> {
+  return new Promise((resolve) => {
+    const proc = spawnFn(cmd, args, { cwd: process.cwd() });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        proc.kill();
+        resolve({ ok: false, code: -1, stdout, stderr });
+      }
+    }, timeoutMs);
+
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    proc.on('close', (code) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve(code === 0 ? { ok: true, stdout, stderr } : { ok: false, code: code ?? -1, stdout, stderr });
+      }
+    });
+
+    proc.on('error', (err: Error) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve({ ok: false, code: -1, stdout, stderr: stderr + (stderr ? '\n' : '') + err.message });
+      }
+    });
+  });
+}
+
+export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): void {
+  const spawnFn = deps?.spawn ?? spawn;
   server.registerTool(
     'llamactl_fleet_snapshot',
     {
@@ -207,6 +260,58 @@ export function registerFleetTools(server: McpServer): void {
       });
 
       return toTextContent({ entries: filtered.slice(-limit) });
+    },
+  );
+
+  server.registerTool(
+    'llamactl_admit_measure',
+    {
+      title: 'Admit Measure',
+      description: 'Probe peak RSS for a workload via `admit measure`.',
+      inputSchema: {
+        workload: z.string(),
+        node: z.string().optional(),
+        timeoutMs: z.number().int().positive().optional(),
+      },
+    },
+    async ({ workload, node, timeoutMs }) => {
+      const args = ['packages/cli/src/bin.ts', 'admit', 'measure', workload];
+      if (node) args.push(`--node=${node}`);
+      const result = await runProcess(spawnFn, 'bun', args, timeoutMs ?? 120_000);
+      return toTextContent(result);
+    },
+  );
+
+  server.registerTool(
+    'llamactl_supervisor_execute',
+    {
+      title: 'Supervisor Execute',
+      description: 'Execute a supervisor proposal or run auto mode (single tick via --once).',
+      inputSchema: {
+        proposalId: z.string().optional(),
+        auto: z.boolean().optional(),
+        severityThreshold: z.number().int().min(1).max(3).optional(),
+        node: z.string().optional(),
+        timeoutMs: z.number().int().positive().optional(),
+      },
+    },
+    async ({ proposalId, auto, severityThreshold, node, timeoutMs }) => {
+      const hasProposal = proposalId != null;
+      const hasAuto = auto === true;
+      if (hasProposal === hasAuto) {
+        return toTextContent({ ok: false, error: 'must specify exactly one of proposalId or auto' });
+      }
+      const args = ['packages/cli/src/bin.ts', 'supervisor'];
+      if (node) args.push(`--node=${node}`);
+      args.push('--once');
+      if (hasAuto) {
+        args.push('--auto');
+        if (severityThreshold != null) args.push(`--severity-threshold=${severityThreshold}`);
+      } else {
+        args.push(`--execute=${proposalId}`);
+      }
+      const result = await runProcess(spawnFn, 'bun', args, timeoutMs ?? 60_000);
+      return toTextContent(result);
     },
   );
 }
