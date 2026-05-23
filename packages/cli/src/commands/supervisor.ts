@@ -9,7 +9,6 @@ import {
   type WorkloadTarget,
   type FleetJournalEntry,
 } from '@llamactl/fleet-supervisor';
-import { defaultFleetAuditPath } from "@llamactl/fleet-supervisor";
 import { runExecutor } from '../../../fleet-supervisor/src/executor.js';
 import { getGlobals } from '../dispatcher.js';
 import { setWorkloadEnabled } from './setEnabled.js';
@@ -100,7 +99,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
   if (sub === 'status') {
     const report = await readSupervisorStatus({
       journalPath,
-      node: globalNode && rest.some(r => r.startsWith('--node=')) ? flags.node : undefined,
+      node: flags.node,
       limit: flags.limit,
     });
 
@@ -139,7 +138,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
   }
 
   if (sub === 'audit') {
-    const res = readAuditEntries({
+    const res = await readAuditEntries({
       auditPath: flags.audit,
       tool: flags.tool,
       outcome: flags.outcome,
@@ -152,6 +151,9 @@ export async function runSupervisor(args: string[]): Promise<number> {
       return 0;
     }
 
+    if (res.malformedLines > 0) {
+      console.log(`audit: ${res.malformedLines} malformed lines skipped`);
+    }
     console.log(`audit: ${res.auditPath}  total=${res.total} shown=${res.entries.length}\n`);
     
     const summarize = (obj: any) => {

@@ -359,7 +359,40 @@ describe('startSupervisorLoop', () => {
     await handle.done;
     expect(observed).toEqual([{ kind: 'fleet-snapshot', node: 'local' }]);
   });
-});
+
+  it('emits a fleet-pressure-status entry on the same tick as the NORMALéHIGH transition', async () => {
+    const entries: any[] = [];
+    let tickCount = 0;
+    const handle = startSupervisorLoop({
+      node: 'local',
+      intervalMs: 1,
+      workloads: [TARGET],
+      probeNodeMem: async () => {
+        if (tickCount++ >= 3) handle.stop();
+        return { ...FAKE_NODE_MEM, free_mb: 100, compressor_mb: 4000 };
+      },
+      probeWorkload: async (t) => makeReachable(t),
+      writeJournal: (entry) => entries.push(entry),
+      pressureThresholds: {
+        headroomMinMb: 512,
+        compressorWarnMb: 2048,
+        consecutiveTicks: 3,
+        clearTicks: 5,
+      },
+      pressureStatusEveryTicks: 0, // disable periodic to ensure we only get the inline one
+    });
+    await handle.done;
+    
+    const transitions = entries.filter(e => e.kind === 'fleet-transition' && e.to === 'HIGH');
+    const statuses = entries.filter(e => e.kind === 'fleet-pressure-status');
+    expect(transitions.length).toBe(1);
+    expect(statuses.length).toBe(1);
+    expect(statuses[0].ts).toBe(transitions[0].ts);
+    expect(statuses[0].enteredAt).toBe(transitions[0].ts);
+    expect(statuses[0].durationMs).toBe(0);
+  });
+ });
+  
 
 function makeReachable(target: WorkloadTarget): WorkloadSnapshot {
   return {

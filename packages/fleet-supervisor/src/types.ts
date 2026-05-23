@@ -67,7 +67,7 @@ export interface FleetPressureStatusEntry {
   ts: string;
   node: string;
   state: 'NORMAL' | 'HIGH';
-  enteredAt: string;          // ISO ts of last NORMAL→HIGH transition (or supervisor start)
+  enteredAt: string;          // ISO ts of last NORMAL→HIGH transition
   durationMs: number;         // ts - enteredAt
   consecutiveClearTicks: number;
   clearTicksNeeded: number;

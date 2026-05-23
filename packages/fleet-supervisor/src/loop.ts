@@ -167,10 +167,26 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
         action: pressure.proposal.action,
       };
       writeJournal(proposal);
-      lastPressureLevel = 'HIGH';
+     lastPressureLevel = 'HIGH';
       consecutiveClearTicks = 0;
       enteredHighAt = ts;
       ticksInHigh = 0;
+
+      const statusEntry: import('./types.js').FleetPressureStatusEntry = {
+        kind: 'fleet-pressure-status',
+        ts,
+        node: opts.node,
+        state: 'HIGH',
+        enteredAt: enteredHighAt,
+        durationMs: 0,
+        consecutiveClearTicks,
+        clearTicksNeeded: pressureThresholds.clearTicks,
+        free_mb: node_mem.free_mb,
+        compressor_mb: node_mem.compressor_mb,
+        headroomBreach: node_mem.free_mb < pressureThresholds.headroomMinMb,
+        compressorBreach: node_mem.compressor_mb > pressureThresholds.compressorWarnMb,
+      };
+      writeJournal(statusEntry);
   } else if (lastPressureLevel === 'HIGH') {
     ticksInHigh++;
     const latestWindowEntry = pressureWindow.tail(1)[0];

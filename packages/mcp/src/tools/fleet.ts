@@ -290,7 +290,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
       },
     },
     async ({ auditPath, tool, outcome, sinceIsoTs, limit }) => {
-      const result = readAuditEntries({ auditPath, tool, outcome, sinceIsoTs, limit });
+      const result = await readAuditEntries({ auditPath, tool, outcome, sinceIsoTs, limit });
       return toTextContent(result as any);
     },
   );

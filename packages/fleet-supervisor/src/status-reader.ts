@@ -32,6 +32,7 @@ export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): P
   const nodeStates = new Map<string, {
     state: 'NORMAL' | 'HIGH';
     enteredAt: string | null;
+    lastTransitionTs: string | null;
     lastStatus: FleetPressureStatusEntry | null;
     recent: FleetPressureStatusEntry[];
   }>();
@@ -41,6 +42,7 @@ export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): P
       nodeStates.set(node, {
         state: 'NORMAL',
         enteredAt: null,
+        lastTransitionTs: null,
         lastStatus: null,
         recent: [],
       });
@@ -67,10 +69,12 @@ export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): P
           const state = ensureNode(entry.node);
           state.state = 'HIGH';
           state.enteredAt = trans.ts;
+          state.lastTransitionTs = trans.ts;
         } else if (trans.signal === 'pressure-cleared' && trans.to === 'NORMAL') {
           const state = ensureNode(entry.node);
           state.state = 'NORMAL';
           state.enteredAt = null;
+          state.lastTransitionTs = trans.ts;
         }
       } else if (entry.kind === 'fleet-pressure-status') {
         const status = entry as FleetPressureStatusEntry;
@@ -79,6 +83,10 @@ export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): P
         state.recent.push(status);
         if (state.recent.length > limit) {
           state.recent.shift();
+        }
+        if (state.lastTransitionTs === null || status.enteredAt > state.lastTransitionTs) {
+          state.state = status.state;
+          state.enteredAt = status.state === 'HIGH' ? status.enteredAt : null;
         }
       }
     } catch (err) {
@@ -97,14 +105,14 @@ export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): P
       node,
       state: state.state,
       enteredAt: state.enteredAt,
-      durationMs: state.enteredAt ? now - new Date(state.enteredAt).getTime() : 0,
+      durationMs: state.enteredAt ? Math.max(0, now - new Date(state.enteredAt).getTime()) : 0,
       consecutiveClearTicks: state.lastStatus ? state.lastStatus.consecutiveClearTicks : 0,
       clearTicksNeeded: state.lastStatus ? state.lastStatus.clearTicksNeeded : 5,
       free_mb: state.lastStatus ? state.lastStatus.free_mb : 0,
       compressor_mb: state.lastStatus ? state.lastStatus.compressor_mb : 0,
       headroomBreach: state.lastStatus ? state.lastStatus.headroomBreach : false,
       compressorBreach: state.lastStatus ? state.lastStatus.compressorBreach : false,
-      recent: state.recent.reverse(), // most recent first
+      recent: [...state.recent].reverse(), // most recent first
     });
   }
 
