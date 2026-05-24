@@ -79,3 +79,50 @@ export interface AnthropicMessagesRequest {
   top_p?: number;
   top_k?: number;
 }
+
+export interface AnthropicMessagesResponse {
+  id: string;
+  type: 'message';
+  role: 'assistant';
+  content: AnthropicContentBlock[];
+  model: string;
+  stop_reason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use';
+  stop_sequence?: string;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+  };
+}
+
+export interface OpenAIUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
+export interface OpenAIChatToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+export interface OpenAIChatMessageResponse {
+  role: 'assistant';
+  content: string | null;
+  tool_calls?: OpenAIChatToolCall[];
+}
+
+export interface OpenAIChatChoice {
+  index: number;
+  message: OpenAIChatMessageResponse;
+  finish_reason: string | null;
+}
+
+export interface OpenAIChatResponse {
+  id: string;
+  model: string;
+  choices: OpenAIChatChoice[];
+  usage?: OpenAIUsage;
+}

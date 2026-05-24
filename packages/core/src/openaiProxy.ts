@@ -1,6 +1,10 @@
 import type { ModelInfo, ModelListResponse } from '@nova/contracts';
 import { statSync } from 'node:fs';
-import { AnthropicTranslationError, translateAnthropicRequest } from './anthropic/translateRequest.js';
+import {
+  AnthropicTranslationError,
+  translateAnthropicRequest,
+} from './anthropic/translateRequest.js';
+import { translateOpenAIResponse } from './anthropic/translateResponse.js';
 import type { AnthropicMessagesRequest } from './anthropic/types.js';
 import { resolveEnv } from './env.js';
 import { endpoint as llamaEndpoint, readServerState, readServerPid } from './server.js';
@@ -153,6 +157,7 @@ type ProxyContext = {
   search: string;
   init: RequestInit;
   bodyText?: string;
+  isAnthropic?: boolean;
 };
 
 let routeMapCache: { mtimeNs: bigint; map: Map<string, RouteEntry> } | null = null;
@@ -238,6 +243,7 @@ async function parseIncoming(req: Request, resolved: ResolvedEnv): Promise<Proxy
         target: `${llamaEndpoint(resolved)}${translatedUrl.pathname}${translatedUrl.search}`,
         pathname: translatedUrl.pathname,
         search: translatedUrl.search,
+        isAnthropic: true,
         bodyText: translatedBodyText,
         init: {
           method: req.method,
@@ -257,11 +263,12 @@ async function parseIncoming(req: Request, resolved: ResolvedEnv): Promise<Proxy
     req,
     resolved,
     target: fallbackTarget,
-    pathname: url.pathname,
-    search: url.search,
-    init: {
-      method: req.method,
-      headers,
+      pathname: url.pathname,
+      search: url.search,
+      isAnthropic: false,
+      init: {
+        method: req.method,
+        headers,
     },
   };
 }
@@ -331,7 +338,34 @@ async function forward(context: ProxyContext): Promise<Response> {
   return upstream;
 }
 
-function maybeTranslateResponse(upstream: Response): Response {
+async function maybeTranslateResponse(context: ProxyContext, upstream: Response): Promise<Response> {
+  const contentType = upstream.headers.get('content-type');
+  if (context.isAnthropic && contentType?.toLowerCase().includes('text/event-stream')) {
+    // TODO(T3.2): translate Anthropic SSE responses once the stream state machine lands.
+    return upstream;
+  }
+  if (context.isAnthropic && upstream.ok && contentType && isJsonContentType(contentType)) {
+    try {
+      const translated = translateOpenAIResponse((await upstream.clone().json()) as never);
+      const respHeaders = new Headers();
+      for (const [key, value] of upstream.headers.entries()) {
+        const lower = key.toLowerCase();
+        if (lower === 'transfer-encoding' || lower === 'connection') continue;
+        respHeaders.set(key, value);
+      }
+      return Response.json(translated, { status: upstream.status, headers: respHeaders });
+    } catch (error) {
+      return Response.json(
+        {
+          error: {
+            message: error instanceof Error ? error.message : 'anthropic response translation failed',
+            type: 'anthropic_response_translation_error',
+          },
+        },
+        { status: 502 },
+      );
+    }
+  }
   const respHeaders = new Headers();
   for (const [key, value] of upstream.headers.entries()) {
     const lower = key.toLowerCase();
@@ -361,5 +395,5 @@ export async function proxyOpenAI(
   const routed = await resolveRoute(translated);
   if (routed instanceof Response) return routed;
   const upstream = await forward(routed);
-  return maybeTranslateResponse(upstream);
+  return maybeTranslateResponse(routed, upstream);
 }

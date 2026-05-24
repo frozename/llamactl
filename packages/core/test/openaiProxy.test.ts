@@ -208,7 +208,21 @@ test('/v1/messages translates into /v1/chat/completions and forwards upstream', 
     globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       calls.push({ url, body: typeof init?.body === 'string' ? init.body : null });
-      return Response.json({ ok: true });
+      return Response.json(
+        {
+          id: 'msg_1',
+          model: 'claude-3-7-sonnet',
+          choices: [
+            {
+              index: 0,
+              message: { role: 'assistant', content: 'hello' },
+              finish_reason: 'stop',
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 2 },
+        },
+        { headers: { 'content-type': 'application/json' } },
+      );
     }) as unknown as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
@@ -233,6 +247,15 @@ test('/v1/messages translates into /v1/chat/completions and forwards upstream', 
         max_tokens: 64,
       }),
     );
+    expect(await res.json()).toEqual({
+      id: 'msg_1',
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'hello' }],
+      model: 'claude-3-7-sonnet',
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 2 },
+    });
   } finally {
     t.cleanup();
   }
@@ -268,6 +291,105 @@ test('/v1/messages translator errors return anthropic_translation_error with sta
         type: 'anthropic_translation_error',
       },
     });
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('/v1/messages response translates non-streaming JSON back to anthropic shape', async () => {
+  const t = tempEnv();
+  try {
+    globalThis.fetch = (async () =>
+      Response.json(
+        {
+          id: 'msg_1',
+          model: 'claude-3-7-sonnet',
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: 'hello',
+                tool_calls: [
+                  {
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'lookup_weather', arguments: '{"city":"Sao Paulo"}' },
+                  },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 20 },
+        },
+        { headers: { 'content-type': 'application/json' } },
+      )) as unknown as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-3-7-sonnet',
+          messages: [{ role: 'user', content: 'hello' }],
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      id: 'msg_1',
+      type: 'message',
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'hello' },
+        {
+          type: 'tool_use',
+          id: 'call_1',
+          name: 'lookup_weather',
+          input: { city: 'Sao Paulo' },
+        },
+      ],
+      model: 'claude-3-7-sonnet',
+      stop_reason: 'tool_use',
+      usage: { input_tokens: 10, output_tokens: 20 },
+    });
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('/v1/messages SSE responses pass through unchanged for now', async () => {
+  const t = tempEnv();
+  try {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"hello":true}\n\n'));
+        controller.close();
+      },
+    });
+    globalThis.fetch = (async () =>
+      new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })) as unknown as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-3-7-sonnet',
+          messages: [{ role: 'user', content: 'hello' }],
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.headers.get('content-type')).toBe('text/event-stream');
+    expect(await res.text()).toBe('data: {"hello":true}\n\n');
   } finally {
     t.cleanup();
   }
