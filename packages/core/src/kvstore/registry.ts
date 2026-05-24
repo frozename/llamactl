@@ -99,6 +99,10 @@ export class KvRegistry {
     return row ? fromRow(row) : null;
   }
 
+  findBySha(sha: string): KvEntry | null {
+    return this.get(sha);
+  }
+
   delete(sha: string): boolean {
     const result = this.storage.db.query('DELETE FROM kv_entries WHERE sha = ?').run(sha) as { changes?: number };
     return (result.changes ?? 0) > 0;

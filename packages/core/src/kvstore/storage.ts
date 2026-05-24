@@ -7,6 +7,8 @@ const SCHEMA_VERSION = 1;
 export interface KvStorage {
   db: Database;
   registry_integrity_errors_total: number;
+  registry_write_fail_total: number;
+  safeWrite(fn: () => void): { ok: true } | { ok: false; reason: 'enospc' | 'other'; error: Error };
   close(): void;
 }
 
@@ -19,10 +21,29 @@ export function openKvStorage(dataRoot: string): KvStorage {
   const storage: KvStorage = {
     db,
     registry_integrity_errors_total: 0,
+    registry_write_fail_total: 0,
+    safeWrite: (fn) => safeWrite(storage, fn),
     close: () => db.close(),
   };
   runIntegrityScan(storage);
   return storage;
+}
+
+export function safeWrite(
+  storage: KvStorage,
+  fn: () => void,
+): { ok: true } | { ok: false; reason: 'enospc' | 'other'; error: Error } {
+  try {
+    fn();
+    return { ok: true };
+  } catch (error: unknown) {
+    const normalized = toError(error);
+    if (isEnospcError(normalized)) {
+      storage.registry_write_fail_total += 1;
+      return { ok: false, reason: 'enospc', error: normalized };
+    }
+    return { ok: false, reason: 'other', error: normalized };
+  }
 }
 
 function migrate(db: Database): void {
@@ -85,4 +106,13 @@ function runIntegrityScan(storage: KvStorage): void {
     quarantine.run(row.sha);
     storage.registry_integrity_errors_total += 1;
   }
+}
+
+function isEnospcError(error: Error & { code?: unknown }): boolean {
+  return error.code === 'ENOSPC';
+}
+
+function toError(error: unknown): Error & { code?: unknown } {
+  if (error instanceof Error) return error;
+  return new Error(typeof error === 'string' ? error : 'Unknown error');
 }
