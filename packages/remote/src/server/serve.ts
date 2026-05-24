@@ -5,7 +5,7 @@ import { openaiProxy } from '@llamactl/core';
 import { resolveEnv } from '../../../core/src/env.js';
 import { migrateLegacySingletonRuntime } from '../../../core/src/workloadRuntime.js';
 import { router as appRouter } from '../router.js';
-import { unauthorizedResponse, verifyBearer } from './auth.js';
+import { extractBearer, unauthorizedResponse, verifyBearer } from './auth.js';
 import { loadCert } from './tls.js';
 import {
   agentInfo,
@@ -44,6 +44,7 @@ export interface StartAgentOptions {
   port?: number;              // default 0 (let OS pick)
   endpoint?: string;          // default '/trpc'
   tokenHash: string;          // SHA-256 hex of the expected bearer token
+  noAuth?: boolean;
   tls?: { certPath: string; keyPath: string };  // omit for plain HTTP (test-only)
   onRequest?: (url: URL) => void;
   /**
@@ -119,6 +120,7 @@ export interface RunningAgent {
   port: number;
   fingerprint: string | null;
   stop: () => Promise<void>;
+  handleRequest?: (req: Request, address?: ClientAddress | null) => Promise<Response>;
   /** Present only when StartAgentOptions.tunnelCentral was set. */
   tunnelServer?: TunnelServer;
   /** Present only when StartAgentOptions.tunnelDial was set. */
@@ -171,6 +173,22 @@ function synthesizeTransientWorkload(
   }
 }
 
+interface ClientAddress {
+  address: string;
+  port?: number;
+  family?: string;
+}
+
+function formatClientAddress(address: ClientAddress | null | undefined): string {
+  if (!address) return 'unknown';
+  return typeof address.port === 'number' ? `${address.address}:${address.port}` : address.address;
+}
+
+function isLoopbackAddress(address: string | null | undefined): boolean {
+  if (!address) return false;
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+}
+
 export function runStartupMigration(): void {
   try {
     const resolved = resolveEnv();
@@ -200,6 +218,8 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   const bindHost = opts.bindHost ?? '127.0.0.1';
   const port = opts.port ?? 0;
   const endpoint = opts.endpoint ?? '/trpc';
+  const noAuth = opts.noAuth === true;
+  let unauthenticatedNoAuthRequestCount = 0;
 
   // Async best-effort subsystems (mDNS Bonjour probes, the tunnel
   // client's reconnect loop, telemetry flushers) can throw
@@ -217,6 +237,11 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   process.on('unhandledRejection', captureFatal('unhandledRejection'));
 
   runStartupMigration();
+  if (noAuth) {
+    process.stderr.write(
+      `[agent] WARNING: --no-auth flag enabled. Bearer token validation BYPASSED for connections from 127.0.0.1. This is intended for local benchmarking/development only. DO NOT use in production. Bind host: ${bindHost}\n`,
+    );
+  }
 
   startSearchIngest().catch(() => {});
   agentInfo.set(
@@ -238,8 +263,23 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       })
     : null;
 
-  async function handleOpenAI(req: Request, url: URL): Promise<Response> {
-    if (!verifyBearer(req, opts.tokenHash)) {
+  function allowNoAuth(address: ClientAddress | null): boolean {
+    return noAuth && isLoopbackAddress(bindHost) && isLoopbackAddress(address?.address);
+  }
+
+  function logUnauthenticatedNoAuthRequest(req: Request, address: ClientAddress | null): void {
+    if (!noAuth || extractBearer(req)) return;
+    unauthenticatedNoAuthRequestCount += 1;
+    if ((unauthenticatedNoAuthRequestCount - 1) % 100 !== 0) return;
+    process.stderr.write(
+      `[agent] WARNING: serving unauthenticated request from ${formatClientAddress(address)}: ${req.method} ${new URL(req.url).pathname}\n`,
+    );
+  }
+
+  async function handleOpenAI(req: Request, url: URL, address: ClientAddress | null): Promise<Response> {
+    if (allowNoAuth(address)) {
+      logUnauthenticatedNoAuthRequest(req, address);
+    } else if (!verifyBearer(req, opts.tokenHash)) {
       return unauthorizedResponse();
     }
     const pathLabel = openaiPathBucket(url.pathname);
@@ -269,6 +309,9 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     server: any,
   ): Response | Promise<Response> => {
     const url = new URL(req.url);
+    const clientAddress = (typeof server?.requestIP === 'function' ? server.requestIP(req) : null) as
+      | ClientAddress
+      | null;
     opts.onRequest?.(url);
     if (url.pathname === '/healthz') {
       return new Response('ok', { status: 200 });
@@ -330,7 +373,9 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // Prometheus scrape endpoint. Bearer-auth'd like everything else;
     // scrapers can set the standard Authorization header.
     if (url.pathname === '/metrics') {
-      if (!verifyBearer(req, opts.tokenHash)) {
+      if (allowNoAuth(clientAddress)) {
+        logUnauthenticatedNoAuthRequest(req, clientAddress);
+      } else if (!verifyBearer(req, opts.tokenHash)) {
         return unauthorizedResponse();
       }
       return metricsRegistry.metrics().then(
@@ -348,12 +393,14 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // through to the legacy openai-proxy path below. Non-POST / other
     // paths under /v1/* fall straight through to handleOpenAI.
     if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
-      if (!verifyBearer(req, opts.tokenHash)) {
+      if (allowNoAuth(clientAddress)) {
+        logUnauthenticatedNoAuthRequest(req, clientAddress);
+      } else if (!verifyBearer(req, opts.tokenHash)) {
         return unauthorizedResponse();
       }
       return handleRagChatCompletions(req, {
         appRouter,
-        fallback: (forwarded) => handleOpenAI(forwarded, url),
+        fallback: (forwarded) => handleOpenAI(forwarded, url, clientAddress),
       });
     }
     // OpenAI-compatible gateway. Anything under /v1/* is bearer-auth'd
@@ -361,12 +408,14 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // or proxied straight to the local llama-server so external tools
     // can speak plain OpenAI SDK to the agent's URL.
     if (url.pathname.startsWith('/v1/') || url.pathname === '/v1') {
-      return handleOpenAI(req, url);
+      return handleOpenAI(req, url, clientAddress);
     }
     if (!url.pathname.startsWith(endpoint)) {
       return new Response('not found', { status: 404 });
     }
-    if (!verifyBearer(req, opts.tokenHash)) {
+    if (allowNoAuth(clientAddress)) {
+      logUnauthenticatedNoAuthRequest(req, clientAddress);
+    } else if (!verifyBearer(req, opts.tokenHash)) {
       return unauthorizedResponse();
     }
     return fetchRequestHandler({
@@ -493,6 +542,11 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     url: `${scheme}://${bindHost}:${listenPort}`,
     port: listenPort,
     fingerprint,
+    handleRequest: async (req: Request, address: ClientAddress | null = null) => {
+      return fetchHandler(req, {
+        requestIP: () => address,
+      });
+    },
     stop: async () => {
       stopSearchIngest();
       // Best-effort — never let a tunnel-client teardown error

@@ -30,7 +30,7 @@ Subcommands:
       so it loads the new tokenHash. The default --host is 127.0.0.1;
       override when the operator's kubeconfig records a different
       advertised endpoint.
-  serve [--dir=<path>] [--bind=<host>] [--port=<n>]
+  serve [--dir=<path>] [--bind=<host>] [--host=<host>] [--port=<n>] [--no-auth]
         [--dial-central=<wss-url>] [--central-bearer=<token>] [--tunnel-node-name=<name>]
         [--tunnel-central=true] [--tunnel-bearer=<token>] [--tunnel-journal=<path>]
       Run the node agent (blocks until SIGINT/SIGTERM).
@@ -369,6 +369,7 @@ export interface ServeFlags {
   dir: string;
   bindHost?: string;
   port?: number;
+  noAuth?: boolean;
   dialCentral?: string;
   centralBearer?: string;
   tunnelNodeName?: string;
@@ -380,11 +381,16 @@ export interface ServeFlags {
 export function parseServeFlags(args: string[]): ServeFlags | { error: string } {
   const flags: ServeFlags = { dir: agentConfigMod.defaultAgentDir() };
   for (const arg of args) {
+    if (arg === '--no-auth') {
+      flags.noAuth = true;
+      continue;
+    }
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent serve: flag must be --key=value: ${arg}` };
     switch (k) {
       case '--dir': flags.dir = v; break;
       case '--bind': flags.bindHost = v; break;
+      case '--host': flags.bindHost = v; break;
       case '--port': {
         const n = Number.parseInt(v, 10);
         if (!Number.isFinite(n)) return { error: `agent serve: invalid --port: ${v}` };
@@ -424,6 +430,16 @@ async function runServe(args: string[]): Promise<number> {
     }
   }
 
+  if (parsed.noAuth) {
+    const bindHost = parsed.bindHost ?? '127.0.0.1';
+    if (bindHost !== '127.0.0.1' && bindHost !== 'localhost') {
+      process.stderr.write(
+        `agent serve: --no-auth is restricted to 127.0.0.1 or localhost binds; got ${bindHost}\n`,
+      );
+      return 1;
+    }
+  }
+
   // --tunnel-central=true mounts /tunnel (WS) + /tunnel-relay on this
   // agent so NAT'd dialing nodes can reach its tRPC router. The bearer
   // is a distinct credential from tokenHash and from LLAMACTL_TUNNEL_BEARER
@@ -454,7 +470,7 @@ async function runServe(args: string[]): Promise<number> {
 
   let running;
   try {
-    running = startAgentServer({
+    const serverOptions = {
       bindHost: parsed.bindHost ?? cfg.bindHost,
       port: parsed.port ?? cfg.port,
       tokenHash: cfg.tokenHash,
@@ -484,7 +500,9 @@ async function runServe(args: string[]): Promise<number> {
             },
           }
         : {}),
-    });
+    } as Parameters<typeof startAgentServer>[0];
+    (serverOptions as Parameters<typeof startAgentServer>[0] & { noAuth?: boolean }).noAuth = parsed.noAuth;
+    running = startAgentServer(serverOptions);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (
