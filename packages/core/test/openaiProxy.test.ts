@@ -111,6 +111,159 @@ test('routes chat completions to a ModelHost by basename alias', async () => {
   }
 });
 
+test('forwards chat completions with the current request shape intact', async () => {
+  const t = tempEnv();
+  try {
+    const workload = join(t.dir, 'workloads', 'mlx-host');
+    mkdirSync(workload, { recursive: true });
+    writeFileSync(join(workload, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(
+      join(workload, 'modelhost.state'),
+      JSON.stringify({
+        kind: 'ModelHost',
+        engine: 'omlx',
+        pid: process.pid,
+        host: '127.0.0.1',
+        port: 8125,
+        modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit'],
+        startedAt: new Date('2026-05-23T00:00:00Z').toISOString(),
+      }),
+    );
+
+    let observedRequest: Request | null = null;
+    globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
+      observedRequest =
+        typeof input === 'string'
+          ? new Request(input, init)
+          : input instanceof URL
+            ? new Request(input.toString(), init)
+            : new Request(input, init);
+      return Response.json(
+        {
+          ok: true,
+          url: observedRequest.url,
+          method: observedRequest.method,
+          headers: [...observedRequest.headers.entries()].sort(),
+          body: await observedRequest.clone().text(),
+        },
+        {
+          headers: { 'x-upstream': 'llama-server' },
+        },
+      );
+    }) as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions?foo=bar', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer secret',
+          connection: 'keep-alive',
+          'content-length': '999',
+          'content-type': 'application/json',
+          host: 'localhost',
+          'x-test': 'preserved',
+        },
+        body: JSON.stringify({
+          model: 'mlx-community/Qwen3-8B-MLX-4bit',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchInlineSnapshot(`
+      {
+        "body": "{\"model\":\"mlx-community/Qwen3-8B-MLX-4bit\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+        "headers": [
+          [
+            "content-type",
+            "application/json",
+          ],
+          [
+            "x-test",
+            "preserved",
+          ],
+        ],
+        "method": "POST",
+        "ok": true,
+        "url": "http://127.0.0.1:8125/v1/chat/completions?foo=bar",
+      }
+    `);
+    expect(res.headers.get('x-upstream')).toBe('llama-server');
+    expect(observedRequest).not.toBeNull();
+    expect(observedRequest!.headers.get('authorization')).toBeNull();
+    expect(observedRequest!.headers.get('connection')).toBeNull();
+    expect(observedRequest!.headers.get('content-length')).toBeNull();
+    expect(observedRequest!.headers.get('host')).toBeNull();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('/v1/messages returns 501', async () => {
+  const t = tempEnv();
+  try {
+    globalThis.fetch = (async () => {
+      throw new Error('upstream should not be called');
+    }) as unknown as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(new Request('http://localhost/v1/messages', { method: 'POST' }), t.env);
+    expect(res.status).toBe(501);
+    expect(await res.text()).toBe('Not Implemented');
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('route map cache build count stays stable across identical requests', async () => {
+  const t = tempEnv();
+  try {
+    const workload = join(t.dir, 'workloads', 'mlx-host');
+    mkdirSync(workload, { recursive: true });
+    writeFileSync(join(workload, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(
+      join(workload, 'modelhost.state'),
+      JSON.stringify({
+        kind: 'ModelHost',
+        engine: 'omlx',
+        pid: process.pid,
+        host: '127.0.0.1',
+        port: 8126,
+        modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit'],
+        startedAt: new Date().toISOString(),
+      }),
+    );
+
+    const seen: string[] = [];
+    globalThis.fetch = (async (input: Request | URL | string) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      seen.push(url);
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+
+    const before = openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests();
+    for (let i = 0; i < 5; i += 1) {
+      const res = await openaiProxy.proxyOpenAI(
+        new Request('http://localhost/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: 'mlx-community/Qwen3-8B-MLX-4bit',
+            messages: [{ role: 'user', content: 'hi' }],
+          }),
+        }),
+        t.env,
+      );
+      expect(res.status).toBe(200);
+    }
+    expect(seen).toHaveLength(5);
+    expect(openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests()).toBe(before + 1);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test('listOpenAIModels differentiates host and agent ownership', () => {
   const t = tempEnv();
   try {

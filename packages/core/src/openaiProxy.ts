@@ -143,6 +143,14 @@ function routedEndpointForModel(
 
 type RouteEntry = { host: string; port: number };
 
+type ProxyContext = {
+  req: Request;
+  resolved: ResolvedEnv;
+  target: string;
+  init: RequestInit;
+  bodyText?: string;
+};
+
 let routeMapCache: { mtimeNs: bigint; map: Map<string, RouteEntry> } | null = null;
 let routeMapBuildCount = 0;
 
@@ -190,41 +198,37 @@ export function __getOpenAIProxyRouteMapBuildCountForTests(): number {
   return routeMapBuildCount;
 }
 
-/**
- * Proxy an OpenAI-style request (chat/completions, completions,
- * embeddings, etc.) to the local llama-server. JSON bodies can route
- * by `model` across live workloads, and Bun/Node fetch responses are
- * returned as a fresh ReadableStream so SSE streams work out of the box.
- */
-export async function proxyOpenAI(
-  req: Request,
-  resolved: ResolvedEnv = resolveEnv(),
-): Promise<Response> {
+function parseIncoming(req: Request, resolved: ResolvedEnv): ProxyContext | Response {
   const url = new URL(req.url);
+  if (url.pathname === '/v1/messages') {
+    return new Response('Not Implemented', { status: 501 });
+  }
   const fallbackTarget = `${llamaEndpoint(resolved)}${url.pathname}${url.search}`;
-  let target = fallbackTarget;
-
-  // Strip hop-by-hop headers llama-server wouldn't like. We also drop
-  // the agent's own `authorization` — llama-server has no bearer auth
-  // and a Bearer token confuses it (some builds 401 unknown tokens).
   const headers = new Headers();
   for (const [key, value] of req.headers.entries()) {
     const lower = key.toLowerCase();
-    if (
-      lower === 'host' ||
-      lower === 'connection' ||
-      lower === 'content-length' ||
-      lower === 'authorization'
-    ) {
+    if (lower === 'host' || lower === 'connection' || lower === 'content-length' || lower === 'authorization') {
       continue;
     }
     headers.set(key, value);
   }
-
-  const init: RequestInit = {
-    method: req.method,
-    headers,
+  return {
+    req,
+    resolved,
+    target: fallbackTarget,
+    init: {
+      method: req.method,
+      headers,
+    },
   };
+}
+
+function maybeTranslate(context: ProxyContext): ProxyContext {
+  return context;
+}
+
+async function resolveRoute(context: ProxyContext): Promise<ProxyContext | Response> {
+  const { req, resolved } = context;
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     const contentType = req.headers.get('content-type');
     if (isJsonContentType(contentType)) {
@@ -235,26 +239,38 @@ export async function proxyOpenAI(
           return new Response('Payload Too Large', { status: 413 });
         }
       }
-      const bodyText = await req.text();
+      const bodyText = await context.req.text();
       if (bodyText.length > MAX_JSON_BODY_BYTES) {
         return new Response('Payload Too Large', { status: 413 });
       }
+      const next: ProxyContext = {
+        ...context,
+        bodyText,
+        init: {
+          ...context.init,
+          body: bodyText,
+        },
+      };
       const model = requestedModelFromBody(bodyText);
-      init.body = bodyText;
       if (model) {
         const routedTarget = routedEndpointForModel(model, req, resolved);
-        if (routedTarget) target = routedTarget;
+        if (routedTarget) next.target = routedTarget;
       }
-    } else {
-      init.body = req.body;
-      // Streaming bodies in Node/Bun fetch require the duplex hint.
-      (init as unknown as { duplex: string }).duplex = 'half';
+      return next;
     }
+    context.init = {
+      ...context.init,
+      body: req.body,
+    };
+    (context.init as unknown as { duplex: string }).duplex = 'half';
   }
+  return context;
+}
 
+async function forward(context: ProxyContext): Promise<Response> {
   let upstream: Response;
   try {
-    upstream = await fetch(target, init);
+    upstream = await fetch(context.target, context.init);
   } catch (err) {
     return Response.json(
       {
@@ -266,10 +282,10 @@ export async function proxyOpenAI(
       { status: 502 },
     );
   }
+  return upstream;
+}
 
-  // Rebuild the response so we can hand Bun a fresh ReadableStream —
-  // passing `upstream.body` directly triggers "already used" errors
-  // on some runtimes when the client disconnects mid-stream.
+function maybeTranslateResponse(upstream: Response): Response {
   const respHeaders = new Headers();
   for (const [key, value] of upstream.headers.entries()) {
     const lower = key.toLowerCase();
@@ -281,4 +297,23 @@ export async function proxyOpenAI(
     statusText: upstream.statusText,
     headers: respHeaders,
   });
+}
+
+/**
+ * Proxy an OpenAI-style request (chat/completions, completions,
+ * embeddings, etc.) to the local llama-server. JSON bodies can route
+ * by `model` across live workloads, and Bun/Node fetch responses are
+ * returned as a fresh ReadableStream so SSE streams work out of the box.
+ */
+export async function proxyOpenAI(
+  req: Request,
+  resolved: ResolvedEnv = resolveEnv(),
+): Promise<Response> {
+  const parsed = parseIncoming(req, resolved);
+  if (parsed instanceof Response) return parsed;
+  const translated = maybeTranslate(parsed);
+  const routed = await resolveRoute(translated);
+  if (routed instanceof Response) return routed;
+  const upstream = await forward(routed);
+  return maybeTranslateResponse(upstream);
 }

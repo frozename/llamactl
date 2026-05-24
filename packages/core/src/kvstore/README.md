@@ -1,0 +1,1 @@
+KV cache storage dir is `<dataRoot>/kvstore/` — a sibling of the workload runtime dir, intentionally placed OUTSIDE `workloadRuntimeRoot` so KV metadata writes do not bump `workloadRuntimeRoot.mtimeNs` and do not invalidate `routeMapCache` or `modelsResponseCache` in `openaiProxy.ts`. This is a load-bearing layering decision — do not move KV state under the workload runtime tree.
