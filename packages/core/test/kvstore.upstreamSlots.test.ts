@@ -57,7 +57,7 @@ async function acquireClosedLocalPort(): Promise<number> {
 }
 
 test('save success returns ok + tokensSaved + sends filename in JSON body', async () => {
-  let sentFilename: string | null = null;
+  let sentFilename: string | null = null as string | null;
   const upstream = await startTestServer(async (req, res, url) => {
     if (req.method !== 'POST' || url.pathname !== '/slots/3') {
       res.statusCode = 404;
@@ -106,7 +106,7 @@ test('save http error returns http_error + status', async () => {
 });
 
 test('restore success returns ok + tokensRestored + sends filename in JSON body', async () => {
-  let sentFilename: string | null = null;
+  let sentFilename: string | null = null as string | null;
   const upstream = await startTestServer(async (req, res, url) => {
     if (req.method !== 'POST' || url.pathname !== '/slots/9') {
       res.statusCode = 404;
