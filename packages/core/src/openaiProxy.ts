@@ -1,5 +1,7 @@
 import type { ModelInfo, ModelListResponse } from '@nova/contracts';
 import { statSync } from 'node:fs';
+import { AnthropicTranslationError, translateAnthropicRequest } from './anthropic/translateRequest.js';
+import type { AnthropicMessagesRequest } from './anthropic/types.js';
 import { resolveEnv } from './env.js';
 import { endpoint as llamaEndpoint, readServerState, readServerPid } from './server.js';
 import { readModelHostState } from './engines/state.js';
@@ -131,14 +133,14 @@ function requestedModelFromBody(bodyText: string): string | undefined {
 
 function routedEndpointForModel(
   model: string,
-  req: Request,
+  pathname: string,
+  search: string,
   resolved: ResolvedEnv,
 ): string | null {
-  const url = new URL(req.url);
   const routeMap = getRouteMap(resolved);
   const entry = routeMap.get(model);
   if (!entry) return null;
-  return `http://${entry.host}:${entry.port}${url.pathname}${url.search}`;
+  return `http://${entry.host}:${entry.port}${pathname}${search}`;
 }
 
 type RouteEntry = { host: string; port: number };
@@ -147,6 +149,8 @@ type ProxyContext = {
   req: Request;
   resolved: ResolvedEnv;
   target: string;
+  pathname: string;
+  search: string;
   init: RequestInit;
   bodyText?: string;
 };
@@ -198,12 +202,20 @@ export function __getOpenAIProxyRouteMapBuildCountForTests(): number {
   return routeMapBuildCount;
 }
 
-function parseIncoming(req: Request, resolved: ResolvedEnv): ProxyContext | Response {
+function anthropicTranslationErrorResponse(error: unknown): Response {
+  return Response.json(
+    {
+      error: {
+        message: error instanceof Error ? error.message : 'anthropic request translation failed',
+        type: 'anthropic_translation_error',
+      },
+    },
+    { status: error instanceof AnthropicTranslationError ? error.statusCode : 400 },
+  );
+}
+
+async function parseIncoming(req: Request, resolved: ResolvedEnv): Promise<ProxyContext | Response> {
   const url = new URL(req.url);
-  if (url.pathname === '/v1/messages') {
-    return new Response('Not Implemented', { status: 501 });
-  }
-  const fallbackTarget = `${llamaEndpoint(resolved)}${url.pathname}${url.search}`;
   const headers = new Headers();
   for (const [key, value] of req.headers.entries()) {
     const lower = key.toLowerCase();
@@ -212,10 +224,41 @@ function parseIncoming(req: Request, resolved: ResolvedEnv): ProxyContext | Resp
     }
     headers.set(key, value);
   }
+  if (url.pathname === '/v1/messages') {
+    try {
+      const bodyText = await req.text();
+      const incoming = JSON.parse(bodyText) as AnthropicMessagesRequest;
+      const translated = translateAnthropicRequest(incoming);
+      const translatedBodyText = JSON.stringify(translated);
+      const translatedUrl = new URL(req.url);
+      translatedUrl.pathname = '/v1/chat/completions';
+      return {
+        req,
+        resolved,
+        target: `${llamaEndpoint(resolved)}${translatedUrl.pathname}${translatedUrl.search}`,
+        pathname: translatedUrl.pathname,
+        search: translatedUrl.search,
+        bodyText: translatedBodyText,
+        init: {
+          method: req.method,
+          headers,
+          body: translatedBodyText,
+        },
+      };
+    } catch (error) {
+      if (error instanceof AnthropicTranslationError || error instanceof SyntaxError) {
+        return anthropicTranslationErrorResponse(error);
+      }
+      return anthropicTranslationErrorResponse(new AnthropicTranslationError('anthropic request translation failed'));
+    }
+  }
+  const fallbackTarget = `${llamaEndpoint(resolved)}${url.pathname}${url.search}`;
   return {
     req,
     resolved,
     target: fallbackTarget,
+    pathname: url.pathname,
+    search: url.search,
     init: {
       method: req.method,
       headers,
@@ -232,31 +275,34 @@ async function resolveRoute(context: ProxyContext): Promise<ProxyContext | Respo
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     const contentType = req.headers.get('content-type');
     if (isJsonContentType(contentType)) {
-      const contentLength = req.headers.get('content-length');
-      if (contentLength) {
-        const parsedContentLength = Number.parseInt(contentLength, 10);
-        if (Number.isFinite(parsedContentLength) && parsedContentLength > MAX_JSON_BODY_BYTES) {
+      if (context.bodyText === undefined) {
+        const contentLength = req.headers.get('content-length');
+        if (contentLength) {
+          const parsedContentLength = Number.parseInt(contentLength, 10);
+          if (Number.isFinite(parsedContentLength) && parsedContentLength > MAX_JSON_BODY_BYTES) {
+            return new Response('Payload Too Large', { status: 413 });
+          }
+        }
+        const bodyText = await context.req.text();
+        if (bodyText.length > MAX_JSON_BODY_BYTES) {
           return new Response('Payload Too Large', { status: 413 });
         }
+        context = {
+          ...context,
+          bodyText,
+          init: {
+            ...context.init,
+            body: bodyText,
+          },
+        };
       }
-      const bodyText = await context.req.text();
-      if (bodyText.length > MAX_JSON_BODY_BYTES) {
-        return new Response('Payload Too Large', { status: 413 });
-      }
-      const next: ProxyContext = {
-        ...context,
-        bodyText,
-        init: {
-          ...context.init,
-          body: bodyText,
-        },
-      };
-      const model = requestedModelFromBody(bodyText);
+      const bodyText = context.bodyText;
+      const model = bodyText ? requestedModelFromBody(bodyText) : undefined;
       if (model) {
-        const routedTarget = routedEndpointForModel(model, req, resolved);
-        if (routedTarget) next.target = routedTarget;
+        const routedTarget = routedEndpointForModel(model, context.pathname, context.search, resolved);
+        if (routedTarget) context.target = routedTarget;
       }
-      return next;
+      return context;
     }
     context.init = {
       ...context.init,
@@ -309,7 +355,7 @@ export async function proxyOpenAI(
   req: Request,
   resolved: ResolvedEnv = resolveEnv(),
 ): Promise<Response> {
-  const parsed = parseIncoming(req, resolved);
+  const parsed = await parseIncoming(req, resolved);
   if (parsed instanceof Response) return parsed;
   const translated = maybeTranslate(parsed);
   const routed = await resolveRoute(translated);

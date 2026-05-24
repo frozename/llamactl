@@ -201,16 +201,73 @@ test('forwards chat completions with the current request shape intact', async ()
   }
 });
 
-test('/v1/messages returns 501', async () => {
+test('/v1/messages translates into /v1/chat/completions and forwards upstream', async () => {
+  const t = tempEnv();
+  try {
+    const calls: Array<{ url: string; body: string | null }> = [];
+    globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push({ url, body: typeof init?.body === 'string' ? init.body : null });
+      return Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/messages?foo=bar', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-3-7-sonnet',
+          messages: [{ role: 'user', content: 'hello' }],
+          max_tokens: 64,
+        }),
+      }),
+      t.env,
+    );
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain('/v1/chat/completions?foo=bar');
+    expect(calls[0]!.body).toBe(
+      JSON.stringify({
+        model: 'claude-3-7-sonnet',
+        messages: [{ role: 'user', content: 'hello' }],
+        max_tokens: 64,
+      }),
+    );
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('/v1/messages translator errors return anthropic_translation_error with status 400', async () => {
   const t = tempEnv();
   try {
     globalThis.fetch = (async () => {
       throw new Error('upstream should not be called');
     }) as unknown as typeof fetch;
 
-    const res = await openaiProxy.proxyOpenAI(new Request('http://localhost/v1/messages', { method: 'POST' }), t.env);
-    expect(res.status).toBe(501);
-    expect(await res.text()).toBe('Not Implemented');
+    const res = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-3-7-sonnet',
+          messages: [
+            {
+              role: 'user',
+              content: [{ type: 'video', src: 'x' }],
+            },
+          ],
+        }),
+      }),
+      t.env,
+    );
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error: {
+        message: 'unsupported content block type: video',
+        type: 'anthropic_translation_error',
+      },
+    });
   } finally {
     t.cleanup();
   }
