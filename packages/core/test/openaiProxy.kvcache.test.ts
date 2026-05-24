@@ -6,7 +6,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { openaiProxy } from '../src/index.js';
-import { KvRegistry, openKvStorage, readWorkloadEpoch, type KvEntry } from '../src/kvstore/index.js';
+import {
+  EXT_FLAG_TOOL_MAP,
+  KvRegistry,
+  openKvStorage,
+  readTrailer,
+  readWorkloadEpoch,
+  writeTrailer,
+  type KvEntry,
+} from '../src/kvstore/index.js';
 
 interface TempRuntime {
   root: string;
@@ -58,12 +66,14 @@ async function startUpstream(opts?: {
   restoreMode?: 'ok' | 'http_error';
   chatMode?: 'json' | 'sse';
   firstJsonToken?: string;
+  toolCalls?: Array<{ id: string; name: string; arguments: string }>;
 }): Promise<TestUpstream> {
   const events: string[] = [];
   const saveMode = opts?.saveMode ?? 'ok';
   const restoreMode = opts?.restoreMode ?? 'ok';
   const chatMode = opts?.chatMode ?? 'json';
   const firstJsonToken = opts?.firstJsonToken ?? 'Hello';
+  const toolCalls = opts?.toolCalls ?? [];
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     if (req.method === 'POST' && url.pathname.startsWith('/slots/')) {
@@ -97,12 +107,25 @@ async function startUpstream(opts?: {
       return json(res, 200, {
         id: 'chatcmpl-1',
         object: 'chat.completion',
+        model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
         choices: [
           {
             index: 0,
             message: {
               role: 'assistant',
               content: [{ type: 'text', text: `${firstJsonToken} world` }],
+              ...(toolCalls.length > 0
+                ? {
+                    tool_calls: toolCalls.map((call) => ({
+                      id: call.id,
+                      type: 'function',
+                      function: {
+                        name: call.name,
+                        arguments: call.arguments,
+                      },
+                    })),
+                  }
+                : {}),
             },
             finish_reason: 'stop',
           },
@@ -166,6 +189,7 @@ function entryTemplate(overrides: Partial<KvEntry>): KvEntry {
     quarantined: 0,
     state: 'idle',
     firstResponseToken: null,
+    extFlags: 0,
     ...overrides,
   };
 }
@@ -209,6 +233,52 @@ test('cold miss saves a new idle kv entry', async () => {
     storage.close();
 
     expect(upstream.events).toEqual(['chat-forward', 'slot-save']);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('anthropic cold save writes trailer toolMap and ext_flags when upstream returns tool_calls', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream({
+    toolCalls: [
+      {
+        id: 'toolu_1',
+        name: 'lookup_weather',
+        arguments: '{\n  "city": "Sao Paulo",\n  "units": "c"\n}',
+      },
+    ],
+  });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const anthropicBody = {
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Use a tool' }] }],
+      max_tokens: 32,
+    };
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(anthropicBody),
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    const entries = registry.listAll();
+    expect(entries).toHaveLength(1);
+    const entry = entries[0]!;
+    expect((entry.extFlags & EXT_FLAG_TOOL_MAP) !== 0).toBe(true);
+    const trailer = readTrailer(entry.upstreamSlotFile);
+    expect(trailer?.toolMap?.toolu_1).toBe(
+      '{"id":"toolu_1","type":"function","function":{"name":"lookup_weather","arguments":"{\\n  \\"city\\": \\"Sao Paulo\\",\\n  \\"units\\": \\"c\\"\\n}"}}',
+    );
+    storage.close();
   } finally {
     await upstream.close();
     runtime.cleanup();
@@ -260,6 +330,192 @@ test('warm hit restores slot before upstream forward', async () => {
     expect(upstream.events.indexOf('slot-restore')).toBeLessThan(upstream.events.indexOf('chat-forward'));
     expect(upstream.events).toEqual(['slot-restore', 'chat-forward']);
   } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('anthropic warm hit replays with trailer toolMap bytes and keeps warm path when sha matches', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream();
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const anthropicBody = {
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'tool call' },
+            {
+              type: 'tool_use',
+              id: 'toolu_1',
+              name: 'lookup_weather',
+              input: { city: 'Sao Paulo' },
+            },
+          ],
+        },
+      ],
+      max_tokens: 16,
+    };
+    const translatedBody = JSON.stringify({
+      model: anthropicBody.model,
+      messages: [
+        {
+          role: 'assistant',
+          content: 'tool call',
+          tool_calls: [
+            {
+              id: 'toolu_1',
+              type: 'function',
+              function: {
+                name: 'lookup_weather',
+                arguments: '{"city":"Sao Paulo"}',
+              },
+            },
+          ],
+        },
+      ],
+      max_tokens: 16,
+    });
+    const sha = shaForBody(translatedBody);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(translatedBody, 'utf8'),
+      prefixByteLength: Buffer.byteLength(translatedBody, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(translatedBody, 'utf8'),
+      textBytes: Buffer.byteLength(translatedBody, 'utf8'),
+      firstResponseToken: 'Hello world',
+      extFlags: EXT_FLAG_TOOL_MAP,
+    }));
+    expect(
+      writeTrailer(slotFile, {
+        extFlags: EXT_FLAG_TOOL_MAP,
+        toolMap: {
+          toolu_1:
+            '{"id":"toolu_1","type":"function","function":{"name":"lookup_weather","arguments":"{\\"city\\":\\"Sao Paulo\\"}"}}',
+        },
+      }),
+    ).toEqual({ ok: true });
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(anthropicBody),
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    expect(upstream.events).toEqual(['slot-restore', 'chat-forward']);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('anthropic warm-hit trailer mismatch falls back to cold prefill and increments replay-mismatch counter', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream();
+  const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const anthropicBody = {
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'tool call' },
+            {
+              type: 'tool_use',
+              id: 'toolu_1',
+              name: 'lookup_weather',
+              input: { city: 'Sao Paulo' },
+            },
+          ],
+        },
+      ],
+      max_tokens: 16,
+    };
+    const translatedBody = JSON.stringify({
+      model: anthropicBody.model,
+      messages: [
+        {
+          role: 'assistant',
+          content: 'tool call',
+          tool_calls: [
+            {
+              id: 'toolu_1',
+              type: 'function',
+              function: {
+                name: 'lookup_weather',
+                arguments: '{"city":"Sao Paulo"}',
+              },
+            },
+          ],
+        },
+      ],
+      max_tokens: 16,
+    });
+    const sha = shaForBody(translatedBody);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(translatedBody, 'utf8'),
+      prefixByteLength: Buffer.byteLength(translatedBody, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(translatedBody, 'utf8'),
+      textBytes: Buffer.byteLength(translatedBody, 'utf8'),
+      firstResponseToken: 'Hello world',
+      extFlags: EXT_FLAG_TOOL_MAP,
+    }));
+    expect(
+      writeTrailer(slotFile, {
+        extFlags: EXT_FLAG_TOOL_MAP,
+        toolMap: {
+          toolu_1:
+            '{"id":"toolu_1","type":"function","function":{"name":"lookup_weather","arguments":"{\\n  \\"city\\": \\"Sao Paulo\\"\\n}"}}',
+        },
+      }),
+    ).toEqual({ ok: true });
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(anthropicBody),
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    expect(openaiProxy.__getOpenAIProxyKvReplayMismatchTotalForTests(runtime.env as any)).toBe(1);
+    expect(upstream.events).toEqual(['slot-restore', 'chat-forward', 'slot-save']);
+    expect(warnSpy.mock.calls.some((call) => String(call[0]).includes('"event":"kv_replay_mismatch"'))).toBe(true);
+  } finally {
+    warnSpy.mockRestore();
     await upstream.close();
     runtime.cleanup();
   }

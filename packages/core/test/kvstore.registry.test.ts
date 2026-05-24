@@ -28,6 +28,7 @@ function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
     quarantined: 0,
     state: 'idle',
     firstResponseToken: null,
+    extFlags: 0,
     ...overrides,
   };
 }

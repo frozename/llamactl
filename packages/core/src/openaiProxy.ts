@@ -19,13 +19,18 @@ import type { ResolvedEnv } from './types.js';
 import * as workloadRuntime from './workloadRuntime.js';
 import type { WorkloadKey } from './workloadRuntime.js';
 import {
+  EXT_FLAG_SESSION_TITLE,
+  EXT_FLAG_TOOL_MAP,
   KvRegistry,
   SlotAllocator,
   UpstreamSlotClient,
   longestPrefixLookup,
   openKvStorage,
+  readTrailer,
   readWorkloadEpoch,
   runEvictionIfOverBudget,
+  writeTrailer,
+  type KvTrailer,
   type KvStorage,
 } from './kvstore/index.js';
 
@@ -211,6 +216,7 @@ type ProxyContext = {
   bodyText?: string;
   isAnthropic?: boolean;
   anthropicModel?: string;
+  anthropicRequest?: AnthropicMessagesRequest;
   route?: RoutedEntry;
   kv?: KvRequestState;
 };
@@ -277,6 +283,10 @@ export function __getOpenAIProxyKvFalseHitTotalForTests(resolved: ResolvedEnv): 
   return kvRuntimeFor(resolved).storage.kv_false_hit_total;
 }
 
+export function __getOpenAIProxyKvReplayMismatchTotalForTests(resolved: ResolvedEnv): number {
+  return kvRuntimeFor(resolved).storage.kv_replay_mismatch_total;
+}
+
 function anthropicTranslationErrorResponse(error: unknown): Response {
   return Response.json(
     {
@@ -315,6 +325,7 @@ async function parseIncoming(req: Request, resolved: ResolvedEnv): Promise<Proxy
         search: translatedUrl.search,
         isAnthropic: true,
         anthropicModel: incoming.model,
+        anthropicRequest: incoming,
         bodyText: translatedBodyText,
         init: {
           method: req.method,
@@ -526,6 +537,55 @@ function extractFirstResponseTokenFromJson(payload: unknown): string | null {
   return null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function extractToolMapFromJson(payload: unknown): Record<string, string> {
+  if (!isRecord(payload)) return {};
+  const choices = payload.choices;
+  if (!Array.isArray(choices)) return {};
+  const out: Record<string, string> = {};
+  for (const choice of choices) {
+    if (!isRecord(choice)) continue;
+    const message = choice.message;
+    if (!isRecord(message)) continue;
+    const toolCalls = message.tool_calls;
+    if (!Array.isArray(toolCalls)) continue;
+    for (const rawCall of toolCalls) {
+      if (!isRecord(rawCall)) continue;
+      if (rawCall.type !== 'function' || typeof rawCall.id !== 'string') continue;
+      const fn = rawCall.function;
+      if (!isRecord(fn) || typeof fn.name !== 'string' || typeof fn.arguments !== 'string') continue;
+      out[rawCall.id] = JSON.stringify({
+        id: rawCall.id,
+        type: 'function',
+        function: {
+          name: fn.name,
+          arguments: fn.arguments,
+        },
+      });
+    }
+  }
+  return out;
+}
+
+function deriveSessionTitle(req: AnthropicMessagesRequest | undefined): string | undefined {
+  if (!req) return undefined;
+  const firstUser = req.messages.find((message) => message.role === 'user');
+  if (!firstUser) return undefined;
+  if (typeof firstUser.content === 'string') {
+    const text = firstUser.content.trim();
+    return text.length > 0 ? text.slice(0, 80) : undefined;
+  }
+  const text = firstUser.content
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('')
+    .trim();
+  return text.length > 0 ? text.slice(0, 80) : undefined;
+}
+
 async function readFirstResponseToken(upstream: Response): Promise<string | null> {
   const contentType = upstream.headers.get('content-type');
   if (!contentType || !isJsonContentType(contentType)) return null;
@@ -543,8 +603,8 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   const runtime = kvRuntimeFor(context.resolved);
   const bodyText = context.bodyText!;
   const enforceFirstTokenEquivalence = shouldEnforceFirstTokenEquivalence(bodyText);
-  const prefixMetric = Buffer.byteLength(bodyText, 'utf8');
-  const sha = createHash('sha1').update(bodyText).digest('hex');
+  let prefixMetric = Buffer.byteLength(bodyText, 'utf8');
+  let sha = createHash('sha1').update(bodyText).digest('hex');
 
   // Phase 6 is boundary-naive: use byte length as both byte prefix and token guard until token accounting lands.
   const hit = longestPrefixLookup(runtime.registry, {
@@ -556,6 +616,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   });
 
   if (hit) {
+    let replayMismatch = false;
     let reserved = false;
     const reserveWrite = runtime.storage.safeWrite(() => {
       reserved = runtime.registry.reserve(hit.sha);
@@ -570,27 +631,99 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
           activated = runtime.registry.activate(hit.sha);
         });
         if (restore.ok && activateWrite.ok && activated) {
-          runtime.registry.bumpHit(hit.sha, Date.now());
-          context.kv = {
-            runtime,
-            workload: metadata.workload,
-            host: metadata.host,
-            port: metadata.port,
-            quantBits: metadata.quantBits,
-            ctxSize: metadata.ctxSize,
-            workloadEpoch: metadata.workloadEpoch,
-            sha,
-            prefixMetric,
-            shouldPersist: false,
-            warmHitSha: hit.sha,
-            warmHitLease: lease,
-            warmHitExpectedFirstResponseToken: hit.firstResponseToken,
-            enforceFirstTokenEquivalence,
-          };
-          return context;
+          if (
+            context.isAnthropic
+            && context.anthropicRequest
+            && (hit.extFlags & EXT_FLAG_TOOL_MAP) !== 0
+          ) {
+            const trailer = readTrailer(hit.upstreamSlotFile);
+            const toolMap = trailer?.toolMap;
+            if (toolMap && Object.keys(toolMap).length > 0) {
+              const replayBodyText = JSON.stringify(
+                translateAnthropicRequest(context.anthropicRequest, { toolMap }),
+              );
+              const replaySha = createHash('sha1').update(replayBodyText).digest('hex');
+              const replayPrefixMetric = Buffer.byteLength(replayBodyText, 'utf8');
+              if (replaySha !== hit.sha) {
+                runtime.storage.kv_replay_mismatch_total += 1;
+                console.warn(JSON.stringify({
+                  event: 'kv_replay_mismatch',
+                  workload: metadata.workload,
+                  expected: hit.sha,
+                  got: replaySha,
+                }));
+                replayMismatch = true;
+              } else {
+                context.bodyText = replayBodyText;
+                context.init = {
+                  ...context.init,
+                  body: replayBodyText,
+                };
+                sha = replaySha;
+                prefixMetric = replayPrefixMetric;
+                runtime.registry.bumpHit(hit.sha, Date.now());
+                context.kv = {
+                  runtime,
+                  workload: metadata.workload,
+                  host: metadata.host,
+                  port: metadata.port,
+                  quantBits: metadata.quantBits,
+                  ctxSize: metadata.ctxSize,
+                  workloadEpoch: metadata.workloadEpoch,
+                  sha,
+                  prefixMetric,
+                  shouldPersist: false,
+                  warmHitSha: hit.sha,
+                  warmHitLease: lease,
+                  warmHitExpectedFirstResponseToken: hit.firstResponseToken,
+                  enforceFirstTokenEquivalence,
+                };
+                return context;
+              }
+            } else {
+              runtime.registry.bumpHit(hit.sha, Date.now());
+              context.kv = {
+                runtime,
+                workload: metadata.workload,
+                host: metadata.host,
+                port: metadata.port,
+                quantBits: metadata.quantBits,
+                ctxSize: metadata.ctxSize,
+                workloadEpoch: metadata.workloadEpoch,
+                sha,
+                prefixMetric,
+                shouldPersist: false,
+                warmHitSha: hit.sha,
+                warmHitLease: lease,
+                warmHitExpectedFirstResponseToken: hit.firstResponseToken,
+                enforceFirstTokenEquivalence,
+              };
+              return context;
+            }
+          } else {
+            runtime.registry.bumpHit(hit.sha, Date.now());
+            context.kv = {
+              runtime,
+              workload: metadata.workload,
+              host: metadata.host,
+              port: metadata.port,
+              quantBits: metadata.quantBits,
+              ctxSize: metadata.ctxSize,
+              workloadEpoch: metadata.workloadEpoch,
+              sha,
+              prefixMetric,
+              shouldPersist: false,
+              warmHitSha: hit.sha,
+              warmHitLease: lease,
+              warmHitExpectedFirstResponseToken: hit.firstResponseToken,
+              enforceFirstTokenEquivalence,
+            };
+            return context;
+          }
         }
         runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
         lease.release();
+        if (replayMismatch) runtime.storage.safeWrite(() => runtime.registry.tryDelete(hit.sha));
         if (!restore.ok) runtime.storage.safeWrite(() => runtime.registry.delete(hit.sha));
       } else {
         runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
@@ -684,7 +817,17 @@ async function forward(context: ProxyContext): Promise<Response> {
 async function maybePersistKv(context: ProxyContext, upstream: Response): Promise<void> {
   const kv = context.kv;
   if (!kv) return;
-  const firstResponseToken = await readFirstResponseToken(upstream);
+  const contentType = upstream.headers.get('content-type');
+  const shouldParseJson = upstream.status === 200 && !!contentType && isJsonContentType(contentType);
+  let upstreamJson: unknown | null = null;
+  if (shouldParseJson) {
+    try {
+      upstreamJson = await upstream.clone().json();
+    } catch {
+      upstreamJson = null;
+    }
+  }
+  const firstResponseToken = upstreamJson ? extractFirstResponseTokenFromJson(upstreamJson) : await readFirstResponseToken(upstream);
   try {
     if (
       kv.warmHitSha &&
@@ -712,10 +855,9 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
     }
 
     if (!kv.shouldPersist) return;
-    const contentType = upstream.headers.get('content-type');
     // TODO(phase9): defer KV save for streams until exact replay boundaries are captured.
     if (contentType?.toLowerCase().startsWith('text/event-stream')) return;
-    if (upstream.status !== 200 || !isJsonContentType(contentType)) return;
+    if (upstream.status !== 200 || !isJsonContentType(contentType) || upstreamJson === null) return;
 
     const allocator = slotAllocatorFor(kv.runtime, kv.workload);
     const lease = allocator.acquire();
@@ -732,6 +874,28 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
       }
 
       const now = Date.now();
+      const trailer: KvTrailer = { extFlags: 0 };
+      let extFlags = 0;
+      const toolMap = extractToolMapFromJson(upstreamJson);
+      if (Object.keys(toolMap).length > 0) {
+        extFlags |= EXT_FLAG_TOOL_MAP;
+        trailer.toolMap = toolMap;
+      }
+      const sessionTitle = deriveSessionTitle(context.anthropicRequest);
+      if (sessionTitle) {
+        extFlags |= EXT_FLAG_SESSION_TITLE;
+        trailer.sessionTitle = sessionTitle;
+      }
+      if (extFlags !== 0) {
+        trailer.extFlags = extFlags;
+        const wroteTrailer = writeTrailer(slotFile, trailer, kv.runtime.storage);
+        if (!wroteTrailer.ok) {
+          extFlags = 0;
+          console.warn(
+            `[kvstore] trailer save skipped for workload='${kv.workload}' sha='${kv.sha}': ${wroteTrailer.reason}`,
+          );
+        }
+      }
       const wrote = kv.runtime.storage.safeWrite(() => {
         kv.runtime.registry.insert({
           sha: kv.sha,
@@ -751,6 +915,7 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
           quarantined: 0,
           state: 'idle',
           firstResponseToken,
+          extFlags,
         });
       });
       if (!wrote.ok) return;

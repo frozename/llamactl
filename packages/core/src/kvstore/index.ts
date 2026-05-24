@@ -15,3 +15,12 @@ export { sweepOrphanSlotFiles } from './orphanSweep.js';
 export type { SweepOrphanSlotFilesOptions, SweepOrphanSlotFilesResult } from './orphanSweep.js';
 export { computeWorkloadEpoch, readWorkloadEpoch } from './workloadEpoch.js';
 export type { WorkloadEpochInput } from './workloadEpoch.js';
+export {
+  EXT_FLAG_RESPONSES_VISIBLE,
+  EXT_FLAG_SESSION_TITLE,
+  EXT_FLAG_THINKING_VISIBLE,
+  EXT_FLAG_TOOL_MAP,
+  readTrailer,
+  writeTrailer,
+} from './trailer.js';
+export type { KvTrailer } from './trailer.js';

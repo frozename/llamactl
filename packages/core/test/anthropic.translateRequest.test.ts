@@ -227,3 +227,82 @@ test('converts base64 image blocks into data URLs', () => {
     content: [{ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,abc123' } }],
   });
 });
+
+test('uses exact toolMap bytes for tool_use blocks when provided', () => {
+  const request: AnthropicMessagesRequest = {
+    model: 'claude-3-7-sonnet',
+    messages: [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Calling tool' },
+          {
+            type: 'tool_use',
+            id: 'toolu_1',
+            name: 'lookup_weather',
+            input: { city: 'Sao Paulo', units: 'c' },
+          },
+        ],
+      },
+    ],
+  };
+
+  const translated = translateAnthropicRequest(request, {
+    toolMap: {
+      toolu_1:
+        '{"id":"toolu_1","type":"function","function":{"name":"lookup_weather","arguments":"{\\n  \\"city\\": \\"Sao Paulo\\",\\n  \\"units\\": \\"c\\"\\n}"}}',
+    },
+  });
+  expect(translated.messages).toEqual([
+    {
+      role: 'assistant',
+      content: 'Calling tool',
+      tool_calls: [
+        {
+          id: 'toolu_1',
+          type: 'function',
+          function: {
+            name: 'lookup_weather',
+            arguments: '{\n  "city": "Sao Paulo",\n  "units": "c"\n}',
+          },
+        },
+      ],
+    },
+  ]);
+});
+
+test('defaults to canonical tool_use translation when toolMap is absent', () => {
+  const translated = translateAnthropicRequest({
+    model: 'claude-3-7-sonnet',
+    messages: [
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_1',
+            name: 'lookup_weather',
+            input: { city: 'Sao Paulo', units: 'c' },
+          },
+        ],
+      },
+    ],
+  });
+
+  expect(translated.messages).toEqual([
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [
+        {
+          id: 'toolu_1',
+          type: 'function',
+          function: {
+            name: 'lookup_weather',
+            arguments: '{"city":"Sao Paulo","units":"c"}',
+          },
+        },
+      ],
+    },
+  ]);
+});

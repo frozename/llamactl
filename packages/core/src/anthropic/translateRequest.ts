@@ -83,6 +83,10 @@ export interface OpenAIChatRequest {
   top_k?: number;
 }
 
+export interface TranslateAnthropicRequestOptions {
+  toolMap?: Record<string, string>;
+}
+
 export class AnthropicTranslationError extends Error {
   statusCode: number;
 
@@ -117,7 +121,40 @@ function toImagePart(block: AnthropicImageContentBlock): OpenAIImagePart {
   };
 }
 
-function toolCallFromBlock(block: AnthropicToolUseContentBlock): OpenAIAssistantToolCall {
+function toolCallFromExactBytes(raw: string): OpenAIAssistantToolCall {
+  const parsed = JSON.parse(raw) as unknown;
+  if (!isRecord(parsed)) {
+    throw new AnthropicTranslationError('toolMap entry must decode to a tool call object');
+  }
+  const id = parsed.id;
+  const kind = parsed.type;
+  const fn = parsed.function;
+  if (typeof id !== 'string' || kind !== 'function' || !isRecord(fn)) {
+    throw new AnthropicTranslationError('toolMap entry missing required tool call fields');
+  }
+  const name = fn.name;
+  const args = fn.arguments;
+  if (typeof name !== 'string' || typeof args !== 'string') {
+    throw new AnthropicTranslationError('toolMap entry function payload is invalid');
+  }
+  return {
+    id,
+    type: 'function',
+    function: {
+      name,
+      arguments: args,
+    },
+  };
+}
+
+function toolCallFromBlock(
+  block: AnthropicToolUseContentBlock,
+  options?: TranslateAnthropicRequestOptions,
+): OpenAIAssistantToolCall {
+  const exact = options?.toolMap?.[block.id];
+  if (typeof exact === 'string' && exact.length > 0) {
+    return toolCallFromExactBytes(exact);
+  }
   return {
     id: block.id,
     type: 'function',
@@ -163,7 +200,10 @@ function normalizeSystemContent(system: AnthropicMessagesRequest['system']): str
   return parts.join('');
 }
 
-function translateMessageContent(message: AnthropicMessage): OpenAIChatMessage[] {
+function translateMessageContent(
+  message: AnthropicMessage,
+  options?: TranslateAnthropicRequestOptions,
+): OpenAIChatMessage[] {
   if (typeof message.content === 'string') {
     return [{ role: message.role, content: message.content }];
   }
@@ -189,7 +229,7 @@ function translateMessageContent(message: AnthropicMessage): OpenAIChatMessage[]
         imageParts.push(toImagePart(block));
         break;
       case 'tool_use':
-        toolCalls.push(toolCallFromBlock(block));
+        toolCalls.push(toolCallFromBlock(block, options));
         break;
       case 'tool_result':
         throw new AnthropicTranslationError('tool_result blocks must appear in user messages without mixed content');
@@ -246,7 +286,10 @@ function translateToolChoice(choice: AnthropicToolChoice | undefined): OpenAICha
   throw new AnthropicTranslationError('unsupported tool_choice value');
 }
 
-export function translateAnthropicRequest(req: AnthropicMessagesRequest): OpenAIChatRequest {
+export function translateAnthropicRequest(
+  req: AnthropicMessagesRequest,
+  options?: TranslateAnthropicRequestOptions,
+): OpenAIChatRequest {
   const messages: OpenAIChatMessage[] = [];
   const system = normalizeSystemContent(req.system);
   if (system !== null) {
@@ -254,7 +297,7 @@ export function translateAnthropicRequest(req: AnthropicMessagesRequest): OpenAI
   }
 
   for (const message of req.messages) {
-    messages.push(...translateMessageContent(message));
+    messages.push(...translateMessageContent(message, options));
   }
 
   return {

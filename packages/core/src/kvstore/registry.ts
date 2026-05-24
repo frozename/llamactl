@@ -21,6 +21,7 @@ export interface KvEntry {
   quarantined: number;
   state: KvEntryState;
   firstResponseToken: string | null;
+  extFlags: number;
 }
 
 interface KvEntryRow {
@@ -41,6 +42,7 @@ interface KvEntryRow {
   quarantined: number;
   state: KvEntryState;
   first_response_token: string | null;
+  ext_flags: number;
 }
 
 export class KvRegistry {
@@ -65,7 +67,8 @@ export class KvRegistry {
         workload_epoch,
         quarantined,
         state,
-        first_response_token
+        first_response_token,
+        ext_flags
       ) VALUES (
         $sha,
         $workload,
@@ -83,7 +86,8 @@ export class KvRegistry {
         $workload_epoch,
         $quarantined,
         $state,
-        $first_response_token
+        $first_response_token,
+        $ext_flags
       )
       ON CONFLICT(sha) DO UPDATE SET
         workload=excluded.workload,
@@ -101,7 +105,8 @@ export class KvRegistry {
         workload_epoch=excluded.workload_epoch,
         quarantined=excluded.quarantined,
         state=excluded.state,
-        first_response_token=excluded.first_response_token
+        first_response_token=excluded.first_response_token,
+        ext_flags=excluded.ext_flags
     `).run(toQueryParams(entry));
   }
 
@@ -167,6 +172,14 @@ export class KvRegistry {
       WHERE sha = ?
     `).run(now, sha);
   }
+
+  setExtFlags(sha: string, extFlags: number): void {
+    this.storage.db.query(`
+      UPDATE kv_entries
+      SET ext_flags = ?
+      WHERE sha = ?
+    `).run(extFlags, sha);
+  }
 }
 
 function toQueryParams(entry: KvEntry): Record<string, number | string | null> {
@@ -188,6 +201,7 @@ function toQueryParams(entry: KvEntry): Record<string, number | string | null> {
     $quarantined: entry.quarantined,
     $state: entry.state,
     $first_response_token: entry.firstResponseToken,
+    $ext_flags: entry.extFlags,
   };
 }
 
@@ -218,5 +232,6 @@ function fromRow(row: KvEntryRow): KvEntry {
     quarantined: row.quarantined,
     state: row.state,
     firstResponseToken: row.first_response_token,
+    extFlags: row.ext_flags,
   };
 }

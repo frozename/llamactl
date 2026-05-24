@@ -1,0 +1,43 @@
+import * as fs from 'node:fs';
+import { dirname } from 'node:path';
+import { safeWrite, type KvStorage } from './storage.js';
+
+export const EXT_FLAG_TOOL_MAP = 1 << 0;
+export const EXT_FLAG_SESSION_TITLE = 1 << 1;
+export const EXT_FLAG_THINKING_VISIBLE = 1 << 2;
+export const EXT_FLAG_RESPONSES_VISIBLE = 1 << 3;
+
+export interface KvTrailer {
+  extFlags: number;
+  toolMap?: Record<string, string>;
+  sessionTitle?: string;
+  thinkingVisible?: string;
+  responsesVisible?: string;
+}
+
+function trailerPath(slotFile: string): string {
+  return `${slotFile}.trailer.json`;
+}
+
+export function readTrailer(slotFile: string): KvTrailer | null {
+  const file = trailerPath(slotFile);
+  if (!fs.existsSync(file)) return null;
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as KvTrailer;
+  return parsed;
+}
+
+export function writeTrailer(
+  slotFile: string,
+  trailer: KvTrailer,
+  storage?: KvStorage,
+): { ok: true } | { ok: false; reason: 'enospc' | 'other'; error: Error } {
+  const target = trailerPath(slotFile);
+  const body = JSON.stringify(trailer);
+  const fallback = { registry_write_fail_total: 0 } as KvStorage;
+  return safeWrite(storage ?? fallback, () => {
+    fs.mkdirSync(dirname(target), { recursive: true });
+    const tmp = `${target}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
+    fs.writeFileSync(tmp, body);
+    fs.renameSync(tmp, target);
+  });
+}
