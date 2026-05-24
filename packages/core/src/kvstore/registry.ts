@@ -1,6 +1,7 @@
 import type { KvStorage } from './storage.js';
 
 export type KvEntryReason = 'cold' | 'continued' | 'evict' | 'shutdown' | 'agentSession';
+export type KvEntryState = 'idle' | 'reserved' | 'active';
 
 export interface KvEntry {
   sha: string;
@@ -18,6 +19,7 @@ export interface KvEntry {
   prefixByteLength: number;
   workloadEpoch: string;
   quarantined: number;
+  state: KvEntryState;
 }
 
 interface KvEntryRow {
@@ -36,6 +38,7 @@ interface KvEntryRow {
   prefix_byte_length: number;
   workload_epoch: string;
   quarantined: number;
+  state: KvEntryState;
 }
 
 export class KvRegistry {
@@ -58,7 +61,8 @@ export class KvRegistry {
         reason,
         prefix_byte_length,
         workload_epoch,
-        quarantined
+        quarantined,
+        state
       ) VALUES (
         $sha,
         $workload,
@@ -74,7 +78,8 @@ export class KvRegistry {
         $reason,
         $prefix_byte_length,
         $workload_epoch,
-        $quarantined
+        $quarantined,
+        $state
       )
       ON CONFLICT(sha) DO UPDATE SET
         workload=excluded.workload,
@@ -90,7 +95,8 @@ export class KvRegistry {
         reason=excluded.reason,
         prefix_byte_length=excluded.prefix_byte_length,
         workload_epoch=excluded.workload_epoch,
-        quarantined=excluded.quarantined
+        quarantined=excluded.quarantined,
+        state=excluded.state
     `).run(toQueryParams(entry));
   }
 
@@ -105,6 +111,41 @@ export class KvRegistry {
 
   delete(sha: string): boolean {
     const result = this.storage.db.query('DELETE FROM kv_entries WHERE sha = ?').run(sha) as { changes?: number };
+    return (result.changes ?? 0) > 0;
+  }
+
+  reserve(sha: string): boolean {
+    const result = this.storage.db.query(`
+      UPDATE kv_entries
+      SET state = 'reserved'
+      WHERE sha = ? AND state = 'idle'
+    `).run(sha) as { changes?: number };
+    return (result.changes ?? 0) > 0;
+  }
+
+  activate(sha: string): boolean {
+    const result = this.storage.db.query(`
+      UPDATE kv_entries
+      SET state = 'active'
+      WHERE sha = ? AND state = 'reserved'
+    `).run(sha) as { changes?: number };
+    return (result.changes ?? 0) > 0;
+  }
+
+  release(sha: string): boolean {
+    const result = this.storage.db.query(`
+      UPDATE kv_entries
+      SET state = 'idle'
+      WHERE sha = ? AND state IN ('reserved', 'active')
+    `).run(sha) as { changes?: number };
+    return (result.changes ?? 0) > 0;
+  }
+
+  tryDelete(sha: string): boolean {
+    const result = this.storage.db.query(`
+      DELETE FROM kv_entries
+      WHERE sha = ? AND state = 'idle'
+    `).run(sha) as { changes?: number };
     return (result.changes ?? 0) > 0;
   }
 
@@ -140,6 +181,7 @@ function toQueryParams(entry: KvEntry): Record<string, number | string> {
     $prefix_byte_length: entry.prefixByteLength,
     $workload_epoch: entry.workloadEpoch,
     $quarantined: entry.quarantined,
+    $state: entry.state,
   };
 }
 
@@ -168,5 +210,6 @@ function fromRow(row: KvEntryRow): KvEntry {
     prefixByteLength: row.prefix_byte_length,
     workloadEpoch: row.workload_epoch,
     quarantined: row.quarantined,
+    state: row.state,
   };
 }

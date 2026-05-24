@@ -26,6 +26,7 @@ function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
     prefixByteLength: 16,
     workloadEpoch: 'epoch-1',
     quarantined: 0,
+    state: 'idle',
     ...overrides,
   };
 }

@@ -1,8 +1,10 @@
+import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { KvRegistry, openKvStorage, type KvEntry } from '../src/kvstore/index.js';
+import { runMigrations } from '../src/kvstore/storage.js';
 import { workloadRuntimeRoot } from '../src/workloadRuntime.js';
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
@@ -27,16 +29,17 @@ function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
     prefixByteLength: 256,
     workloadEpoch: 'epoch-1',
     quarantined: 0,
+    state: 'idle',
     ...overrides,
   };
 }
 
-test('schema migration creates schema_version=1 and kv_entries columns', () => {
+test('schema migration creates schema_version=2 and kv_entries columns', () => {
   const t = makeTempRoot();
   try {
     const storage = openKvStorage(t.root);
     const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
-    expect(version?.version).toBe(1);
+    expect(version?.version).toBe(2);
     const table = storage.db.query(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name = 'kv_entries'
@@ -60,6 +63,7 @@ test('schema migration creates schema_version=1 and kv_entries columns', () => {
       'prefix_byte_length',
       'workload_epoch',
       'quarantined',
+      'state',
     ]);
     storage.close();
   } finally {
@@ -84,8 +88,48 @@ test('schema is preserved across reopens with existing rows', () => {
     expect(row).not.toBeNull();
     expect(row?.upstreamSlotFile).toBe(slotFile);
     const version = second.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
-    expect(version?.version).toBe(1);
+    expect(version?.version).toBe(2);
     second.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('migration from v1 to v2 adds state column with idle default for existing rows', () => {
+  const t = makeTempRoot();
+  try {
+    const kvDir = join(t.root, 'kvstore');
+    mkdirSync(kvDir, { recursive: true });
+    const dbPath = join(kvDir, 'registry.db');
+    const db = new Database(dbPath);
+    db.run('PRAGMA journal_mode = WAL');
+    db.run(`
+      CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER NOT NULL
+      )
+    `);
+    db.query('INSERT INTO schema_version (version) VALUES (0)').run();
+    runMigrations(db, 0, 1);
+    db.query(`
+      INSERT INTO kv_entries (
+        sha, workload, upstream_slot_file, quant_bits, tokens, ctx_size, hits,
+        created_at, last_used, payload_bytes, text_bytes, reason,
+        prefix_byte_length, workload_epoch, quarantined
+      ) VALUES (
+        'legacy-sha', 'wl-a', '/tmp/legacy.slot', 8, 123, 32768, 0,
+        1, 1, 10, 5, 'cold', 64, 'epoch-legacy', 0
+      )
+    `).run();
+    db.close();
+
+    const storage = openKvStorage(t.root);
+    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    expect(version?.version).toBe(2);
+    const state = storage.db.query('SELECT state FROM kv_entries WHERE sha = ?').get('legacy-sha') as
+      | { state: string }
+      | null;
+    expect(state?.state).toBe('idle');
+    storage.close();
   } finally {
     t.cleanup();
   }

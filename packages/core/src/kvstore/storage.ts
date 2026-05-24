@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 export interface KvStorage {
   db: Database;
@@ -88,6 +88,13 @@ export function runMigrations(db: Database, fromVersion: number, toVersion: numb
         db.run('CREATE INDEX IF NOT EXISTS idx_kv_workload_quant_ctx ON kv_entries (workload, quant_bits, ctx_size)');
         db.run('CREATE INDEX IF NOT EXISTS idx_kv_last_used ON kv_entries (last_used)');
         db.query('UPDATE schema_version SET version = 1').run();
+        break;
+      case 2:
+        db.run(`
+          ALTER TABLE kv_entries
+          ADD COLUMN state TEXT NOT NULL DEFAULT 'idle' CHECK(state IN ('idle','reserved','active'))
+        `);
+        db.query('UPDATE schema_version SET version = 2').run();
         break;
       default:
         throw new Error(`Unsupported kvstore schema migration target ${next}`);
