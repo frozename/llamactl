@@ -8,6 +8,11 @@ import { taskRefinerRubricWorkload } from './workloads/task-refiner-rubric.js';
 import { toolCallGrammarWorkload } from './workloads/tool-call-grammar.js';
 import { memoryRecallWorkload } from './workloads/memory-recall.js';
 import { projectBriefGenWorkload } from './workloads/project-brief-gen.js';
+import {
+  kvWarmBenchWorkload,
+  parseKvWarmBenchRunArgs,
+  runKvWarmBench,
+} from './workloads/kv-warm-bench.js';
 import { renderCsvReport, renderMarkdownReport } from './report.js';
 import type { ModelSpec, WorkloadEval } from './types.js';
 
@@ -132,12 +137,22 @@ function getKnownWorkloads(): Record<string, WorkloadEval> {
     'tool-call-grammar': toolCallGrammarWorkload,
     'memory-recall': memoryRecallWorkload,
     'project-brief-gen': projectBriefGenWorkload,
+    'kv-warm-bench': kvWarmBenchWorkload,
   };
 }
 
 async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  if (argv[0] === 'run' && argv[1] === 'kv-warm-bench') {
+    const args = parseKvWarmBenchRunArgs(argv.slice(2));
+    const result = await runKvWarmBench(args);
+    console.log(`kv-warm-bench wrote ${result.outputPath}`);
+    return;
+  }
+
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
     console.log('usage: --models <json> --workloads <names> --out-db <path> [--concurrency <1-8>] [--report md|csv|both] [--report-out <path>] [--corpus-override workload=path[,...]]');
+    console.log('   or: run kv-warm-bench --model <name> [--proxy <url>] [--temperature <n>] [--max-tokens <n>] [--frontiers <csv>] [--warm-runs <n>] [--data-root <path>] [--out <path>]');
     return;
   }
   const { modelsPath, workloadsArg, outDb, concurrency, report, reportOut, runId, reportAllRuns, corpusOverrides } = parseArgs(process.argv.slice(2));
