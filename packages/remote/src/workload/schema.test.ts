@@ -50,6 +50,30 @@ test('ModelRun parses metadata.annotations defaulting to {}', () => {
   expect(m.metadata.annotations).toEqual({ 'llamactl.io/evict': 'old' });
 });
 
+test('ModelRun accepts spec.useProxy omitted (default false behavior)', () => {
+  const m = ModelRunSchema.parse({
+    apiVersion: 'llamactl/v1',
+    kind: 'ModelRun',
+    metadata: { name: 'a' },
+    spec: { node: 'local', target: { kind: 'rel', value: 'm.gguf' } },
+  });
+  expect(m.spec.useProxy).toBeUndefined();
+});
+
+test('ModelRun accepts spec.useProxy=true', () => {
+  const m = ModelRunSchema.parse({
+    apiVersion: 'llamactl/v1',
+    kind: 'ModelRun',
+    metadata: { name: 'a' },
+    spec: {
+      node: 'local',
+      target: { kind: 'rel', value: 'm.gguf' },
+      useProxy: true,
+    },
+  });
+  expect(m.spec.useProxy).toBe(true);
+});
+
 test('NodeRun parses spec.budget.memoryGiB', () => {
   const n = NodeRunSchema.parse({
     apiVersion: 'llamactl/v1',

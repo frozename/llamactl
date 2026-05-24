@@ -1085,6 +1085,202 @@ describe('applyComposite — gateway upstream threading', () => {
     expect(ctx.providerConfig).toEqual({ extra: { routing: 'latency-aware', maxQps: 42 } });
   });
 
+  test('useProxy=true emits the internal-proxy endpoint for upstream workloads', async () => {
+    const backend = new FakeRuntimeBackend();
+    const { client } = makeFakeWorkloadClient();
+
+    const { loadConfig, saveConfig: saveCfg, upsertNode } = await import(
+      '../src/config/kubeconfig.js'
+    );
+    const cfg0 = loadConfig(configPath);
+    saveCfg(
+      upsertNode(cfg0, 'home', {
+        name: 'proxy-gw',
+        endpoint: '',
+        kind: 'gateway',
+        cloud: {
+          provider: 'sirius',
+          baseUrl: 'http://127.0.0.1:3000/v1',
+        },
+      }),
+      configPath,
+    );
+
+    const recorded: Array<{
+      upstreams: ReadonlyArray<{ endpoint: string }>;
+    }> = [];
+    const fakeSirius = {
+      kind: 'sirius',
+      canHandle: (node: { cloud?: { provider: string } }) =>
+        node.cloud?.provider === 'sirius',
+      apply: async (o: {
+        composite?: {
+          upstreams: ReadonlyArray<{ endpoint: string }>;
+        };
+      }) => {
+        if (o.composite) recorded.push(o.composite);
+        const now = new Date().toISOString();
+        return {
+          action: 'started' as const,
+          statusSection: {
+            phase: 'Running' as const,
+            serverPid: null,
+            endpoint: 'http://127.0.0.1:3000/v1',
+            lastTransitionTime: now,
+            conditions: [],
+          },
+        };
+      },
+    };
+
+    const manifest: Composite = {
+      apiVersion: 'llamactl/v1',
+      kind: 'Composite',
+      metadata: { name: 'proxy-stack' },
+      spec: {
+        services: [],
+        workloads: [
+          {
+            node: 'local',
+            enabled: true,
+            target: { kind: 'rel', value: 'llama-7b.gguf' },
+            extraArgs: [],
+            workers: [],
+            restartPolicy: 'OnFailure',
+            gateway: false,
+            allowExternalBind: false,
+            timeoutSeconds: 60,
+            useProxy: true,
+          },
+        ],
+        ragNodes: [],
+        gateways: [
+          {
+            name: 'sirius-entry',
+            node: 'proxy-gw',
+            provider: 'sirius',
+            upstreamWorkloads: ['local'],
+            providerConfig: {},
+          },
+        ],
+        pipelines: [],
+        dependencies: [],
+        onFailure: 'rollback',
+      },
+    };
+
+    const result = await applyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+      gatewayHandlers: [fakeSirius as never],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.upstreams[0]?.endpoint).toBe('http://127.0.0.1:7944');
+  });
+
+  test('useProxy=false keeps the direct workload endpoint', async () => {
+    const backend = new FakeRuntimeBackend();
+    const { client } = makeFakeWorkloadClient();
+
+    const { loadConfig, saveConfig: saveCfg, upsertNode } = await import(
+      '../src/config/kubeconfig.js'
+    );
+    const cfg0 = loadConfig(configPath);
+    saveCfg(
+      upsertNode(cfg0, 'home', {
+        name: 'direct-gw',
+        endpoint: '',
+        kind: 'gateway',
+        cloud: {
+          provider: 'sirius',
+          baseUrl: 'http://127.0.0.1:3000/v1',
+        },
+      }),
+      configPath,
+    );
+
+    const recorded: Array<{
+      upstreams: ReadonlyArray<{ endpoint: string }>;
+    }> = [];
+    const fakeSirius = {
+      kind: 'sirius',
+      canHandle: (node: { cloud?: { provider: string } }) =>
+        node.cloud?.provider === 'sirius',
+      apply: async (o: {
+        composite?: {
+          upstreams: ReadonlyArray<{ endpoint: string }>;
+        };
+      }) => {
+        if (o.composite) recorded.push(o.composite);
+        const now = new Date().toISOString();
+        return {
+          action: 'started' as const,
+          statusSection: {
+            phase: 'Running' as const,
+            serverPid: null,
+            endpoint: 'http://127.0.0.1:3000/v1',
+            lastTransitionTime: now,
+            conditions: [],
+          },
+        };
+      },
+    };
+
+    const manifest: Composite = {
+      apiVersion: 'llamactl/v1',
+      kind: 'Composite',
+      metadata: { name: 'direct-stack' },
+      spec: {
+        services: [],
+        workloads: [
+          {
+            node: 'local',
+            enabled: true,
+            target: { kind: 'rel', value: 'llama-7b.gguf' },
+            extraArgs: [],
+            workers: [],
+            restartPolicy: 'OnFailure',
+            gateway: false,
+            allowExternalBind: false,
+            timeoutSeconds: 60,
+            useProxy: false,
+          },
+        ],
+        ragNodes: [],
+        gateways: [
+          {
+            name: 'sirius-entry',
+            node: 'direct-gw',
+            provider: 'sirius',
+            upstreamWorkloads: ['local'],
+            providerConfig: {},
+          },
+        ],
+        pipelines: [],
+        dependencies: [],
+        onFailure: 'rollback',
+      },
+    };
+
+    const result = await applyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => client,
+      configPath,
+      compositesDir,
+      gatewayHandlers: [fakeSirius as never],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]?.upstreams[0]?.endpoint).toBe('http://127.0.0.1:8080');
+  });
+
   test('upstreamWorkloads=[] still emits empty composite context', async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();

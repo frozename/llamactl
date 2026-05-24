@@ -87,6 +87,12 @@ export const ModelRunSpecSchema = z.object({
    * server beyond localhost.
    */
   allowExternalBind: z.boolean().default(false),
+  /**
+   * When true, internal callers should address this workload through
+   * the local internal proxy endpoint instead of the workload's direct
+   * llama-server URL.
+   */
+  useProxy: z.boolean().optional(),
 });
 
 export const ModelRunConditionSchema = z.object({

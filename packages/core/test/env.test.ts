@@ -2,7 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ensureDirs, formatEvalScript, resolveEnv } from '../src/env.js';
+import {
+  ensureDirs,
+  formatEvalScript,
+  resolveEnv,
+  resolveInternalProxyEndpoint,
+} from '../src/env.js';
 
 describe('env.resolveEnv', () => {
   test('derives sensible defaults from just DEV_STORAGE', () => {
@@ -51,6 +56,22 @@ describe('env.resolveEnv', () => {
       LOCAL_AI_MODEL: 'custom-id',
     } as NodeJS.ProcessEnv);
     expect(resolved.LOCAL_AI_MODEL).toBe('custom-id');
+  });
+});
+
+describe('env.resolveInternalProxyEndpoint', () => {
+  test('falls back to loopback default when unset', () => {
+    expect(resolveInternalProxyEndpoint({} as NodeJS.ProcessEnv)).toBe(
+      'http://127.0.0.1:7944',
+    );
+  });
+
+  test('respects LLAMACTL_INTERNAL_PROXY_URL override', () => {
+    expect(
+      resolveInternalProxyEndpoint({
+        LLAMACTL_INTERNAL_PROXY_URL: 'http://127.0.0.1:9001',
+      } as NodeJS.ProcessEnv),
+    ).toBe('http://127.0.0.1:9001');
   });
 });
 

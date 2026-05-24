@@ -110,6 +110,12 @@ function resolveProvider(raw: string | undefined): Provider {
   return raw === 'lmstudio' ? 'lmstudio' : 'llama.cpp';
 }
 
+export function resolveInternalProxyEndpoint(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return env.LLAMACTL_INTERNAL_PROXY_URL ?? 'http://127.0.0.1:7944';
+}
+
 function resolveDefaultModel(
   env: NodeJS.ProcessEnv,
   profile: MachineProfile,

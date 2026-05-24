@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Per-user launchd agent for the internal-only llamactl proxy endpoint.
+
+  This runs a dedicated second `agent serve` process on 127.0.0.1:7944
+  with `--no-auth` so local supervisors and internal callers can hit
+  the OpenAI-compatible proxy without bearer plumbing.
+
+  SECURITY: `--no-auth` is safe ONLY for loopback traffic. Keep
+  `--bind=127.0.0.1` unchanged. The CLI rejects `--no-auth` on non-
+  loopback binds, but this plist should never be edited to expose
+  external interfaces.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.llamactl.internal-proxy</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/acordeiro/.bun/bin/bun</string>
+    <string>/Volumes/WorkSSD/repos/personal/llamactl/packages/cli/src/bin.ts</string>
+    <string>agent</string>
+    <string>serve</string>
+    <string>--bind=127.0.0.1</string>
+    <string>--port=7944</string>
+    <string>--no-auth</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/Users/acordeiro/.llamactl/logs/internal-proxy.stdout.log</string>
+  <key>StandardErrorPath</key><string>/Users/acordeiro/.llamactl/logs/internal-proxy.stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>/Users/acordeiro</string>
+    <key>PATH</key><string>/Users/acordeiro/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>DEV_STORAGE</key><string>/Users/acordeiro/DevStorage</string>
+    <key>LLAMA_CPP_MODELS</key><string>/Volumes/WorkSSD/ai-models/llama.cpp/models</string>
+  </dict>
+</dict>
+</plist>

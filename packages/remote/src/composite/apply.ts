@@ -25,6 +25,7 @@
  */
 import { removeCompositeEntries, readGatewayCatalog, writeGatewayCatalog } from '../workload/gateway-catalog/index.js';
 import { reloadAllGatewayNodesOfKind } from '../workload/gateway-catalog/reload.js';
+import { resolveInternalProxyEndpoint } from '../../../core/src/env.js';
 import type {
   RuntimeBackend,
   ServiceInstance,
@@ -366,10 +367,13 @@ async function applyWorkloadComponent(
     throw new Error(`workload '${ref.name}' failed: ${result.error}`);
   }
   const endpoint = result.statusSection.endpoint;
+  const workloadEndpoint = spec.useProxy
+    ? resolveInternalProxyEndpoint(process.env)
+    : endpoint;
   return {
     ref,
     started: result.action !== 'unchanged',
-    ...(endpoint && { workloadEndpoint: endpoint }),
+    ...(workloadEndpoint && { workloadEndpoint }),
     workloadNodeName: spec.node,
   };
 }
