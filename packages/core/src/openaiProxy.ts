@@ -1,4 +1,8 @@
 import type { ModelInfo, ModelListResponse } from '@nova/contracts';
+import { createHash } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { statSync } from 'node:fs';
 import {
   AnthropicTranslationError,
@@ -8,11 +12,22 @@ import { translateOpenAIResponse } from './anthropic/translateResponse.js';
 import { translateOpenAIStreamToAnthropic } from './anthropic/translateStream.js';
 import type { AnthropicMessagesRequest } from './anthropic/types.js';
 import { resolveEnv } from './env.js';
+import { ctxForModel } from './ctx.js';
 import { endpoint as llamaEndpoint, readServerState, readServerPid } from './server.js';
 import { readModelHostState } from './engines/state.js';
 import type { ResolvedEnv } from './types.js';
 import * as workloadRuntime from './workloadRuntime.js';
 import type { WorkloadKey } from './workloadRuntime.js';
+import {
+  KvRegistry,
+  SlotAllocator,
+  UpstreamSlotClient,
+  longestPrefixLookup,
+  openKvStorage,
+  readWorkloadEpoch,
+  runEvictionIfOverBudget,
+  type KvStorage,
+} from './kvstore/index.js';
 
 const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
 
@@ -141,14 +156,48 @@ function routedEndpointForModel(
   pathname: string,
   search: string,
   resolved: ResolvedEnv,
-): string | null {
+): RoutedEntry | null {
   const routeMap = getRouteMap(resolved);
   const entry = routeMap.get(model);
   if (!entry) return null;
-  return `http://${entry.host}:${entry.port}${pathname}${search}`;
+  return {
+    ...entry,
+    target: `http://${entry.host}:${entry.port}${pathname}${search}`,
+  };
 }
 
-type RouteEntry = { host: string; port: number };
+type RouteEntry = {
+  host: string;
+  port: number;
+  workload: string;
+  kind: 'ModelRun' | 'ModelHost';
+  engine: workloadRuntime.LocalRoute['engine'];
+  model: string;
+};
+
+type RoutedEntry = RouteEntry & { target: string };
+
+interface KvRuntime {
+  storage: KvStorage;
+  registry: KvRegistry;
+  allocators: Map<string, SlotAllocator>;
+  slotClients: Map<string, { endpoint: string; client: UpstreamSlotClient }>;
+}
+
+interface KvRequestState {
+  runtime: KvRuntime;
+  workload: string;
+  host: string;
+  port: number;
+  quantBits: number;
+  ctxSize: number;
+  workloadEpoch: string;
+  sha: string;
+  prefixMetric: number;
+  shouldPersist: boolean;
+  warmHitSha: string | null;
+  warmHitLease: { slotId: number; release: () => void } | null;
+}
 
 type ProxyContext = {
   req: Request;
@@ -160,6 +209,8 @@ type ProxyContext = {
   bodyText?: string;
   isAnthropic?: boolean;
   anthropicModel?: string;
+  route?: RoutedEntry;
+  kv?: KvRequestState;
 };
 
 let routeMapCache: { mtimeNs: bigint; map: Map<string, RouteEntry> } | null = null;
@@ -182,7 +233,14 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
       continue;
     }
     winners.set(route.model, { kind: route.kind, workload: route.workload });
-    out.set(route.model, { host: route.host, port: route.port });
+    out.set(route.model, {
+      host: route.host,
+      port: route.port,
+      workload: route.workload,
+      kind: route.kind,
+      engine: route.engine,
+      model: route.model,
+    });
   }
   return out;
 }
@@ -203,6 +261,10 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   routeMapCache = null;
   modelsResponseCache = null;
   routeMapBuildCount = 0;
+  for (const runtime of kvRuntimeByDataRoot.values()) {
+    runtime.storage.close();
+  }
+  kvRuntimeByDataRoot.clear();
 }
 
 export function __getOpenAIProxyRouteMapBuildCountForTests(): number {
@@ -280,6 +342,199 @@ function maybeTranslate(context: ProxyContext): ProxyContext {
   return context;
 }
 
+const kvRuntimeByDataRoot = new Map<string, KvRuntime>();
+
+function resolveKvDataRoot(resolved: ResolvedEnv): string {
+  // KV state is rooted beside workload runtime files to avoid route-map cache churn on each KV write.
+  const runtimeRoot = (resolved as Partial<ResolvedEnv>).LOCAL_AI_RUNTIME_DIR;
+  if (typeof runtimeRoot === 'string' && runtimeRoot.length > 0) return runtimeRoot;
+  return join(homedir(), '.llamactl', 'data');
+}
+
+function kvRuntimeFor(resolved: ResolvedEnv): KvRuntime {
+  const dataRoot = resolveKvDataRoot(resolved);
+  const cached = kvRuntimeByDataRoot.get(dataRoot);
+  if (cached) return cached;
+  const storage = openKvStorage(dataRoot);
+  const runtime: KvRuntime = {
+    storage,
+    registry: new KvRegistry(storage),
+    allocators: new Map(),
+    slotClients: new Map(),
+  };
+  kvRuntimeByDataRoot.set(dataRoot, runtime);
+  return runtime;
+}
+
+function slotAllocatorFor(runtime: KvRuntime, workload: string): SlotAllocator {
+  let allocator = runtime.allocators.get(workload);
+  if (!allocator) {
+    allocator = new SlotAllocator(1);
+    runtime.allocators.set(workload, allocator);
+  }
+  return allocator;
+}
+
+function slotClientFor(runtime: KvRuntime, workload: string, host: string, port: number): UpstreamSlotClient {
+  const endpoint = `http://${host}:${port}`;
+  const cached = runtime.slotClients.get(workload);
+  if (cached && cached.endpoint === endpoint) return cached.client;
+  const client = new UpstreamSlotClient(endpoint);
+  runtime.slotClients.set(workload, { endpoint, client });
+  return client;
+}
+
+function parseContextWindow(extraArgs: readonly string[] | undefined, fallback: number): number {
+  if (!extraArgs || extraArgs.length === 0) return fallback;
+  const readAfterFlag = (...flags: string[]): number | null => {
+    for (let i = 0; i < extraArgs.length; i += 1) {
+      const token = extraArgs[i]!;
+      if (flags.includes(token)) {
+        const value = extraArgs[i + 1];
+        if (value && Number.isInteger(Number.parseInt(value, 10))) {
+          return Number.parseInt(value, 10);
+        }
+        continue;
+      }
+      for (const flag of flags) {
+        if (!token.startsWith(`${flag}=`)) continue;
+        const value = token.slice(flag.length + 1);
+        if (Number.isInteger(Number.parseInt(value, 10))) return Number.parseInt(value, 10);
+      }
+    }
+    return null;
+  };
+  return readAfterFlag('-c', '--ctx-size') ?? fallback;
+}
+
+function quantBitsFromModelId(model: string): number {
+  if (/Q8_0\.gguf$/i.test(model) || /(?:^|[-_/])q8(?:$|[-_/])/i.test(model)) return 8;
+  if (/Q6_[A-Z0-9_]+\.gguf$/i.test(model) || /(?:^|[-_/])q6(?:$|[-_/])/i.test(model)) return 6;
+  if (/Q5_[A-Z0-9_]+\.gguf$/i.test(model) || /(?:^|[-_/])q5(?:$|[-_/])/i.test(model)) return 5;
+  if (/Q4_[A-Z0-9_]+\.gguf$/i.test(model) || /(?:^|[-_/])q4(?:$|[-_/])/i.test(model)) return 4;
+  if (/Q3_[A-Z0-9_]+\.gguf$/i.test(model) || /(?:^|[-_/])q3(?:$|[-_/])/i.test(model)) return 3;
+  if (/Q2_[A-Z0-9_]+\.gguf$/i.test(model) || /(?:^|[-_/])q2(?:$|[-_/])/i.test(model)) return 2;
+  return 0;
+}
+
+function resolveRouteKvMetadata(context: ProxyContext): {
+  workload: string;
+  host: string;
+  port: number;
+  quantBits: number;
+  ctxSize: number;
+  workloadEpoch: string;
+} | null {
+  const route = context.route;
+  if (!route) return null;
+  if (route.kind !== 'ModelRun' || route.engine !== 'llamacpp') return null;
+
+  const key = { name: route.workload };
+  const workloadEpoch = readWorkloadEpoch(key, context.resolved);
+  if (!workloadEpoch) return null;
+
+  const state = readServerState(key, context.resolved);
+  const rel = state?.rel ?? route.model;
+  const defaultCtx = Number.parseInt(ctxForModel(rel, context.resolved), 10);
+  const ctxSize = parseContextWindow(state?.extraArgs, Number.isFinite(defaultCtx) ? defaultCtx : 32768);
+  return {
+    workload: route.workload,
+    host: route.host,
+    port: route.port,
+    quantBits: quantBitsFromModelId(rel),
+    ctxSize,
+    workloadEpoch,
+  };
+}
+
+function kvBudgetBytes(): number {
+  const raw = process.env.LLAMACTL_KV_WORKLOAD_BUDGET_MB;
+  if (!raw) return 8192 * 1024 * 1024;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 8192 * 1024 * 1024;
+  return parsed * 1024 * 1024;
+}
+
+function shouldUseKvPath(context: ProxyContext): boolean {
+  return context.req.method === 'POST' && context.pathname === '/v1/chat/completions' && typeof context.bodyText === 'string';
+}
+
+async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
+  if (!shouldUseKvPath(context)) return context;
+  const metadata = resolveRouteKvMetadata(context);
+  if (!metadata) return context;
+  const runtime = kvRuntimeFor(context.resolved);
+  const bodyText = context.bodyText!;
+  const prefixMetric = Buffer.byteLength(bodyText, 'utf8');
+  const sha = createHash('sha1').update(bodyText).digest('hex');
+
+  // Phase 6 is boundary-naive: use byte length as both byte prefix and token guard until token accounting lands.
+  const hit = longestPrefixLookup(runtime.registry, {
+    candidatePrefixes: [{ sha, prefixByteLength: prefixMetric, tokenCount: prefixMetric }],
+    workload: metadata.workload,
+    quantBits: metadata.quantBits,
+    ctxSize: metadata.ctxSize,
+    workloadEpoch: metadata.workloadEpoch,
+  });
+
+  if (hit) {
+    let reserved = false;
+    const reserveWrite = runtime.storage.safeWrite(() => {
+      reserved = runtime.registry.reserve(hit.sha);
+    });
+    if (reserveWrite.ok && reserved) {
+      const lease = slotAllocatorFor(runtime, metadata.workload).acquire();
+      if (lease) {
+        const slotClient = slotClientFor(runtime, metadata.workload, metadata.host, metadata.port);
+        const restore = await slotClient.restore(lease.slotId, hit.upstreamSlotFile);
+        let activated = false;
+        const activateWrite = runtime.storage.safeWrite(() => {
+          activated = runtime.registry.activate(hit.sha);
+        });
+        if (restore.ok && activateWrite.ok && activated) {
+          runtime.registry.bumpHit(hit.sha, Date.now());
+          context.kv = {
+            runtime,
+            workload: metadata.workload,
+            host: metadata.host,
+            port: metadata.port,
+            quantBits: metadata.quantBits,
+            ctxSize: metadata.ctxSize,
+            workloadEpoch: metadata.workloadEpoch,
+            sha,
+            prefixMetric,
+            shouldPersist: false,
+            warmHitSha: hit.sha,
+            warmHitLease: lease,
+          };
+          return context;
+        }
+        runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
+        lease.release();
+        if (!restore.ok) runtime.storage.safeWrite(() => runtime.registry.delete(hit.sha));
+      } else {
+        runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
+      }
+    }
+  }
+
+  context.kv = {
+    runtime,
+    workload: metadata.workload,
+    host: metadata.host,
+    port: metadata.port,
+    quantBits: metadata.quantBits,
+    ctxSize: metadata.ctxSize,
+    workloadEpoch: metadata.workloadEpoch,
+    sha,
+    prefixMetric,
+    shouldPersist: true,
+    warmHitSha: null,
+    warmHitLease: null,
+  };
+  return context;
+}
+
 async function resolveRoute(context: ProxyContext): Promise<ProxyContext | Response> {
   const { req, resolved } = context;
   if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -310,7 +565,10 @@ async function resolveRoute(context: ProxyContext): Promise<ProxyContext | Respo
       const model = bodyText ? requestedModelFromBody(bodyText) : undefined;
       if (model) {
         const routedTarget = routedEndpointForModel(model, context.pathname, context.search, resolved);
-        if (routedTarget) context.target = routedTarget;
+        if (routedTarget) {
+          context.target = routedTarget.target;
+          context.route = routedTarget;
+        }
       }
       return context;
     }
@@ -339,6 +597,70 @@ async function forward(context: ProxyContext): Promise<Response> {
     );
   }
   return upstream;
+}
+
+async function maybePersistKv(context: ProxyContext, upstream: Response): Promise<void> {
+  const kv = context.kv;
+  if (!kv) return;
+  try {
+    if (!kv.shouldPersist) return;
+    const contentType = upstream.headers.get('content-type');
+    // TODO(phase9): defer KV save for streams until exact replay boundaries are captured.
+    if (contentType?.toLowerCase().startsWith('text/event-stream')) return;
+    if (upstream.status !== 200 || !isJsonContentType(contentType)) return;
+
+    const allocator = slotAllocatorFor(kv.runtime, kv.workload);
+    const lease = allocator.acquire();
+    if (!lease) return;
+    try {
+      const slotDir = join(resolveKvDataRoot(context.resolved), 'kvstore', 'slots', kv.workload);
+      mkdirSync(slotDir, { recursive: true });
+      const slotFile = join(slotDir, `${kv.sha}.kvslot`);
+      const slotClient = slotClientFor(kv.runtime, kv.workload, kv.host, kv.port);
+      const saved = await slotClient.save(lease.slotId, slotFile);
+      if (!saved.ok) {
+        console.warn(`[kvstore] slot save skipped for workload='${kv.workload}' sha='${kv.sha}': ${saved.reason}`);
+        return;
+      }
+
+      const now = Date.now();
+      const wrote = kv.runtime.storage.safeWrite(() => {
+        kv.runtime.registry.insert({
+          sha: kv.sha,
+          workload: kv.workload,
+          upstreamSlotFile: slotFile,
+          quantBits: kv.quantBits,
+          tokens: kv.prefixMetric,
+          ctxSize: kv.ctxSize,
+          hits: 0,
+          createdAt: now,
+          lastUsed: now,
+          payloadBytes: kv.prefixMetric,
+          textBytes: kv.prefixMetric,
+          reason: 'cold',
+          prefixByteLength: kv.prefixMetric,
+          workloadEpoch: kv.workloadEpoch,
+          quarantined: 0,
+          state: 'idle',
+        });
+      });
+      if (!wrote.ok) return;
+
+      const eviction = runEvictionIfOverBudget(kv.runtime.registry, kv.workload, kvBudgetBytes(), now);
+      for (const blockedSha of eviction.blockedActive) {
+        console.debug(JSON.stringify({
+          event: 'slot_eviction_blocked_active_request',
+          workload: kv.workload,
+          sha: blockedSha,
+        }));
+      }
+    } finally {
+      lease.release();
+    }
+  } finally {
+    if (kv.warmHitSha) kv.runtime.storage.safeWrite(() => kv.runtime.registry.release(kv.warmHitSha!));
+    kv.warmHitLease?.release();
+  }
 }
 
 async function maybeTranslateResponse(context: ProxyContext, upstream: Response): Promise<Response> {
@@ -413,6 +735,8 @@ export async function proxyOpenAI(
   const translated = maybeTranslate(parsed);
   const routed = await resolveRoute(translated);
   if (routed instanceof Response) return routed;
-  const upstream = await forward(routed);
-  return maybeTranslateResponse(routed, upstream);
+  const withKvLookup = await maybeKvLookup(routed);
+  const upstream = await forward(withKvLookup);
+  await maybePersistKv(withKvLookup, upstream);
+  return maybeTranslateResponse(withKvLookup, upstream);
 }
