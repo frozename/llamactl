@@ -56,16 +56,25 @@ async function acquireClosedLocalPort(): Promise<number> {
   return port;
 }
 
-test('save success returns ok + tokensSaved', async () => {
-  const upstream = await startTestServer((req, res, url) => {
+test('save success returns ok + tokensSaved + sends filename in JSON body', async () => {
+  let sentFilename: string | null = null;
+  const upstream = await startTestServer(async (req, res, url) => {
     if (req.method !== 'POST' || url.pathname !== '/slots/3') {
       res.statusCode = 404;
       res.end();
       return;
     }
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    try {
+      const parsed = JSON.parse(body) as { filename?: string };
+      sentFilename = parsed.filename ?? null;
+    } catch {
+      sentFilename = null;
+    }
     json(res, 200, {
       action: url.searchParams.get('action'),
-      filename: url.searchParams.get('filename'),
+      filename: sentFilename,
       n_saved: 123,
     });
   });
@@ -73,6 +82,7 @@ test('save success returns ok + tokensSaved', async () => {
     const client = new UpstreamSlotClient(upstream.baseUrl);
     const result = await client.save(3, 'slot-a.bin');
     expect(result).toEqual({ ok: true, tokensSaved: 123 });
+    expect(sentFilename).toBe('slot-a.bin');
   } finally {
     await upstream.close();
   }
@@ -95,16 +105,25 @@ test('save http error returns http_error + status', async () => {
   }
 });
 
-test('restore success returns ok + tokensRestored', async () => {
-  const upstream = await startTestServer((req, res, url) => {
+test('restore success returns ok + tokensRestored + sends filename in JSON body', async () => {
+  let sentFilename: string | null = null;
+  const upstream = await startTestServer(async (req, res, url) => {
     if (req.method !== 'POST' || url.pathname !== '/slots/9') {
       res.statusCode = 404;
       res.end();
       return;
     }
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    try {
+      const parsed = JSON.parse(body) as { filename?: string };
+      sentFilename = parsed.filename ?? null;
+    } catch {
+      sentFilename = null;
+    }
     json(res, 200, {
       action: url.searchParams.get('action'),
-      filename: url.searchParams.get('filename'),
+      filename: sentFilename,
       n_restored: 456,
     });
   });
@@ -112,6 +131,7 @@ test('restore success returns ok + tokensRestored', async () => {
     const client = new UpstreamSlotClient(upstream.baseUrl);
     const result = await client.restore(9, 'slot-c.bin');
     expect(result).toEqual({ ok: true, tokensRestored: 456 });
+    expect(sentFilename).toBe('slot-c.bin');
   } finally {
     await upstream.close();
   }

@@ -101,8 +101,7 @@ export class UpstreamSlotClient implements SlotClient {
   ): Promise<FetchResult> {
     const url = new URL(`/slots/${slotId}`, this.baseUrl);
     url.searchParams.set('action', action);
-    url.searchParams.set('filename', filename);
-    return this.fetchWithTimeout(url, 'POST');
+    return this.fetchWithTimeout(url, 'POST', JSON.stringify({ filename }));
   }
 
   private async probeSupportsSlots(): Promise<boolean> {
@@ -113,11 +112,16 @@ export class UpstreamSlotClient implements SlotClient {
     return parsed.ok && typeof parsed.value === 'object' && parsed.value !== null;
   }
 
-  private async fetchWithTimeout(url: URL, method: 'GET' | 'POST'): Promise<FetchResult> {
+  private async fetchWithTimeout(url: URL, method: 'GET' | 'POST', body?: string): Promise<FetchResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), SLOT_REQUEST_TIMEOUT_MS);
     try {
-      const response = await fetch(url, { method, signal: controller.signal });
+      const init: RequestInit = { method, signal: controller.signal };
+      if (body !== undefined) {
+        init.body = body;
+        init.headers = { 'content-type': 'application/json' };
+      }
+      const response = await fetch(url, init);
       return { ok: true, response };
     } catch (error: unknown) {
       return { ok: false, error: toError(error) };
