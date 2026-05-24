@@ -20,6 +20,7 @@ export interface KvEntry {
   workloadEpoch: string;
   quarantined: number;
   state: KvEntryState;
+  firstResponseToken: string | null;
 }
 
 interface KvEntryRow {
@@ -39,6 +40,7 @@ interface KvEntryRow {
   workload_epoch: string;
   quarantined: number;
   state: KvEntryState;
+  first_response_token: string | null;
 }
 
 export class KvRegistry {
@@ -62,7 +64,8 @@ export class KvRegistry {
         prefix_byte_length,
         workload_epoch,
         quarantined,
-        state
+        state,
+        first_response_token
       ) VALUES (
         $sha,
         $workload,
@@ -79,7 +82,8 @@ export class KvRegistry {
         $prefix_byte_length,
         $workload_epoch,
         $quarantined,
-        $state
+        $state,
+        $first_response_token
       )
       ON CONFLICT(sha) DO UPDATE SET
         workload=excluded.workload,
@@ -96,7 +100,8 @@ export class KvRegistry {
         prefix_byte_length=excluded.prefix_byte_length,
         workload_epoch=excluded.workload_epoch,
         quarantined=excluded.quarantined,
-        state=excluded.state
+        state=excluded.state,
+        first_response_token=excluded.first_response_token
     `).run(toQueryParams(entry));
   }
 
@@ -164,7 +169,7 @@ export class KvRegistry {
   }
 }
 
-function toQueryParams(entry: KvEntry): Record<string, number | string> {
+function toQueryParams(entry: KvEntry): Record<string, number | string | null> {
   return {
     $sha: entry.sha,
     $workload: entry.workload,
@@ -182,6 +187,7 @@ function toQueryParams(entry: KvEntry): Record<string, number | string> {
     $workload_epoch: entry.workloadEpoch,
     $quarantined: entry.quarantined,
     $state: entry.state,
+    $first_response_token: entry.firstResponseToken,
   };
 }
 
@@ -211,5 +217,6 @@ function fromRow(row: KvEntryRow): KvEntry {
     workloadEpoch: row.workload_epoch,
     quarantined: row.quarantined,
     state: row.state,
+    firstResponseToken: row.first_response_token,
   };
 }

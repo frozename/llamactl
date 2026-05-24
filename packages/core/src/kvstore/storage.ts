@@ -2,12 +2,13 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export interface KvStorage {
   db: Database;
   registry_integrity_errors_total: number;
   registry_write_fail_total: number;
+  kv_false_hit_total: number;
   safeWrite(fn: () => void): { ok: true } | { ok: false; reason: 'enospc' | 'other'; error: Error };
   close(): void;
 }
@@ -22,6 +23,7 @@ export function openKvStorage(dataRoot: string): KvStorage {
     db,
     registry_integrity_errors_total: 0,
     registry_write_fail_total: 0,
+    kv_false_hit_total: 0,
     safeWrite: (fn) => safeWrite(storage, fn),
     close: () => db.close(),
   };
@@ -95,6 +97,13 @@ export function runMigrations(db: Database, fromVersion: number, toVersion: numb
           ADD COLUMN state TEXT NOT NULL DEFAULT 'idle' CHECK(state IN ('idle','reserved','active'))
         `);
         db.query('UPDATE schema_version SET version = 2').run();
+        break;
+      case 3:
+        db.run(`
+          ALTER TABLE kv_entries
+          ADD COLUMN first_response_token TEXT
+        `);
+        db.query('UPDATE schema_version SET version = 3').run();
         break;
       default:
         throw new Error(`Unsupported kvstore schema migration target ${next}`);

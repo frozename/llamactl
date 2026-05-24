@@ -30,16 +30,17 @@ function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
     workloadEpoch: 'epoch-1',
     quarantined: 0,
     state: 'idle',
+    firstResponseToken: null,
     ...overrides,
   };
 }
 
-test('schema migration creates schema_version=2 and kv_entries columns', () => {
+test('schema migration creates schema_version=3 and kv_entries columns', () => {
   const t = makeTempRoot();
   try {
     const storage = openKvStorage(t.root);
     const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
-    expect(version?.version).toBe(2);
+    expect(version?.version).toBe(3);
     const table = storage.db.query(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name = 'kv_entries'
@@ -64,6 +65,7 @@ test('schema migration creates schema_version=2 and kv_entries columns', () => {
       'workload_epoch',
       'quarantined',
       'state',
+      'first_response_token',
     ]);
     storage.close();
   } finally {
@@ -88,14 +90,14 @@ test('schema is preserved across reopens with existing rows', () => {
     expect(row).not.toBeNull();
     expect(row?.upstreamSlotFile).toBe(slotFile);
     const version = second.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
-    expect(version?.version).toBe(2);
+    expect(version?.version).toBe(3);
     second.close();
   } finally {
     t.cleanup();
   }
 });
 
-test('migration from v1 to v2 adds state column with idle default for existing rows', () => {
+test('migration from v2 to v3 adds first_response_token column with NULL default', () => {
   const t = makeTempRoot();
   try {
     const kvDir = join(t.root, 'kvstore');
@@ -109,26 +111,31 @@ test('migration from v1 to v2 adds state column with idle default for existing r
       )
     `);
     db.query('INSERT INTO schema_version (version) VALUES (0)').run();
-    runMigrations(db, 0, 1);
+    runMigrations(db, 0, 2);
     db.query(`
       INSERT INTO kv_entries (
         sha, workload, upstream_slot_file, quant_bits, tokens, ctx_size, hits,
         created_at, last_used, payload_bytes, text_bytes, reason,
-        prefix_byte_length, workload_epoch, quarantined
+        prefix_byte_length, workload_epoch, quarantined, state
       ) VALUES (
         'legacy-sha', 'wl-a', '/tmp/legacy.slot', 8, 123, 32768, 0,
-        1, 1, 10, 5, 'cold', 64, 'epoch-legacy', 0
+        1, 1, 10, 5, 'cold', 64, 'epoch-legacy', 0, 'idle'
       )
     `).run();
     db.close();
 
     const storage = openKvStorage(t.root);
     const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
-    expect(version?.version).toBe(2);
-    const state = storage.db.query('SELECT state FROM kv_entries WHERE sha = ?').get('legacy-sha') as
-      | { state: string }
+    expect(version?.version).toBe(3);
+    const row = storage.db.query(`
+      SELECT state, first_response_token
+      FROM kv_entries
+      WHERE sha = ?
+    `).get('legacy-sha') as
+      | { state: string; first_response_token: string | null }
       | null;
-    expect(state?.state).toBe('idle');
+    expect(row?.state).toBe('idle');
+    expect(row?.first_response_token).toBeNull();
     storage.close();
   } finally {
     t.cleanup();

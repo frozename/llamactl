@@ -27,6 +27,7 @@ function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
     workloadEpoch: 'epoch-1',
     quarantined: 0,
     state: 'idle',
+    firstResponseToken: null,
     ...overrides,
   };
 }

@@ -197,6 +197,8 @@ interface KvRequestState {
   shouldPersist: boolean;
   warmHitSha: string | null;
   warmHitLease: { slotId: number; release: () => void } | null;
+  warmHitExpectedFirstResponseToken: string | null;
+  enforceFirstTokenEquivalence: boolean;
 }
 
 type ProxyContext = {
@@ -269,6 +271,10 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
 
 export function __getOpenAIProxyRouteMapBuildCountForTests(): number {
   return routeMapBuildCount;
+}
+
+export function __getOpenAIProxyKvFalseHitTotalForTests(resolved: ResolvedEnv): number {
+  return kvRuntimeFor(resolved).storage.kv_false_hit_total;
 }
 
 function anthropicTranslationErrorResponse(error: unknown): Response {
@@ -459,12 +465,84 @@ function shouldUseKvPath(context: ProxyContext): boolean {
   return context.req.method === 'POST' && context.pathname === '/v1/chat/completions' && typeof context.bodyText === 'string';
 }
 
+function shouldEnforceFirstTokenEquivalence(bodyText: string): boolean {
+  try {
+    const parsed = JSON.parse(bodyText) as { temperature?: unknown; seed?: unknown };
+    if (parsed.seed !== null && parsed.seed !== undefined) return true;
+    if (typeof parsed.temperature === 'number' && Number.isFinite(parsed.temperature) && parsed.temperature > 0) {
+      // First-token checks are unstable under sampled decoding without a fixed seed.
+      return false;
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+const FIRST_RESPONSE_TOKEN_FINGERPRINT_CHARS = 20;
+
+function normalizeFirstResponseToken(text: string): string | null {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return null;
+  return trimmed.slice(0, FIRST_RESPONSE_TOKEN_FINGERPRINT_CHARS);
+}
+
+function firstTokenTextFromContent(content: unknown): string | null {
+  if (typeof content === 'string') return normalizeFirstResponseToken(content);
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (typeof part === 'string') {
+        const fromString = normalizeFirstResponseToken(part);
+        if (fromString) return fromString;
+        continue;
+      }
+      if (!part || typeof part !== 'object') continue;
+      const partText = (part as { text?: unknown }).text;
+      if (typeof partText !== 'string') continue;
+      const normalized = normalizeFirstResponseToken(partText);
+      if (normalized) return normalized;
+    }
+  }
+  return null;
+}
+
+function extractFirstResponseTokenFromJson(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const choices = (payload as { choices?: unknown }).choices;
+  if (!Array.isArray(choices) || choices.length === 0) return null;
+  const firstChoice = choices[0];
+  if (!firstChoice || typeof firstChoice !== 'object') return null;
+  const message = (firstChoice as { message?: unknown }).message;
+  if (message && typeof message === 'object') {
+    const content = (message as { content?: unknown }).content;
+    const fromMessage = firstTokenTextFromContent(content);
+    if (fromMessage) return fromMessage;
+  }
+  const delta = (firstChoice as { delta?: unknown }).delta;
+  if (delta && typeof delta === 'object') {
+    const content = (delta as { content?: unknown }).content;
+    return firstTokenTextFromContent(content);
+  }
+  return null;
+}
+
+async function readFirstResponseToken(upstream: Response): Promise<string | null> {
+  const contentType = upstream.headers.get('content-type');
+  if (!contentType || !isJsonContentType(contentType)) return null;
+  try {
+    return extractFirstResponseTokenFromJson(await upstream.clone().json());
+  } catch {
+    return null;
+  }
+}
+
 async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   if (!shouldUseKvPath(context)) return context;
   const metadata = resolveRouteKvMetadata(context);
   if (!metadata) return context;
   const runtime = kvRuntimeFor(context.resolved);
   const bodyText = context.bodyText!;
+  const enforceFirstTokenEquivalence = shouldEnforceFirstTokenEquivalence(bodyText);
   const prefixMetric = Buffer.byteLength(bodyText, 'utf8');
   const sha = createHash('sha1').update(bodyText).digest('hex');
 
@@ -506,6 +584,8 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
             shouldPersist: false,
             warmHitSha: hit.sha,
             warmHitLease: lease,
+            warmHitExpectedFirstResponseToken: hit.firstResponseToken,
+            enforceFirstTokenEquivalence,
           };
           return context;
         }
@@ -531,6 +611,8 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
     shouldPersist: true,
     warmHitSha: null,
     warmHitLease: null,
+    warmHitExpectedFirstResponseToken: null,
+    enforceFirstTokenEquivalence,
   };
   return context;
 }
@@ -602,7 +684,33 @@ async function forward(context: ProxyContext): Promise<Response> {
 async function maybePersistKv(context: ProxyContext, upstream: Response): Promise<void> {
   const kv = context.kv;
   if (!kv) return;
+  const firstResponseToken = await readFirstResponseToken(upstream);
   try {
+    if (
+      kv.warmHitSha &&
+      kv.enforceFirstTokenEquivalence &&
+      kv.warmHitExpectedFirstResponseToken !== null &&
+      firstResponseToken !== null &&
+      kv.warmHitExpectedFirstResponseToken !== firstResponseToken
+    ) {
+      kv.runtime.storage.kv_false_hit_total += 1;
+      console.warn(JSON.stringify({
+        event: 'kv_false_hit',
+        workload: kv.workload,
+        sha: kv.warmHitSha,
+        expected: kv.warmHitExpectedFirstResponseToken,
+        got: firstResponseToken,
+      }));
+      const staleSha = kv.warmHitSha;
+      kv.warmHitSha = null;
+      kv.runtime.storage.safeWrite(() => {
+        kv.runtime.registry.release(staleSha);
+        kv.runtime.registry.tryDelete(staleSha);
+      });
+      kv.warmHitLease?.release();
+      kv.warmHitLease = null;
+    }
+
     if (!kv.shouldPersist) return;
     const contentType = upstream.headers.get('content-type');
     // TODO(phase9): defer KV save for streams until exact replay boundaries are captured.
@@ -642,6 +750,7 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
           workloadEpoch: kv.workloadEpoch,
           quarantined: 0,
           state: 'idle',
+          firstResponseToken,
         });
       });
       if (!wrote.ok) return;
