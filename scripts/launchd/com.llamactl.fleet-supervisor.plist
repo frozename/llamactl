@@ -43,8 +43,9 @@
     <string>--interval=30</string>
     <string>--auto</string>
     <string>--severity-threshold=2</string>
-    <string>--workload=gains-host@http://127.0.0.1:8096</string>
-    <string>--workload=granite-3b@http://127.0.0.1:8083</string>
+    <string>--workload=gains-host-35b-local@http://127.0.0.1:8096</string>
+    <string>--kind=ModelRun</string>
+    <string>--workload=granite41-3b-long-lived-local@http://127.0.0.1:8083</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

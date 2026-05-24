@@ -39,6 +39,7 @@ metadata:
 spec:
   node: local
   enabled: true
+  useProxy: true
   binary: /Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server
   resources:
     expectedMemoryGiB: 5
@@ -48,6 +49,8 @@ spec:
   extraArgs:
     - --alias
     - local
+    - --slot-save-path
+    - /Users/acordeiro/.llamactl/data/kvstore/slots/granite41-3b-long-lived-local
     - --jinja
     - --ctx-size
     - "65536"
