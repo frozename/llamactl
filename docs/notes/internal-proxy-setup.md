@@ -20,7 +20,7 @@ launchctl bootout gui/$(id -u)/com.llamactl.internal-proxy || true && rm ~/Libra
 curl http://127.0.0.1:7944/v1/models | head
 ```
 
-Expected: JSON response without auth headers.
+Expected: JSON response over plain HTTP without auth headers.
 
 ## Per-workload opt-in
 

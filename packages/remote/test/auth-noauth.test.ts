@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateToken } from '../src/server/auth.js';
 import { startAgentServer, type RunningAgent } from '../src/server/serve.js';
+import { generateSelfSignedCert } from '../src/server/tls.js';
 
 let dir: string;
 
@@ -18,11 +19,21 @@ afterEach(() => {
 describe('startAgentServer no-auth bypass', () => {
   let server: RunningAgent;
   const { hash } = generateToken();
+  let certPath: string;
+  let keyPath: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    const cert = await generateSelfSignedCert({
+      dir,
+      commonName: '127.0.0.1',
+      hostnames: ['127.0.0.1', 'localhost'],
+    });
+    certPath = cert.certPath;
+    keyPath = cert.keyPath;
     server = startAgentServer({
       tokenHash: hash,
       noAuth: true,
+      tls: { certPath, keyPath },
     });
   });
 
@@ -35,6 +46,13 @@ describe('startAgentServer no-auth bypass', () => {
       new Request('http://x/v1/models'),
       { address: '127.0.0.1', port: 12345, family: 'IPv4' },
     );
+    expect(resp.status).toBe(200);
+  });
+
+  test('serves plain HTTP on loopback even when tls is configured', async () => {
+    expect(server.url.startsWith('http://')).toBe(true);
+    expect(server.fingerprint).toBeNull();
+    const resp = await fetch(`${server.url}/v1/models`);
     expect(resp.status).toBe(200);
   });
 

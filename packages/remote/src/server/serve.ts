@@ -186,7 +186,12 @@ function formatClientAddress(address: ClientAddress | null | undefined): string 
 
 function isLoopbackAddress(address: string | null | undefined): boolean {
   if (!address) return false;
-  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+  return (
+    address === '127.0.0.1' ||
+    address === 'localhost' ||
+    address === '::1' ||
+    address === '::ffff:127.0.0.1'
+  );
 }
 
 export function runStartupMigration(): void {
@@ -219,6 +224,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   const port = opts.port ?? 0;
   const endpoint = opts.endpoint ?? '/trpc';
   const noAuth = opts.noAuth === true;
+  const allowPlainHttp = noAuth && isLoopbackAddress(bindHost);
   let unauthenticatedNoAuthRequestCount = 0;
 
   // Async best-effort subsystems (mDNS Bonjour probes, the tunnel
@@ -238,8 +244,9 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
 
   runStartupMigration();
   if (noAuth) {
+    const transport = allowPlainHttp ? 'Serving plain HTTP (no TLS).' : 'Serving HTTPS.';
     process.stderr.write(
-      `[agent] WARNING: --no-auth flag enabled. Bearer token validation BYPASSED for connections from 127.0.0.1. This is intended for local benchmarking/development only. DO NOT use in production. Bind host: ${bindHost}\n`,
+      `[agent] WARNING: --no-auth flag enabled. Bearer token validation BYPASSED for connections from 127.0.0.1. This is intended for local benchmarking/development only. DO NOT use in production. Bind host: ${bindHost}. ${transport}\n`,
     );
   }
 
@@ -431,7 +438,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   // present, so we can't share a single literal with `websocket?:`
   // optional — the ws-and-no-ws branches construct separately.
   const wsConfig = tunnelServer ? tunnelServer.websocket : null;
-  const server = opts.tls
+  const server = opts.tls && !allowPlainHttp
     ? (() => {
         const loaded = loadCert(opts.tls);
         fingerprint = loaded.fingerprint;
@@ -476,7 +483,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
           idleTimeout: 255,
         });
 
-  const scheme = opts.tls ? 'https' : 'http';
+  const scheme = opts.tls && !allowPlainHttp ? 'https' : 'http';
   const listenPort = server.port ?? port;
 
   let mdns: PublishedAgent | null = null;
