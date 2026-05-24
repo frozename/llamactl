@@ -5,6 +5,7 @@ import {
   translateAnthropicRequest,
 } from './anthropic/translateRequest.js';
 import { translateOpenAIResponse } from './anthropic/translateResponse.js';
+import { translateOpenAIStreamToAnthropic } from './anthropic/translateStream.js';
 import type { AnthropicMessagesRequest } from './anthropic/types.js';
 import { resolveEnv } from './env.js';
 import { endpoint as llamaEndpoint, readServerState, readServerPid } from './server.js';
@@ -158,6 +159,7 @@ type ProxyContext = {
   init: RequestInit;
   bodyText?: string;
   isAnthropic?: boolean;
+  anthropicModel?: string;
 };
 
 let routeMapCache: { mtimeNs: bigint; map: Map<string, RouteEntry> } | null = null;
@@ -244,6 +246,7 @@ async function parseIncoming(req: Request, resolved: ResolvedEnv): Promise<Proxy
         pathname: translatedUrl.pathname,
         search: translatedUrl.search,
         isAnthropic: true,
+        anthropicModel: incoming.model,
         bodyText: translatedBodyText,
         init: {
           method: req.method,
@@ -340,9 +343,25 @@ async function forward(context: ProxyContext): Promise<Response> {
 
 async function maybeTranslateResponse(context: ProxyContext, upstream: Response): Promise<Response> {
   const contentType = upstream.headers.get('content-type');
-  if (context.isAnthropic && contentType?.toLowerCase().includes('text/event-stream')) {
-    // TODO(T3.2): translate Anthropic SSE responses once the stream state machine lands.
-    return upstream;
+  if (context.isAnthropic && contentType?.toLowerCase().startsWith('text/event-stream')) {
+    if (!upstream.body) return upstream;
+    const respHeaders = new Headers();
+    for (const [key, value] of upstream.headers.entries()) {
+      const lower = key.toLowerCase();
+      if (lower === 'transfer-encoding' || lower === 'connection') continue;
+      respHeaders.set(key, value);
+    }
+    respHeaders.set('content-type', 'text/event-stream');
+    return new Response(
+      translateOpenAIStreamToAnthropic(upstream.body, {
+        model: context.anthropicModel ?? 'claude-compatible',
+      }),
+      {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers: respHeaders,
+      },
+    );
   }
   if (context.isAnthropic && upstream.ok && contentType && isJsonContentType(contentType)) {
     try {

@@ -361,12 +361,18 @@ test('/v1/messages response translates non-streaming JSON back to anthropic shap
   }
 });
 
-test('/v1/messages SSE responses pass through unchanged for now', async () => {
+test('/v1/messages SSE responses translate to anthropic stream events', async () => {
   const t = tempEnv();
   try {
     const stream = new ReadableStream({
       start(controller) {
-        controller.enqueue(new TextEncoder().encode('data: {"hello":true}\n\n'));
+        controller.enqueue(
+          new TextEncoder().encode(
+            'data: {"id":"msg_1","choices":[{"delta":{"content":"hello"},"finish_reason":null}],"usage":{"completion_tokens":1}}\n\n',
+          ),
+        );
+        controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'));
+        controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
         controller.close();
       },
     });
@@ -389,7 +395,8 @@ test('/v1/messages SSE responses pass through unchanged for now', async () => {
     );
 
     expect(res.headers.get('content-type')).toBe('text/event-stream');
-    expect(await res.text()).toBe('data: {"hello":true}\n\n');
+    const body = await res.text();
+    expect(body.startsWith('event: message_start\n')).toBe(true);
   } finally {
     t.cleanup();
   }
