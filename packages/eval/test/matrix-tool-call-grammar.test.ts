@@ -22,7 +22,7 @@ describe('tool-call-grammar workload', () => {
     expect(__signature([{ function: { name: 'foo', arguments: '{' } }])).toBe('__parse_error__');
   });
 
-  test('scorer exact_match reflects signature equality', () => {
+  test('scorer exact_match reflects signature equality', async () => {
     const row = {
       messages: [
         { role: 'user', content: 'call the tool' },
@@ -38,12 +38,12 @@ describe('tool-call-grammar workload', () => {
       ],
     };
 
-    expect(toolCallGrammarWorkload.scorer(row, '', {
+    expect((await toolCallGrammarWorkload.scorer(row, '', {
       tool_calls: [{ type: 'function', function: { name: 'ha_pulse', arguments: '{}' } }],
-    }).metrics.exact_match).toBe(1);
+    })).metrics.exact_match).toBe(1);
 
-    expect(toolCallGrammarWorkload.scorer(row, '', {
+    expect((await toolCallGrammarWorkload.scorer(row, '', {
       tool_calls: [{ type: 'function', function: { name: 'different_tool', arguments: '{}' } }],
-    }).metrics.exact_match).toBe(0);
+    })).metrics.exact_match).toBe(0);
   });
 });

@@ -114,7 +114,7 @@ export function buildBootCommandForModelSpec(model: ModelSpec): { binary: string
       // llama.cpp-style specs that set both fields.
       hostedModels: [model.dflash ? { rel, dflash: model.dflash as never } : { rel }],
       resources: {},
-      extraArgs: model.extra_args ?? [],
+      extraArgs: [...(model.extra_args ?? [])],
       timeoutSeconds: 60,
     };
     const env: EngineBootEnv = { ...process.env } as EngineBootEnv;
@@ -143,7 +143,7 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
       endpoint: { host: model.host, port: model.port },
       hostedModels: [model.dflash ? { rel, dflash: model.dflash as never } : { rel }],
       resources: {},
-      extraArgs: model.extra_args ?? [],
+      extraArgs: [...(model.extra_args ?? [])],
       timeoutSeconds: 60,
     };
     const env: EngineBootEnv = { ...process.env } as EngineBootEnv;

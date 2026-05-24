@@ -10,9 +10,9 @@ export interface ModelSpec {
   size_params: string;
   host: string;
   port: number;
-  extra_args: string[];
+  extra_args?: readonly string[] | string[];
   binary?: string;
-  start_args?: string[];
+  start_args?: readonly string[] | string[];
   managed?: boolean;
   /** Override the OpenAI request body's `model` field. Llama-server
    *  uses --alias local by default, so leaving this unset is correct

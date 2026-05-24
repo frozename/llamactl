@@ -158,7 +158,7 @@ describe('runMatrix', () => {
     ).toThrow('buildJsonClassifierWorkload: validLabels must contain at least one label');
   });
 
-  test('strips markdown code fences before parsing binary memory-efficacy predictions', () => {
+  test('strips markdown code fences before parsing binary memory-efficacy predictions', async () => {
     const row = {
       messages: [
         { role: 'user', content: 'Is this memory related?' },
@@ -166,7 +166,7 @@ describe('runMatrix', () => {
       ],
     };
 
-    const result = memoryEfficacyBinaryWorkload.scorer(row, '```json\n{"memory_related":true}\n```');
+    const result = await memoryEfficacyBinaryWorkload.scorer(row, '```json\n{"memory_related":true}\n```');
 
     expect(result.prediction).toBe('true');
   });
@@ -190,14 +190,14 @@ describe('runMatrix', () => {
     ].join('\n');
     await Bun.write(tmpPath, jsonl);
     const origFetch = globalThis.fetch;
-    globalThis.fetch = async () =>
+    globalThis.fetch = (async () =>
       new Response(
         JSON.stringify({
           choices: [{ message: { content: '{"memory_related":true}' } }],
           usage: { completion_tokens: 5 },
         }),
         { headers: { 'Content-Type': 'application/json' } },
-      );
+      )) as unknown as typeof fetch;
     try {
     const workload: WorkloadEval = {
       ...memoryEfficacyBinaryWorkload,
@@ -211,7 +211,8 @@ describe('runMatrix', () => {
       expect(run.cellsWritten).toBe(1);
       const rows = listCellRows(db, { run_id: run.runId });
       expect(rows).toHaveLength(1);
-      const [cell] = rows;
+      const cell = rows[0];
+      if (!cell) throw new Error('expected cell');
       expect(cell.runner_version).toBe(1);
       expect(cell.n_rows).toBe(2);
       expect(cell.run_id).toMatch(/^\d{4}-\d{2}-\d{2}T.+-[0-9a-f]{8}$/);
@@ -248,14 +249,14 @@ describe('runMatrix', () => {
     ].join('\n');
     await Bun.write(tmpPath, jsonl);
     const origFetch = globalThis.fetch;
-    globalThis.fetch = async () =>
+    globalThis.fetch = (async () =>
       new Response(
         JSON.stringify({
           choices: [{ message: { content: '{"memory_related":true}' } }],
           usage: { completion_tokens: 5 },
         }),
         { headers: { 'Content-Type': 'application/json' } },
-      );
+      )) as unknown as typeof fetch;
     try {
       const workload: WorkloadEval = {
         ...memoryEfficacyBinaryWorkload,
@@ -299,7 +300,7 @@ describe('runMatrix', () => {
     await Bun.write(tmpPath, jsonl);
     const origFetch = globalThis.fetch;
     let lastRequestBody: Record<string, unknown> | undefined;
-    globalThis.fetch = async (_url, init) => {
+    globalThis.fetch = (async (_url: Request | string | URL, init: RequestInit | undefined) => {
       if (init && typeof init.body === 'string') {
         lastRequestBody = JSON.parse(init.body) as Record<string, unknown>;
       }
@@ -310,7 +311,7 @@ describe('runMatrix', () => {
         }),
         { headers: { 'Content-Type': 'application/json' } },
       );
-    };
+    }) as unknown as typeof fetch;
     try {
       const workload: WorkloadEval = {
         ...memoryEfficacy4wayWorkload,
@@ -324,7 +325,8 @@ describe('runMatrix', () => {
       expect(run.cellsWritten).toBe(1);
       const rows = listCellRows(db, { run_id: run.runId });
       expect(rows).toHaveLength(1);
-      const [cell] = rows;
+      const cell = rows[0];
+      if (!cell) throw new Error('expected cell');
       expect(cell.runner_version).toBe(1);
       expect(cell.n_rows).toBe(2);
       expect(cell.run_id).toMatch(/^\d{4}-\d{2}-\d{2}T.+-[0-9a-f]{8}$/);
@@ -356,7 +358,7 @@ describe('runMatrix', () => {
     await Bun.write(tmpPath, jsonl);
     const origFetch = globalThis.fetch;
     let lastRequestBody: Record<string, unknown> | undefined;
-    globalThis.fetch = async (_url, init) => {
+    globalThis.fetch = (async (_url: Request | string | URL, init: RequestInit | undefined) => {
       if (init && typeof init.body === 'string') {
         lastRequestBody = JSON.parse(init.body) as Record<string, unknown>;
       }
@@ -367,7 +369,7 @@ describe('runMatrix', () => {
         }),
         { headers: { 'Content-Type': 'application/json' } },
       );
-    };
+    }) as unknown as typeof fetch;
     try {
       const workload: WorkloadEval = {
         ...memoryEfficacy4wayWorkload,
@@ -536,7 +538,7 @@ describe('matrix CLI', () => {
     const delays = [80, 10, 60, 20];
     let inflight = 0;
     let peakInflight = 0;
-    globalThis.fetch = async (_url, init) => {
+    globalThis.fetch = (async (_url: Request | string | URL, init: RequestInit | undefined) => {
       const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {};
       const messages = Array.isArray(body.messages) ? body.messages : [];
       const userMessage = (messages[0] as { content?: string } | undefined)?.content ?? '';
@@ -553,7 +555,7 @@ describe('matrix CLI', () => {
         }),
         { headers: { 'Content-Type': 'application/json' } },
       );
-    };
+    }) as unknown as typeof fetch;
 
     const workload: WorkloadEval = {
       name: 'concurrency-test',

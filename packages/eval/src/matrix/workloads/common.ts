@@ -45,7 +45,7 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
     : undefined;
   function stripCodeFences(s: string): string {
     const m = s.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
-    if (m) return m[1];
+    if (m) return m[1] ?? '';
     return s;
   }
   function tryParseJson(s: string): Record<string, unknown> | null {

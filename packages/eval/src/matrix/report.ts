@@ -77,7 +77,7 @@ function buildGrid(cells: CellRow[]): { models: string[]; workloads: string[]; l
 
 function getPrimaryMetricName(cells: CellRow[]): string {
   const names = uniqueSorted(cells.map((cell) => cell.primary_metric_name));
-  return names.length === 1 ? names[0] : 'mixed';
+  return names.length === 1 ? names[0] ?? 'mixed' : 'mixed';
 }
 
 function renderWinnerList(workloads: string[], lookup: Map<string, CellRow>): string {
@@ -105,7 +105,10 @@ export function renderMarkdownReport(cells: CellRow[], opts: ReportOpts = {}): s
   const primaryMetricName = getPrimaryMetricName(filtered);
   const sectionRows = (section: Section, mapper: (cell?: CellRow) => string) =>
     models.map((model) => {
-      const values = workloads.map((workload) => mdField(mapper(lookup.get(cellKey(model, workload))) || '-'));
+      const values = workloads.map((workload) => {
+        const mapped = mapper(lookup.get(cellKey(model, workload)));
+        return mdField(mapped === '' ? '-' : mapped);
+      });
       return `| ${[mdField(model), ...values].join(' | ')} |`;
     });
   const sections: string[] = [

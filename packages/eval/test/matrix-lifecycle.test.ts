@@ -101,7 +101,7 @@ describe('matrix lifecycle - engine dispatch', () => {
 describe('ensureModelServing', () => {
   test('returns owned=false when server already responds to /health', async () => {
     const origFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response('ok', { status: 200 });
+    globalThis.fetch = (async () => new Response('ok', { status: 200 })) as unknown as typeof fetch;
     try {
       const boot = await ensureModelServing(baseModel({ managed: true, binary: '/nonexistent' }));
       expect(boot.owned).toBe(false);
@@ -113,9 +113,9 @@ describe('ensureModelServing', () => {
 
   test('throws when managed=false and /health is unreachable', async () => {
     const origFetch = globalThis.fetch;
-    globalThis.fetch = async () => {
+    globalThis.fetch = (async () => {
       throw new Error('ECONNREFUSED');
-    };
+    }) as unknown as typeof fetch;
     try {
       await expect(ensureModelServing(baseModel({ managed: false }))).rejects.toThrow(/not reachable/);
     } finally {
@@ -125,9 +125,9 @@ describe('ensureModelServing', () => {
 
   test('throws when managed=true but binary path does not exist', async () => {
     const origFetch = globalThis.fetch;
-    globalThis.fetch = async () => {
+    globalThis.fetch = (async () => {
       throw new Error('ECONNREFUSED');
-    };
+    }) as unknown as typeof fetch;
     try {
       await expect(
         ensureModelServing(baseModel({ managed: true, binary: '/nonexistent-binary' })),
@@ -140,7 +140,7 @@ describe('ensureModelServing', () => {
   test('throws when managed spawn passes /health but /v1 boot-probe fails', async () => {
     const origFetch = globalThis.fetch;
     let healthChecks = 0;
-    globalThis.fetch = async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: Request | string | URL) => {
       const url = String(input);
       if (url.endsWith('/health')) {
         healthChecks += 1;
@@ -151,7 +151,7 @@ describe('ensureModelServing', () => {
         return new Response('nope', { status: 500 });
       }
       throw new Error(`unexpected fetch ${url}`);
-    };
+    }) as unknown as typeof fetch;
     try {
       await expect(
         ensureModelServing(
@@ -167,11 +167,11 @@ describe('ensureModelServing', () => {
 describe('probeInference', () => {
   test('returns true when /v1 responds with valid JSON', async () => {
     const origFetch = globalThis.fetch;
-    globalThis.fetch = async () =>
+    globalThis.fetch = (async () =>
       new Response(JSON.stringify({ choices: [{ message: { content: '' } }] }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
-      });
+      })) as unknown as typeof fetch;
     try {
       await expect(probeInference('127.0.0.1', 65501, 1000)).resolves.toBe(true);
     } finally {
@@ -182,12 +182,12 @@ describe('probeInference', () => {
   test('returns false when /v1 responds 500 or fetch throws', async () => {
     const origFetch = globalThis.fetch;
     try {
-      globalThis.fetch = async () => new Response('nope', { status: 500 });
+      globalThis.fetch = (async () => new Response('nope', { status: 500 })) as unknown as typeof fetch;
       await expect(probeInference('127.0.0.1', 65501, 1000)).resolves.toBe(false);
 
-      globalThis.fetch = async () => {
+      globalThis.fetch = (async () => {
         throw new Error('ECONNREFUSED');
-      };
+      }) as unknown as typeof fetch;
       await expect(probeInference('127.0.0.1', 65501, 1000)).resolves.toBe(false);
     } finally {
       globalThis.fetch = origFetch;

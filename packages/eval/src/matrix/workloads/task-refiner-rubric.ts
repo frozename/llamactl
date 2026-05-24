@@ -48,11 +48,12 @@ function parseJudgeJson(text: string): { intent_preservation: number; contract_c
   let s = text;
   if (s.includes('@@metadata')) {
     const parts = s.split('@@metadata', 2);
-    if (parts.length > 1) s = parts[1];
-    if (s.includes('@@end')) s = s.split('@@end', 1)[0];
+    if (parts.length > 1) s = parts[1] ?? '';
+    const endParts = s.split('@@end', 1);
+    if (endParts.length > 0) s = endParts[0] ?? '';
   }
   const fenceMatch = s.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (fenceMatch) s = fenceMatch[1];
+  if (fenceMatch) s = fenceMatch[1] ?? '';
   const start = s.indexOf('{');
   const end = s.lastIndexOf('}');
   if (start < 0 || end <= start) return null;
