@@ -10,6 +10,8 @@ import {
   type FleetJournalEntry,
   DEFAULT_PRESSURE_THRESHOLDS,
 } from '@llamactl/fleet-supervisor';
+import { env as envMod } from '@llamactl/core';
+import { workloadStore } from '@llamactl/remote';
 import { runExecutor } from '../../../fleet-supervisor/src/executor.js';
 import { getGlobals } from '../dispatcher.js';
 import { setWorkloadEnabled } from './setEnabled.js';
@@ -93,7 +95,12 @@ export async function runSupervisor(args: string[]): Promise<number> {
     console.error((err as Error).message);
     return 2;
   }
-  
+
+  if (sub === 'serve' || sub === 'tick') {
+    // TODO: Re-resolve on each tick once we have low-overhead cache + invalidation.
+    flags.workloads = resolveWorkloadTargetsAtStartup(flags.workloads, process.env);
+  }
+
   const globalNode = getGlobals().nodeName;
   if (globalNode) flags.node = globalNode;
   const journalPath = flags.journal ?? defaultFleetJournalPath();
@@ -292,6 +299,63 @@ interface Flags {
   outcome?: "denied" | "success" | "error";
   since?: string;
 
+}
+
+interface ResolveWorkloadUrlDeps {
+  loadWorkloadByName?: typeof workloadStore.loadWorkloadByName;
+  resolveInternalProxyEndpoint?: typeof envMod.resolveInternalProxyEndpoint;
+  warn?: (message: string) => void;
+}
+
+interface ResolveWorkloadTargetsAtStartupDeps extends ResolveWorkloadUrlDeps {
+  info?: (message: string) => void;
+}
+
+export function resolveWorkloadUrl(
+  name: string,
+  fallbackUrl: string,
+  env: NodeJS.ProcessEnv = process.env,
+  deps: ResolveWorkloadUrlDeps = {},
+): string {
+  const loadWorkloadByName = deps.loadWorkloadByName ?? workloadStore.loadWorkloadByName;
+  const resolveInternalProxyEndpoint = deps.resolveInternalProxyEndpoint ?? envMod.resolveInternalProxyEndpoint;
+  const warn = deps.warn ?? ((message: string) => process.stderr.write(`${message}\n`));
+
+  try {
+    const manifest = loadWorkloadByName(name);
+    if (manifest.spec.useProxy === true) {
+      return resolveInternalProxyEndpoint(env);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    warn(`[supervisor] workload=${name} failed to read deployed spec (${message}); using configured URL ${fallbackUrl}`);
+  }
+
+  return fallbackUrl;
+}
+
+export function resolveWorkloadTargetsAtStartup(
+  workloads: WorkloadTarget[],
+  env: NodeJS.ProcessEnv = process.env,
+  deps: ResolveWorkloadTargetsAtStartupDeps = {},
+): WorkloadTarget[] {
+  const info = deps.info ?? ((message: string) => process.stderr.write(`${message}\n`));
+  const loggedOverrides = new Map<string, string>();
+
+  return workloads.map((target) => {
+    if (target.kind !== 'ModelRun') return target;
+
+    const resolvedEndpoint = resolveWorkloadUrl(target.name, target.endpoint, env, deps);
+    if (resolvedEndpoint === target.endpoint) return target;
+
+    const signature = `${target.endpoint}->${resolvedEndpoint}`;
+    const prev = loggedOverrides.get(target.name);
+    if (prev !== signature) {
+      info(`[supervisor] workload=${target.name} routing via proxy ${resolvedEndpoint} (was ${target.endpoint})`);
+      loggedOverrides.set(target.name, signature);
+    }
+    return { ...target, endpoint: resolvedEndpoint };
+  });
 }
 
 const warnedDeprecatedAuditFlagNames = new Set<string>();
