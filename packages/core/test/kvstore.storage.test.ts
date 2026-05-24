@@ -1,0 +1,189 @@
+import { expect, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { KvRegistry, openKvStorage, type KvEntry } from '../src/kvstore/index.js';
+import { workloadRuntimeRoot } from '../src/workloadRuntime.js';
+
+function makeTempRoot(): { root: string; cleanup: () => void } {
+  const root = mkdtempSync(join(tmpdir(), 'llamactl-kvstore-'));
+  return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
+  return {
+    sha: 'abc123',
+    workload: 'wl-a',
+    upstreamSlotFile: '/tmp/slot.bin',
+    quantBits: 8,
+    tokens: 2048,
+    ctxSize: 32768,
+    hits: 0,
+    createdAt: 1716576000,
+    lastUsed: 1716576000,
+    payloadBytes: 1024,
+    textBytes: 512,
+    reason: 'cold',
+    prefixByteLength: 256,
+    workloadEpoch: 'epoch-1',
+    quarantined: 0,
+    ...overrides,
+  };
+}
+
+test('schema migration creates schema_version=1 and kv_entries columns', () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openKvStorage(t.root);
+    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    expect(version?.version).toBe(1);
+    const table = storage.db.query(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table' AND name = 'kv_entries'
+      LIMIT 1
+    `).get() as { name: string } | null;
+    expect(table?.name).toBe('kv_entries');
+    const columns = storage.db.query("PRAGMA table_info('kv_entries')").all() as Array<{ name: string }>;
+    expect(columns.map((c) => c.name)).toEqual([
+      'sha',
+      'workload',
+      'upstream_slot_file',
+      'quant_bits',
+      'tokens',
+      'ctx_size',
+      'hits',
+      'created_at',
+      'last_used',
+      'payload_bytes',
+      'text_bytes',
+      'reason',
+      'prefix_byte_length',
+      'workload_epoch',
+      'quarantined',
+    ]);
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('schema is preserved across reopens with existing rows', () => {
+  const t = makeTempRoot();
+  try {
+    const slotFile = join(t.root, 'slot.bin');
+    writeFileSync(slotFile, 'payload');
+
+    const first = openKvStorage(t.root);
+    const firstRegistry = new KvRegistry(first);
+    firstRegistry.insert(baseEntry({ sha: 'keep-me', upstreamSlotFile: slotFile }));
+    first.close();
+
+    const second = openKvStorage(t.root);
+    const secondRegistry = new KvRegistry(second);
+    const row = secondRegistry.get('keep-me');
+    expect(row).not.toBeNull();
+    expect(row?.upstreamSlotFile).toBe(slotFile);
+    const version = second.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    expect(version?.version).toBe(1);
+    second.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('integrity scan quarantines rows with missing upstream_slot_file on open', () => {
+  const t = makeTempRoot();
+  try {
+    const missingFile = join(t.root, 'does-not-exist.slot');
+    const first = openKvStorage(t.root);
+    const firstRegistry = new KvRegistry(first);
+    firstRegistry.insert(baseEntry({ sha: 'missing', upstreamSlotFile: missingFile }));
+    first.close();
+
+    const second = openKvStorage(t.root);
+    const secondRegistry = new KvRegistry(second);
+    const row = secondRegistry.get('missing');
+    expect(row?.quarantined).toBe(1);
+    expect(second.registry_integrity_errors_total).toBe(1);
+    second.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('openKvStorage enables WAL mode', () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openKvStorage(t.root);
+    const mode = storage.db.query('PRAGMA journal_mode').get() as { journal_mode: string } | null;
+    expect(mode?.journal_mode.toLowerCase()).toBe('wal');
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('KvRegistry CRUD and bumpHit round-trip', () => {
+  const t = makeTempRoot();
+  try {
+    const slotFile = join(t.root, 'slot.bin');
+    writeFileSync(slotFile, 'payload');
+    const storage = openKvStorage(t.root);
+    const registry = new KvRegistry(storage);
+
+    registry.insert(baseEntry({ sha: 'roundtrip', upstreamSlotFile: slotFile, hits: 2, lastUsed: 100 }));
+    const inserted = registry.get('roundtrip');
+    expect(inserted?.hits).toBe(2);
+    expect(inserted?.lastUsed).toBe(100);
+
+    registry.bumpHit('roundtrip', 200);
+    const bumped = registry.get('roundtrip');
+    expect(bumped?.hits).toBe(3);
+    expect(bumped?.lastUsed).toBe(200);
+
+    expect(registry.delete('roundtrip')).toBe(true);
+    expect(registry.get('roundtrip')).toBeNull();
+    expect(registry.delete('roundtrip')).toBe(false);
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('openKvStorage creates <dataRoot>/kvstore directory on first open', () => {
+  const t = makeTempRoot();
+  try {
+    const kvDir = join(t.root, 'kvstore');
+    expect(existsSync(kvDir)).toBe(false);
+    const storage = openKvStorage(t.root);
+    expect(existsSync(kvDir)).toBe(true);
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('kv metadata writes do not change workloadRuntimeRoot mtimeNs', () => {
+  const t = makeTempRoot();
+  try {
+    const runtimeDir = join(t.root, 'runtime');
+    mkdirSync(runtimeDir, { recursive: true });
+    const resolved = { LOCAL_AI_RUNTIME_DIR: runtimeDir } as any;
+    const root = workloadRuntimeRoot(resolved);
+    mkdirSync(root, { recursive: true });
+
+    const before = statSync(root, { bigint: true }).mtimeNs;
+
+    const slotFile = join(t.root, 'slot.bin');
+    writeFileSync(slotFile, 'payload');
+    const storage = openKvStorage(runtimeDir);
+    const registry = new KvRegistry(storage);
+    registry.insert(baseEntry({ sha: 'mtime', upstreamSlotFile: slotFile }));
+    storage.close();
+
+    const after = statSync(root, { bigint: true }).mtimeNs;
+    expect(after).toBe(before);
+  } finally {
+    t.cleanup();
+  }
+});
