@@ -2,7 +2,7 @@ import type { ModelInfo, ModelListResponse } from '@nova/contracts';
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { statSync } from 'node:fs';
 import {
   AnthropicTranslationError,
@@ -625,7 +625,10 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
       const lease = slotAllocatorFor(runtime, metadata.workload).acquire();
       if (lease) {
         const slotClient = slotClientFor(runtime, metadata.workload, metadata.host, metadata.port);
-        const restore = await slotClient.restore(lease.slotId, hit.upstreamSlotFile);
+        // llama-server's slot API only accepts a bare filename (relative to its
+        // --slot-save-path). We store the absolute path in the registry for
+        // orphan sweep + integrity scan, but pass basename to the upstream call.
+        const restore = await slotClient.restore(lease.slotId, basename(hit.upstreamSlotFile));
         let activated = false;
         const activateWrite = runtime.storage.safeWrite(() => {
           activated = runtime.registry.activate(hit.sha);
@@ -865,9 +868,13 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
     try {
       const slotDir = join(resolveKvDataRoot(context.resolved), 'kvstore', 'slots', kv.workload);
       mkdirSync(slotDir, { recursive: true });
-      const slotFile = join(slotDir, `${kv.sha}.kvslot`);
+      const slotBasename = `${kv.sha}.kvslot`;
+      const slotFile = join(slotDir, slotBasename);
       const slotClient = slotClientFor(kv.runtime, kv.workload, kv.host, kv.port);
-      const saved = await slotClient.save(lease.slotId, slotFile);
+      // llama-server's slot API only accepts a bare filename (relative to its
+      // --slot-save-path). We store the absolute path in the registry for
+      // orphan sweep + integrity scan, but pass basename to the upstream call.
+      const saved = await slotClient.save(lease.slotId, slotBasename);
       if (!saved.ok) {
         console.warn(`[kvstore] slot save skipped for workload='${kv.workload}' sha='${kv.sha}': ${saved.reason}`);
         return;
