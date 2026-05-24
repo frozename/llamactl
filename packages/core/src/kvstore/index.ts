@@ -6,3 +6,7 @@ export type { KvEntry } from './registry.js';
 export { evictionScore } from './evictionScore.js';
 export { longestPrefixLookup } from './policy.js';
 export type { LookupParams } from './policy.js';
+export { UpstreamSlotClient } from './upstreamSlots.js';
+export type { SlotClient, SlotRestoreResult, SlotSaveResult } from './upstreamSlots.js';
+export { computeWorkloadEpoch, readWorkloadEpoch } from './workloadEpoch.js';
+export type { WorkloadEpochInput } from './workloadEpoch.js';
