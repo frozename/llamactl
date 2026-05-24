@@ -164,20 +164,23 @@ test('network failure returns network', async () => {
 });
 
 test('timeout returns network', async () => {
-  const upstream = await startTestServer(async (_req, res) => {
-    await new Promise((resolve) => setTimeout(resolve, 11_000));
-    json(res, 200, { n_saved: 1 });
-  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_input: Request | URL | string, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(new DOMException('The operation was aborted.', 'AbortError'));
+      });
+    })) as typeof fetch;
   try {
-    const client = new UpstreamSlotClient(upstream.baseUrl);
+    const client = new UpstreamSlotClient('http://127.0.0.1:1');
     const result = await client.save(1, 'slot-timeout.bin');
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected save timeout');
     expect(result.reason).toBe('network');
   } finally {
-    await upstream.close();
+    globalThis.fetch = originalFetch;
   }
-}, 20_000);
+}, 35_000);
 
 test('supportsSlots caches probe result per client', async () => {
   const upstream = await startTestServer((req, res, url) => {

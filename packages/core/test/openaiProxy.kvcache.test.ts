@@ -61,7 +61,8 @@ function writeModelRunWorkload(
   );
 }
 
-async function startUpstream(opts?: {
+async function startUpstream(opts: {
+  slotBaseDir: string;
   saveMode?: 'ok' | 'invalid';
   restoreMode?: 'ok' | 'http_error';
   chatMode?: 'json' | 'sse';
@@ -69,26 +70,29 @@ async function startUpstream(opts?: {
   toolCalls?: Array<{ id: string; name: string; arguments: string }>;
 }): Promise<TestUpstream> {
   const events: string[] = [];
-  const saveMode = opts?.saveMode ?? 'ok';
-  const restoreMode = opts?.restoreMode ?? 'ok';
-  const chatMode = opts?.chatMode ?? 'json';
-  const firstJsonToken = opts?.firstJsonToken ?? 'Hello';
-  const toolCalls = opts?.toolCalls ?? [];
+  const saveMode = opts.saveMode ?? 'ok';
+  const restoreMode = opts.restoreMode ?? 'ok';
+  const chatMode = opts.chatMode ?? 'json';
+  const firstJsonToken = opts.firstJsonToken ?? 'Hello';
+  const toolCalls = opts.toolCalls ?? [];
+  const slotBaseDir = opts.slotBaseDir;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     if (req.method === 'POST' && url.pathname.startsWith('/slots/')) {
       const action = url.searchParams.get('action');
-      const filename = url.searchParams.get('filename') ?? '';
+      const body = await readBody(req);
+      const filename = body ? JSON.parse(body).filename : '';
+      const absPath = join(slotBaseDir, filename);
       if (action === 'restore') {
         events.push('slot-restore');
         if (restoreMode === 'http_error') return json(res, 500, { error: 'restore-fail' });
-        if (!existsSync(filename)) return json(res, 404, { error: 'missing' });
+        if (!existsSync(absPath)) return json(res, 404, { error: 'missing' });
         return json(res, 200, { n_restored: 123 });
       }
       if (action === 'save') {
         events.push('slot-save');
-        mkdirSync(dirname(filename), { recursive: true });
-        writeFileSync(filename, 'slot');
+        mkdirSync(dirname(absPath), { recursive: true });
+        writeFileSync(absPath, 'slot');
         if (saveMode === 'invalid') return json(res, 200, { ok: true });
         return json(res, 200, { n_saved: 321 });
       }
@@ -204,7 +208,8 @@ afterEach(() => {
 
 test('cold miss saves a new idle kv entry', async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir });
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
@@ -241,7 +246,9 @@ test('cold miss saves a new idle kv entry', async () => {
 
 test('anthropic cold save writes trailer toolMap and ext_flags when upstream returns tool_calls', async () => {
   const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
   const upstream = await startUpstream({
+    slotBaseDir,
     toolCalls: [
       {
         id: 'toolu_1',
@@ -287,7 +294,8 @@ test('anthropic cold save writes trailer toolMap and ext_flags when upstream ret
 
 test('warm hit restores slot before upstream forward', async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir });
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
@@ -337,7 +345,8 @@ test('warm hit restores slot before upstream forward', async () => {
 
 test('anthropic warm hit replays with trailer toolMap bytes and keeps warm path when sha matches', async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir });
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
@@ -428,7 +437,8 @@ test('anthropic warm hit replays with trailer toolMap bytes and keeps warm path 
 
 test('anthropic warm-hit trailer mismatch falls back to cold prefill and increments replay-mismatch counter', async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir });
   const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
   try {
     const url = new URL(upstream.baseUrl);
@@ -523,7 +533,8 @@ test('anthropic warm-hit trailer mismatch falls back to cold prefill and increme
 
 test('warm-hit mismatch on deterministic request increments false-hit counter and invalidates entry', async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream({ firstJsonToken: 'Goodbye' });
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, firstJsonToken: 'Goodbye' });
   const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
   try {
     const url = new URL(upstream.baseUrl);
@@ -581,7 +592,8 @@ test('warm-hit mismatch on deterministic request increments false-hit counter an
 
 test('warm-hit match on deterministic request keeps entry and counter unchanged', async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream({ firstJsonToken: 'Hello' });
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, firstJsonToken: 'Hello' });
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
@@ -634,7 +646,8 @@ test('warm-hit match on deterministic request keeps entry and counter unchanged'
 
 test('warm-hit mismatch skips check when request is sampled and seed is missing', async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream({ firstJsonToken: 'Goodbye' });
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, firstJsonToken: 'Goodbye' });
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
@@ -687,7 +700,8 @@ test('warm-hit mismatch skips check when request is sampled and seed is missing'
 
 test('warm-hit skip when legacy entry has null fingerprint', async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream({ firstJsonToken: 'Goodbye' });
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, firstJsonToken: 'Goodbye' });
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
@@ -740,7 +754,8 @@ test('warm-hit skip when legacy entry has null fingerprint', async () => {
 
 test('restore failure downgrades to cold prefill and deletes broken entry', async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream({ saveMode: 'invalid', restoreMode: 'http_error' });
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, saveMode: 'invalid', restoreMode: 'http_error' });
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
@@ -791,7 +806,8 @@ test('restore failure downgrades to cold prefill and deletes broken entry', asyn
 
 test('epoch mismatch rejects stale hit and proceeds as cold prefill', async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir });
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
@@ -835,7 +851,8 @@ test('epoch mismatch rejects stale hit and proceeds as cold prefill', async () =
 
 test('eviction trims over-budget workload entries and keeps new cold entry', async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir });
   process.env.LLAMACTL_KV_WORKLOAD_BUDGET_MB = '1';
   try {
     const url = new URL(upstream.baseUrl);
@@ -889,7 +906,8 @@ test('eviction trims over-budget workload entries and keeps new cold entry', asy
 
 test('eviction blocked by active entry keeps active row and emits debug event', async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir });
   process.env.LLAMACTL_KV_WORKLOAD_BUDGET_MB = '1';
   const debugSpy = spyOn(console, 'debug').mockImplementation(() => {});
   try {
@@ -957,7 +975,8 @@ test('eviction blocked by active entry keeps active row and emits debug event', 
 
 test('sse response skips kv save', async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream({ chatMode: 'sse' });
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, chatMode: 'sse' });
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
