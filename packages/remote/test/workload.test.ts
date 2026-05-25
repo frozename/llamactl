@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -284,6 +284,33 @@ describe('workload store', () => {
     const loaded = listWorkloads(dir);
     expect(loaded).toHaveLength(1);
     expect(loaded[0]!.metadata.name).toBe('gemma-qa');
+  });
+
+  test('listWorkloads warns on duplicate metadata.name manifests', () => {
+    const duplicateAPath = join(dir, 'dup-a.yaml');
+    const duplicateBPath = join(dir, 'dup-b.yaml');
+    writeFileSync(
+      duplicateAPath,
+      sampleYaml.replace('name: gemma-qa', 'name: duplicate'),
+      'utf8',
+    );
+    writeFileSync(
+      duplicateBPath,
+      minimalYaml.replace('name: minimal', 'name: duplicate'),
+      'utf8',
+    );
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const loaded = listWorkloads(dir);
+      expect(loaded.map((m) => m.metadata.name)).toEqual(['duplicate', 'duplicate']);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const warned = String(warnSpy.mock.calls[0]?.[0] ?? '');
+      expect(warned).toContain("listWorkloads: duplicate metadata.name 'duplicate' in manifests:");
+      expect(warned).toContain(duplicateAPath);
+      expect(warned).toContain(duplicateBPath);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   test('listWorkloadNames ignores non-YAML files', () => {

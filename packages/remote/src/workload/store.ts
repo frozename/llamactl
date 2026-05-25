@@ -178,6 +178,7 @@ export function listWorkloads(
   // rather than letting Zod throw on a NodeRun-shaped file.
   if (!existsSync(dir)) return [];
   const out: ModelRun[] = [];
+  const manifestPathsByName = new Map<string, string[]>();
   for (const entry of readdirSync(dir)) {
     if (!entry.endsWith('.yaml')) continue;
     const path = join(dir, entry);
@@ -185,12 +186,21 @@ export function listWorkloads(
       const raw = readFileSync(path, 'utf8');
       const parsed = parseYaml(raw) as { kind?: string } | null;
       if (parsed?.kind !== 'ModelRun') continue;
-      out.push(ModelRunSchema.parse(parsed));
+      const manifest = ModelRunSchema.parse(parsed);
+      out.push(manifest);
+      const byName = manifestPathsByName.get(manifest.metadata.name) ?? [];
+      byName.push(path);
+      manifestPathsByName.set(manifest.metadata.name, byName);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       (onSkip ?? ((skippedFile: string, skippedErr: Error) => {
         console.warn(`listWorkloads: skipped ${skippedFile}: ${skippedErr.message}`);
       }))(path, error);
+    }
+  }
+  for (const [name, paths] of manifestPathsByName) {
+    if (paths.length > 1) {
+      console.warn(`listWorkloads: duplicate metadata.name '${name}' in manifests: ${paths.join(', ')}`);
     }
   }
   return out.sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
