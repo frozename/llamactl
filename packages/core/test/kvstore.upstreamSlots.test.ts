@@ -200,3 +200,132 @@ test('supportsSlots caches probe result per client', async () => {
     await upstream.close();
   }
 });
+
+test('supportsRequestHandle returns true when slots.supports_request_handle === true and api_version >= 2', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      json(res, 200, { slots: { api_version: 2, supports_request_handle: true } });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl);
+    expect(await client.supportsRequestHandle()).toBe(true);
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('supportsRequestHandle returns false when slots.supports_request_handle absent', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      json(res, 200, { slots: { api_version: 2 } });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl);
+    expect(await client.supportsRequestHandle()).toBe(false);
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('supportsRequestHandle returns false when slots.supports_request_handle === true but api_version === 1', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      json(res, 200, { slots: { api_version: 1, supports_request_handle: true } });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl);
+    expect(await client.supportsRequestHandle()).toBe(false);
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('supportsRequestHandle returns false when slots block absent entirely', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      json(res, 200, { n_slots: 8 });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl);
+    expect(await client.supportsRequestHandle()).toBe(false);
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('supportsRequestHandle returns false on fetch failure (network error)', async () => {
+  const port = await acquireClosedLocalPort();
+  const client = new UpstreamSlotClient(`http://127.0.0.1:${port}`);
+  expect(await client.supportsRequestHandle()).toBe(false);
+});
+
+test('supportsRequestHandle returns false on malformed JSON', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end('{');
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl);
+    expect(await client.supportsRequestHandle()).toBe(false);
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('supportsRequestHandle result is cached across calls (single fetch)', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      json(res, 200, { slots: { api_version: 2, supports_request_handle: true } });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl);
+    expect(await client.supportsRequestHandle()).toBe(true);
+    expect(await client.supportsRequestHandle()).toBe(true);
+    expect(upstream.requestCount()).toBe(1);
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('supportsSlots still returns true when slots block present', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      json(res, 200, { slots: { api_version: 2, supports_request_handle: true } });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl);
+    expect(await client.supportsSlots()).toBe(true);
+  } finally {
+    await upstream.close();
+  }
+});

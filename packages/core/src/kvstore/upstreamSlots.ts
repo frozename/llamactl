@@ -4,6 +4,7 @@ export interface SlotClient {
   save(slotId: number, filename: string): Promise<SlotSaveResult>;
   restore(slotId: number, filename: string): Promise<SlotRestoreResult>;
   supportsSlots(): Promise<boolean>;
+  supportsRequestHandle(): Promise<boolean>;
 }
 
 export type SlotSaveResult =
@@ -26,6 +27,7 @@ type FetchResult =
 export class UpstreamSlotClient implements SlotClient {
   private readonly baseUrl: URL;
   private supportsSlotsProbe: Promise<boolean> | null = null;
+  private supportsRequestHandleProbe: Promise<boolean> | null = null;
 
   constructor(baseUrl: string) {
     this.baseUrl = new URL(baseUrl);
@@ -94,6 +96,13 @@ export class UpstreamSlotClient implements SlotClient {
     return this.supportsSlotsProbe;
   }
 
+  supportsRequestHandle(): Promise<boolean> {
+    if (!this.supportsRequestHandleProbe) {
+      this.supportsRequestHandleProbe = this.probeSupportsRequestHandle();
+    }
+    return this.supportsRequestHandleProbe;
+  }
+
   private async postSlotAction(
     slotId: number,
     action: 'save' | 'restore',
@@ -105,11 +114,23 @@ export class UpstreamSlotClient implements SlotClient {
   }
 
   private async probeSupportsSlots(): Promise<boolean> {
+    const parsed = await this.fetchProps();
+    return parsed.ok && typeof parsed.value === 'object' && parsed.value !== null;
+  }
+
+  private async probeSupportsRequestHandle(): Promise<boolean> {
+    const parsed = await this.fetchProps();
+    if (!parsed.ok) return false;
+    return hasRequestHandleCapability(parsed.value);
+  }
+
+  private async fetchProps(): Promise<{ ok: true; value: unknown } | { ok: false }> {
     const url = new URL('/props', this.baseUrl);
     const result = await this.fetchWithTimeout(url, 'GET');
-    if (!result.ok || !result.response.ok) return false;
+    if (!result.ok || !result.response.ok) return { ok: false };
     const parsed = await this.parseJsonBody(result.response);
-    return parsed.ok && typeof parsed.value === 'object' && parsed.value !== null;
+    if (!parsed.ok) return { ok: false };
+    return { ok: true, value: parsed.value };
   }
 
   private async fetchWithTimeout(url: URL, method: 'GET' | 'POST', body?: string): Promise<FetchResult> {
@@ -146,6 +167,15 @@ function readNumberField(value: unknown, key: string): number | null {
   const field = (value as Record<string, unknown>)[key];
   if (typeof field !== 'number' || !Number.isFinite(field)) return null;
   return field;
+}
+
+function hasRequestHandleCapability(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const slots = (value as Record<string, unknown>).slots;
+  if (!slots || typeof slots !== 'object') return false;
+  const version = (slots as Record<string, unknown>).api_version;
+  if (typeof version !== 'number' || !Number.isFinite(version) || version < 2) return false;
+  return (slots as Record<string, unknown>).supports_request_handle === true;
 }
 
 function toError(error: unknown): Error {
