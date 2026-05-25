@@ -15,6 +15,7 @@ import {
   listWorkloads,
   loadWorkload,
   loadWorkloadByName,
+  loadWorkloadByNameAny,
   parseManifestYaml,
   parseWorkload,
   saveWorkload,
@@ -121,6 +122,42 @@ describe('ModelRun schema', () => {
     const path = saveWorkload(m, dir);
     const reloaded = loadWorkload(path);
     expect(reloaded).toEqual(m);
+  });
+
+  test('loadWorkloadByNameAny returns ModelRun for ModelRun yaml', () => {
+    const m = parseWorkload(sampleYaml);
+    saveWorkload(m, dir);
+    const loaded = loadWorkloadByNameAny('gemma-qa', dir);
+    expect(loaded.kind).toBe('ModelRun');
+    expect(loaded.metadata.name).toBe('gemma-qa');
+  });
+
+  test('loadWorkloadByNameAny returns ModelHost for ModelHost yaml', () => {
+    const dir2 = mkdtempSync(join(tmpdir(), 'llamactl-workloads-any-'));
+    try {
+      writeFileSync(join(dir2, 'host.yaml'), `
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: host
+spec:
+  engine: omlx
+  node: local
+  enabled: true
+  binary: /tmp/omlx
+  endpoint:
+    host: 127.0.0.1
+    port: 8080
+  hostedModels:
+    - rel: demo.gguf
+  extraArgs: []
+`);
+      const loaded = loadWorkloadByNameAny('host', dir2);
+      expect(loaded.kind).toBe('ModelHost');
+      expect(loaded.metadata.name).toBe('host');
+    } finally {
+      rmSync(dir2, { recursive: true, force: true });
+    }
   });
 
   test('parses a multi-node manifest with workers', () => {

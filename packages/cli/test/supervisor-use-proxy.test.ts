@@ -30,6 +30,31 @@ function modelRun(
   };
 }
 
+function modelHost(
+  useProxy: boolean | undefined,
+): any {
+  return {
+    apiVersion: 'llamactl/v1',
+    kind: 'ModelHost',
+    metadata: {
+      name: 'demo',
+      labels: {},
+    },
+    spec: {
+      engine: 'omlx',
+      node: 'local',
+      enabled: true,
+      binary: '/tmp/omlx',
+      endpoint: { host: '127.0.0.1', port: 8088 },
+      hostedModels: [{ rel: 'demo.gguf' }],
+      extraArgs: [],
+      restartPolicy: 'Always',
+      timeoutSeconds: 60,
+      ...(useProxy === undefined ? {} : { useProxy }),
+    },
+  };
+}
+
 describe('supervisor useProxy startup routing', () => {
   test('useProxy=true resolves workload URL to internal proxy', () => {
     const out = resolveWorkloadUrl(
@@ -110,5 +135,43 @@ describe('supervisor useProxy startup routing', () => {
     expect(info).toEqual([
       '[supervisor] workload=demo routing via proxy http://127.0.0.1:7944 (was http://127.0.0.1:8088)',
     ]);
+  });
+
+  test('startup resolves ModelHost useProxy=true through the proxy', () => {
+    const info: string[] = [];
+    const out = resolveWorkloadTargetsAtStartup(
+      [{ name: 'demo', endpoint: 'http://127.0.0.1:8088', kind: 'ModelHost' }],
+      {},
+      {
+        loadWorkloadByNameAny: () => modelHost(true),
+        info: (message) => info.push(message),
+      },
+    );
+    expect(out[0]?.endpoint).toBe('http://127.0.0.1:7944');
+    expect(info).toEqual([
+      '[supervisor] workload=demo routing via proxy http://127.0.0.1:7944 (was http://127.0.0.1:8088)',
+    ]);
+  });
+
+  test('startup leaves ModelHost without useProxy unchanged', () => {
+    const out = resolveWorkloadTargetsAtStartup(
+      [{ name: 'demo', endpoint: 'http://127.0.0.1:8088', kind: 'ModelHost' }],
+      {},
+      {
+        loadWorkloadByNameAny: () => modelHost(undefined),
+      },
+    );
+    expect(out[0]?.endpoint).toBe('http://127.0.0.1:8088');
+  });
+
+  test('startup still resolves ModelRun useProxy=true through the proxy', () => {
+    const out = resolveWorkloadTargetsAtStartup(
+      [{ name: 'demo', endpoint: 'http://127.0.0.1:8088', kind: 'ModelRun' }],
+      {},
+      {
+        loadWorkloadByNameAny: () => modelRun(true),
+      },
+    );
+    expect(out[0]?.endpoint).toBe('http://127.0.0.1:7944');
   });
 });

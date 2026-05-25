@@ -303,6 +303,7 @@ interface Flags {
 
 interface ResolveWorkloadUrlDeps {
   loadWorkloadByName?: typeof workloadStore.loadWorkloadByName;
+  loadWorkloadByNameAny?: (name: string) => { spec: { useProxy?: boolean } };
   resolveInternalProxyEndpoint?: typeof envMod.resolveInternalProxyEndpoint;
   warn?: (message: string) => void;
 }
@@ -317,12 +318,17 @@ export function resolveWorkloadUrl(
   env: NodeJS.ProcessEnv = process.env,
   deps: ResolveWorkloadUrlDeps = {},
 ): string {
-  const loadWorkloadByName = deps.loadWorkloadByName ?? workloadStore.loadWorkloadByName;
+  const loadWorkloadByNameAny = deps.loadWorkloadByNameAny
+    ?? ((workloadName: string) => (
+      deps.loadWorkloadByName
+        ? deps.loadWorkloadByName(workloadName)
+        : workloadStore.loadWorkloadByName(workloadName)
+    ) as { spec: { useProxy?: boolean } });
   const resolveInternalProxyEndpoint = deps.resolveInternalProxyEndpoint ?? envMod.resolveInternalProxyEndpoint;
   const warn = deps.warn ?? ((message: string) => process.stderr.write(`${message}\n`));
 
   try {
-    const manifest = loadWorkloadByName(name);
+    const manifest = loadWorkloadByNameAny(name);
     if (manifest.spec.useProxy === true) {
       return resolveInternalProxyEndpoint(env);
     }
@@ -343,8 +349,6 @@ export function resolveWorkloadTargetsAtStartup(
   const loggedOverrides = new Map<string, string>();
 
   return workloads.map((target) => {
-    if (target.kind !== 'ModelRun') return target;
-
     const resolvedEndpoint = resolveWorkloadUrl(target.name, target.endpoint, env, deps);
     if (resolvedEndpoint === target.endpoint) return target;
 

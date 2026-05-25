@@ -94,6 +94,26 @@ export function loadWorkloadByName(
   return loadWorkload(workloadPath(name, dir));
 }
 
+export function loadWorkloadByNameAny(
+  name: string,
+  dir: string = defaultWorkloadsDir(),
+): ModelRun | ModelHostManifest {
+  const path = workloadPath(name, dir);
+  if (!existsSync(path)) {
+    throw new Error(`workload manifest not found: ${path}`);
+  }
+
+  const parsed = parseYaml(readFileSync(path, 'utf8')) as { kind?: string; apiVersion?: string } | null;
+  if (parsed && parsed.apiVersion === 'llamactl.io/v1') {
+    parsed.apiVersion = 'llamactl/v1';
+  }
+
+  if (parsed?.kind === 'ModelHost') {
+    return ModelHostManifestSchema.parse(parsed);
+  }
+  return ModelRunSchema.parse(parsed);
+}
+
 export function saveWorkload(
   workload: ModelRun,
   dir: string = defaultWorkloadsDir(),
