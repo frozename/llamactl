@@ -332,7 +332,161 @@ test('supportsRequestHandle returns false on malformed JSON', async () => {
   }
 });
 
-test('supportsRequestHandle result is cached across calls (single fetch)', async () => {
+test('supportsRequestHandle returns cached value within TTL window', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      json(res, 200, { slots: { api_version: 2, supports_request_handle: true } });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl, { supportsRequestHandleTtlMs: 60_000 });
+    expect(await client.supportsRequestHandle()).toBe(true);
+    expect(await client.supportsRequestHandle()).toBe(true);
+    expect(upstream.requestCount()).toBe(1);
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('supportsRequestHandle re-probes after TTL expiry', async () => {
+  const originalNow = Date.now;
+  let now = 1_000;
+  Date.now = () => now;
+  let requests = 0;
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      requests += 1;
+      json(res, 200, { slots: { api_version: 2, supports_request_handle: true } });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl, { supportsRequestHandleTtlMs: 50 });
+    expect(await client.supportsRequestHandle()).toBe(true);
+    now += 25;
+    expect(await client.supportsRequestHandle()).toBe(true);
+    now += 26;
+    expect(await client.supportsRequestHandle()).toBe(true);
+    expect(requests).toBe(2);
+  } finally {
+    Date.now = originalNow;
+    await upstream.close();
+  }
+});
+
+test('supportsRequestHandle re-probes on every call when previous result was false', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      json(res, 200, { n_slots: 8 });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl, { supportsRequestHandleTtlMs: 60_000 });
+    expect(await client.supportsRequestHandle()).toBe(false);
+    expect(await client.supportsRequestHandle()).toBe(false);
+    expect(upstream.requestCount()).toBe(2);
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('supportsRequestHandle invalidates cache on save() fetch failure', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      json(res, 200, { slots: { api_version: 2, supports_request_handle: true } });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl, { supportsRequestHandleTtlMs: 60_000 });
+    expect(await client.supportsRequestHandle()).toBe(true);
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+        if (init?.method === 'POST' && url.pathname.startsWith('/slots/')) {
+          throw new TypeError('network down');
+        }
+        return originalFetch(input as Parameters<typeof fetch>[0], init);
+      }) as typeof fetch;
+      const result = await client.save(1, 'slot-failure.bin');
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected save failure');
+      expect(await client.supportsRequestHandle()).toBe(true);
+      expect(upstream.requestCount()).toBe(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('supportsRequestHandle invalidates cache on restore() fetch failure', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      json(res, 200, { slots: { api_version: 2, supports_request_handle: true } });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl, { supportsRequestHandleTtlMs: 60_000 });
+    expect(await client.supportsRequestHandle()).toBe(true);
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+        if (init?.method === 'POST' && url.pathname.startsWith('/slots/')) {
+          throw new TypeError('network down');
+        }
+        return originalFetch(input as Parameters<typeof fetch>[0], init);
+      }) as typeof fetch;
+      const result = await client.restore(1, 'slot-failure.bin');
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected restore failure');
+      expect(await client.supportsRequestHandle()).toBe(true);
+      expect(upstream.requestCount()).toBe(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('supportsRequestHandle invalidateCapabilityCache() forces next call to re-probe', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      json(res, 200, { slots: { api_version: 2, supports_request_handle: true } });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl, { supportsRequestHandleTtlMs: 60_000 });
+    expect(await client.supportsRequestHandle()).toBe(true);
+    client.invalidateCapabilityCache();
+    expect(await client.supportsRequestHandle()).toBe(true);
+    expect(upstream.requestCount()).toBe(2);
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('supportsRequestHandle still returns true when capability present', async () => {
   const upstream = await startTestServer((req, res, url) => {
     if (req.method === 'GET' && url.pathname === '/props') {
       json(res, 200, { slots: { api_version: 2, supports_request_handle: true } });
@@ -344,8 +498,6 @@ test('supportsRequestHandle result is cached across calls (single fetch)', async
   try {
     const client = new UpstreamSlotClient(upstream.baseUrl);
     expect(await client.supportsRequestHandle()).toBe(true);
-    expect(await client.supportsRequestHandle()).toBe(true);
-    expect(upstream.requestCount()).toBe(1);
   } finally {
     await upstream.close();
   }

@@ -1,4 +1,5 @@
 const SLOT_REQUEST_TIMEOUT_MS = 10_000;
+const SUPPORTS_REQUEST_HANDLE_TTL_MS = 60_000;
 
 export interface SlotClient {
   save(slotId: number, filename: string): Promise<SlotSaveResult>;
@@ -27,15 +28,20 @@ type FetchResult =
 export class UpstreamSlotClient implements SlotClient {
   private readonly baseUrl: URL;
   private supportsSlotsProbe: Promise<boolean> | null = null;
-  private supportsRequestHandleProbe: Promise<boolean> | null = null;
+  private _supportsRequestHandleCache: { value: boolean; expiresAt: number } | null = null;
+  private readonly supportsRequestHandleTtlMs: number;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, opts?: { fetch?: typeof fetch; supportsRequestHandleTtlMs?: number }) {
     this.baseUrl = new URL(baseUrl);
+    this.supportsRequestHandleTtlMs = opts?.supportsRequestHandleTtlMs ?? SUPPORTS_REQUEST_HANDLE_TTL_MS;
   }
 
   async save(slotId: number, filename: string): Promise<SlotSaveResult> {
     const result = await this.postSlotAction(slotId, 'save', filename);
-    if (!result.ok) return { ok: false, reason: 'network', error: result.error };
+    if (!result.ok) {
+      this.invalidateCapabilityCache();
+      return { ok: false, reason: 'network', error: result.error };
+    }
     if (!result.response.ok) {
       return {
         ok: false,
@@ -59,7 +65,10 @@ export class UpstreamSlotClient implements SlotClient {
 
   async restore(slotId: number, filename: string): Promise<SlotRestoreResult> {
     const result = await this.postSlotAction(slotId, 'restore', filename);
-    if (!result.ok) return { ok: false, reason: 'network', error: result.error };
+    if (!result.ok) {
+      this.invalidateCapabilityCache();
+      return { ok: false, reason: 'network', error: result.error };
+    }
     if (!result.response.ok) {
       if (result.response.status === 404) {
         return {
@@ -97,10 +106,15 @@ export class UpstreamSlotClient implements SlotClient {
   }
 
   supportsRequestHandle(): Promise<boolean> {
-    if (!this.supportsRequestHandleProbe) {
-      this.supportsRequestHandleProbe = this.probeSupportsRequestHandle();
+    const cache = this._supportsRequestHandleCache;
+    if (cache && cache.value === true && Date.now() < cache.expiresAt) {
+      return Promise.resolve(cache.value);
     }
-    return this.supportsRequestHandleProbe;
+    return this.probeSupportsRequestHandle();
+  }
+
+  invalidateCapabilityCache(): void {
+    this._supportsRequestHandleCache = null;
   }
 
   private async postSlotAction(
@@ -120,8 +134,12 @@ export class UpstreamSlotClient implements SlotClient {
 
   private async probeSupportsRequestHandle(): Promise<boolean> {
     const parsed = await this.fetchProps();
-    if (!parsed.ok) return false;
-    return hasRequestHandleCapability(parsed.value);
+    const value = parsed.ok && hasRequestHandleCapability(parsed.value);
+    this._supportsRequestHandleCache = {
+      value,
+      expiresAt: Date.now() + this.supportsRequestHandleTtlMs,
+    };
+    return value;
   }
 
   private async fetchProps(): Promise<{ ok: true; value: unknown } | { ok: false }> {
