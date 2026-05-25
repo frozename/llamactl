@@ -131,6 +131,7 @@ export async function runExpose(args: string[]): Promise<number> {
       restartPolicy: 'Always',
       timeoutSeconds,
       gateway: false,
+      allowExternalBind: false,
     },
   };
 

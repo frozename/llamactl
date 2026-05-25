@@ -148,6 +148,7 @@ async function runStart(args: string[]): Promise<number> {
       restartPolicy: 'Always',
       timeoutSeconds,
       gateway: false,
+      allowExternalBind: false,
     },
   };
   workloadStore.saveWorkload(manifest);

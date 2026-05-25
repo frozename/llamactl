@@ -77,7 +77,7 @@ beforeAll(async () => {
   process.env.LLAMACTL_COMPOSITES_DIR = compositesDir;
   process.env.LLAMACTL_CONFIG = configPath;
   __setWorkloadTestSeams({
-    getNodeClientByName: () => makeModelHostClient(),
+    getNodeClientByName: () => makeModelHostClient() as any,
   });
 
   try {

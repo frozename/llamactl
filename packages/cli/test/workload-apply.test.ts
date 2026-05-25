@@ -20,6 +20,7 @@ function makeManifest(): workloadSchema.ModelRun {
       restartPolicy: 'Always' as const,
       timeoutSeconds: 60,
       gateway: false,
+      allowExternalBind: false,
     },
   };
 }
