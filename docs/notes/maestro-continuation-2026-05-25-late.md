@@ -25,24 +25,23 @@ This session shipped six tracks (A→F from the previous note's §5) and three n
 - **Mac-mini :8197 slot canary killed** (PID 93970). Manifest moved aside on mac-mini. Freed ~3 GB initially but the box reabsorbed most of it within the hour — mac-mini at 16 GB total is genuinely full.
 - **M4 fleet-supervisor plist re-sync** — live `~/Library/LaunchAgents/com.llamactl.fleet-supervisor.plist` was stale (still `gains-host-35b-local`). `cp + bootout + bootstrap` (kickstart -k alone doesn't reload plist). PID 15856 now correctly probing `mlx-qwen36-35b-a3b-local`.
 
-## 2 — In flight at session end
+## 2 — Phase 0+2 landed in-session
 
-**Phase 0+2 — fleet aggregator + observability** dispatch is running.
+`a09831f feat(fleet): add phase 0+2 fleet aggregation and snapshot surfaces`. 16 files, +1097/−24 LOC. Pushed to origin. 19/0 tests, all four touched-package `tsc --noEmit` clean.
 
-- handoff_id: `6577ffdd-8e87-4cdb-89a5-ad78dc725b12`
-- conversation_id: `conv-43ac5fcc-3954-4d15-9ea4-046e46000c56`
-- agent: codex-acp-deep (implement_substantial)
-- started: 2026-05-25T20:47:21Z
-- Scope per merged synth lines 106-178:
-  - `packages/fleet-supervisor/src/aggregator.ts` — `FleetAggregator` with `pollNow/getSnapshot/getAll/start()`
-  - `packages/fleet-supervisor/src/peer-fetch.ts` — `createPeerFetch(peer)` w/ `https.Agent` + CA from `caPemPath`
-  - `packages/fleet-supervisor/src/aggregator-db.ts` — sqlite at `~/.llamactl/fleet/cluster.db`
-  - `packages/remote/src/routes/fleet.ts` extend — `GET /v1/fleet/snapshot`
-  - `packages/cli/src/commands/fleet.ts` new — `fleet snapshot [--all]` + `fleet status`
-  - `packages/mcp/src/tools/fleet.ts` extend — `all` arg + `'fleet-placement'` to kinds enum (architect's FLAG-B preemptive fix)
-  - `packages/fleet-supervisor/test/journalSchema.test.ts` — pre-condition for Phase 3
+What was added:
+- `packages/fleet-supervisor/src/aggregator.ts` — `FleetAggregator` with `pollNow/getSnapshot/getAll/start()`, fetchSnapshot injected.
+- `packages/fleet-supervisor/src/peer-fetch.ts` — `createPeerFetch(peer)` wrapping `https.Agent` w/ optional CA from `caPemPath`.
+- `packages/fleet-supervisor/src/aggregator-db.ts` — sqlite at `~/.llamactl/fleet/cluster.db`, schema `node_snapshots(node, ts, snapshot_json, PRIMARY KEY(node,ts))`, ops `openAggregatorDb/writeSnapshot/getLatestPerNode/getHistoricalForNode`.
+- `packages/fleet-supervisor/src/snapshot-reader.ts` — journal-tail latest-snapshot extractor (bonus, used by the route + aggregator).
+- `packages/remote/src/routes/fleet.ts` — `GET /v1/fleet/snapshot` handler. 200 with latest, 204 on empty.
+- `packages/cli/src/commands/fleet.ts` — `llamactl fleet snapshot [--all]`, `fleet status`, `fleet journal-tail`, `fleet aggregator serve`.
+- `packages/mcp/src/tools/fleet.ts` extended — `llamactl_fleet_snapshot` `all?: boolean`, and `'fleet-placement'` added to `llamactl_fleet_journal_tail` kinds enum (architect's FLAG-B preemptive fix).
+- 5 new test files: `aggregator.test.ts`, `aggregatorDb.test.ts`, `fleetSnapshotRoute.test.ts`, `journalSchema.test.ts`, `cli/test/fleet.test.ts`.
 
-**First moves §6 includes a status check.** If the chain completed: verify the worktree (expect `feat/fleet-aggregator-phase02` or similar branch name — agent may pick its own due to namespace conflicts), `git log <base>..HEAD`, run the 5 new test files + tsc on each touched package, then land via `git merge --ff-only` + push (dispatch_land won't find the branch name; use manual ff merge — same pattern as Phase 1 land). If failed: read the `chain_get_response`, decide retry or split scope.
+Two downstream chain-hop handoffs were spawned and cancelled (`510fdffc` from Phase 1, `3f57b53e` from Phase 0+2) — both `non_terminal_stale` orphans, not load-bearing.
+
+**Phase 0+2 is end-to-end testable but NOT yet activated in production.** Required follow-up next session: hand-write `~/.llamactl/cluster.yaml` listing mac-mini as a peer + place `/tmp/llamactl-mac-mini-ca.pem` somewhere stable, then `launchctl kickstart -k` the llamactl-internal-proxy so it picks up the new code, and smoke `llamactl fleet snapshot --all` end-to-end.
 
 ## 3 — Open follow-ups (post-Phase 0+2)
 
@@ -123,15 +122,22 @@ Mac-mini canary on :8197 killed mid-session.
 ## 6 — First moves (next session)
 
 1. Parallel: `git status --short && git log --oneline origin/main -8` (llamactl) + `git -C /Volumes/WorkSSD/repos/personal/penumbra log --oneline -3` + `git -C /Volumes/WorkSSD/src/omlx log --oneline -2 && git -C /Volumes/WorkSSD/src/omlx branch --show-current` + `launchctl list | grep -E "(penumbra|llamactl)"` + `mcp__penumbra__handoff_list_pending` + `mcp__penumbra__cost_quota_status`.
-2. **`mcp__penumbra__chain_status` on `6577ffdd-8e87-4cdb-89a5-ad78dc725b12` (Phase 0+2 dispatch).** Three outcomes:
-   - **completed + trustworthy** → `chain_get_response` for sha + diff; `cd <worktree> && git log <base>..HEAD && git diff --stat <base>..HEAD`; if all green: `git worktree remove --force <wt>` + `git merge --ff-only <branch>` + `git push origin main`. Mark task #14 complete.
-   - **completed + `no_worktree_activity`** → false-positive trap (same as Phase 1). Same verification path; same manual ff-merge.
-   - **failed / stale** → `chain_cancel`, read response for diagnosis, decide retry or split-scope.
-3. Live probes: `curl -s http://127.0.0.1:8096/v1/slots/capabilities` (expect mcr=4), `curl -s http://127.0.0.1:7944/v1/models`, `curl -s http://127.0.0.1:8083/health`, `pgrep -fl "omlx serve" | head`, `ssh macmini.ai 'pgrep -fl "omlx serve" | wc -l; vm_stat | awk ...'`.
-4. After Phase 0+2 lands:
-   - Hand-write `~/.llamactl/cluster.yaml` with mac-mini peer entry (id: mac-mini, endpoint: https://macmini.ai:7843, caPemPath: ~/.llamactl/certs/mac-mini-ca.pem — copy `/tmp/llamactl-mac-mini-ca.pem` to that location first).
-   - Smoke `llamactl fleet snapshot --all` → expect both nodes' free_mb + workload counts.
-   - Smoke cross-node routing: `curl http://127.0.0.1:7944/v1/models` should now include mac-mini's qwen3-8b / granite-3b / granite-8b model ids. Try a chat completion against one.
-   - Decide direction with the user: Phase 3 (placement scheduler), Phase 5 (infra-push), or polish/Phase-1-live-smoke first.
+2. Live probes: `curl -s http://127.0.0.1:8096/v1/slots/capabilities` (expect mcr=4), `curl -s http://127.0.0.1:7944/v1/models`, `curl -s http://127.0.0.1:8083/health`, `pgrep -fl "omlx serve" | head`, `ssh macmini.ai 'pgrep -fl "omlx serve" | wc -l; vm_stat | awk "/free|inactive/ {gsub(/\\./, \"\"); sum += \$NF} END {printf \"%.1f GB free+inactive\\n\", sum*16384/1024/1024/1024}"'`.
+3. **Activate Phase 0+2 in production** (the in-session land is end-to-end testable but not yet live):
+   - `mkdir -p ~/.llamactl/certs && cp /tmp/llamactl-mac-mini-ca.pem ~/.llamactl/certs/mac-mini-ca.pem` (or pull a fresh CA from mac-mini if the /tmp one is gone).
+   - Write `~/.llamactl/cluster.yaml`:
+     ```yaml
+     peers:
+       - id: mac-mini
+         endpoint: https://macmini.ai:7843
+         caPemPath: ~/.llamactl/certs/mac-mini-ca.pem
+     ```
+   - `launchctl kickstart -k gui/$(id -u)/com.llamactl.internal-proxy` to pick up the new code (built from main, which now has both Phase 1 and Phase 0+2). If the plist file itself changed: `bootout + bootstrap` instead.
+   - Smoke: `llamactl fleet snapshot --all` → expect both nodes' free_mb + workload counts. `curl http://127.0.0.1:7944/v1/models | jq '.data[].id'` → should now include mac-mini's `mlx-granite-3b-iso-mac-mini` etc model ids. Try a chat completion against one.
+   - Verify the mac-mini agent at :7843 actually serves `/v1/fleet/snapshot` — mac-mini's llamactl-agent binary may be older than this code; if so, `infra push` mac-mini first (see Phase 5 below) or hand-rsync the new build.
+4. Decide direction with the user:
+   - **Phase 3 (placement scheduler)** — `scoreNodes/chooseBestNode` + `spec.node:auto` + `spec.placement:pinned` + apply-path integration + FLAG-A `actionTier` fix.
+   - **Phase 5 (infra-push rollout)** — composes Phase 1's peer client + Phase 0+2's `/v1/fleet/snapshot` health gate. Open Q: does `POST /v1/infra/install` already exist on the agent? Grep the routes/admin path first.
+   - **Phase 4 (migration)** — highest risk; needs `LLAMACTL_FLEET_MOVE_ENABLED=1` + `schedulerLease.holder`. Adversarial-review the diff before land.
 
 ---
