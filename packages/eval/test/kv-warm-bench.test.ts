@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  buildFrontierPrompt,
   buildDeterministicPrompt,
   formatKvWarmBenchCsvRow,
+  createTokenizeClient,
   renderKvWarmBenchMarkdown,
   type KvWarmBenchRow,
 } from '../src/matrix/workloads/kv-warm-bench.js';
@@ -11,6 +13,69 @@ describe('buildDeterministicPrompt', () => {
     const a = buildDeterministicPrompt({ approxTokens: 2048, seed: 7 });
     const b = buildDeterministicPrompt({ approxTokens: 2048, seed: 7 });
     expect(a).toBe(b);
+  });
+});
+
+describe('buildFrontierPrompt', () => {
+  test('matches the exact token frontier when tokenize endpoint is available', async () => {
+    const origFetch = globalThis.fetch;
+    const tokenizeCalls: number[] = [];
+    globalThis.fetch = (async (input: Request | string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/v1/tokenize')) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { prompt?: string };
+        const payload = String(body.prompt ?? '');
+        const words = payload.split('\n')[1]?.trim().split(/\s+/).filter(Boolean).length ?? 0;
+        tokenizeCalls.push(words);
+        return new Response(JSON.stringify({ token_ids: [], n_tokens: words * 6 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('unexpected', { status: 500 });
+    }) as unknown as typeof fetch;
+
+    try {
+      const tokenizeClient = await createTokenizeClient({
+        proxyBaseUrl: 'http://127.0.0.1:8089',
+        model: 'granite-test',
+      });
+      expect(tokenizeClient).not.toBeNull();
+      if (!tokenizeClient) return;
+
+      const prompt = await buildFrontierPrompt({
+        frontierTokens: 120,
+        seed: 11,
+        tokenize: tokenizeClient,
+      });
+      const finalWords = prompt.split('\n')[1]?.trim().split(/\s+/).filter(Boolean).length ?? 0;
+      expect(finalWords * 6).toBe(120);
+      expect(tokenizeCalls.length).toBeLessThanOrEqual(4);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+});
+
+describe('createTokenizeClient', () => {
+  test('warns once and falls back when tokenize endpoint is unavailable', async () => {
+    const origFetch = globalThis.fetch;
+    const warnings: string[] = [];
+    globalThis.fetch = (async () => new Response('not found', { status: 404 })) as unknown as typeof fetch;
+
+    try {
+      const tokenizeClient = await createTokenizeClient({
+        proxyBaseUrl: 'http://127.0.0.1:8089',
+        model: 'granite-test',
+        onWarn: (msg) => warnings.push(msg),
+      });
+      expect(tokenizeClient).toBeNull();
+      expect(warnings).toEqual([
+        'kv-warm-bench: /v1/tokenize unavailable; interpreting --frontiers as approximate word counts',
+      ]);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   });
 });
 

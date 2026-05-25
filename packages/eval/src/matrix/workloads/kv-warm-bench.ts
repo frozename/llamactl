@@ -79,14 +79,102 @@ function stableToken(seed: number, index: number): string {
   return `t${x.toString(36).padStart(7, '0')}`;
 }
 
-export function buildDeterministicPrompt(opts: { approxTokens: number; seed?: number }): string {
-  const approxTokens = Math.max(16, Math.floor(opts.approxTokens));
-  const seed = opts.seed ?? 11;
+function buildPromptWithStableWords(seed: number, wordCount: number): string {
+  const safeWordCount = Math.max(1, Math.floor(wordCount));
   const tokens: string[] = [];
-  for (let i = 0; i < approxTokens; i += 1) {
+  for (let i = 0; i < safeWordCount; i += 1) {
     tokens.push(stableToken(seed, i));
   }
   return `KV-WARM-BENCH-SEED=${seed}\n${tokens.join(' ')}`;
+}
+
+export function buildDeterministicPrompt(opts: { approxTokens: number; seed?: number }): string {
+  const approxTokens = Math.max(16, Math.floor(opts.approxTokens));
+  const seed = opts.seed ?? 11;
+  return buildPromptWithStableWords(seed, approxTokens);
+}
+
+export const KV_WARM_BENCH_TOKENIZE_FALLBACK_WARNING =
+  'kv-warm-bench: /v1/tokenize unavailable; interpreting --frontiers as approximate word counts';
+
+export type KvWarmBenchTokenize = (prompt: string) => Promise<number>;
+
+export async function createTokenizeClient(args: {
+  proxyBaseUrl: string;
+  model: string;
+  onWarn?: (message: string) => void;
+}): Promise<KvWarmBenchTokenize | null> {
+  const endpoint = `${args.proxyBaseUrl}/v1/tokenize`;
+  const warn = args.onWarn ?? ((message: string) => console.warn(message));
+  const probe = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: args.model, prompt: buildDeterministicPrompt({ approxTokens: 16, seed: 11 }) }),
+  });
+  if (!probe.ok) {
+    warn(KV_WARM_BENCH_TOKENIZE_FALLBACK_WARNING);
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = await probe.json();
+  } catch {
+    warn(KV_WARM_BENCH_TOKENIZE_FALLBACK_WARNING);
+    return null;
+  }
+  const probeTokens = typeof (parsed as { n_tokens?: unknown }).n_tokens === 'number'
+    ? Math.floor((parsed as { n_tokens: number }).n_tokens)
+    : Number.NaN;
+  if (!Number.isFinite(probeTokens) || probeTokens <= 0) {
+    warn(KV_WARM_BENCH_TOKENIZE_FALLBACK_WARNING);
+    return null;
+  }
+  return async (prompt: string) => {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: args.model, prompt }),
+    });
+    if (!response.ok) {
+      throw new Error(`kv-warm-bench: HTTP ${response.status} from ${endpoint}: ${await response.text()}`);
+    }
+    const payload = (await response.json()) as { n_tokens?: unknown };
+    const nTokens =
+      typeof payload.n_tokens === 'number' ? Math.floor(payload.n_tokens) : Number.NaN;
+    if (!Number.isFinite(nTokens) || nTokens <= 0) {
+      throw new Error(`kv-warm-bench: invalid /v1/tokenize payload from ${endpoint}`);
+    }
+    return nTokens;
+  };
+}
+
+export async function buildFrontierPrompt(args: {
+  frontierTokens: number;
+  seed: number;
+  tokenize: KvWarmBenchTokenize;
+}): Promise<string> {
+  const target = Math.max(16, Math.floor(args.frontierTokens));
+  let words = Math.max(1, target);
+  let prompt = buildPromptWithStableWords(args.seed, words);
+  let nTokens = await args.tokenize(prompt);
+  if (nTokens === target) return prompt;
+
+  let ratio = nTokens / Math.max(1, words);
+  words = Math.max(1, Math.ceil(target / Math.max(ratio, 0.1)));
+  prompt = buildPromptWithStableWords(args.seed, words);
+  nTokens = await args.tokenize(prompt);
+  ratio = nTokens / Math.max(1, words);
+
+  for (let i = 0; i < 2 && nTokens !== target; i += 1) {
+    const delta = target - nTokens;
+    const step = Math.max(1, Math.ceil(Math.abs(delta) / Math.max(ratio, 0.1)));
+    words = delta > 0 ? words + step : Math.max(1, words - step);
+    prompt = buildPromptWithStableWords(args.seed, words);
+    nTokens = await args.tokenize(prompt);
+    ratio = nTokens / Math.max(1, words);
+  }
+
+  return prompt;
 }
 
 function normalizeArgs(args: KvWarmBenchArgs): NormalizedKvWarmBenchArgs {
@@ -268,9 +356,19 @@ export async function runKvWarmBench(args: KvWarmBenchArgs): Promise<{
 }> {
   const normalized = normalizeArgs(args);
   const rows: KvWarmBenchRow[] = [];
+  const tokenize = await createTokenizeClient({
+    proxyBaseUrl: normalized.proxyBaseUrl,
+    model: normalized.model,
+  });
 
   for (const frontier of normalized.frontiers) {
-    const prompt = buildDeterministicPrompt({ approxTokens: frontier, seed: normalized.seed });
+    const prompt = tokenize
+      ? await buildFrontierPrompt({
+          frontierTokens: frontier,
+          seed: normalized.seed,
+          tokenize,
+        })
+      : buildDeterministicPrompt({ approxTokens: frontier, seed: normalized.seed });
 
     const cold = await measureChatCompletion({
       proxyBaseUrl: normalized.proxyBaseUrl,
