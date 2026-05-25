@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import {
+  __parseAnthropicSseEventPayloadForTests,
   __resetTranslatorUnknownEventTotalForTests,
   translateOpenAIStreamToAnthropic,
   translator_unknown_event_total,
@@ -342,6 +343,70 @@ test('unknown upstream SSE data increments counter but stream still terminates c
   expect(translator_unknown_event_total()).toBe(1);
   expect(events.at(-2)?.event).toBe('message_delta');
   expect(events.at(-1)?.event).toBe('message_stop');
+});
+
+test('named event with valid data is translated and does not increment unknown counter', async () => {
+  __resetTranslatorUnknownEventTotalForTests();
+  const upstream = makeSseStream([
+    'event: message\ndata: {"id":"msg_named","choices":[{"delta":{"content":"hi"},"finish_reason":null}],"usage":{"completion_tokens":1}}\n\n',
+    'data: [DONE]\n\n',
+  ]);
+
+  const translated = translateOpenAIStreamToAnthropic(upstream, { model: 'claude-3-7-sonnet' });
+  const events = parseAnthropicSse(await readStreamText(translated));
+
+  expect(translator_unknown_event_total()).toBe(0);
+  expect(events.map((event) => event.event)).toContain('content_block_delta');
+  expect(events.at(-1)?.event).toBe('message_stop');
+});
+
+test('multiple data lines in one event are concatenated with newlines', async () => {
+  const parsed = __parseAnthropicSseEventPayloadForTests('data: line1\ndata: line2\n\n');
+
+  expect(parsed.unknownLineCount).toBe(0);
+  expect(parsed.data).toBe('line1\nline2');
+});
+
+test('id and retry lines are ignored while translating valid data', async () => {
+  __resetTranslatorUnknownEventTotalForTests();
+  const upstream = makeSseStream([
+    'event: foo\nid: abc\nretry: 5000\ndata: {"id":"msg_meta","choices":[{"delta":{"content":"hi"},"finish_reason":null}],"usage":{"completion_tokens":1}}\n\n',
+    'data: [DONE]\n\n',
+  ]);
+
+  const translated = translateOpenAIStreamToAnthropic(upstream, { model: 'claude-3-7-sonnet' });
+  const events = parseAnthropicSse(await readStreamText(translated));
+
+  expect(translator_unknown_event_total()).toBe(0);
+  expect(events.map((event) => event.event)).toContain('content_block_delta');
+});
+
+test('comment lines are ignored while translating valid data', async () => {
+  __resetTranslatorUnknownEventTotalForTests();
+  const upstream = makeSseStream([
+    ': this is a comment\ndata: {"id":"msg_comment","choices":[{"delta":{"content":"hi"},"finish_reason":null}],"usage":{"completion_tokens":1}}\n\n',
+    'data: [DONE]\n\n',
+  ]);
+
+  const translated = translateOpenAIStreamToAnthropic(upstream, { model: 'claude-3-7-sonnet' });
+  const events = parseAnthropicSse(await readStreamText(translated));
+
+  expect(translator_unknown_event_total()).toBe(0);
+  expect(events.map((event) => event.event)).toContain('content_block_delta');
+});
+
+test('unknown line increments counter but does not suppress valid data', async () => {
+  __resetTranslatorUnknownEventTotalForTests();
+  const upstream = makeSseStream([
+    'garbage: x\ndata: {"id":"msg_unknown_line","choices":[{"delta":{"content":"hi"},"finish_reason":null}],"usage":{"completion_tokens":1}}\n\n',
+    'data: [DONE]\n\n',
+  ]);
+
+  const translated = translateOpenAIStreamToAnthropic(upstream, { model: 'claude-3-7-sonnet' });
+  const events = parseAnthropicSse(await readStreamText(translated));
+
+  expect(translator_unknown_event_total()).toBe(1);
+  expect(events.map((event) => event.event)).toContain('content_block_delta');
 });
 
 test('upstream mid-stream error emits clean terminal message_delta + message_stop', async () => {

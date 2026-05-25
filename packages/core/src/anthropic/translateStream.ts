@@ -87,6 +87,36 @@ export function __resetTranslatorUnknownEventTotalForTests(): void {
   unknownEventTotal = 0;
 }
 
+export function __parseAnthropicSseEventPayloadForTests(eventPayload: string): {
+  data: string | null;
+  unknownLineCount: number;
+} {
+  const lines = eventPayload.split('\n');
+  const dataLines: string[] = [];
+  let unknownLineCount = 0;
+
+  for (const line of lines) {
+    if (line.length === 0 || line.startsWith(':')) continue;
+
+    if (line.startsWith('data:')) {
+      const maybeSpace = line.slice(5);
+      dataLines.push(maybeSpace.startsWith(' ') ? maybeSpace.slice(1) : maybeSpace);
+      continue;
+    }
+
+    if (line.startsWith('event:') || line.startsWith('id:') || line.startsWith('retry:')) {
+      continue;
+    }
+
+    unknownLineCount += 1;
+  }
+
+  return {
+    data: dataLines.length > 0 ? dataLines.join('\n') : null,
+    unknownLineCount,
+  };
+}
+
 export function translateOpenAIStreamToAnthropic(
   upstream: ReadableStream<Uint8Array>,
   ctx: TranslatorContext,
@@ -288,26 +318,9 @@ export function translateOpenAIStreamToAnthropic(
       const processEvent = (eventPayload: string): 'continue' | 'done' => {
         if (eventPayload.trim().length === 0) return 'continue';
 
-        const lines = eventPayload.split('\n');
-        const dataLines: string[] = [];
-        let unknownLine = false;
-
-        for (const line of lines) {
-          if (line.length === 0 || line.startsWith(':')) continue;
-          if (!line.startsWith('data:')) {
-            unknownLine = true;
-            continue;
-          }
-          const maybeSpace = line.slice(5);
-          dataLines.push(maybeSpace.startsWith(' ') ? maybeSpace.slice(1) : maybeSpace);
-        }
-
-        if (unknownLine || dataLines.length === 0) {
-          unknownEventTotal += 1;
-          return 'continue';
-        }
-
-        const data = dataLines.join('\n');
+        const { data, unknownLineCount } = __parseAnthropicSseEventPayloadForTests(eventPayload);
+        unknownEventTotal += unknownLineCount;
+        if (data === null) return 'continue';
         if (data === '[DONE]') {
           emitTerminalDelta(lastFinishReason);
           emitMessageStop();
