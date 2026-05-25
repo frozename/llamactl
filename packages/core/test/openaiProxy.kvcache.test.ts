@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { openaiProxy } from '../src/index.js';
+import { isRouteKvEligible } from '../src/openaiProxy.js';
 import {
   EXT_FLAG_TOOL_MAP,
   KvRegistry,
@@ -55,6 +56,30 @@ function writeModelRunWorkload(
       pid: process.pid,
       startedAt: '2026-05-24T00:00:00.000Z',
       tunedProfile: null,
+    }),
+  );
+}
+
+function writeModelHostWorkload(
+  runtimeRoot: string,
+  workload: string,
+  port: number,
+  engine: 'omlx' | 'llamacpp',
+  modelAliases: string[] = ['Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf'],
+): void {
+  const dir = join(runtimeRoot, 'workloads', workload);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'modelhost.pid'), `${process.pid}\n`);
+  writeFileSync(
+    join(dir, 'modelhost.state'),
+    JSON.stringify({
+      kind: 'ModelHost',
+      engine,
+      pid: process.pid,
+      host: '127.0.0.1',
+      port,
+      modelAliases,
+      startedAt: '2026-05-24T00:00:00.000Z',
     }),
   );
 }
@@ -221,6 +246,65 @@ test('cold miss saves a new idle kv entry', async () => {
     await upstream.close();
     runtime.cleanup();
   }
+});
+
+test('cold miss saves a new idle kv entry for ModelHost omxl', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelHostWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), 'omlx', [
+      'mlx-community/Qwen3-8B-MLX-4bit',
+    ]);
+    writeFileSync(
+      join(runtime.root, 'workloads', 'wl-a', 'modelhost.state'),
+      JSON.stringify({
+        kind: 'ModelHost',
+        engine: 'omlx',
+        pid: process.pid,
+        host: '127.0.0.1',
+        port: Number.parseInt(url.port, 10),
+        modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit'],
+        startedAt: '2026-05-24T00:00:00.000Z',
+        rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      }),
+    );
+
+    const body = JSON.stringify({
+      model: 'mlx-community/Qwen3-8B-MLX-4bit',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    const entry = registry.get(shaForBody(body));
+    expect(entry).not.toBeNull();
+    expect(entry?.state).toBe('idle');
+    expect(entry?.workload).toBe('wl-a');
+    storage.close();
+
+    expect(upstream.events).toEqual(['chat-forward', 'slot-save']);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('kv eligibility admits ModelRun llamacpp and ModelHost omlx only', () => {
+  expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'llamacpp' })).toBe(true);
+  expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'omlx' })).toBe(true);
+  expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'llamacpp' })).toBe(false);
+  expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'omlx' })).toBe(false);
 });
 
 test('anthropic cold save writes trailer toolMap and ext_flags when upstream returns tool_calls', async () => {

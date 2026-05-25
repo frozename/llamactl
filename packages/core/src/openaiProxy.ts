@@ -510,7 +510,7 @@ function resolveRouteKvMetadata(context: ProxyContext): {
 } | null {
   const route = context.route;
   if (!route) return null;
-  if (route.kind !== 'ModelRun' || route.engine !== 'llamacpp') return null;
+  if (!isRouteKvEligible(route)) return null;
 
   const key = { name: route.workload };
   const workloadEpoch = readWorkloadEpoch(key, context.resolved);
@@ -528,6 +528,13 @@ function resolveRouteKvMetadata(context: ProxyContext): {
     ctxSize,
     workloadEpoch,
   };
+}
+
+export function isRouteKvEligible(route: { kind: 'ModelRun' | 'ModelHost'; engine: string }): boolean {
+  return (
+    (route.kind === 'ModelRun' && route.engine === 'llamacpp') ||
+    (route.kind === 'ModelHost' && route.engine === 'omlx')
+  );
 }
 
 function kvBudgetBytes(): number {

@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { ModelRunSchema } from './schema.js';
+import { ModelHostManifestSchema } from './modelhost-schema.js';
 import { NodeRunSchema } from './noderun-schema.js';
 
 test('ModelRun parses spec.enabled defaulting to true', () => {
@@ -85,4 +86,54 @@ test('NodeRun parses spec.budget.memoryGiB', () => {
     },
   });
   expect(n.spec.budget?.memoryGiB).toBe(16);
+});
+
+test('ModelHost accepts spec.useProxy omitted', () => {
+  const m = ModelHostManifestSchema.parse({
+    apiVersion: 'llamactl/v1',
+    kind: 'ModelHost',
+    metadata: { name: 'a' },
+    spec: {
+      engine: 'omlx',
+      node: 'local',
+      binary: '/usr/local/bin/omlx',
+      endpoint: { host: '127.0.0.1', port: 8123 },
+      hostedModels: [{ rel: 'm.gguf' }],
+    },
+  });
+  expect(m.spec.useProxy).toBeUndefined();
+});
+
+test('ModelHost accepts spec.useProxy=true', () => {
+  const m = ModelHostManifestSchema.parse({
+    apiVersion: 'llamactl/v1',
+    kind: 'ModelHost',
+    metadata: { name: 'a' },
+    spec: {
+      engine: 'omlx',
+      node: 'local',
+      binary: '/usr/local/bin/omlx',
+      endpoint: { host: '127.0.0.1', port: 8123 },
+      hostedModels: [{ rel: 'm.gguf' }],
+      useProxy: true,
+    },
+  });
+  expect(m.spec.useProxy).toBe(true);
+});
+
+test('ModelHost accepts spec.useProxy=false', () => {
+  const m = ModelHostManifestSchema.parse({
+    apiVersion: 'llamactl/v1',
+    kind: 'ModelHost',
+    metadata: { name: 'a' },
+    spec: {
+      engine: 'omlx',
+      node: 'local',
+      binary: '/usr/local/bin/omlx',
+      endpoint: { host: '127.0.0.1', port: 8123 },
+      hostedModels: [{ rel: 'm.gguf' }],
+      useProxy: false,
+    },
+  });
+  expect(m.spec.useProxy).toBe(false);
 });

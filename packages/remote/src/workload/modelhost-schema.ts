@@ -40,6 +40,7 @@ export const ModelHostSpecSchema = z.object({
   endpoint: ModelHostEndpointSchema,
   hostedModels: z.array(ModelHostHostedModelSchema).min(1).max(1),
   extraArgs: z.array(z.string()).default([]),
+  useProxy: z.boolean().optional(),
   restartPolicy: z.enum(['Always', 'OnFailure', 'Never']).default('Always'),
   timeoutSeconds: z.number().int().positive().max(600).default(60),
   env: z.record(z.string(), z.string()).optional(),
