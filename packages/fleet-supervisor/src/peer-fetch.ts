@@ -1,38 +1,46 @@
-import { readFileSync } from 'node:fs';
-import { Agent, request } from 'node:https';
+import { Agent as HttpsAgent } from 'node:https';
 import type { FleetSnapshotEntry } from './types.js';
 import type { AggregatorPeer } from './aggregator.js';
+import { resolveToken } from '../../remote/src/config/kubeconfig.js';
 
 interface PeerFetchResult {
   statusCode: number;
   body: string;
 }
 
+const loggedTokenWarnings = new Set<string>();
+
+function resolvedPeerToken(peer: AggregatorPeer): string | undefined {
+  if (peer.token) return peer.token;
+  if (!peer.tokenRef) return undefined;
+  try {
+    return resolveToken({ name: peer.id, tokenRef: peer.tokenRef });
+  } catch (err) {
+    const key = `${peer.id}:${peer.endpoint}`;
+    if (!loggedTokenWarnings.has(key)) {
+      console.warn(`unable to resolve token for peer '${peer.id}': ${(err as Error).message}`);
+      loggedTokenWarnings.add(key);
+    }
+    return undefined;
+  }
+}
+
 function doRequest(peer: AggregatorPeer): Promise<PeerFetchResult> {
-  const ca = peer.caPemPath ? readFileSync(peer.caPemPath, 'utf8') : undefined;
-  const agent = ca ? new Agent({ ca }) : undefined;
+  const ca = peer.certificate;
+  const agent = ca ? new HttpsAgent({ ca }) : undefined;
+  const headers: Record<string, string> = {};
+  const token = resolvedPeerToken(peer);
+  if (token) headers.authorization = `Bearer ${token}`;
   const target = new URL('/v1/fleet/snapshot', peer.endpoint);
-  return new Promise((resolve, reject) => {
-    const req = request(
-      target,
-      {
-        method: 'GET',
-        ...(agent ? { agent } : {}),
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk: Buffer) => chunks.push(chunk));
-        res.on('end', () => {
-          resolve({
-            statusCode: res.statusCode ?? 0,
-            body: Buffer.concat(chunks).toString('utf8'),
-          });
-        });
-      },
-    );
-    req.on('error', reject);
-    req.end();
-  });
+  const init = {
+    method: 'GET' as const,
+    ...(agent ? { agent } : {}),
+    ...(Object.keys(headers).length ? { headers } : {}),
+  } satisfies RequestInit & { agent?: HttpsAgent };
+  return fetch(target.toString(), init).then(async (res) => ({
+    statusCode: res.status,
+    body: await res.text(),
+  }));
 }
 
 export function createPeerFetch(

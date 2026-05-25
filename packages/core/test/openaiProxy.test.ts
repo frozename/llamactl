@@ -633,7 +633,7 @@ test('same-kind alias collision keeps the alphabetically earlier workload', asyn
   }
 });
 
-test('/v1/models includes local and peer models when cluster.yaml is present', () => {
+test('/v1/models includes local and peer models from peer routing config', () => {
   const t = tempEnv();
   try {
     const workload = join(t.dir, 'workloads', 'local-run');
@@ -652,17 +652,7 @@ test('/v1/models includes local and peer models when cluster.yaml is present', (
       }),
     );
 
-    const clusterPath = join(t.dir, 'cluster.yaml');
-    writeFileSync(
-      clusterPath,
-      [
-        'peers:',
-        '  - id: mac-mini',
-        '    endpoint: https://macmini.ai:7843',
-        '    caPemPath: /tmp/mac-mini-ca.pem',
-      ].join('\n'),
-    );
-
+    const peers = [{ id: 'mac-mini', endpoint: 'https://macmini.ai:7843' }];
     const peerSnapshots = new Map<string, PeerSnapshot>([
       [
         'mac-mini',
@@ -675,7 +665,7 @@ test('/v1/models includes local and peer models when cluster.yaml is present', (
     ]);
 
     openaiProxy.__setOpenAIProxyClusterRoutingForTests({
-      clusterConfigPath: clusterPath,
+      clusterPeers: peers,
       peerSnapshots,
     });
 
@@ -689,18 +679,15 @@ test('/v1/models includes local and peer models when cluster.yaml is present', (
 test('POST /v1/chat/completions forwards peer-only model to peer endpoint', async () => {
   const t = tempEnv();
   try {
-    const caPath = join(t.dir, 'mac-mini-ca.pem');
-    writeFileSync(caPath, '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n');
-    const clusterPath = join(t.dir, 'cluster.yaml');
-    writeFileSync(
-      clusterPath,
-      [
-        'peers:',
-        '  - id: mac-mini',
-        '    endpoint: https://macmini.ai:7843',
-        `    caPemPath: ${caPath}`,
-      ].join('\n'),
-    );
+    const peerToken = 'peer-token-123';
+    const peers = [
+      {
+        id: 'mac-mini',
+        endpoint: 'https://macmini.ai:7843',
+        certificate: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n',
+        peerToken,
+      },
+    ];
     const peerSnapshots = new Map<string, PeerSnapshot>([
       [
         'mac-mini',
@@ -712,13 +699,17 @@ test('POST /v1/chat/completions forwards peer-only model to peer endpoint', asyn
       ],
     ]);
     openaiProxy.__setOpenAIProxyClusterRoutingForTests({
-      clusterConfigPath: clusterPath,
+      clusterPeers: peers,
       peerSnapshots,
     });
 
+    let forwardedAuthorization = '';
     const calls: Array<{ url: string }> = [];
-    globalThis.fetch = (async (input: Request | URL | string) => {
+    globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (init?.headers) {
+        forwardedAuthorization = new Headers(init.headers).get('authorization') ?? '';
+      }
       calls.push({ url });
       return Response.json({ ok: true });
     }) as typeof fetch;
@@ -737,6 +728,7 @@ test('POST /v1/chat/completions forwards peer-only model to peer endpoint', asyn
     expect(res.status).toBe(200);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe('https://macmini.ai:7843/v1/chat/completions');
+    expect(forwardedAuthorization).toBe(`Bearer ${peerToken}`);
   } finally {
     t.cleanup();
   }
@@ -745,17 +737,9 @@ test('POST /v1/chat/completions forwards peer-only model to peer endpoint', asyn
 test('peer route + x_omlx_request_handle returns 400 with exact error message', async () => {
   const t = tempEnv();
   try {
-    const clusterPath = join(t.dir, 'cluster.yaml');
-    writeFileSync(
-      clusterPath,
-      [
-        'peers:',
-        '  - id: mac-mini',
-        '    endpoint: https://macmini.ai:7843',
-      ].join('\n'),
-    );
+    const peers = [{ id: 'mac-mini', endpoint: 'https://macmini.ai:7843' }];
     openaiProxy.__setOpenAIProxyClusterRoutingForTests({
-      clusterConfigPath: clusterPath,
+      clusterPeers: peers,
       peerSnapshots: new Map([
         [
           'mac-mini',
@@ -794,17 +778,9 @@ test('peer route + x_omlx_request_handle returns 400 with exact error message', 
 test('peer 502 invalidates route cache so next request refetches routes', async () => {
   const t = tempEnv();
   try {
-    const clusterPath = join(t.dir, 'cluster.yaml');
-    writeFileSync(
-      clusterPath,
-      [
-        'peers:',
-        '  - id: mac-mini',
-        '    endpoint: https://macmini.ai:7843',
-      ].join('\n'),
-    );
+    const peers = [{ id: 'mac-mini', endpoint: 'https://macmini.ai:7843' }];
     openaiProxy.__setOpenAIProxyClusterRoutingForTests({
-      clusterConfigPath: clusterPath,
+      clusterPeers: peers,
       peerSnapshots: new Map([
         [
           'mac-mini',

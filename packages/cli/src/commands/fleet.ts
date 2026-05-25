@@ -12,10 +12,9 @@ import {
   type FleetSnapshotEntry,
 } from '../../../fleet-supervisor/src/index.js';
 import {
-  readClusterConfig as readClusterConfigDefault,
-  type ClusterConfig,
+  listPeers,
   type PeerNode,
-} from '../../../remote/src/config/cluster.js';
+} from '../../../remote/src/config/peers.js';
 
 const USAGE = `Usage: llamactl fleet <subcommand>
 
@@ -28,7 +27,7 @@ Subcommands:
 
 interface FleetDeps {
   readLocalSnapshot?: () => Promise<FleetSnapshotEntry | null>;
-  readClusterConfig?: () => ClusterConfig;
+  readPeers?: () => PeerNode[];
   fetchPeerSnapshot?: (peer: PeerNode) => Promise<FleetSnapshotEntry | null>;
 }
 
@@ -69,9 +68,9 @@ async function buildRows(
   const local = await deps.readLocalSnapshot();
   if (local) rows.push(toRow(local.node, local));
 
-  const cfg = deps.readClusterConfig();
+  const peers = deps.readPeers ? deps.readPeers() : listPeers();
   await Promise.all(
-    (cfg.peers ?? []).map(async (peer) => {
+    peers.map(async (peer) => {
       const s = await deps.fetchPeerSnapshot(peer);
       if (s) rows.push(toRow(peer.id, s));
     }),
@@ -117,7 +116,7 @@ function readJournalEntries(path: string): Array<{ ts?: string; kind?: string; n
 export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<number> {
   const readLocalSnapshot = deps.readLocalSnapshot ?? (async () =>
     readLatestFleetSnapshotFromJournal(defaultFleetJournalPath()));
-  const readClusterConfig = deps.readClusterConfig ?? (() => readClusterConfigDefault());
+  const readPeers = deps.readPeers ?? listPeers;
   const fetchPeerSnapshot =
     deps.fetchPeerSnapshot ??
     (async (peer: PeerNode) => {
@@ -126,7 +125,7 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
     });
   const fullDeps: Required<FleetDeps> = {
     readLocalSnapshot,
-    readClusterConfig,
+    readPeers,
     fetchPeerSnapshot,
   };
 
@@ -177,8 +176,7 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
   if (sub === 'aggregator' && rest[0] === 'serve') {
     const once = rest.includes('--once');
     const dbPath = parseFlagValue(rest, '--db') ?? defaultAggregatorDbPath();
-    const cfg = readClusterConfig();
-    const peers = cfg.peers as AggregatorPeer[];
+    const peers = readPeers();
     const db = openAggregatorDb(dbPath);
     const aggregator = new FleetAggregator({
       peers,

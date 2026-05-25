@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import type { ClusterConfig } from '../../remote/src/config/cluster.js';
+import type { PeerNode } from '../../remote/src/config/peers.js';
 import type { LocalRoute, PeerSnapshot } from '../src/workloadRuntime.js';
 import { listClusterRoutes } from '../src/workloadRuntime.js';
 
@@ -13,15 +13,15 @@ const localRoute = (model: string, workload = 'local-a'): LocalRoute => ({
   pid: process.pid,
 });
 
-const config: ClusterConfig = {
+const config = {
   peers: [
     {
       id: 'mac-mini',
       endpoint: 'https://macmini.ai:7843',
-      caPemPath: '/tmp/mac-mini-ca.pem',
+      certificate: '-----BEGIN CERTIFICATE-----\\nMIIB\\n-----END CERTIFICATE-----\\n',
     },
   ],
-};
+} satisfies { peers: PeerNode[] };
 
 const now = Date.now();
 

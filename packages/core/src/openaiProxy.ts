@@ -1,5 +1,5 @@
 import type { ModelInfo, ModelListResponse } from '@nova/contracts';
-import { mkdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
 import { Agent as HttpsAgent } from 'node:https';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -17,7 +17,7 @@ import { readModelHostState } from './engines/state.js';
 import type { ResolvedEnv } from './types.js';
 import * as workloadRuntime from './workloadRuntime.js';
 import type { WorkloadKey } from './workloadRuntime.js';
-import { readClusterConfig, type ClusterConfig } from '../../remote/src/config/cluster.js';
+import { type PeerNode, listPeers } from '../../remote/src/config/peers.js';
 import { boundaryNaiveBytePrefixSha, canonicalRequestSha } from './cache-identity/canonical.js';
 import {
   EXT_FLAG_SESSION_TITLE,
@@ -112,8 +112,10 @@ function createdAtForRoute(route: workloadRuntime.ClusterRoute, resolved: Resolv
 
 function listRoutesForProxy(resolved: ResolvedEnv): workloadRuntime.ClusterRoute[] {
   const localRoutes = workloadRuntime.listLocalRoutes(resolved);
-  const path = clusterRoutingOverrideForTests?.clusterConfigPath;
-  const clusterConfig = readClusterConfig(path);
+  const peers = clusterRoutingOverrideForTests?.clusterPeers ?? listPeers();
+  const clusterConfig = {
+    peers,
+  };
   const peerSnapshots = clusterRoutingOverrideForTests?.peerSnapshots ?? new Map<string, workloadRuntime.PeerSnapshot>();
   return workloadRuntime.listClusterRoutes(localRoutes, peerSnapshots, clusterConfig);
 }
@@ -165,20 +167,13 @@ function isJsonContentType(contentType: string | null): boolean {
   return lower.includes('application/json') || lower.includes('+json');
 }
 
-function expandHome(path: string): string {
-  if (path === '~') return homedir();
-  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
-  return path;
-}
-
 function peerAgentForRoute(route: RoutedEntry | undefined): HttpsAgent | undefined {
-  if (!route?.isPeer || !route.peerCaPemPath) return undefined;
-  const resolvedPath = expandHome(route.peerCaPemPath);
-  const cached = peerHttpsAgentByPemPath.get(resolvedPath);
+  if (!route?.isPeer || !route.peerCertificate) return undefined;
+  const cached = peerHttpsAgentByPemPath.get(route.peerCertificate);
   if (cached) return cached;
-  const caPem = readFileSync(resolvedPath, 'utf8');
+  const caPem = route.peerCertificate;
   const agent = new HttpsAgent({ ca: caPem });
-  peerHttpsAgentByPemPath.set(resolvedPath, agent);
+  peerHttpsAgentByPemPath.set(route.peerCertificate, agent);
   return agent;
 }
 
@@ -218,7 +213,8 @@ type RouteEntry = {
   model: string;
   isPeer?: true;
   peerEndpoint?: string;
-  peerCaPemPath?: string;
+  peerCertificate?: string;
+  peerToken?: string;
   targetNodeId?: string;
 };
 
@@ -284,7 +280,7 @@ type ProxyContext = {
 let routeMapCache: { mtimeNs: bigint; map: Map<string, RouteEntry> } | null = null;
 let routeMapBuildCount = 0;
 let clusterRoutingOverrideForTests: {
-  clusterConfigPath?: string;
+  clusterPeers?: PeerNode[];
   peerSnapshots?: Map<string, workloadRuntime.PeerSnapshot>;
 } | null = null;
 const peerHttpsAgentByPemPath = new Map<string, HttpsAgent>();
@@ -323,7 +319,8 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
       model: route.model,
       isPeer: 'isPeer' in route && route.isPeer ? true : undefined,
       peerEndpoint: 'isPeer' in route && route.isPeer ? route.peerEndpoint : undefined,
-      peerCaPemPath: 'isPeer' in route && route.isPeer ? route.peerCaPemPath : undefined,
+      peerCertificate: 'isPeer' in route && route.isPeer ? route.peerCertificate : undefined,
+      peerToken: 'isPeer' in route && route.isPeer ? route.peerToken : undefined,
       targetNodeId: 'isPeer' in route && route.isPeer ? route.targetNodeId : undefined,
     });
   }
@@ -359,11 +356,11 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
 }
 
 export function __setOpenAIProxyClusterRoutingForTests(input: {
-  clusterConfigPath?: string;
+  clusterPeers?: PeerNode[];
   peerSnapshots?: Map<string, workloadRuntime.PeerSnapshot>;
 }): void {
   clusterRoutingOverrideForTests = {
-    clusterConfigPath: input.clusterConfigPath,
+    clusterPeers: input.clusterPeers,
     peerSnapshots: input.peerSnapshots,
   };
   routeMapCache = null;
@@ -1286,9 +1283,13 @@ async function forward(context: ProxyContext): Promise<Response> {
     return Response.json({ error: 'cross-node slot ops not supported' }, { status: 400 });
   }
 
-  const init: RequestInit & { agent?: HttpsAgent } = {
+  const init: RequestInit & { headers: Headers; agent?: HttpsAgent } = {
     ...context.init,
+    headers: new Headers(context.init.headers ?? {}),
   };
+  if (context.route?.isPeer && context.route.peerToken) {
+    init.headers.set('authorization', `Bearer ${context.route.peerToken}`);
+  }
   const peerAgent = peerAgentForRoute(context.route);
   if (peerAgent) init.agent = peerAgent;
 

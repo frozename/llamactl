@@ -18,7 +18,7 @@ import {
 import { defaultFleetAuditPath } from '../../../fleet-supervisor/src/journal.js';
 import { FleetAggregator } from '../../../fleet-supervisor/src/aggregator.js';
 import { createPeerFetch } from '../../../fleet-supervisor/src/peer-fetch.js';
-import { readClusterConfig } from '../../../remote/src/config/cluster.js';
+import { listPeers } from '../../../remote/src/config/peers.js';
 
 const CLI_BIN_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../../../cli/src/bin.ts');
 let cliBinChecked = false;
@@ -268,9 +268,9 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     },
     async ({ node, all, journalPath }) => {
       if (all) {
-        const cfg = readClusterConfig();
+        const peers = listPeers();
         const aggregator = new FleetAggregator({
-          peers: cfg.peers,
+          peers,
           fetchSnapshot: async (peer) => createPeerFetch(peer)(),
         });
         await aggregator.pollNow();

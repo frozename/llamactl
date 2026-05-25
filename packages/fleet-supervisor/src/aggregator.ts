@@ -1,10 +1,7 @@
 import type { FleetSnapshotEntry } from './types.js';
+import { listPeers, type PeerNode } from '../../remote/src/config/peers.js';
 
-export interface AggregatorPeer {
-  id: string;
-  endpoint: string;
-  caPemPath?: string;
-}
+export type AggregatorPeer = PeerNode;
 
 export interface AggregatedSnapshot {
   nodeId: string;
@@ -15,7 +12,7 @@ export interface AggregatedSnapshot {
 }
 
 export interface FleetAggregatorOptions {
-  peers: AggregatorPeer[];
+  peers?: AggregatorPeer[];
   fetchSnapshot: (peer: AggregatorPeer) => Promise<FleetSnapshotEntry | null>;
   now?: () => number;
   pollIntervalMs?: number;
@@ -35,7 +32,7 @@ export class FleetAggregator {
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: FleetAggregatorOptions) {
-    this.peers = opts.peers;
+    this.peers = opts.peers ?? listPeers();
     this.fetchSnapshot = opts.fetchSnapshot;
     this.now = opts.now ?? Date.now;
     this.pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_MS;

@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { runFleet } from '../src/commands/fleet.js';
 import type { FleetSnapshotEntry } from '../../fleet-supervisor/src/types.js';
-import type { ClusterConfig } from '../../remote/src/config/cluster.js';
 
 const snap = (node: string, free: number, comp: number, ts = '2026-05-25T17:00:00Z'): FleetSnapshotEntry => ({
   kind: 'fleet-snapshot',
@@ -58,7 +57,7 @@ describe('fleet command', () => {
   test('fleet snapshot prints local node latest snapshot JSON', async () => {
     const { result, out } = await captureStdout(() => runFleet(['snapshot'], {
       readLocalSnapshot: async () => snap('local', 2048, 100),
-      readClusterConfig: () => ({ peers: [] }),
+      readPeers: () => [],
       fetchPeerSnapshot: async () => null,
     }));
 
@@ -69,12 +68,12 @@ describe('fleet command', () => {
   });
 
   test('fleet snapshot --all prints table with expected columns', async () => {
-    const cfg: ClusterConfig = {
+    const cfg = {
       peers: [{ id: 'mac-mini', endpoint: 'https://mac-mini' }],
     };
     const { result, out } = await captureStdout(() => runFleet(['snapshot', '--all'], {
       readLocalSnapshot: async () => snap('local', 2048, 100),
-      readClusterConfig: () => cfg,
+      readPeers: () => cfg,
       fetchPeerSnapshot: async () => snap('mac-mini', 3000, 90),
     }));
 
@@ -85,12 +84,12 @@ describe('fleet command', () => {
   });
 
   test('fleet status prints one summary line per node', async () => {
-    const cfg: ClusterConfig = {
+    const cfg = {
       peers: [{ id: 'mac-mini', endpoint: 'https://mac-mini' }],
     };
     const { result, out } = await captureStdout(() => runFleet(['status'], {
       readLocalSnapshot: async () => snap('local', 200, 3000),
-      readClusterConfig: () => cfg,
+      readPeers: () => cfg,
       fetchPeerSnapshot: async () => snap('mac-mini', 3000, 90),
     }));
 
@@ -104,7 +103,7 @@ describe('fleet command', () => {
   test('fleet snapshot exits non-zero when local snapshot is missing', async () => {
     const { result, out } = await captureStderr(() => runFleet(['snapshot'], {
       readLocalSnapshot: async () => null,
-      readClusterConfig: () => ({ peers: [] }),
+      readPeers: () => [],
       fetchPeerSnapshot: async () => null,
     }));
     expect(result).toBe(1);
