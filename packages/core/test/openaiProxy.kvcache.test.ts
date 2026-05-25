@@ -343,6 +343,76 @@ test('warm hit restores slot before upstream forward', async () => {
   }
 });
 
+test('warm-hit lease is released when response-cache buffering throws before kv persist', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir });
+  const nativeFetch = globalThis.fetch;
+  const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(((...args: Parameters<typeof fetch>) => {
+    const [input, init] = args;
+    const target = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if (target.includes('/v1/chat/completions')) {
+      const failing = new Response('{"id":"chatcmpl-throw"}', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+      (failing as Response & { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer = () =>
+        Promise.reject(new Error('simulated arrayBuffer failure'));
+      return Promise.resolve(failing);
+    }
+    return nativeFetch(input, init);
+  }) as typeof fetch);
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'lease release on throw' }],
+      temperature: 0,
+    });
+    const sha = shaForBody(body);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(body, 'utf8'),
+      prefixByteLength: Buffer.byteLength(body, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(body, 'utf8'),
+      textBytes: Buffer.byteLength(body, 'utf8'),
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    await expect(
+      openaiProxy.proxyOpenAI(
+        new Request('http://localhost/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+        }),
+        runtime.env as any,
+      ),
+    ).rejects.toThrow('simulated arrayBuffer failure');
+
+    const afterStorage = openKvStorage(runtime.root);
+    const afterRegistry = new KvRegistry(afterStorage);
+    expect(afterRegistry.get(sha)?.state).toBe('idle');
+    afterStorage.close();
+  } finally {
+    fetchSpy.mockRestore();
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
 test('anthropic warm hit replays with trailer toolMap bytes and keeps warm path when sha matches', async () => {
   const runtime = makeTempRuntime();
   const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');

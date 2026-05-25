@@ -550,6 +550,14 @@ function responseCacheMaxEntryBytes(): number {
   return parsed * 1024 * 1024;
 }
 
+function responseCacheTtlMs(): number {
+  const raw = process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS;
+  if (!raw) return 24 * 60 * 60 * 1000;
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 24 * 60 * 60 * 1000;
+  return parsed * 60 * 60 * 1000;
+}
+
 function requestModel(parsedBody: unknown): string | null {
   if (!parsedBody || typeof parsedBody !== 'object') return null;
   const maybeModel = (parsedBody as { model?: unknown }).model;
@@ -603,6 +611,11 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
   };
   const hit = runtime.registry.findBySha(sha);
   if (!hit || hit.model !== model) {
+    runtime.storage.response_cache_miss_total += 1;
+    return context;
+  }
+  if (Date.now() - hit.createdAt > responseCacheTtlMs()) {
+    runtime.storage.safeWrite(() => runtime.registry.tryDelete(sha));
     runtime.storage.response_cache_miss_total += 1;
     return context;
   }
@@ -905,6 +918,32 @@ async function maybePersistResponseCache(context: ProxyContext, upstream: Respon
     headers: upstream.headers,
   });
   if (upstream.status !== 200 || !responseCache.deterministic || !cacheableType) return replay;
+  if (isJson) {
+    try {
+      const parsed = JSON.parse(Buffer.from(bodyBytes).toString('utf8')) as { error?: unknown };
+      if (parsed && typeof parsed === 'object' && parsed.error) {
+        console.warn(JSON.stringify({
+          event: 'response_cache_skip_error_envelope',
+          sha: responseCache.sha,
+          model: responseCache.model,
+        }));
+        return replay;
+      }
+    } catch {}
+  }
+  if (isSse) {
+    const sseBody = Buffer.from(bodyBytes).toString('utf8');
+    const hasOpenAiDone = sseBody.includes('data: [DONE]\n');
+    const hasAnthropicDone = sseBody.includes('event: message_stop');
+    if (!hasOpenAiDone && !hasAnthropicDone) {
+      console.warn(JSON.stringify({
+        event: 'response_cache_skip_partial_sse',
+        sha: responseCache.sha,
+        model: responseCache.model,
+      }));
+      return replay;
+    }
+  }
 
   const totalBytes = responseCache.requestBodyBytes + bodyBytes.byteLength;
   if (totalBytes > responseCacheMaxEntryBytes()) return replay;
@@ -933,6 +972,17 @@ async function maybePersistResponseCache(context: ProxyContext, upstream: Respon
   );
   responseCache.runtime.storage.response_cache_evict_total += eviction.deleted.length;
   return replay;
+}
+
+function releaseWarmHitLease(context: ProxyContext): void {
+  const kv = context.kv;
+  if (!kv) return;
+  const warmHitSha = kv.warmHitSha;
+  const warmHitLease = kv.warmHitLease;
+  kv.warmHitSha = null;
+  kv.warmHitLease = null;
+  if (warmHitSha) kv.runtime.storage.safeWrite(() => kv.runtime.registry.release(warmHitSha));
+  warmHitLease?.release();
 }
 
 async function resolveRoute(context: ProxyContext): Promise<ProxyContext | Response> {
@@ -1036,6 +1086,7 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
         kv.runtime.registry.tryDelete(staleSha);
       });
       kv.warmHitLease?.release();
+      kv.warmHitSha = null;
       kv.warmHitLease = null;
     }
 
@@ -1121,8 +1172,7 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
       lease.release();
     }
   } finally {
-    if (kv.warmHitSha) kv.runtime.storage.safeWrite(() => kv.runtime.registry.release(kv.warmHitSha!));
-    kv.warmHitLease?.release();
+    releaseWarmHitLease(context);
   }
 }
 
@@ -1204,8 +1254,12 @@ export async function proxyOpenAI(
   }
 
   const withKvLookup = await maybeKvLookup(withResponseCacheLookup);
-  const upstream = await forward(withKvLookup);
-  const withResponseCachePersist = await maybePersistResponseCache(withKvLookup, upstream);
-  await maybePersistKv(withKvLookup, withResponseCachePersist);
-  return maybeTranslateResponse(withKvLookup, withResponseCachePersist);
+  try {
+    const upstream = await forward(withKvLookup);
+    const withResponseCachePersist = await maybePersistResponseCache(withKvLookup, upstream);
+    await maybePersistKv(withKvLookup, withResponseCachePersist);
+    return maybeTranslateResponse(withKvLookup, withResponseCachePersist);
+  } finally {
+    releaseWarmHitLease(withKvLookup);
+  }
 }

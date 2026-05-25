@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -52,7 +52,7 @@ function writeModelRunWorkload(
   );
 }
 
-async function startUpstream(mode: 'json' | 'sse'): Promise<TestUpstream> {
+async function startUpstream(mode: 'json' | 'sse' | 'json_error' | 'sse_partial'): Promise<TestUpstream> {
   let calls = 0;
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -64,6 +64,20 @@ async function startUpstream(mode: 'json' | 'sse'): Promise<TestUpstream> {
         res.setHeader('content-type', 'text/event-stream');
         res.end(`data: ${JSON.stringify({ id: calls, echoed: body })}\n\ndata: [DONE]\n\n`);
         return;
+      }
+      if (mode === 'sse_partial') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'text/event-stream');
+        res.end(`data: ${JSON.stringify({ id: calls, echoed: body })}\n\n`);
+        return;
+      }
+      if (mode === 'json_error') {
+        return json(res, 200, {
+          error: {
+            message: 'upstream failure',
+            type: 'upstream_error',
+          },
+        });
       }
       return json(res, 200, {
         id: `chatcmpl-${calls}`,
@@ -108,12 +122,15 @@ async function readBody(req: IncomingMessage): Promise<string> {
 
 const originalBudget = process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB;
 const originalMaxEntry = process.env.LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB;
+const originalTtlHours = process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS;
 
 afterEach(() => {
   if (originalBudget === undefined) delete process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB;
   else process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB = originalBudget;
   if (originalMaxEntry === undefined) delete process.env.LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB;
   else process.env.LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB = originalMaxEntry;
+  if (originalTtlHours === undefined) delete process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS;
+  else process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS = originalTtlHours;
   openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
 });
 
@@ -315,6 +332,177 @@ test('eviction trims entries under configured response-cache budget', async () =
     expect(afterRegistry.findBySha(canonicalRequestSha(body))).not.toBeNull();
     expect(openaiProxy.__getOpenAIProxyResponseCacheEvictTotalForTests(runtime.env as any)).toBeGreaterThan(0);
     afterStorage.close();
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('error-envelope JSON responses are not cached and emit skip log', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream('json_error');
+  const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'error envelope' }],
+      temperature: 0,
+    });
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    expect(upstream.calls).toBe(1);
+    expect(warnSpy.mock.calls.some((call) => String(call[0]).includes('"event":"response_cache_skip_error_envelope"'))).toBe(true);
+
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    expect(registry.findBySha(canonicalRequestSha(body))).toBeNull();
+    storage.close();
+  } finally {
+    warnSpy.mockRestore();
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('partial SSE responses are not cached and emit skip log', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream('sse_partial');
+  const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'partial sse' }],
+      stream: true,
+      temperature: 0,
+    });
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    expect(upstream.calls).toBe(1);
+    expect(warnSpy.mock.calls.some((call) => String(call[0]).includes('"event":"response_cache_skip_partial_sse"'))).toBe(true);
+
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    expect(registry.findBySha(canonicalRequestSha(body))).toBeNull();
+    storage.close();
+  } finally {
+    warnSpy.mockRestore();
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('TTL-expired response-cache entries are treated as misses and deleted', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream('json_error');
+  process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS = '24';
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'ttl expired' }],
+      temperature: 0,
+    });
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    const now = Date.now();
+    registry.insert({
+      sha: canonicalRequestSha(body),
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      contentType: 'application/json',
+      statusCode: 200,
+      responseBody: new Uint8Array(Buffer.from('{"ok":true}', 'utf8')),
+      requestBodyBytes: Buffer.byteLength(body, 'utf8'),
+      responseBodyBytes: Buffer.byteLength('{"ok":true}', 'utf8'),
+      createdAt: now - 25 * 60 * 60 * 1000,
+      lastUsed: now - 25 * 60 * 60 * 1000,
+      hits: 0,
+    });
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    expect(upstream.calls).toBe(1);
+    expect(openaiProxy.__getOpenAIProxyResponseCacheHitTotalForTests(runtime.env as any)).toBe(0);
+    expect(openaiProxy.__getOpenAIProxyResponseCacheMissTotalForTests(runtime.env as any)).toBe(1);
+
+    const afterStorage = openResponseCacheStorage(runtime.root);
+    const afterRegistry = new ResponseCacheRegistry(afterStorage);
+    expect(afterRegistry.findBySha(canonicalRequestSha(body))).toBeNull();
+    afterStorage.close();
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('fresh response-cache entries are served as hits before TTL expiry', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream('json');
+  process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS = '24';
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'ttl fresh' }],
+      temperature: 0,
+    });
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    const now = Date.now();
+    registry.insert({
+      sha: canonicalRequestSha(body),
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      contentType: 'application/json',
+      statusCode: 200,
+      responseBody: new Uint8Array(Buffer.from('{"id":"cached"}', 'utf8')),
+      requestBodyBytes: Buffer.byteLength(body, 'utf8'),
+      responseBodyBytes: Buffer.byteLength('{"id":"cached"}', 'utf8'),
+      createdAt: now - 60 * 60 * 1000,
+      lastUsed: now - 60 * 60 * 1000,
+      hits: 0,
+    });
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    const payload = await response.json() as { id?: string };
+    expect(response.status).toBe(200);
+    expect(payload.id).toBe('cached');
+    expect(upstream.calls).toBe(0);
+    expect(openaiProxy.__getOpenAIProxyResponseCacheHitTotalForTests(runtime.env as any)).toBe(1);
   } finally {
     await upstream.close();
     runtime.cleanup();
