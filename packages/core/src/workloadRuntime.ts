@@ -26,6 +26,84 @@ export interface LocalRoute {
   pid: number;
 }
 
+export interface PeerSnapshot {
+  workloads: Array<{ modelId: string; port: number }>;
+  pressure: 'NORMAL' | 'HIGH';
+  fetchedAt: number;
+}
+
+export type ClusterRoute =
+  | LocalRoute
+  | (Omit<LocalRoute, 'pid'> & {
+      isPeer: true;
+      peerEndpoint: string;
+      peerCaPemPath?: string;
+      targetNodeId: string;
+    });
+
+export interface ClusterConfigPeer {
+  id: string;
+  endpoint: string;
+  caPemPath?: string;
+}
+
+export interface ClusterConfigLike {
+  peers: ClusterConfigPeer[];
+}
+
+const PEER_ROUTE_STALE_MS = 30_000;
+
+function endpointPortForUrl(url: URL): number {
+  if (url.port) {
+    const parsed = Number.parseInt(url.port, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return url.protocol === 'https:' ? 443 : 80;
+}
+
+export function listClusterRoutes(
+  localRoutes: LocalRoute[],
+  peerSnapshots: Map<string, PeerSnapshot>,
+  config: ClusterConfigLike,
+  now: number = Date.now(),
+): ClusterRoute[] {
+  const routes: ClusterRoute[] = [...localRoutes];
+  const seenModels = new Set(localRoutes.map((route) => route.model));
+
+  for (const peer of config.peers) {
+    const snapshot = peerSnapshots.get(peer.id);
+    if (!snapshot) continue;
+    if (snapshot.pressure === 'HIGH') continue;
+    if (now - snapshot.fetchedAt > PEER_ROUTE_STALE_MS) continue;
+
+    let endpoint: URL;
+    try {
+      endpoint = new URL(peer.endpoint);
+    } catch {
+      continue;
+    }
+
+    for (const workload of snapshot.workloads) {
+      if (seenModels.has(workload.modelId)) continue;
+      seenModels.add(workload.modelId);
+      routes.push({
+        workload: `${peer.id}:${workload.modelId}`,
+        model: workload.modelId,
+        host: endpoint.hostname,
+        port: endpointPortForUrl(endpoint),
+        engine: 'llamacpp',
+        kind: 'ModelRun',
+        isPeer: true,
+        peerEndpoint: peer.endpoint,
+        peerCaPemPath: peer.caPemPath,
+        targetNodeId: peer.id,
+      });
+    }
+  }
+
+  return routes;
+}
+
 export function workloadRuntimeRoot(resolved: ResolvedEnv = resolveEnv()): string {
   return join(resolved.LOCAL_AI_RUNTIME_DIR, 'workloads');
 }

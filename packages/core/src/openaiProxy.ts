@@ -1,8 +1,8 @@
 import type { ModelInfo, ModelListResponse } from '@nova/contracts';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync } from 'node:fs';
+import { Agent as HttpsAgent } from 'node:https';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { statSync } from 'node:fs';
 import {
   AnthropicTranslationError,
   translateAnthropicRequest,
@@ -17,6 +17,7 @@ import { readModelHostState } from './engines/state.js';
 import type { ResolvedEnv } from './types.js';
 import * as workloadRuntime from './workloadRuntime.js';
 import type { WorkloadKey } from './workloadRuntime.js';
+import { readClusterConfig, type ClusterConfig } from '../../remote/src/config/cluster.js';
 import { boundaryNaiveBytePrefixSha, canonicalRequestSha } from './cache-identity/canonical.js';
 import {
   EXT_FLAG_SESSION_TITLE,
@@ -97,7 +98,8 @@ export function listOpenAIModels(
   return getCachedModelsResponse(keyOrResolved);
 }
 
-function createdAtForRoute(route: workloadRuntime.LocalRoute, resolved: ResolvedEnv): number {
+function createdAtForRoute(route: workloadRuntime.ClusterRoute, resolved: ResolvedEnv): number {
+  if ('isPeer' in route && route.isPeer) return 0;
   if (route.kind === 'ModelHost') {
     const state = readModelHostState({ name: route.workload }, resolved);
     if (state?.startedAt) return Math.floor(new Date(state.startedAt).getTime() / 1000);
@@ -108,10 +110,18 @@ function createdAtForRoute(route: workloadRuntime.LocalRoute, resolved: Resolved
   return 0;
 }
 
+function listRoutesForProxy(resolved: ResolvedEnv): workloadRuntime.ClusterRoute[] {
+  const localRoutes = workloadRuntime.listLocalRoutes(resolved);
+  const path = clusterRoutingOverrideForTests?.clusterConfigPath;
+  const clusterConfig = readClusterConfig(path);
+  const peerSnapshots = clusterRoutingOverrideForTests?.peerSnapshots ?? new Map<string, workloadRuntime.PeerSnapshot>();
+  return workloadRuntime.listClusterRoutes(localRoutes, peerSnapshots, clusterConfig);
+}
+
 function buildListOpenAIModels(resolved: ResolvedEnv): ModelListResponse {
   const data: ModelInfo[] = [];
   const winners = new Map<string, { kind: string; workload: string }>();
-  const routes = [...workloadRuntime.listLocalRoutes(resolved)].sort((a, b) => {
+  const routes = [...listRoutesForProxy(resolved)].sort((a, b) => {
     if (a.kind !== b.kind) return a.kind === 'ModelRun' ? -1 : 1;
     return a.workload.localeCompare(b.workload);
   });
@@ -155,6 +165,23 @@ function isJsonContentType(contentType: string | null): boolean {
   return lower.includes('application/json') || lower.includes('+json');
 }
 
+function expandHome(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
+  return path;
+}
+
+function peerAgentForRoute(route: RoutedEntry | undefined): HttpsAgent | undefined {
+  if (!route?.isPeer || !route.peerCaPemPath) return undefined;
+  const resolvedPath = expandHome(route.peerCaPemPath);
+  const cached = peerHttpsAgentByPemPath.get(resolvedPath);
+  if (cached) return cached;
+  const caPem = readFileSync(resolvedPath, 'utf8');
+  const agent = new HttpsAgent({ ca: caPem });
+  peerHttpsAgentByPemPath.set(resolvedPath, agent);
+  return agent;
+}
+
 function requestedModelFromBody(bodyText: string): string | undefined {
   try {
     const parsed = JSON.parse(bodyText) as { model?: unknown };
@@ -173,9 +200,12 @@ function routedEndpointForModel(
   const routeMap = getRouteMap(resolved);
   const entry = routeMap.get(model);
   if (!entry) return null;
+  const target = entry.isPeer && entry.peerEndpoint
+    ? `${entry.peerEndpoint}${pathname}${search}`
+    : `http://${entry.host}:${entry.port}${pathname}${search}`;
   return {
     ...entry,
-    target: `http://${entry.host}:${entry.port}${pathname}${search}`,
+    target,
   };
 }
 
@@ -186,6 +216,10 @@ type RouteEntry = {
   kind: 'ModelRun' | 'ModelHost';
   engine: workloadRuntime.LocalRoute['engine'];
   model: string;
+  isPeer?: true;
+  peerEndpoint?: string;
+  peerCaPemPath?: string;
+  targetNodeId?: string;
 };
 
 type RoutedEntry = RouteEntry & { target: string };
@@ -249,12 +283,25 @@ type ProxyContext = {
 
 let routeMapCache: { mtimeNs: bigint; map: Map<string, RouteEntry> } | null = null;
 let routeMapBuildCount = 0;
+let clusterRoutingOverrideForTests: {
+  clusterConfigPath?: string;
+  peerSnapshots?: Map<string, workloadRuntime.PeerSnapshot>;
+} | null = null;
+const peerHttpsAgentByPemPath = new Map<string, HttpsAgent>();
+
+function invalidateRouteCacheEntry(model: string): void {
+  if (routeMapCache) {
+    routeMapCache.map.delete(model);
+  }
+  routeMapCache = null;
+  modelsResponseCache = null;
+}
 
 function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
   routeMapBuildCount += 1;
   const out = new Map<string, RouteEntry>();
   const winners = new Map<string, { kind: string; workload: string }>();
-  const routes = [...workloadRuntime.listLocalRoutes(resolved)].sort((a, b) => {
+  const routes = [...listRoutesForProxy(resolved)].sort((a, b) => {
     if (a.kind !== b.kind) return a.kind === 'ModelRun' ? -1 : 1;
     return a.workload.localeCompare(b.workload);
   });
@@ -274,6 +321,10 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
       kind: route.kind,
       engine: route.engine,
       model: route.model,
+      isPeer: 'isPeer' in route && route.isPeer ? true : undefined,
+      peerEndpoint: 'isPeer' in route && route.isPeer ? route.peerEndpoint : undefined,
+      peerCaPemPath: 'isPeer' in route && route.isPeer ? route.peerCaPemPath : undefined,
+      targetNodeId: 'isPeer' in route && route.isPeer ? route.targetNodeId : undefined,
     });
   }
   return out;
@@ -295,6 +346,8 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   routeMapCache = null;
   modelsResponseCache = null;
   routeMapBuildCount = 0;
+  clusterRoutingOverrideForTests = null;
+  peerHttpsAgentByPemPath.clear();
   for (const runtime of kvRuntimeByDataRoot.values()) {
     runtime.storage.close();
   }
@@ -303,6 +356,18 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   }
   kvRuntimeByDataRoot.clear();
   responseCacheRuntimeByDataRoot.clear();
+}
+
+export function __setOpenAIProxyClusterRoutingForTests(input: {
+  clusterConfigPath?: string;
+  peerSnapshots?: Map<string, workloadRuntime.PeerSnapshot>;
+}): void {
+  clusterRoutingOverrideForTests = {
+    clusterConfigPath: input.clusterConfigPath,
+    peerSnapshots: input.peerSnapshots,
+  };
+  routeMapCache = null;
+  modelsResponseCache = null;
 }
 
 export function __getOpenAIProxyRouteMapBuildCountForTests(): number {
@@ -1206,10 +1271,30 @@ async function resolveRoute(context: ProxyContext): Promise<ProxyContext | Respo
   return context;
 }
 
+function requestBodyContainsOmlxRequestHandle(bodyText: string | undefined): boolean {
+  if (!bodyText) return false;
+  try {
+    const parsed = JSON.parse(bodyText) as { x_omlx_request_handle?: unknown };
+    return Object.prototype.hasOwnProperty.call(parsed, 'x_omlx_request_handle');
+  } catch {
+    return false;
+  }
+}
+
 async function forward(context: ProxyContext): Promise<Response> {
+  if (context.route?.isPeer && requestBodyContainsOmlxRequestHandle(context.bodyText)) {
+    return Response.json({ error: 'cross-node slot ops not supported' }, { status: 400 });
+  }
+
+  const init: RequestInit & { agent?: HttpsAgent } = {
+    ...context.init,
+  };
+  const peerAgent = peerAgentForRoute(context.route);
+  if (peerAgent) init.agent = peerAgent;
+
   let upstream: Response;
   try {
-    upstream = await fetch(context.target, context.init);
+    upstream = await fetch(context.target, init);
   } catch (err) {
     return Response.json(
       {
@@ -1220,6 +1305,9 @@ async function forward(context: ProxyContext): Promise<Response> {
       },
       { status: 502 },
     );
+  }
+  if (context.route?.isPeer && upstream.status === 502) {
+    invalidateRouteCacheEntry(context.route.model);
   }
   return upstream;
 }
@@ -1423,6 +1511,9 @@ export async function proxyOpenAI(
   const translated = maybeTranslate(parsed);
   const routed = await resolveRoute(translated);
   if (routed instanceof Response) return routed;
+  if (routed.route?.isPeer && requestBodyContainsOmlxRequestHandle(routed.bodyText)) {
+    return Response.json({ error: 'cross-node slot ops not supported' }, { status: 400 });
+  }
   if (routed.bodyText) {
     let parsedBody: unknown;
     try {

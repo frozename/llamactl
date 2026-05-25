@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openaiProxy } from '../src/index.js';
+import type { PeerSnapshot } from '../src/workloadRuntime.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -628,6 +629,229 @@ test('same-kind alias collision keeps the alphabetically earlier workload', asyn
     expect(calls[0]!.url).toBe('http://127.0.0.1:8115/v1/chat/completions');
   } finally {
     warnSpy.mockRestore();
+    t.cleanup();
+  }
+});
+
+test('/v1/models includes local and peer models when cluster.yaml is present', () => {
+  const t = tempEnv();
+  try {
+    const workload = join(t.dir, 'workloads', 'local-run');
+    mkdirSync(workload, { recursive: true });
+    writeFileSync(join(workload, 'llama-server.pid'), `${process.pid}\n`);
+    writeFileSync(
+      join(workload, 'llama-server.state'),
+      JSON.stringify({
+        rel: 'local/model.gguf',
+        extraArgs: [],
+        host: '127.0.0.1',
+        port: 8131,
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        tunedProfile: null,
+      }),
+    );
+
+    const clusterPath = join(t.dir, 'cluster.yaml');
+    writeFileSync(
+      clusterPath,
+      [
+        'peers:',
+        '  - id: mac-mini',
+        '    endpoint: https://macmini.ai:7843',
+        '    caPemPath: /tmp/mac-mini-ca.pem',
+      ].join('\n'),
+    );
+
+    const peerSnapshots = new Map<string, PeerSnapshot>([
+      [
+        'mac-mini',
+        {
+          workloads: [{ modelId: 'peer/model.gguf', port: 9200 }],
+          pressure: 'NORMAL',
+          fetchedAt: Date.now(),
+        },
+      ],
+    ]);
+
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+      clusterConfigPath: clusterPath,
+      peerSnapshots,
+    });
+
+    const models = openaiProxy.listOpenAIModels(t.env);
+    expect(new Set(models.data.map((entry) => entry.id))).toEqual(new Set(['local/model.gguf', 'peer/model.gguf']));
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('POST /v1/chat/completions forwards peer-only model to peer endpoint', async () => {
+  const t = tempEnv();
+  try {
+    const caPath = join(t.dir, 'mac-mini-ca.pem');
+    writeFileSync(caPath, '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n');
+    const clusterPath = join(t.dir, 'cluster.yaml');
+    writeFileSync(
+      clusterPath,
+      [
+        'peers:',
+        '  - id: mac-mini',
+        '    endpoint: https://macmini.ai:7843',
+        `    caPemPath: ${caPath}`,
+      ].join('\n'),
+    );
+    const peerSnapshots = new Map<string, PeerSnapshot>([
+      [
+        'mac-mini',
+        {
+          workloads: [{ modelId: 'peer-only/model.gguf', port: 9222 }],
+          pressure: 'NORMAL',
+          fetchedAt: Date.now(),
+        },
+      ],
+    ]);
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+      clusterConfigPath: clusterPath,
+      peerSnapshots,
+    });
+
+    const calls: Array<{ url: string }> = [];
+    globalThis.fetch = (async (input: Request | URL | string) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push({ url });
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'peer-only/model.gguf',
+          messages: [{ role: 'user', content: 'route me' }],
+        }),
+      }),
+      t.env,
+    );
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe('https://macmini.ai:7843/v1/chat/completions');
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('peer route + x_omlx_request_handle returns 400 with exact error message', async () => {
+  const t = tempEnv();
+  try {
+    const clusterPath = join(t.dir, 'cluster.yaml');
+    writeFileSync(
+      clusterPath,
+      [
+        'peers:',
+        '  - id: mac-mini',
+        '    endpoint: https://macmini.ai:7843',
+      ].join('\n'),
+    );
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+      clusterConfigPath: clusterPath,
+      peerSnapshots: new Map([
+        [
+          'mac-mini',
+          {
+            workloads: [{ modelId: 'peer-only/model.gguf', port: 9222 }],
+            pressure: 'NORMAL',
+            fetchedAt: Date.now(),
+          },
+        ],
+      ]),
+    });
+
+    globalThis.fetch = (async () => {
+      throw new Error('peer fetch should not run for slot ops');
+    }) as unknown as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'peer-only/model.gguf',
+          messages: [{ role: 'user', content: 'slot op' }],
+          x_omlx_request_handle: 'handle-1',
+        }),
+      }),
+      t.env,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'cross-node slot ops not supported' });
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('peer 502 invalidates route cache so next request refetches routes', async () => {
+  const t = tempEnv();
+  try {
+    const clusterPath = join(t.dir, 'cluster.yaml');
+    writeFileSync(
+      clusterPath,
+      [
+        'peers:',
+        '  - id: mac-mini',
+        '    endpoint: https://macmini.ai:7843',
+      ].join('\n'),
+    );
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+      clusterConfigPath: clusterPath,
+      peerSnapshots: new Map([
+        [
+          'mac-mini',
+          {
+            workloads: [{ modelId: 'peer-only/model.gguf', port: 9222 }],
+            pressure: 'NORMAL',
+            fetchedAt: Date.now(),
+          },
+        ],
+      ]),
+    });
+
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return calls === 1 ? new Response('bad gateway', { status: 502 }) : Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+
+    const before = openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests();
+    const first = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'peer-only/model.gguf',
+          messages: [{ role: 'user', content: 'one' }],
+        }),
+      }),
+      t.env,
+    );
+    expect(first.status).toBe(502);
+    expect(openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests()).toBe(before + 1);
+
+    const second = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'peer-only/model.gguf',
+          messages: [{ role: 'user', content: 'two' }],
+        }),
+      }),
+      t.env,
+    );
+    expect(second.status).toBe(200);
+    expect(openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests()).toBe(before + 2);
+  } finally {
     t.cleanup();
   }
 });
