@@ -1,5 +1,4 @@
 import type { ModelInfo, ModelListResponse } from '@nova/contracts';
-import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -18,6 +17,7 @@ import { readModelHostState } from './engines/state.js';
 import type { ResolvedEnv } from './types.js';
 import * as workloadRuntime from './workloadRuntime.js';
 import type { WorkloadKey } from './workloadRuntime.js';
+import { boundaryNaiveBytePrefixSha, canonicalRequestSha } from './cache-identity/canonical.js';
 import {
   EXT_FLAG_SESSION_TITLE,
   EXT_FLAG_TOOL_MAP,
@@ -34,7 +34,6 @@ import {
   type KvStorage,
 } from './kvstore/index.js';
 import {
-  canonicalRequestSha,
   isDeterministic,
   openResponseCacheStorage,
   ResponseCacheRegistry,
@@ -224,6 +223,9 @@ interface ResponseCacheRequestState {
   runtime: ResponseCacheRuntime;
   sha: string;
   model: string;
+  workload: string;
+  workloadEpoch: string;
+  protocolVariant: 'openai' | 'anthropic';
   deterministic: boolean;
   requestBodyBytes: number;
 }
@@ -339,6 +341,13 @@ function anthropicTranslationErrorResponse(error: unknown): Response {
   );
 }
 
+function isOversizedJsonBody(req: Request): boolean {
+  const contentLength = req.headers.get('content-length');
+  if (!contentLength) return false;
+  const parsedContentLength = Number.parseInt(contentLength, 10);
+  return Number.isFinite(parsedContentLength) && parsedContentLength > MAX_JSON_BODY_BYTES;
+}
+
 async function parseIncoming(req: Request, resolved: ResolvedEnv): Promise<ProxyContext | Response> {
   const url = new URL(req.url);
   const headers = new Headers();
@@ -350,6 +359,9 @@ async function parseIncoming(req: Request, resolved: ResolvedEnv): Promise<Proxy
     headers.set(key, value);
   }
   if (url.pathname === '/v1/messages') {
+    if (isOversizedJsonBody(req)) {
+      return new Response('Payload Too Large', { status: 413 });
+    }
     try {
       const bodyText = await req.text();
       const incoming = JSON.parse(bodyText) as AnthropicMessagesRequest;
@@ -534,6 +546,10 @@ function shouldUseResponseCachePath(context: ProxyContext): boolean {
   return context.req.method === 'POST' && context.pathname === '/v1/chat/completions' && typeof context.bodyText === 'string';
 }
 
+function responseCacheProtocolVariant(context: ProxyContext): 'openai' | 'anthropic' {
+  return context.isAnthropic ? 'anthropic' : 'openai';
+}
+
 function responseCacheBudgetBytes(): number {
   const raw = process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB;
   if (!raw) return 1024 * 1024 * 1024;
@@ -589,6 +605,8 @@ function cacheHitResponse(entry: ResponseCacheEntry): Response {
 
 async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyContext> {
   if (!shouldUseResponseCachePath(context)) return context;
+  const metadata = resolveRouteKvMetadata(context);
+  if (!metadata) return context;
   const bodyText = context.bodyText!;
   let parsedBody: unknown;
   try {
@@ -601,26 +619,37 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
   if (!model) return context;
   const runtime = responseCacheRuntimeFor(context.resolved);
   const sha = canonicalRequestSha(bodyText);
+  const protocolVariant = responseCacheProtocolVariant(context);
   const requestBodyBytes = Buffer.byteLength(bodyText, 'utf8');
   context.responseCache = {
     runtime,
     sha,
     model,
+    workload: metadata.workload,
+    workloadEpoch: metadata.workloadEpoch,
+    protocolVariant,
     deterministic: true,
     requestBodyBytes,
   };
-  const hit = runtime.registry.findBySha(sha);
-  if (!hit || hit.model !== model) {
+  const lookup = {
+    sha,
+    model,
+    workload: metadata.workload,
+    workloadEpoch: metadata.workloadEpoch,
+    protocolVariant,
+  } as const;
+  const hit = runtime.registry.findBySha(lookup);
+  if (!hit) {
     runtime.storage.response_cache_miss_total += 1;
     return context;
   }
   if (Date.now() - hit.createdAt > responseCacheTtlMs()) {
-    runtime.storage.safeWrite(() => runtime.registry.tryDelete(sha));
+    runtime.storage.safeWrite(() => runtime.registry.tryDelete(lookup));
     runtime.storage.response_cache_miss_total += 1;
     return context;
   }
   runtime.storage.response_cache_hit_total += 1;
-  runtime.registry.bumpHit(sha, Date.now());
+  runtime.registry.bumpHit(lookup, Date.now());
   context.responseCacheHit = cacheHitResponse(hit);
   return context;
 }
@@ -753,7 +782,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   const bodyText = context.bodyText!;
   const enforceFirstTokenEquivalence = shouldEnforceFirstTokenEquivalence(bodyText);
   let prefixMetric = Buffer.byteLength(bodyText, 'utf8');
-  let sha = createHash('sha1').update(bodyText).digest('hex');
+  let sha = boundaryNaiveBytePrefixSha(bodyText);
 
   // Phase 6 is boundary-naive: use byte length as both byte prefix and token guard until token accounting lands.
   const hit = longestPrefixLookup(runtime.registry, {
@@ -794,7 +823,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
               const replayBodyText = JSON.stringify(
                 translateAnthropicRequest(context.anthropicRequest, { toolMap }),
               );
-              const replaySha = createHash('sha1').update(replayBodyText).digest('hex');
+              const replaySha = boundaryNaiveBytePrefixSha(replayBodyText);
               const replayPrefixMetric = Buffer.byteLength(replayBodyText, 'utf8');
               if (replaySha !== hit.sha) {
                 runtime.storage.kv_replay_mismatch_total += 1;
@@ -953,6 +982,9 @@ async function maybePersistResponseCache(context: ProxyContext, upstream: Respon
     responseCache.runtime.registry.insert({
       sha: responseCache.sha,
       model: responseCache.model,
+      workload: responseCache.workload,
+      workloadEpoch: responseCache.workloadEpoch,
+      protocolVariant: responseCache.protocolVariant,
       contentType: isSse ? 'text/event-stream' : 'application/json',
       statusCode: upstream.status,
       responseBody: bodyBytes,
@@ -991,12 +1023,8 @@ async function resolveRoute(context: ProxyContext): Promise<ProxyContext | Respo
     const contentType = req.headers.get('content-type');
     if (isJsonContentType(contentType)) {
       if (context.bodyText === undefined) {
-        const contentLength = req.headers.get('content-length');
-        if (contentLength) {
-          const parsedContentLength = Number.parseInt(contentLength, 10);
-          if (Number.isFinite(parsedContentLength) && parsedContentLength > MAX_JSON_BODY_BYTES) {
-            return new Response('Payload Too Large', { status: 413 });
-          }
+        if (isOversizedJsonBody(req)) {
+          return new Response('Payload Too Large', { status: 413 });
         }
         const bodyText = await context.req.text();
         if (bodyText.length > MAX_JSON_BODY_BYTES) {
@@ -1250,15 +1278,15 @@ export async function proxyOpenAI(
   if (routed instanceof Response) return routed;
   const withResponseCacheLookup = await maybeResponseCacheLookup(routed);
   if (withResponseCacheLookup.responseCacheHit) {
-    return maybeTranslateResponse(withResponseCacheLookup, withResponseCacheLookup.responseCacheHit);
+    return withResponseCacheLookup.responseCacheHit;
   }
 
   const withKvLookup = await maybeKvLookup(withResponseCacheLookup);
   try {
     const upstream = await forward(withKvLookup);
-    const withResponseCachePersist = await maybePersistResponseCache(withKvLookup, upstream);
-    await maybePersistKv(withKvLookup, withResponseCachePersist);
-    return maybeTranslateResponse(withKvLookup, withResponseCachePersist);
+    await maybePersistKv(withKvLookup, upstream);
+    const translatedResponse = await maybeTranslateResponse(withKvLookup, upstream);
+    return await maybePersistResponseCache(withKvLookup, translatedResponse);
   } finally {
     releaseWarmHitLease(withKvLookup);
   }

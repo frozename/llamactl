@@ -1,10 +1,8 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { AddressInfo } from 'node:net';
 import { openaiProxy } from '../src/index.js';
 import {
   EXT_FLAG_TOOL_MAP,
@@ -76,39 +74,41 @@ async function startUpstream(opts: {
   const firstJsonToken = opts.firstJsonToken ?? 'Hello';
   const toolCalls = opts.toolCalls ?? [];
   const slotBaseDir = opts.slotBaseDir;
-  const server = createServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-    if (req.method === 'POST' && url.pathname.startsWith('/slots/')) {
-      const action = url.searchParams.get('action');
-      const body = await readBody(req);
+  const baseUrl = 'http://127.0.0.1:19502';
+  globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init?.method ?? (typeof input === 'object' && 'method' in input ? (input as Request).method : 'GET');
+    const parsed = new URL(url);
+    if (method === 'POST' && parsed.pathname.startsWith('/slots/')) {
+      const action = parsed.searchParams.get('action');
+      const body = typeof init?.body === 'string' ? init.body : '';
       const filename = body ? JSON.parse(body).filename : '';
       const absPath = join(slotBaseDir, filename);
       if (action === 'restore') {
         events.push('slot-restore');
-        if (restoreMode === 'http_error') return json(res, 500, { error: 'restore-fail' });
-        if (!existsSync(absPath)) return json(res, 404, { error: 'missing' });
-        return json(res, 200, { n_restored: 123 });
+        if (restoreMode === 'http_error') return Response.json({ error: 'restore-fail' }, { status: 500 });
+        if (!existsSync(absPath)) return Response.json({ error: 'missing' }, { status: 404 });
+        return Response.json({ n_restored: 123 });
       }
       if (action === 'save') {
         events.push('slot-save');
         mkdirSync(dirname(absPath), { recursive: true });
         writeFileSync(absPath, 'slot');
-        if (saveMode === 'invalid') return json(res, 200, { ok: true });
-        return json(res, 200, { n_saved: 321 });
+        if (saveMode === 'invalid') return Response.json({ ok: true });
+        return Response.json({ n_saved: 321 });
       }
-      return json(res, 400, { error: 'bad action' });
+      return Response.json({ error: 'bad action' }, { status: 400 });
     }
-
-    if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
+    if (method === 'POST' && parsed.pathname === '/v1/chat/completions') {
       events.push('chat-forward');
-      const body = await readBody(req);
+      const body = typeof init?.body === 'string' ? init.body : '';
       if (chatMode === 'sse') {
-        res.statusCode = 200;
-        res.setHeader('content-type', 'text/event-stream');
-        res.end(`data: ${JSON.stringify({ id: 'evt', body })}\n\n`);
-        return;
+        return new Response(`data: ${JSON.stringify({ id: 'evt', body })}\n\n`, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
       }
-      return json(res, 200, {
+      return Response.json({
         id: 'chatcmpl-1',
         object: 'chat.completion',
         model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
@@ -137,37 +137,14 @@ async function startUpstream(opts: {
         echoed: body,
       });
     }
+    return new Response('', { status: 404 });
+  }) as typeof fetch;
 
-    res.statusCode = 404;
-    res.end();
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve());
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('failed to bind upstream');
   return {
-    baseUrl: `http://127.0.0.1:${(address as AddressInfo).port}`,
+    baseUrl,
     events,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      }),
+    close: async () => {},
   };
-}
-
-function json(res: ServerResponse, status: number, body: unknown): void {
-  res.statusCode = status;
-  res.setHeader('content-type', 'application/json');
-  res.end(JSON.stringify(body));
-}
-
-async function readBody(req: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  return Buffer.concat(chunks).toString('utf8');
 }
 
 function shaForBody(body: string): string {
@@ -199,8 +176,10 @@ function entryTemplate(overrides: Partial<KvEntry>): KvEntry {
 }
 
 const originalBudget = process.env.LLAMACTL_KV_WORKLOAD_BUDGET_MB;
+const originalFetch = globalThis.fetch;
 
 afterEach(() => {
+  globalThis.fetch = originalFetch;
   if (originalBudget === undefined) delete process.env.LLAMACTL_KV_WORKLOAD_BUDGET_MB;
   else process.env.LLAMACTL_KV_WORKLOAD_BUDGET_MB = originalBudget;
   openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
@@ -348,16 +327,23 @@ test('warm-hit lease is released when response-cache buffering throws before kv 
   const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
   const upstream = await startUpstream({ slotBaseDir });
   const nativeFetch = globalThis.fetch;
+  const nativeArrayBuffer = Response.prototype.arrayBuffer;
+  const arrayBufferSpy = spyOn(Response.prototype, 'arrayBuffer').mockImplementation(function (
+    this: Response,
+  ): Promise<ArrayBuffer> {
+    if (this.headers.get('x-fail-buffer') === '1') {
+      return Promise.reject(new Error('simulated arrayBuffer failure'));
+    }
+    return nativeArrayBuffer.call(this);
+  });
   const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(((...args: Parameters<typeof fetch>) => {
     const [input, init] = args;
     const target = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     if (target.includes('/v1/chat/completions')) {
       const failing = new Response('{"id":"chatcmpl-throw"}', {
         status: 200,
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-fail-buffer': '1' },
       });
-      (failing as Response & { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer = () =>
-        Promise.reject(new Error('simulated arrayBuffer failure'));
       return Promise.resolve(failing);
     }
     return nativeFetch(input, init);
@@ -407,6 +393,7 @@ test('warm-hit lease is released when response-cache buffering throws before kv 
     expect(afterRegistry.get(sha)?.state).toBe('idle');
     afterStorage.close();
   } finally {
+    arrayBufferSpy.mockRestore();
     fetchSpy.mockRestore();
     await upstream.close();
     runtime.cleanup();

@@ -3,6 +3,9 @@ import type { ResponseCacheStorage } from './storage.js';
 export interface ResponseCacheEntry {
   sha: string;
   model: string;
+  workload: string;
+  workloadEpoch: string;
+  protocolVariant: 'openai' | 'anthropic';
   contentType: string;
   statusCode: number;
   responseBody: Uint8Array;
@@ -16,6 +19,9 @@ export interface ResponseCacheEntry {
 interface ResponseCacheEntryRow {
   sha: string;
   model: string;
+  workload: string;
+  workload_epoch: string;
+  protocol_variant: 'openai' | 'anthropic';
   content_type: string;
   status_code: number;
   response_body: Uint8Array;
@@ -26,6 +32,14 @@ interface ResponseCacheEntryRow {
   hits: number;
 }
 
+export interface ResponseCacheLookup {
+  sha: string;
+  model: string;
+  workload: string;
+  workloadEpoch: string;
+  protocolVariant: 'openai' | 'anthropic';
+}
+
 export class ResponseCacheRegistry {
   constructor(private readonly storage: ResponseCacheStorage) {}
 
@@ -34,6 +48,9 @@ export class ResponseCacheRegistry {
       INSERT INTO response_entries (
         sha,
         model,
+        workload,
+        workload_epoch,
+        protocol_variant,
         content_type,
         status_code,
         response_body,
@@ -45,6 +62,9 @@ export class ResponseCacheRegistry {
       ) VALUES (
         $sha,
         $model,
+        $workload,
+        $workload_epoch,
+        $protocol_variant,
         $content_type,
         $status_code,
         $response_body,
@@ -54,8 +74,7 @@ export class ResponseCacheRegistry {
         $last_used,
         $hits
       )
-      ON CONFLICT(sha) DO UPDATE SET
-        model=excluded.model,
+      ON CONFLICT(sha, model, workload, workload_epoch, protocol_variant) DO UPDATE SET
         content_type=excluded.content_type,
         status_code=excluded.status_code,
         response_body=excluded.response_body,
@@ -67,22 +86,45 @@ export class ResponseCacheRegistry {
     `).run(toQueryParams(entry));
   }
 
-  findBySha(sha: string): ResponseCacheEntry | null {
-    const row = this.storage.db.query('SELECT * FROM response_entries WHERE sha = ?').get(sha) as ResponseCacheEntryRow | null;
+  findBySha(lookup: ResponseCacheLookup): ResponseCacheEntry | null {
+    const row = this.storage.db.query(`
+      SELECT *
+      FROM response_entries
+      WHERE sha = $sha
+        AND model = $model
+        AND workload = $workload
+        AND workload_epoch = $workload_epoch
+        AND protocol_variant = $protocol_variant
+      LIMIT 1
+    `).get(toLookupParams(lookup)) as ResponseCacheEntryRow | null;
     return row ? fromRow(row) : null;
   }
 
-  bumpHit(sha: string, now: number): void {
+  bumpHit(lookup: ResponseCacheLookup, now: number): void {
     this.storage.db.query(`
       UPDATE response_entries
       SET hits = hits + 1,
-          last_used = ?
-      WHERE sha = ?
-    `).run(now, sha);
+          last_used = $last_used
+      WHERE sha = $sha
+        AND model = $model
+        AND workload = $workload
+        AND workload_epoch = $workload_epoch
+        AND protocol_variant = $protocol_variant
+    `).run({
+      ...toLookupParams(lookup),
+      $last_used: now,
+    });
   }
 
-  tryDelete(sha: string): boolean {
-    const result = this.storage.db.query('DELETE FROM response_entries WHERE sha = ?').run(sha) as { changes?: number };
+  tryDelete(lookup: ResponseCacheLookup): boolean {
+    const result = this.storage.db.query(`
+      DELETE FROM response_entries
+      WHERE sha = $sha
+        AND model = $model
+        AND workload = $workload
+        AND workload_epoch = $workload_epoch
+        AND protocol_variant = $protocol_variant
+    `).run(toLookupParams(lookup)) as { changes?: number };
     return (result.changes ?? 0) > 0;
   }
 
@@ -101,6 +143,9 @@ function toQueryParams(entry: ResponseCacheEntry): Record<string, number | strin
   return {
     $sha: entry.sha,
     $model: entry.model,
+    $workload: entry.workload,
+    $workload_epoch: entry.workloadEpoch,
+    $protocol_variant: entry.protocolVariant,
     $content_type: entry.contentType,
     $status_code: entry.statusCode,
     $response_body: entry.responseBody,
@@ -112,10 +157,23 @@ function toQueryParams(entry: ResponseCacheEntry): Record<string, number | strin
   };
 }
 
+function toLookupParams(lookup: ResponseCacheLookup): Record<string, string> {
+  return {
+    $sha: lookup.sha,
+    $model: lookup.model,
+    $workload: lookup.workload,
+    $workload_epoch: lookup.workloadEpoch,
+    $protocol_variant: lookup.protocolVariant,
+  };
+}
+
 function fromRow(row: ResponseCacheEntryRow): ResponseCacheEntry {
   return {
     sha: row.sha,
     model: row.model,
+    workload: row.workload,
+    workloadEpoch: row.workload_epoch,
+    protocolVariant: row.protocol_variant,
     contentType: row.content_type,
     statusCode: row.status_code,
     responseBody: row.response_body,

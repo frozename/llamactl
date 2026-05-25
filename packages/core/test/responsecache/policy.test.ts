@@ -13,6 +13,9 @@ function baseEntry(overrides: Partial<ResponseCacheEntry> = {}): ResponseCacheEn
   return {
     sha: 'sha',
     model: 'model-a',
+    workload: '',
+    workloadEpoch: '',
+    protocolVariant: 'openai',
     contentType: 'application/json',
     statusCode: 200,
     responseBody: new TextEncoder().encode('{"ok":true}'),
@@ -22,6 +25,16 @@ function baseEntry(overrides: Partial<ResponseCacheEntry> = {}): ResponseCacheEn
     lastUsed: 1,
     hits: 0,
     ...overrides,
+  };
+}
+
+function defaultLookup(sha: string) {
+  return {
+    sha,
+    model: 'model-a',
+    workload: '',
+    workloadEpoch: '',
+    protocolVariant: 'openai' as const,
   };
 }
 
@@ -53,7 +66,7 @@ test('eviction ordering drops highest-score rows first when over budget', () => 
     expect(result.totalBytesBefore).toBeGreaterThan(700_000);
     expect(result.totalBytesAfter).toBeLessThanOrEqual(700_000);
     expect(result.deleted.length).toBeGreaterThan(0);
-    expect(registry.findBySha('keep-hot')).not.toBeNull();
+    expect(registry.findBySha(defaultLookup('keep-hot'))).not.toBeNull();
     storage.close();
   } finally {
     t.cleanup();

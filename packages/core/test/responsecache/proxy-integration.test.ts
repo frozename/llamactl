@@ -1,10 +1,10 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openaiProxy } from '../../src/index.js';
+import { translateAnthropicRequest } from '../../src/anthropic/translateRequest.js';
+import { readWorkloadEpoch } from '../../src/kvstore/index.js';
 import { ResponseCacheRegistry, canonicalRequestSha, openResponseCacheStorage } from '../../src/responsecache/index.js';
 
 interface TempRuntime {
@@ -52,79 +52,86 @@ function writeModelRunWorkload(
   );
 }
 
+function workloadEpochFor(runtime: TempRuntime, workload: string): string {
+  const epoch = readWorkloadEpoch({ name: workload }, runtime.env as any);
+  if (!epoch) throw new Error(`missing workload epoch for ${workload}`);
+  return epoch;
+}
+
+function lookupScope(params: {
+  sha: string;
+  model: string;
+  workload: string;
+  workloadEpoch: string;
+  protocolVariant?: 'openai' | 'anthropic';
+}) {
+  return {
+    sha: params.sha,
+    model: params.model,
+    workload: params.workload,
+    workloadEpoch: params.workloadEpoch,
+    protocolVariant: params.protocolVariant ?? 'openai',
+  } as const;
+}
+
 async function startUpstream(mode: 'json' | 'sse' | 'json_error' | 'sse_partial'): Promise<TestUpstream> {
   let calls = 0;
-  const server = createServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-    if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
+  const baseUrl = 'http://127.0.0.1:19501';
+  globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init?.method ?? (typeof input === 'object' && 'method' in input ? (input as Request).method : 'GET');
+    const parsed = new URL(url);
+    if (method === 'POST' && parsed.pathname === '/v1/chat/completions') {
       calls += 1;
-      const body = await readBody(req);
+      const body = typeof init?.body === 'string' ? init.body : '';
       if (mode === 'sse') {
-        res.statusCode = 200;
-        res.setHeader('content-type', 'text/event-stream');
-        res.end(`data: ${JSON.stringify({ id: calls, echoed: body })}\n\ndata: [DONE]\n\n`);
-        return;
+        return new Response(`data: ${JSON.stringify({ id: calls, echoed: body })}\n\ndata: [DONE]\n\n`, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
       }
       if (mode === 'sse_partial') {
-        res.statusCode = 200;
-        res.setHeader('content-type', 'text/event-stream');
-        res.end(`data: ${JSON.stringify({ id: calls, echoed: body })}\n\n`);
-        return;
+        return new Response(`data: ${JSON.stringify({ id: calls, echoed: body })}\n\n`, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
       }
       if (mode === 'json_error') {
-        return json(res, 200, {
+        return Response.json({
           error: {
             message: 'upstream failure',
             type: 'upstream_error',
           },
         });
       }
-      return json(res, 200, {
+      return Response.json({
         id: `chatcmpl-${calls}`,
         object: 'chat.completion',
-        choices: [{ index: 0, message: { role: 'assistant', content: [{ type: 'text', text: `hit-${calls}` }] } }],
+        model: 'claude-compatible',
+        choices: [{ index: 0, message: { role: 'assistant', content: `hit-${calls}` }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
         echoed: body,
       });
     }
-    res.statusCode = 404;
-    res.end();
-  });
+    return new Response('', { status: 404 });
+  }) as typeof fetch;
 
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve());
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('failed to bind upstream');
   return {
-    baseUrl: `http://127.0.0.1:${(address as AddressInfo).port}`,
+    baseUrl,
     get calls() {
       return calls;
     },
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      }),
+    close: async () => {},
   };
-}
-
-function json(res: ServerResponse, status: number, body: unknown): void {
-  res.statusCode = status;
-  res.setHeader('content-type', 'application/json');
-  res.end(JSON.stringify(body));
-}
-
-async function readBody(req: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  return Buffer.concat(chunks).toString('utf8');
 }
 
 const originalBudget = process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB;
 const originalMaxEntry = process.env.LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB;
 const originalTtlHours = process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS;
+const originalFetch = globalThis.fetch;
 
 afterEach(() => {
+  globalThis.fetch = originalFetch;
   if (originalBudget === undefined) delete process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB;
   else process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB = originalBudget;
   if (originalMaxEntry === undefined) delete process.env.LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB;
@@ -139,9 +146,11 @@ test('cold miss saves and warm hit serves cached JSON without upstream call', as
   const upstream = await startUpstream('json');
   try {
     const url = new URL(upstream.baseUrl);
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
     const body = JSON.stringify({
-      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      model,
       messages: [{ role: 'user', content: 'cached json' }],
       temperature: 0,
     });
@@ -173,7 +182,12 @@ test('cold miss saves and warm hit serves cached JSON without upstream call', as
 
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
-    const entry = registry.findBySha(canonicalRequestSha(body));
+    const entry = registry.findBySha(lookupScope({
+      sha: canonicalRequestSha(body),
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+    }));
     expect(entry).not.toBeNull();
     storage.close();
   } finally {
@@ -233,9 +247,11 @@ test('non-deterministic request bypasses response cache', async () => {
   const upstream = await startUpstream('json');
   try {
     const url = new URL(upstream.baseUrl);
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
     const body = JSON.stringify({
-      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      model,
       messages: [{ role: 'user', content: 'sampled' }],
       temperature: 0.7,
     });
@@ -262,7 +278,12 @@ test('non-deterministic request bypasses response cache', async () => {
 
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
-    expect(registry.findBySha(canonicalRequestSha(body))).toBeNull();
+    expect(registry.findBySha(lookupScope({
+      sha: canonicalRequestSha(body),
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+    }))).toBeNull();
     storage.close();
   } finally {
     await upstream.close();
@@ -276,7 +297,9 @@ test('eviction trims entries under configured response-cache budget', async () =
   process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB = '1';
   try {
     const url = new URL(upstream.baseUrl);
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
 
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
@@ -285,7 +308,10 @@ test('eviction trims entries under configured response-cache budget', async () =
     const blobB = new Uint8Array(420_000);
     registry.insert({
       sha: 'old-a',
-      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+      protocolVariant: 'openai',
       contentType: 'application/json',
       statusCode: 200,
       responseBody: blobA,
@@ -297,7 +323,10 @@ test('eviction trims entries under configured response-cache budget', async () =
     });
     registry.insert({
       sha: 'old-b',
-      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+      protocolVariant: 'openai',
       contentType: 'application/json',
       statusCode: 200,
       responseBody: blobB,
@@ -310,7 +339,7 @@ test('eviction trims entries under configured response-cache budget', async () =
     storage.close();
 
     const body = JSON.stringify({
-      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      model,
       messages: [{ role: 'user', content: 'evict if needed' }],
       temperature: 0,
     });
@@ -326,10 +355,15 @@ test('eviction trims entries under configured response-cache budget', async () =
 
     const afterStorage = openResponseCacheStorage(runtime.root);
     const afterRegistry = new ResponseCacheRegistry(afterStorage);
-    const entries = afterRegistry.listForModel('Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf');
+    const entries = afterRegistry.listForModel(model);
     const totalBytes = entries.reduce((sum, entry) => sum + entry.requestBodyBytes + entry.responseBodyBytes, 0);
     expect(totalBytes).toBeLessThanOrEqual(1 * 1024 * 1024);
-    expect(afterRegistry.findBySha(canonicalRequestSha(body))).not.toBeNull();
+    expect(afterRegistry.findBySha(lookupScope({
+      sha: canonicalRequestSha(body),
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+    }))).not.toBeNull();
     expect(openaiProxy.__getOpenAIProxyResponseCacheEvictTotalForTests(runtime.env as any)).toBeGreaterThan(0);
     afterStorage.close();
   } finally {
@@ -344,9 +378,11 @@ test('error-envelope JSON responses are not cached and emit skip log', async () 
   const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
   try {
     const url = new URL(upstream.baseUrl);
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
     const body = JSON.stringify({
-      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      model,
       messages: [{ role: 'user', content: 'error envelope' }],
       temperature: 0,
     });
@@ -364,7 +400,12 @@ test('error-envelope JSON responses are not cached and emit skip log', async () 
 
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
-    expect(registry.findBySha(canonicalRequestSha(body))).toBeNull();
+    expect(registry.findBySha(lookupScope({
+      sha: canonicalRequestSha(body),
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+    }))).toBeNull();
     storage.close();
   } finally {
     warnSpy.mockRestore();
@@ -379,9 +420,11 @@ test('partial SSE responses are not cached and emit skip log', async () => {
   const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
   try {
     const url = new URL(upstream.baseUrl);
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
     const body = JSON.stringify({
-      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      model,
       messages: [{ role: 'user', content: 'partial sse' }],
       stream: true,
       temperature: 0,
@@ -400,7 +443,12 @@ test('partial SSE responses are not cached and emit skip log', async () => {
 
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
-    expect(registry.findBySha(canonicalRequestSha(body))).toBeNull();
+    expect(registry.findBySha(lookupScope({
+      sha: canonicalRequestSha(body),
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+    }))).toBeNull();
     storage.close();
   } finally {
     warnSpy.mockRestore();
@@ -415,9 +463,11 @@ test('TTL-expired response-cache entries are treated as misses and deleted', asy
   process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS = '24';
   try {
     const url = new URL(upstream.baseUrl);
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
     const body = JSON.stringify({
-      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      model,
       messages: [{ role: 'user', content: 'ttl expired' }],
       temperature: 0,
     });
@@ -426,7 +476,10 @@ test('TTL-expired response-cache entries are treated as misses and deleted', asy
     const now = Date.now();
     registry.insert({
       sha: canonicalRequestSha(body),
-      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+      protocolVariant: 'openai',
       contentType: 'application/json',
       statusCode: 200,
       responseBody: new Uint8Array(Buffer.from('{"ok":true}', 'utf8')),
@@ -453,7 +506,12 @@ test('TTL-expired response-cache entries are treated as misses and deleted', asy
 
     const afterStorage = openResponseCacheStorage(runtime.root);
     const afterRegistry = new ResponseCacheRegistry(afterStorage);
-    expect(afterRegistry.findBySha(canonicalRequestSha(body))).toBeNull();
+    expect(afterRegistry.findBySha(lookupScope({
+      sha: canonicalRequestSha(body),
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+    }))).toBeNull();
     afterStorage.close();
   } finally {
     await upstream.close();
@@ -467,9 +525,11 @@ test('fresh response-cache entries are served as hits before TTL expiry', async 
   process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS = '24';
   try {
     const url = new URL(upstream.baseUrl);
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
     const body = JSON.stringify({
-      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      model,
       messages: [{ role: 'user', content: 'ttl fresh' }],
       temperature: 0,
     });
@@ -478,7 +538,10 @@ test('fresh response-cache entries are served as hits before TTL expiry', async 
     const now = Date.now();
     registry.insert({
       sha: canonicalRequestSha(body),
-      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+      protocolVariant: 'openai',
       contentType: 'application/json',
       statusCode: 200,
       responseBody: new Uint8Array(Buffer.from('{"id":"cached"}', 'utf8')),
@@ -503,6 +566,302 @@ test('fresh response-cache entries are served as hits before TTL expiry', async 
     expect(payload.id).toBe('cached');
     expect(upstream.calls).toBe(0);
     expect(openaiProxy.__getOpenAIProxyResponseCacheHitTotalForTests(runtime.env as any)).toBe(1);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('response cache misses when workload scope differs', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream('json');
+  try {
+    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(new URL(upstream.baseUrl).port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const body = JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: 'scope workload mismatch' }],
+      temperature: 0,
+    });
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    registry.insert({
+      sha: canonicalRequestSha(body),
+      model,
+      workload: 'wl-b',
+      workloadEpoch,
+      protocolVariant: 'openai',
+      contentType: 'application/json',
+      statusCode: 200,
+      responseBody: new TextEncoder().encode('{"id":"wrong-workload"}'),
+      requestBodyBytes: Buffer.byteLength(body, 'utf8'),
+      responseBodyBytes: Buffer.byteLength('{"id":"wrong-workload"}', 'utf8'),
+      createdAt: Date.now(),
+      lastUsed: Date.now(),
+      hits: 0,
+    });
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    expect(upstream.calls).toBe(1);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('response cache misses when workload epoch differs', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream('json');
+  try {
+    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(new URL(upstream.baseUrl).port, 10), model);
+    const body = JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: 'scope epoch mismatch' }],
+      temperature: 0,
+    });
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    registry.insert({
+      sha: canonicalRequestSha(body),
+      model,
+      workload: 'wl-a',
+      workloadEpoch: 'stale-epoch',
+      protocolVariant: 'openai',
+      contentType: 'application/json',
+      statusCode: 200,
+      responseBody: new TextEncoder().encode('{"id":"stale-epoch"}'),
+      requestBodyBytes: Buffer.byteLength(body, 'utf8'),
+      responseBodyBytes: Buffer.byteLength('{"id":"stale-epoch"}', 'utf8'),
+      createdAt: Date.now(),
+      lastUsed: Date.now(),
+      hits: 0,
+    });
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    expect(upstream.calls).toBe(1);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('response cache hits when workload and epoch match', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream('json');
+  try {
+    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(new URL(upstream.baseUrl).port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const body = JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: 'scope hit' }],
+      temperature: 0,
+    });
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    registry.insert({
+      sha: canonicalRequestSha(body),
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+      protocolVariant: 'openai',
+      contentType: 'application/json',
+      statusCode: 200,
+      responseBody: new TextEncoder().encode('{"id":"scope-hit"}'),
+      requestBodyBytes: Buffer.byteLength(body, 'utf8'),
+      responseBodyBytes: Buffer.byteLength('{"id":"scope-hit"}', 'utf8'),
+      createdAt: Date.now(),
+      lastUsed: Date.now(),
+      hits: 0,
+    });
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id: 'scope-hit' });
+    expect(upstream.calls).toBe(0);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('/v1/messages persists anthropic variant with post-translation bytes', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream('json');
+  try {
+    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(new URL(upstream.baseUrl).port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const anthropicRequest = {
+      model,
+      max_tokens: 64,
+      temperature: 0,
+      messages: [{ role: 'user', content: 'cache anthropic bytes' }],
+    } as const;
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(anthropicRequest),
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    const responsePayload = await response.json();
+    expect((responsePayload as { type?: string }).type).toBe('message');
+
+    const translatedBody = JSON.stringify(translateAnthropicRequest(anthropicRequest as any));
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    const entry = registry.findBySha(lookupScope({
+      sha: canonicalRequestSha(translatedBody),
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+      protocolVariant: 'anthropic',
+    }));
+    expect(entry).not.toBeNull();
+    const cachedPayload = JSON.parse(Buffer.from(entry!.responseBody).toString('utf8')) as { type?: string; id?: string };
+    expect(cachedPayload.type).toBe('message');
+    expect(cachedPayload.id).toBe('chatcmpl-1');
+    storage.close();
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('/v1/messages misses when only openai protocol variant exists for matching sha', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream('json');
+  try {
+    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(new URL(upstream.baseUrl).port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const anthropicRequest = {
+      model,
+      max_tokens: 64,
+      temperature: 0,
+      messages: [{ role: 'user', content: 'protocol mismatch' }],
+    } as const;
+    const translatedBody = JSON.stringify(translateAnthropicRequest(anthropicRequest as any));
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    registry.insert({
+      sha: canonicalRequestSha(translatedBody),
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+      protocolVariant: 'openai',
+      contentType: 'application/json',
+      statusCode: 200,
+      responseBody: new TextEncoder().encode('{"id":"openai-shape"}'),
+      requestBodyBytes: Buffer.byteLength(translatedBody, 'utf8'),
+      responseBodyBytes: Buffer.byteLength('{"id":"openai-shape"}', 'utf8'),
+      createdAt: Date.now(),
+      lastUsed: Date.now(),
+      hits: 0,
+    });
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(anthropicRequest),
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    expect(upstream.calls).toBe(1);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('/v1/messages warm-hit returns cached anthropic bytes without translation', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream('json');
+  try {
+    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(new URL(upstream.baseUrl).port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const anthropicRequest = {
+      model,
+      max_tokens: 64,
+      temperature: 0,
+      messages: [{ role: 'user', content: 'anthropic warm hit' }],
+    } as const;
+    const translatedBody = JSON.stringify(translateAnthropicRequest(anthropicRequest as any));
+    const cachedAnthropic = {
+      id: 'msg_cached',
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'cached anthropic body' }],
+      model,
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    };
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    registry.insert({
+      sha: canonicalRequestSha(translatedBody),
+      model,
+      workload: 'wl-a',
+      workloadEpoch,
+      protocolVariant: 'anthropic',
+      contentType: 'application/json',
+      statusCode: 200,
+      responseBody: new TextEncoder().encode(JSON.stringify(cachedAnthropic)),
+      requestBodyBytes: Buffer.byteLength(translatedBody, 'utf8'),
+      responseBodyBytes: Buffer.byteLength(JSON.stringify(cachedAnthropic), 'utf8'),
+      createdAt: Date.now(),
+      lastUsed: Date.now(),
+      hits: 0,
+    });
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(anthropicRequest),
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(cachedAnthropic);
+    expect(upstream.calls).toBe(0);
   } finally {
     await upstream.close();
     runtime.cleanup();

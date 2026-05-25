@@ -42,7 +42,15 @@ export function runResponseCacheEvictionIfOverBudget(
   const deleted: string[] = [];
   for (const entry of sorted) {
     if (totalBytes <= budgetBytes) break;
-    if (!registry.tryDelete(entry.sha)) continue;
+    if (
+      !registry.tryDelete({
+        sha: entry.sha,
+        model: entry.model,
+        workload: entry.workload,
+        workloadEpoch: entry.workloadEpoch,
+        protocolVariant: entry.protocolVariant,
+      })
+    ) continue;
     deleted.push(entry.sha);
     totalBytes -= totalEntryBytes(entry);
   }

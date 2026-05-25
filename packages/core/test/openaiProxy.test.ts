@@ -261,6 +261,30 @@ test('/v1/messages translates into /v1/chat/completions and forwards upstream', 
   }
 });
 
+test('/v1/messages rejects oversized content-length before reading body', async () => {
+  const t = tempEnv();
+  try {
+    globalThis.fetch = (async () => {
+      throw new Error('upstream should not be called');
+    }) as unknown as typeof fetch;
+    const req = new Request('http://localhost/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'content-length': '999999999',
+      },
+      body: '{}',
+    });
+    const textSpy = spyOn(req, 'text');
+
+    const res = await openaiProxy.proxyOpenAI(req, t.env);
+    expect(res.status).toBe(413);
+    expect(textSpy).not.toHaveBeenCalled();
+  } finally {
+    t.cleanup();
+  }
+});
+
 test('/v1/messages translator errors return anthropic_translation_error with status 400', async () => {
   const t = tempEnv();
   try {

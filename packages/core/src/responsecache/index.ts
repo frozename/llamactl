@@ -3,6 +3,7 @@ export { safeWrite } from './storage.js';
 export type { ResponseCacheStorage } from './storage.js';
 export { ResponseCacheRegistry } from './registry.js';
 export type { ResponseCacheEntry } from './registry.js';
+export type { ResponseCacheLookup } from './registry.js';
 export { responseEvictionScore } from './policy.js';
 export { runResponseCacheEvictionIfOverBudget } from './policy.js';
 export type { ResponseEvictionRunResult } from './policy.js';
