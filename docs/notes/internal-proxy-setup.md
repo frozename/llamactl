@@ -1,6 +1,6 @@
 # Internal Proxy Setup
 
-Slice X adds per-workload proxy opt-in (`spec.useProxy: true`) so internal callers can route through the local OpenAI-compatible proxy instead of direct workload ports. This is part of the convergence strategy to centralize KV cache, Anthropic translation, and observability in one endpoint.
+Slice X adds per-workload proxy opt-in (`spec.useProxy: true`) so internal callers can route through the local OpenAI-compatible proxy instead of direct workload ports. This is part of the convergence strategy to centralize KV cache, Anthropic translation, and observability in one endpoint. The internal proxy on 7944 only exposes `/v1/*` without auth; all control-plane routes require bearer even on the no-auth port.
 
 ## Install launchd agent
 

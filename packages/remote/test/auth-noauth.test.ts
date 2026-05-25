@@ -18,7 +18,7 @@ afterEach(() => {
 
 describe('startAgentServer no-auth bypass', () => {
   let server: RunningAgent;
-  const { hash } = generateToken();
+  const { token, hash } = generateToken();
   let certPath: string;
   let keyPath: string;
 
@@ -76,6 +76,32 @@ describe('startAgentServer no-auth bypass', () => {
     expect(resp.status).not.toBe(401);
   });
 
+  test('rejects unauthenticated trpc request even when no-auth is enabled', async () => {
+    const resp = await server.handleRequest!(
+      new Request('http://x/trpc/catalog.list'),
+      { address: '127.0.0.1', port: 12345, family: 'IPv4' },
+    );
+    expect(resp.status).toBe(401);
+  });
+
+  test('rejects unauthenticated metrics request even when no-auth is enabled', async () => {
+    const resp = await server.handleRequest!(
+      new Request('http://x/metrics'),
+      { address: '127.0.0.1', port: 12345, family: 'IPv4' },
+    );
+    expect(resp.status).toBe(401);
+  });
+
+  test('accepts bearer-authenticated trpc request in no-auth mode', async () => {
+    const resp = await server.handleRequest!(
+      new Request('http://x/trpc/catalog.list?batch=1&input=%7B%7D', {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      { address: '127.0.0.1', port: 12345, family: 'IPv4' },
+    );
+    expect(resp.status).not.toBe(401);
+  });
+
   test('logs the first unauthenticated request and suppresses the next 98', async () => {
     const writes: string[] = [];
     const originalWrite = process.stderr.write.bind(process.stderr);
@@ -100,5 +126,25 @@ describe('startAgentServer no-auth bypass', () => {
     } finally {
       process.stderr.write = originalWrite;
     }
+  });
+
+  test('rejects loopback-only no-auth bypass when the agent is not bound to loopback', async () => {
+    const cert = await generateSelfSignedCert({
+      dir,
+      commonName: '0.0.0.0',
+      hostnames: ['0.0.0.0'],
+    });
+    await server.stop();
+    server = startAgentServer({
+      tokenHash: hash,
+      noAuth: true,
+      bindHost: '0.0.0.0',
+      tls: { certPath: cert.certPath, keyPath: cert.keyPath },
+    });
+    const resp = await server.handleRequest!(
+      new Request('http://x/v1/models'),
+      { address: '127.0.0.1', port: 12345, family: 'IPv4' },
+    );
+    expect(resp.status).toBe(401);
   });
 });

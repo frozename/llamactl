@@ -246,7 +246,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   if (noAuth) {
     const transport = allowPlainHttp ? 'Serving plain HTTP (no TLS).' : 'Serving HTTPS.';
     process.stderr.write(
-      `[agent] WARNING: --no-auth flag enabled. Bearer token validation BYPASSED for connections from 127.0.0.1. This is intended for local benchmarking/development only. DO NOT use in production. Bind host: ${bindHost}. ${transport}\n`,
+      `[agent] WARNING: --no-auth flag enabled. Bearer token validation BYPASSED for /v1/* connections from 127.0.0.1. All other routes (including /trpc) still require bearer auth. ${transport}\n`,
     );
   }
 
@@ -270,8 +270,13 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       })
     : null;
 
-  function allowNoAuth(address: ClientAddress | null): boolean {
-    return noAuth && isLoopbackAddress(bindHost) && isLoopbackAddress(address?.address);
+  function allowNoAuth(pathname: string, address: ClientAddress | null): boolean {
+    return (
+      noAuth &&
+      pathname.startsWith('/v1/') &&
+      isLoopbackAddress(bindHost) &&
+      isLoopbackAddress(address?.address)
+    );
   }
 
   function logUnauthenticatedNoAuthRequest(req: Request, address: ClientAddress | null): void {
@@ -284,7 +289,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   }
 
   async function handleOpenAI(req: Request, url: URL, address: ClientAddress | null): Promise<Response> {
-    if (allowNoAuth(address)) {
+    if (allowNoAuth(url.pathname, address)) {
       logUnauthenticatedNoAuthRequest(req, address);
     } else if (!verifyBearer(req, opts.tokenHash)) {
       return unauthorizedResponse();
@@ -380,7 +385,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // Prometheus scrape endpoint. Bearer-auth'd like everything else;
     // scrapers can set the standard Authorization header.
     if (url.pathname === '/metrics') {
-      if (allowNoAuth(clientAddress)) {
+      if (allowNoAuth(url.pathname, clientAddress)) {
         logUnauthenticatedNoAuthRequest(req, clientAddress);
       } else if (!verifyBearer(req, opts.tokenHash)) {
         return unauthorizedResponse();
@@ -400,7 +405,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // through to the legacy openai-proxy path below. Non-POST / other
     // paths under /v1/* fall straight through to handleOpenAI.
     if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
-      if (allowNoAuth(clientAddress)) {
+      if (allowNoAuth(url.pathname, clientAddress)) {
         logUnauthenticatedNoAuthRequest(req, clientAddress);
       } else if (!verifyBearer(req, opts.tokenHash)) {
         return unauthorizedResponse();
@@ -420,7 +425,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     if (!url.pathname.startsWith(endpoint)) {
       return new Response('not found', { status: 404 });
     }
-    if (allowNoAuth(clientAddress)) {
+    if (allowNoAuth(url.pathname, clientAddress)) {
       logUnauthenticatedNoAuthRequest(req, clientAddress);
     } else if (!verifyBearer(req, opts.tokenHash)) {
       return unauthorizedResponse();
