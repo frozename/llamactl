@@ -12,7 +12,7 @@ export type SlotSaveResult =
   | { ok: false; reason: 'http_error' | 'network' | 'invalid_response'; status?: number; error: Error };
 
 export type SlotRestoreResult =
-  | { ok: true; tokensRestored: number }
+  | { ok: true; tokensRestored: number; restore_epoch: string | null }
   | {
     ok: false;
     reason: 'http_error' | 'network' | 'invalid_response' | 'not_found';
@@ -86,7 +86,7 @@ export class UpstreamSlotClient implements SlotClient {
         error: new Error('slot restore response missing numeric n_restored'),
       };
     }
-    return { ok: true, tokensRestored };
+    return { ok: true, tokensRestored, restore_epoch: readStringField(body.value, 'restore_epoch') };
   }
 
   supportsSlots(): Promise<boolean> {
@@ -167,6 +167,12 @@ function readNumberField(value: unknown, key: string): number | null {
   const field = (value as Record<string, unknown>)[key];
   if (typeof field !== 'number' || !Number.isFinite(field)) return null;
   return field;
+}
+
+function readStringField(value: unknown, key: string): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === 'string' ? field : null;
 }
 
 function hasRequestHandleCapability(value: unknown): boolean {

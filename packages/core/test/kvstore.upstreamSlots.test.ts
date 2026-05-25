@@ -130,8 +130,46 @@ test('restore success returns ok + tokensRestored + sends filename in JSON body'
   try {
     const client = new UpstreamSlotClient(upstream.baseUrl);
     const result = await client.restore(9, 'slot-c.bin');
-    expect(result).toEqual({ ok: true, tokensRestored: 456 });
+    expect(result).toEqual({ ok: true, tokensRestored: 456, restore_epoch: null });
     expect(sentFilename).toBe('slot-c.bin');
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('restore returns null restore_epoch when server omits the field', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'POST' && url.pathname === '/slots/4') {
+      json(res, 200, { n_restored: 42 });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl);
+    const result = await client.restore(4, 'slot-no-epoch.bin');
+    expect(result).toMatchObject({ ok: true, tokensRestored: 42 });
+    expect((result as any).restore_epoch).toBeNull();
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('restore returns restore_epoch string when server provides it', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'POST' && url.pathname === '/slots/5') {
+      json(res, 200, { n_restored: 42, restore_epoch: 'epoch-xyz' });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl);
+    const result = await client.restore(5, 'slot-with-epoch.bin');
+    expect(result).toMatchObject({ ok: true, tokensRestored: 42 });
+    expect((result as any).restore_epoch).toBe('epoch-xyz');
   } finally {
     await upstream.close();
   }

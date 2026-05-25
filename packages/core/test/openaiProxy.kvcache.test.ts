@@ -88,6 +88,8 @@ async function startUpstream(opts: {
   slotBaseDir: string;
   saveMode?: 'ok' | 'invalid';
   restoreMode?: 'ok' | 'http_error';
+  supportsRequestHandle?: boolean;
+  restoreEpoch?: string | null;
   chatMode?: 'json' | 'sse';
   firstJsonToken?: string;
   toolCalls?: Array<{ id: string; name: string; arguments: string }>;
@@ -95,6 +97,8 @@ async function startUpstream(opts: {
   const events: string[] = [];
   const saveMode = opts.saveMode ?? 'ok';
   const restoreMode = opts.restoreMode ?? 'ok';
+  const supportsRequestHandle = opts.supportsRequestHandle ?? false;
+  const restoreEpoch = opts.restoreEpoch ?? null;
   const chatMode = opts.chatMode ?? 'json';
   const firstJsonToken = opts.firstJsonToken ?? 'Hello';
   const toolCalls = opts.toolCalls ?? [];
@@ -113,7 +117,7 @@ async function startUpstream(opts: {
         events.push('slot-restore');
         if (restoreMode === 'http_error') return Response.json({ error: 'restore-fail' }, { status: 500 });
         if (!existsSync(absPath)) return Response.json({ error: 'missing' }, { status: 404 });
-        return Response.json({ n_restored: 123 });
+        return Response.json({ n_restored: 123, restore_epoch: restoreEpoch });
       }
       if (action === 'save') {
         events.push('slot-save');
@@ -160,6 +164,14 @@ async function startUpstream(opts: {
           },
         ],
         echoed: body,
+      });
+    }
+    if (method === 'GET' && parsed.pathname === '/props') {
+      return Response.json({
+        slots: {
+          api_version: supportsRequestHandle ? 2 : 1,
+          supports_request_handle: supportsRequestHandle,
+        },
       });
     }
     return new Response('', { status: 404 });
@@ -400,6 +412,327 @@ test('warm hit restores slot before upstream forward', async () => {
     expect(response.status).toBe(200);
     expect(upstream.events.indexOf('slot-restore')).toBeLessThan(upstream.events.indexOf('chat-forward'));
     expect(upstream.events).toEqual(['slot-restore', 'chat-forward']);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('proxy injects x_omlx_request_handle and x_omlx_restore_epoch after successful restore', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, supportsRequestHandle: true, restoreEpoch: 'abc' });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'warm inject' }],
+    });
+    const sha = shaForBody(body);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(body, 'utf8'),
+      prefixByteLength: Buffer.byteLength(body, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(body, 'utf8'),
+      textBytes: Buffer.byteLength(body, 'utf8'),
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    const responseJson = await response.json() as { echoed?: string };
+    const echoed = JSON.parse(responseJson.echoed ?? '{}') as Record<string, unknown>;
+    expect(echoed.x_omlx_request_handle).toBe(sha);
+    expect(echoed.x_omlx_restore_epoch).toBe('abc');
+    expect(upstream.events).toEqual(['slot-restore', 'chat-forward']);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('proxy does not inject vendor fields when request-handle capability is unsupported', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, supportsRequestHandle: false, restoreEpoch: 'abc' });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'warm unsupported' }],
+    });
+    const sha = shaForBody(body);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(body, 'utf8'),
+      prefixByteLength: Buffer.byteLength(body, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(body, 'utf8'),
+      textBytes: Buffer.byteLength(body, 'utf8'),
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    const responseJson = await response.json() as { echoed?: string };
+    const echoed = JSON.parse(responseJson.echoed ?? '{}') as Record<string, unknown>;
+    expect(echoed.x_omlx_request_handle).toBeUndefined();
+    expect(echoed.x_omlx_restore_epoch).toBeUndefined();
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('proxy does not inject vendor fields when restore fails', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({
+    slotBaseDir,
+    restoreMode: 'http_error',
+    supportsRequestHandle: true,
+    restoreEpoch: 'abc',
+  });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'restore fail no inject' }],
+    });
+    const sha = shaForBody(body);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(body, 'utf8'),
+      prefixByteLength: Buffer.byteLength(body, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(body, 'utf8'),
+      textBytes: Buffer.byteLength(body, 'utf8'),
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    const responseJson = await response.json() as { echoed?: string };
+    const echoed = JSON.parse(responseJson.echoed ?? '{}') as Record<string, unknown>;
+    expect(echoed.x_omlx_request_handle).toBeUndefined();
+    expect(echoed.x_omlx_restore_epoch).toBeUndefined();
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('proxy does not inject vendor fields when restore_epoch is null', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, supportsRequestHandle: true, restoreEpoch: null });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'restore epoch null' }],
+    });
+    const sha = shaForBody(body);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(body, 'utf8'),
+      prefixByteLength: Buffer.byteLength(body, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(body, 'utf8'),
+      textBytes: Buffer.byteLength(body, 'utf8'),
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    const responseJson = await response.json() as { echoed?: string };
+    const echoed = JSON.parse(responseJson.echoed ?? '{}') as Record<string, unknown>;
+    expect(echoed.x_omlx_request_handle).toBeUndefined();
+    expect(echoed.x_omlx_restore_epoch).toBeUndefined();
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('proxy injects vendor fields at top-level only', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, supportsRequestHandle: true, restoreEpoch: 'abc' });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'top-level only' }],
+    });
+    const sha = shaForBody(body);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(body, 'utf8'),
+      prefixByteLength: Buffer.byteLength(body, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(body, 'utf8'),
+      textBytes: Buffer.byteLength(body, 'utf8'),
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    const responseJson = await response.json() as { echoed?: string };
+    const echoed = JSON.parse(responseJson.echoed ?? '{}') as {
+      x_omlx_request_handle?: unknown;
+      x_omlx_restore_epoch?: unknown;
+      messages?: Array<{ x_omlx_request_handle?: unknown; x_omlx_restore_epoch?: unknown }>;
+    };
+    expect(echoed.x_omlx_request_handle).toBe(sha);
+    expect(echoed.x_omlx_restore_epoch).toBe('abc');
+    expect(Array.isArray(echoed.messages)).toBe(true);
+    expect(echoed.messages?.[0]?.x_omlx_request_handle).toBeUndefined();
+    expect(echoed.messages?.[0]?.x_omlx_restore_epoch).toBeUndefined();
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('proxy injection overwrites user supplied vendor fields', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, supportsRequestHandle: true, restoreEpoch: 'abc' });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'overwrite handle' }],
+      x_omlx_request_handle: 'user-handle',
+      x_omlx_restore_epoch: 'user-epoch',
+    });
+    const sha = shaForBody(body);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(body, 'utf8'),
+      prefixByteLength: Buffer.byteLength(body, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(body, 'utf8'),
+      textBytes: Buffer.byteLength(body, 'utf8'),
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    const responseJson = await response.json() as { echoed?: string };
+    const echoed = JSON.parse(responseJson.echoed ?? '{}') as Record<string, unknown>;
+    expect(echoed.x_omlx_request_handle).toBe(sha);
+    expect(echoed.x_omlx_restore_epoch).toBe('abc');
   } finally {
     await upstream.close();
     runtime.cleanup();

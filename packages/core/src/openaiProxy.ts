@@ -781,6 +781,59 @@ async function readFirstResponseToken(upstream: Response): Promise<string | null
   }
 }
 
+function basenameStripKvslot(path: string): string {
+  const file = basename(path);
+  return file.endsWith('.kvslot') ? file.slice(0, -'.kvslot'.length) : file;
+}
+
+function injectVendorFields(
+  body: Record<string, unknown>,
+  fields: { x_omlx_request_handle: string; x_omlx_restore_epoch: string },
+): boolean {
+  const hadRequestHandle = Object.prototype.hasOwnProperty.call(body, 'x_omlx_request_handle');
+  const hadRestoreEpoch = Object.prototype.hasOwnProperty.call(body, 'x_omlx_restore_epoch');
+  body.x_omlx_request_handle = fields.x_omlx_request_handle;
+  body.x_omlx_restore_epoch = fields.x_omlx_restore_epoch;
+  return hadRequestHandle || hadRestoreEpoch;
+}
+
+async function maybeInjectOmlxRestoreBind(
+  context: ProxyContext,
+  slotClient: UpstreamSlotClient,
+  workload: string,
+  hitSha: string,
+  upstreamSlotFile: string,
+  restoreEpoch: string | null,
+): Promise<void> {
+  if (restoreEpoch === null || context.bodyText === undefined) return;
+  const handleSupported = await slotClient.supportsRequestHandle();
+  if (!handleSupported) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(context.bodyText);
+  } catch {
+    return;
+  }
+  if (!isRecord(parsed)) return;
+  const overwritten = injectVendorFields(parsed, {
+    x_omlx_request_handle: basenameStripKvslot(upstreamSlotFile),
+    x_omlx_restore_epoch: restoreEpoch,
+  });
+  if (overwritten) {
+    console.debug(JSON.stringify({
+      event: 'kv_restore_bind_overwrite_vendor_fields',
+      workload,
+      sha: hitSha,
+    }));
+  }
+  const injectedBody = JSON.stringify(parsed);
+  context.bodyText = injectedBody;
+  context.init = {
+    ...context.init,
+    body: injectedBody,
+  };
+}
+
 async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   if (!shouldUseKvPath(context)) return context;
   const metadata = resolveRouteKvMetadata(context);
@@ -847,6 +900,14 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
                   ...context.init,
                   body: replayBodyText,
                 };
+                await maybeInjectOmlxRestoreBind(
+                  context,
+                  slotClient,
+                  metadata.workload,
+                  hit.sha,
+                  hit.upstreamSlotFile,
+                  restore.restore_epoch,
+                );
                 sha = replaySha;
                 prefixMetric = replayPrefixMetric;
                 runtime.registry.bumpHit(hit.sha, Date.now());
@@ -869,6 +930,14 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
                 return context;
               }
             } else {
+              await maybeInjectOmlxRestoreBind(
+                context,
+                slotClient,
+                metadata.workload,
+                hit.sha,
+                hit.upstreamSlotFile,
+                restore.restore_epoch,
+              );
               runtime.registry.bumpHit(hit.sha, Date.now());
               context.kv = {
                 runtime,
@@ -889,6 +958,14 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
               return context;
             }
           } else {
+            await maybeInjectOmlxRestoreBind(
+              context,
+              slotClient,
+              metadata.workload,
+              hit.sha,
+              hit.upstreamSlotFile,
+              restore.restore_epoch,
+            );
             runtime.registry.bumpHit(hit.sha, Date.now());
             context.kv = {
               runtime,
