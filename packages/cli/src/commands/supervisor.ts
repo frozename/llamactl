@@ -43,7 +43,7 @@ FLAGS:
   --consecutive-errors=<n>    Per-workload consecutive-errors threshold. Default 3.
   --no-workloads              Skip workload probing (mem-only mode).
   --workload=<name@url>       Add a workload target (repeatable).
-                              Format: name@url, e.g. gains-host@http://127.0.0.1:8096
+                              Format: name@url, e.g. mlx-qwen36-35b@http://127.0.0.1:8096
   --kind=ModelHost|ModelRun   Kind for subsequent --workload entries. Default ModelHost.
   --quiet                     Suppress per-tick stderr summary.
 

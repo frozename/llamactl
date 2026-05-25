@@ -14,7 +14,7 @@
   Tier-2 behavior has been observed for a baseline window.
 
   Workload set is the M4 Pro production fleet as of 2026-05-22:
-    - gains-host        :8096  (oMLX 35B-A3B, primary brief-synth + judge tie-breaker)
+    - mlx-qwen36-35b    :8096  (oMLX 35B-A3B, primary brief-synth + judge tie-breaker)
     - granite-3b        :8083  (llama.cpp Q8 long-lived judge)
 
   Install:
@@ -43,7 +43,7 @@
     <string>--interval=30</string>
     <string>--auto</string>
     <string>--severity-threshold=2</string>
-    <string>--workload=gains-host-35b-local@http://127.0.0.1:8096</string>
+    <string>--workload=mlx-qwen36-35b-a3b-local@http://127.0.0.1:8096</string>
     <string>--kind=ModelRun</string>
     <string>--workload=granite41-3b-long-lived-local@http://127.0.0.1:8083</string>
   </array>
