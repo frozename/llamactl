@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import {
@@ -15,8 +15,10 @@ import {
   listModelHosts,
   saveModelHost,
 } from '../../../remote/src/workload/modelhost-store.js';
-import { ModelHostManifestSchema } from '../../../remote/src/workload/modelhost-schema.js';
+import { ModelHostManifestSchema, type ModelHostManifest } from '../../../remote/src/workload/modelhost-schema.js';
 import { readModelHostState } from '../../../core/src/engines/state.js';
+import { resolveEnv } from '../../../core/src/env.js';
+import { workloadRuntimeDir } from '../../../core/src/workloadRuntime.js';
 import { getNodeClientByName } from '../dispatcher.js';
 import { makeSpecArtifactResolver } from './noderun-helpers.js';
 
@@ -635,16 +637,40 @@ export async function runDelete(args: string[]): Promise<number> {
     process.stderr.write(DELETE_USAGE);
     return 1;
   }
-  let manifest: workloadSchema.ModelRun;
+  let manifest: workloadSchema.ModelRun | ModelHostManifest;
   try {
-    manifest = workloadStore.loadWorkloadByName(name);
+    manifest = workloadStore.loadWorkloadByNameAny(name);
   } catch (err) {
     process.stderr.write(`delete: ${(err as Error).message}\n`);
     return 1;
   }
+  if (manifest.kind === 'ModelHost') {
+    if (!keepRunning) {
+      try {
+        const client = getWorkloadNodeClient(manifest.spec.node);
+        if (client.modelHostStop) {
+          await client.modelHostStop.mutate({ workload: manifest.metadata.name });
+          process.stdout.write(`stopped modelhost on node ${manifest.spec.node}\n`);
+        }
+      } catch (err) {
+        process.stderr.write(
+          `warning: failed to reach node ${manifest.spec.node}: ${(err as Error).message}\n`,
+        );
+      }
+      rmSync(workloadRuntimeDir(resolveEnv(), { name: manifest.metadata.name }), { recursive: true, force: true });
+    }
+    const ok = workloadStore.deleteWorkload(name);
+    if (!ok) {
+      process.stderr.write(`delete: workload '${name}' not found in store\n`);
+      return 1;
+    }
+    process.stdout.write(`deleted modelhost/${name}\n`);
+    return 0;
+  }
+
   if (!keepRunning) {
     try {
-      const client = getNodeClientByName(manifest.spec.node);
+      const client = getWorkloadNodeClient(manifest.spec.node);
       const status = await client.serverStatus.query({ workload: manifest.metadata.name });
       // Only stop the server if the running rel matches this workload's
       // target. If something else is running there (perhaps another
@@ -667,7 +693,7 @@ export async function runDelete(args: string[]): Promise<number> {
     // want to remove the manifest even if a worker node is unreachable.
     for (const worker of [...manifest.spec.workers].reverse()) {
       try {
-        const wc = getNodeClientByName(worker.node);
+        const wc = getWorkloadNodeClient(worker.node);
         await wc.rpcServerStop.mutate({ graceSeconds: 3 });
         process.stdout.write(`stopped rpc-server on worker ${worker.node}\n`);
       } catch (err) {
