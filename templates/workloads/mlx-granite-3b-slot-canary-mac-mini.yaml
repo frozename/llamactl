@@ -1,0 +1,45 @@
+# Slot v2 canary ModelHost: granite-4.1-3b-mlx-4bit on mac-mini, port 8197.
+#
+# Sibling of mlx-granite-3b-iso-mac-mini (port 8194) — runs the SAME model
+# but at mcr=1 with --slot-save-path enabled, so the oMLX slot save/restore
+# API is active and the v2 invariant (max_concurrent_requests==1 when slot
+# enabled) is satisfied.
+#
+# Purpose: prove v2 round-trip end-to-end against real production-class
+# infrastructure (mac-mini, real oMLX runtime, real MLX granite model).
+# Drives save → restore → chat-completion(x_omlx_request_handle + restore_epoch)
+# directly via curl; bypasses the llamactl proxy because the supervisor's
+# ModelHost useProxy bridge is still open (deferred from Slice X.3).
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: mlx-granite-3b-slot-canary-mac-mini
+  labels:
+    fleet: slot-canary
+    family: granite-4.1
+    role: canary
+spec:
+  engine: omlx
+  node: mac-mini
+  enabled: true
+  binary: /Volumes/AI-DATA/src/omlx/.venv/bin/omlx
+  resources:
+    expectedMemoryGiB: 4
+  endpoint:
+    host: 0.0.0.0
+    port: 8197
+  hostedModels:
+    - rel: mlx-community/granite-4.1-3b-4bit
+  extraArgs:
+    - --max-concurrent-requests
+    - "1"
+    - --max-process-memory
+    - "20%"
+    - --paged-ssd-cache-dir
+    - /Volumes/AI-DATA/cache/omlx-slot-canary
+    - --slot-save-path
+    - /Volumes/AI-DATA/cache/omlx-slot-canary-slots
+  restartPolicy: Always
+  timeoutSeconds: 180
+  env:
+    MLX_METAL_MAX_INFLIGHT_PER_STREAM: "1"
