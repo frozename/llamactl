@@ -10,7 +10,7 @@
 apiVersion: llamactl/v1
 kind: ModelHost
 metadata:
-  name: gains-host-35b-local
+  name: mlx-qwen36-35b-a3b-local
   labels:
     family: qwen36
     role: memory-recall-ranker
@@ -28,8 +28,10 @@ spec:
     - rel: Qwen3.6-35B-A3B-4bit
   extraArgs:
     - --max-concurrent-requests
-    - "4"
+    - "1"
     - --paged-ssd-cache-dir
     - /Volumes/WorkSSD/cache/omlx-35b
+    - --slot-save-path
+    - /Volumes/WorkSSD/cache/omlx-qwen36-35b-slots
   restartPolicy: Always
   timeoutSeconds: 180
