@@ -102,6 +102,22 @@ describe('ModelRun schema', () => {
     expect(m.spec.timeoutSeconds).toBe(60);
   });
 
+  test('defaults node to auto when omitted', () => {
+    const withAuto = `
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: auto-node
+spec:
+  target:
+    kind: rel
+    value: foo/bar.gguf
+`;
+    const m = parseWorkload(withAuto);
+    expect(m.spec.node).toBe('auto');
+    expect(m.spec.placement).toBeUndefined();
+  });
+
   test('rejects a bad name', () => {
     const bad = sampleYaml.replace('name: gemma-qa', 'name: Gemma-QA');
     expect(() => parseWorkload(bad)).toThrow(/lowercase alphanumeric/);

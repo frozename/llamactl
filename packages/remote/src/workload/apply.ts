@@ -2,7 +2,19 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { ENGINES } from '../../../core/src/engines/index.js';
 import { computeModelHostSpecHash, removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
 import { resolveEnv } from '../../../core/src/env.js';
-import { projectAdmissionHeadroom } from '@llamactl/fleet-supervisor';
+import {
+  appendFleetJournal,
+  buildPlacementDecision,
+  chooseBestNode,
+  defaultAggregatorDbPath,
+  defaultFleetJournalPath,
+  type FleetTransitionEntry,
+  getLatestPerNode,
+  openAggregatorDb,
+  projectAdmissionHeadroom,
+  scoreNodes,
+  type FleetPlacementEntry,
+} from '@llamactl/fleet-supervisor';
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
 import { ModelRunSchema } from './schema.js';
 import { ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
@@ -138,6 +150,93 @@ export interface ApplyManifestOptions {
     headroomMinGiB: number;
     safetyFactor?: number;
   };
+  placement?: {
+    dbPath?: string;
+    journalPath?: string;
+    headroomMinMb?: number;
+    modelFilePenaltyMb?: number;
+  };
+}
+
+interface PlacementContext {
+  manifest: ModelRun;
+  dbPath: string;
+  journalPath: string;
+  headroomMinMb: number;
+  modelFilePenaltyMb: number;
+}
+
+function shouldAutoPlace(manifest: ModelRun): boolean {
+  return (
+    (manifest.spec.node === 'auto' || manifest.spec.placement === 'auto')
+    && manifest.spec.placement !== 'pinned'
+  );
+}
+
+async function runPlacement(context: PlacementContext): Promise<
+  { ok: true; manifest: ModelRun; decision: FleetPlacementEntry }
+  | { ok: false; error: string }
+> {
+  let db;
+  try {
+    db = openAggregatorDb(context.dbPath);
+    const rows = getLatestPerNode(db);
+    const scores = scoreNodes(rows, {
+      workload: context.manifest.metadata.name,
+      targetModel: context.manifest.spec.target.value,
+      expectedMemoryMb: (context.manifest.spec.resources?.expectedMemoryGiB ?? 0) * 1024,
+      modelFilePenaltyMb: context.modelFilePenaltyMb,
+      headroomMinMb: context.headroomMinMb,
+    });
+    const best = chooseBestNode(scores);
+    if (!best) {
+      return {
+        ok: false,
+        error: `no viable placement node for ${context.manifest.metadata.name}`,
+      };
+    }
+
+    const decision = buildPlacementDecision({
+      workload: context.manifest.metadata.name,
+      requestedNode: context.manifest.spec.node,
+      expectedMemoryMb: (context.manifest.spec.resources?.expectedMemoryGiB ?? 0) * 1024,
+      scores,
+      headroomMinMb: context.headroomMinMb,
+      modelFilePenaltyMb: context.modelFilePenaltyMb,
+    });
+
+    const entry: FleetPlacementEntry = {
+      kind: 'fleet-placement',
+      ts: new Date().toISOString(),
+      node: best,
+      decision: {
+        ...decision,
+        chosenNode: best,
+      },
+    };
+    const transition: FleetTransitionEntry = {
+      kind: 'fleet-transition',
+      ts: entry.ts,
+      node: best,
+      subject: context.manifest.metadata.name,
+      subjectKind: 'workload',
+      signal: 'placement',
+      from: context.manifest.spec.node,
+      to: best,
+    };
+
+    appendFleetJournal(entry, context.journalPath);
+    appendFleetJournal(transition, context.journalPath);
+    return {
+      ok: true,
+      manifest: { ...context.manifest, spec: { ...context.manifest.spec, node: best } },
+      decision: entry,
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    db?.close();
+  }
 }
 
 export type ApplyManifestOutcome =
@@ -919,14 +1018,26 @@ export async function applyManifest(
     if (!parsed.success) {
       return { ok: false, error: parsed.error.message };
     }
+    let manifest = parsed.data;
+    if (shouldAutoPlace(manifest)) {
+      const placement = await runPlacement({
+        manifest,
+        dbPath: opts.placement?.dbPath ?? defaultAggregatorDbPath(),
+        journalPath: opts.placement?.journalPath ?? defaultFleetJournalPath(),
+        headroomMinMb: opts.placement?.headroomMinMb ?? 512,
+        modelFilePenaltyMb: opts.placement?.modelFilePenaltyMb ?? 128,
+      });
+      if (!placement.ok) return { ok: false, error: placement.error };
+      manifest = placement.manifest;
+    }
     if (!opts.getClient) {
       return { ok: false, error: 'applyManifest requires getClient for ModelRun manifests' };
     }
-    const result = await applyOne(parsed.data, opts.getClient);
+    const result = await applyOne(manifest, opts.getClient);
     if (result.error) {
       return { ok: false, error: result.error };
     }
-    return { ok: true, kind: 'ModelRun', manifest: parsed.data, result };
+    return { ok: true, kind: 'ModelRun', manifest, result };
   }
   if (kind === 'ModelHost') {
     const parsed = ModelHostManifestSchema.safeParse(opts.manifest);

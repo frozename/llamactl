@@ -7,7 +7,7 @@ const NODE = 'test-node';
 
 function makeProposal(
   id: string,
-  actionType: 'mark-degraded' | 'evict' | 'restart',
+  actionType: 'mark-degraded' | 'evict' | 'restart' | 'place' | 'move' | 'drain',
   workload = 'qwen-host',
   node = NODE,
 ): FleetProposalEntry {
@@ -23,7 +23,13 @@ function makeProposal(
       from: 'healthy',
       to: 'degraded',
     },
-    action: { type: actionType, workload, reason: 'test' },
+    action: actionType === 'place'
+      ? { type: 'place', workload, node: node, reason: 'test' }
+      : actionType === 'move'
+      ? { type: 'move', workload, fromNode: node, toNode: NODE, reason: 'test' }
+      : actionType === 'drain'
+      ? { type: 'drain', node, reason: 'test' }
+      : { type: actionType, workload, reason: 'test' },
   };
 }
 
@@ -57,6 +63,18 @@ describe('actionTier', () => {
 
   it('restart is tier 3', () => {
     expect(actionTier({ type: 'restart', workload: 'w', reason: 'r' })).toBe(3);
+  });
+
+  it('place is tier 1', () => {
+    expect(actionTier({ type: 'place', workload: 'w', node: 'n', reason: 'r' })).toBe(1);
+  });
+
+  it('move is tier 2', () => {
+    expect(actionTier({ type: 'move', workload: 'w', fromNode: 'a', toNode: 'b', reason: 'r' })).toBe(2);
+  });
+
+  it('drain is tier 2', () => {
+    expect(actionTier({ type: 'drain', node: 'n', reason: 'r' })).toBe(2);
   });
 });
 

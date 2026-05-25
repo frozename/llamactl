@@ -32,14 +32,47 @@ export interface FleetTransitionEntry {
   kind: 'fleet-transition';
   ts: string; node: string;
   subject: string; subjectKind: 'workload' | 'node';
-  signal: 'pressure' | 'pressure-cleared' | 'degraded';
+  signal: 'pressure' | 'pressure-cleared' | 'degraded' | 'placement';
   from: string; to: string;
+}
+
+export interface NodeScore {
+  node: string;
+  score: number;
+  freeAfterMb: number;
+  freePenaltyMb?: number;
+  compressorMb: number;
+  requestRate5m: number;
+  eligible: boolean;
+  reason: string | null;
+  pressureState?: 'NORMAL' | 'HIGH';
+  modelFilePresent?: boolean;
+}
+
+export interface FleetPlacementDecision {
+  workload: string;
+  requestedNode: string;
+  chosenNode: string;
+  expectedMemoryMb: number;
+  headroomMinMb: number;
+  modelFilePenaltyMb: number;
+  scores: NodeScore[];
+}
+
+export interface FleetPlacementEntry {
+  kind: 'fleet-placement';
+  ts: string;
+  node: string;
+  decision: FleetPlacementDecision;
 }
 
 export type FleetProposalAction =
   | { type: 'evict'; workload: string; reason: string }
   | { type: 'restart'; workload: string; reason: string }
-  | { type: 'mark-degraded'; workload: string; reason: string };
+  | { type: 'mark-degraded'; workload: string; reason: string }
+  | { type: 'place'; workload: string; node: string; reason: string }
+  | { type: 'move'; workload: string; fromNode: string; toNode: string; reason: string }
+  | { type: 'drain'; node: string; reason: string };
 
 export interface FleetProposalEntry {
   kind: 'fleet-proposal';
@@ -59,6 +92,9 @@ export interface FleetExecutionEntry {
 
 export function actionTier(action: FleetProposalAction): 1 | 2 | 3 {
   if (action.type === 'mark-degraded') return 2;
+  if (action.type === 'place') return 1;
+  if (action.type === 'move') return 2;
+  if (action.type === 'drain') return 2;
   return 3; // evict | restart
 }
 
@@ -80,4 +116,4 @@ export interface FleetPressureStatusEntry {
 export type FleetJournalEntry =
   | FleetSnapshotEntry | FleetHeartbeatEntry
   | FleetTransitionEntry | FleetProposalEntry | FleetExecutionEntry
-  | FleetPressureStatusEntry;
+  | FleetPressureStatusEntry | FleetPlacementEntry;

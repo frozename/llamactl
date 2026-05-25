@@ -41,7 +41,7 @@ export const ModelRunWorkerSchema = z.object({
 });
 
 export const ModelRunSpecSchema = z.object({
-  node: z.string().min(1),
+  node: z.union([z.literal('auto'), z.string().min(1)]).default('auto'),
   enabled: z.boolean().default(true),
   target: ModelRunTargetSchema,
   extraArgs: z.array(z.string()).default([]),
@@ -93,6 +93,12 @@ export const ModelRunSpecSchema = z.object({
    * llama-server URL.
    */
   useProxy: z.boolean().optional(),
+  /**
+   * Placement strategy for scheduler-autos. `auto` enables
+   * cross-node scheduling when `node` is unset/auto.
+   * `pinned` keeps the workload on its current node.
+   */
+  placement: z.enum(['auto', 'pinned']).optional(),
 });
 
 export const ModelRunConditionSchema = z.object({

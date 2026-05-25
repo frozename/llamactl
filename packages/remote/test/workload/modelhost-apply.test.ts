@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { openAggregatorDb, writeSnapshot } from '@llamactl/fleet-supervisor';
 import { applyManifest, applyOneModelHost, type WorkloadClient } from '../../src/workload/apply.js';
 import { reconcileOnce } from '../../src/workload/reconciler.js';
 import { listModelHosts, saveModelHost } from '../../src/workload/modelhost-store.js';
@@ -44,6 +45,102 @@ function makeModelRunClient(): WorkloadClient {
     rpcServerStop: { mutate: async () => ({ ok: true }) },
     rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
   };
+}
+
+function makePlacementClient(): WorkloadClient {
+  return {
+    serverStatus: {
+      query: async () => ({
+        state: 'down',
+        rel: null,
+        extraArgs: [],
+        pid: null,
+        host: null,
+        port: null,
+        binary: null,
+        endpoint: '',
+      }),
+    },
+    serverStop: { mutate: async () => ({ ok: true }) },
+    serverStart: {
+      subscribe: (_input, callbacks) => {
+        queueMicrotask(() => {
+          callbacks.onData({ type: 'done', result: { ok: true, pid: 123, endpoint: 'http://127.0.0.1:18180' } });
+          callbacks.onComplete();
+        });
+        return { unsubscribe() {} };
+      },
+    },
+    modelHostStart: { subscribe: () => ({ unsubscribe() {} }) },
+    modelHostStop: { mutate: async () => ({ ok: true }) },
+    modelHostStatus: { query: async () => ({ state: 'Stopped', pid: null }) },
+    rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
+    rpcServerStop: { mutate: async () => ({ ok: true }) },
+    rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+  };
+}
+
+function modelRunManifestForPlacement(overrides: Partial<ModelRun['spec']> = {}): ModelRun {
+  return {
+    apiVersion: 'llamactl/v1',
+    kind: 'ModelRun',
+    metadata: { name: 'qwen-run', labels: {}, annotations: {} },
+    spec: {
+      node: 'auto',
+      placement: 'auto',
+      enabled: true,
+      target: { kind: 'rel', value: 'qwen3.6-35b-MTP-Q4_0-Q6_K.gguf' },
+      extraArgs: [],
+      workers: [],
+      restartPolicy: 'Always',
+      allowExternalBind: false,
+      timeoutSeconds: 60,
+      gateway: false,
+      ...overrides,
+    },
+  };
+}
+
+function writeClusterSnapshot(
+  dbPath: string,
+  node: string,
+  ts: string,
+  freeMb: number,
+  workloads: Array<{ name: string; models?: string[] }> = [],
+): void {
+  const db = openAggregatorDb(dbPath);
+  try {
+    writeSnapshot(db, node, {
+      kind: 'fleet-snapshot',
+      ts,
+      node,
+      node_mem: {
+        free_mb: freeMb,
+        active_mb: 0,
+        inactive_mb: 0,
+        wired_mb: 0,
+        compressor_mb: 0,
+        swap_in: 0,
+        swap_out: 0,
+      },
+      workloads: workloads.map((w) => ({
+        name: w.name,
+        kind: 'ModelRun',
+        endpoint: 'http://127.0.0.1:8080',
+        priority: 50,
+        rss_mb: null,
+        request_rate_5m: 0,
+        error_rate_5m: 0,
+        p50_ms: 10,
+        p95_ms: 20,
+        models: w.models ?? [],
+        reachable: true,
+        consecutiveErrors: 0,
+      })),
+    });
+  } finally {
+    db.close();
+  }
 }
 
 describe('applyManifest — kind dispatch', () => {
@@ -638,5 +735,109 @@ describe('applyManifest — kind dispatch', () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  test('auto placement writes manifest to chosen node before apply', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelrun-placement-'));
+    const dbPath = join(tmp, 'cluster.db');
+    const journalPath = join(tmp, 'fleet-placement-journal.jsonl');
+    writeClusterSnapshot(dbPath, 'node-a', '2026-05-25T00:00:00Z', 7000, [
+      { name: 'alpha', models: [] },
+    ]);
+    writeClusterSnapshot(dbPath, 'node-b', '2026-05-25T00:00:10Z', 12000, [
+      { name: 'beta', models: ['qwen3.6-35b-MTP-Q4_0-Q6_K.gguf'] },
+    ]);
+
+    const result = await applyManifest({
+      manifest: modelRunManifestForPlacement(),
+      getClient: () => makePlacementClient(),
+      workloadsDir: tmp,
+      placement: { dbPath, journalPath, headroomMinMb: 512 },
+    });
+
+    if (!result.ok) console.log('ERROR:', result); expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.kind).toBe('ModelRun');
+    if (result.kind !== 'ModelRun') return;
+    expect(result.manifest.spec.node).toBe('node-b');
+
+    const lines = fs.readFileSync(journalPath, 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    const placement = lines.find((entry) => entry.kind === 'fleet-placement');
+    const transition = lines.find((entry) => entry.kind === 'fleet-transition');
+    expect(placement).toBeDefined();
+    expect(placement?.decision?.chosenNode).toBe('node-b');
+    expect(Array.isArray(placement?.decision?.scores)).toBe(true);
+    expect(placement?.decision?.scores).toHaveLength(2);
+    expect(transition?.kind).toBe('fleet-transition');
+    expect(transition?.subject).toBe('qwen-run');
+    expect(transition?.to).toBe('node-b');
+    expect(transition?.signal).toBe('placement');
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('explicit node does not trigger auto placement', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelrun-placement-explicit-'));
+    const result = await applyManifest({
+      manifest: modelRunManifestForPlacement({
+        node: 'node-a',
+        placement: undefined,
+      }),
+      workloadsDir: tmp,
+      getClient: () => makePlacementClient(),
+      placement: { dbPath: join(tmp, 'does-not-exist.db') },
+    });
+
+    if (!result.ok) console.log('ERROR:', result); expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.kind).toBe('ModelRun');
+    if (result.kind !== 'ModelRun') return;
+    expect(result.manifest.spec.node).toBe('node-a');
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('pinned placement does not trigger scheduler', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelrun-placement-pinned-'));
+    const result = await applyManifest({
+      manifest: modelRunManifestForPlacement({
+        node: 'auto',
+        placement: 'pinned',
+      }),
+      workloadsDir: tmp,
+      getClient: () => makePlacementClient(),
+      placement: { dbPath: join(tmp, 'does-not-exist.db') },
+    });
+
+    if (!result.ok) console.log('ERROR:', result); expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.kind).toBe('ModelRun');
+    if (result.kind !== 'ModelRun') return;
+    expect(result.manifest.spec.node).toBe('auto');
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('no viable placement returns error before apply', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelrun-placement-none-'));
+    const dbPath = join(tmp, 'cluster.db');
+    writeClusterSnapshot(dbPath, 'node-a', '2026-05-25T00:00:00Z', 200, [
+      { name: 'alpha', models: [] },
+    ]);
+
+    const result = await applyManifest({
+      manifest: modelRunManifestForPlacement(),
+      workloadsDir: tmp,
+      placement: {
+        dbPath,
+        headroomMinMb: 512,
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain('no viable placement node');
+    rmSync(tmp, { recursive: true, force: true });
   });
 });
