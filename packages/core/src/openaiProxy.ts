@@ -1,6 +1,5 @@
 import type { ModelInfo, ModelListResponse } from '@nova/contracts';
 import { mkdirSync, statSync } from 'node:fs';
-import { Agent as HttpsAgent } from 'node:https';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import {
@@ -167,14 +166,9 @@ function isJsonContentType(contentType: string | null): boolean {
   return lower.includes('application/json') || lower.includes('+json');
 }
 
-function peerAgentForRoute(route: RoutedEntry | undefined): HttpsAgent | undefined {
+function peerTlsForRoute(route: RoutedEntry | undefined): { ca: string } | undefined {
   if (!route?.isPeer || !route.peerCertificate) return undefined;
-  const cached = peerHttpsAgentByPemPath.get(route.peerCertificate);
-  if (cached) return cached;
-  const caPem = route.peerCertificate;
-  const agent = new HttpsAgent({ ca: caPem });
-  peerHttpsAgentByPemPath.set(route.peerCertificate, agent);
-  return agent;
+  return { ca: route.peerCertificate };
 }
 
 function requestedModelFromBody(bodyText: string): string | undefined {
@@ -283,8 +277,6 @@ let clusterRoutingOverrideForTests: {
   clusterPeers?: PeerNode[];
   peerSnapshots?: Map<string, workloadRuntime.PeerSnapshot>;
 } | null = null;
-const peerHttpsAgentByPemPath = new Map<string, HttpsAgent>();
-
 function invalidateRouteCacheEntry(model: string): void {
   if (routeMapCache) {
     routeMapCache.map.delete(model);
@@ -344,7 +336,6 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   modelsResponseCache = null;
   routeMapBuildCount = 0;
   clusterRoutingOverrideForTests = null;
-  peerHttpsAgentByPemPath.clear();
   for (const runtime of kvRuntimeByDataRoot.values()) {
     runtime.storage.close();
   }
@@ -1283,15 +1274,15 @@ async function forward(context: ProxyContext): Promise<Response> {
     return Response.json({ error: 'cross-node slot ops not supported' }, { status: 400 });
   }
 
-  const init: RequestInit & { headers: Headers; agent?: HttpsAgent } = {
+  const init: RequestInit & { headers: Headers; tls?: { ca: string } } = {
     ...context.init,
     headers: new Headers(context.init.headers ?? {}),
   };
   if (context.route?.isPeer && context.route.peerToken) {
     init.headers.set('authorization', `Bearer ${context.route.peerToken}`);
   }
-  const peerAgent = peerAgentForRoute(context.route);
-  if (peerAgent) init.agent = peerAgent;
+  const peerTls = peerTlsForRoute(context.route);
+  if (peerTls) (init as RequestInit & { tls?: { ca: string } }).tls = peerTls;
 
   let upstream: Response;
   try {

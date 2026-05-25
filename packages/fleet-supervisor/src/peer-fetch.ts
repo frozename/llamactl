@@ -1,4 +1,3 @@
-import { Agent as HttpsAgent } from 'node:https';
 import type { FleetSnapshotEntry } from './types.js';
 import type { AggregatorPeer } from './aggregator.js';
 import { resolveToken } from '../../remote/src/config/kubeconfig.js';
@@ -26,17 +25,15 @@ function resolvedPeerToken(peer: AggregatorPeer): string | undefined {
 }
 
 function doRequest(peer: AggregatorPeer): Promise<PeerFetchResult> {
-  const ca = peer.certificate;
-  const agent = ca ? new HttpsAgent({ ca }) : undefined;
   const headers: Record<string, string> = {};
   const token = resolvedPeerToken(peer);
   if (token) headers.authorization = `Bearer ${token}`;
   const target = new URL('/v1/fleet/snapshot', peer.endpoint);
-  const init = {
-    method: 'GET' as const,
-    ...(agent ? { agent } : {}),
+  const init: RequestInit & { tls?: { ca: string } } = {
+    method: 'GET',
     ...(Object.keys(headers).length ? { headers } : {}),
-  } satisfies RequestInit & { agent?: HttpsAgent };
+    ...(peer.certificate ? { tls: { ca: peer.certificate } } : {}),
+  };
   return fetch(target.toString(), init).then(async (res) => ({
     statusCode: res.status,
     body: await res.text(),
