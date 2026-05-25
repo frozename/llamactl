@@ -153,6 +153,21 @@ function makeFakeWorkloadClient(): {
         return { unsubscribe: () => {} };
       },
     },
+    modelHostStart: {
+      subscribe() {
+        return { unsubscribe: () => {} };
+      },
+    },
+    modelHostStop: {
+      async mutate() {
+        return {};
+      },
+    },
+    modelHostStatus: {
+      async query() {
+        return { state: 'Stopped', pid: null };
+      },
+    },
     rpcServerStart: {
       subscribe() {
         return { unsubscribe: () => {} };
@@ -1044,6 +1059,7 @@ describe('applyComposite — gateway upstream threading', () => {
             workers: [],
             restartPolicy: 'OnFailure',
             gateway: false,
+            allowExternalBind: false,
             timeoutSeconds: 60,
           },
         ],

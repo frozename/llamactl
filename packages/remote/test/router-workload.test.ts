@@ -4,9 +4,9 @@ import { router } from '../src/router.js';
 describe('router workload validation', () => {
   test('exposes ModelHost lifecycle procedures', () => {
     const caller = router.createCaller({});
-    expect(typeof caller.modelHostStatus.query).toBe('function');
-    expect(typeof caller.modelHostStop.mutate).toBe('function');
-    expect(typeof caller.modelHostStart.subscribe).toBe('function');
+    expect(typeof caller.modelHostStatus).toBe('function');
+    expect(typeof caller.modelHostStop).toBe('function');
+    expect(typeof caller.modelHostStart).toBe('function');
   });
 
   test('accepts ModelRun manifests', async () => {
@@ -62,7 +62,8 @@ spec:
 
   test('modelHostStart validates optional inline manifest payloads', async () => {
     const caller = router.createCaller({});
-    await expect(caller.modelHostStart({ workload: 'host-a' })).resolves.toEqual({});
+    const stream = await caller.modelHostStart({ workload: 'host-a' });
+    expect(typeof stream[Symbol.asyncIterator]).toBe('function');
     await expect(
       caller.modelHostStart({
         workload: 'host-a',

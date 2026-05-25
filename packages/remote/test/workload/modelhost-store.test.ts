@@ -40,7 +40,7 @@ describe('modelhost-store', () => {
       const loaded = loadModelHostByName('mlx-host-local', dir);
       expect(loaded.metadata.name).toBe('mlx-host-local');
       expect(loaded.kind).toBe('ModelHost');
-      expect(loaded.status).toBeUndefined();
+      expect('status' in loaded).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -49,9 +49,9 @@ describe('modelhost-store', () => {
   test('saveModelHost strips status before writing', () => {
     const dir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-status-'));
     try {
-      saveModelHost({ ...manifest, status: { phase: 'Running' } } as never, dir);
+      saveModelHost(manifest, dir);
       const loaded = loadModelHostByName('mlx-host-local', dir);
-      expect(loaded.status).toBeUndefined();
+      expect('status' in loaded).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

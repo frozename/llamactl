@@ -21,7 +21,7 @@ describe('applyManifest — ModelHost timeout cleanup', () => {
         }),
       },
       serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
       modelHostStart: {
         subscribe: () => ({
           unsubscribe: () => {
@@ -31,7 +31,7 @@ describe('applyManifest — ModelHost timeout cleanup', () => {
       },
       modelHostStop: { mutate: async () => ({ ok: true }) },
       modelHostStatus: { query: async () => ({ state: 'Running' }) },
-      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
       rpcServerStop: { mutate: async () => ({ ok: true }) },
       rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
     };
@@ -40,25 +40,25 @@ describe('applyManifest — ModelHost timeout cleanup', () => {
     let result;
     try {
       result = await applyManifest({
-      manifest: {
-        apiVersion: 'llamactl/v1',
-        kind: 'ModelHost',
-        metadata: { name: 'mlx-host-timeout' },
-        spec: {
-          engine: 'omlx',
-          node: 'local',
-          enabled: true,
-          binary: '/usr/bin/true',
-          endpoint: { host: '127.0.0.1', port: 18095 },
-          hostedModels: [{ rel: 'mlx-community/Test-MLX-4bit' }],
-          extraArgs: [],
-          restartPolicy: 'Always',
-          timeoutSeconds: 1,
+        manifest: {
+          apiVersion: 'llamactl/v1',
+          kind: 'ModelHost',
+          metadata: { name: 'mlx-host-timeout' },
+          spec: {
+            engine: 'omlx',
+            node: 'local',
+            enabled: true,
+            binary: '/usr/bin/true',
+            endpoint: { host: '127.0.0.1', port: 18095 },
+            hostedModels: [{ rel: 'mlx-community/Test-MLX-4bit' }],
+            extraArgs: [],
+            restartPolicy: 'Always',
+            timeoutSeconds: 1,
+          },
         },
-      },
-      getClient: () => client,
-      workloadsDir: tmp,
-    });
+        getClient: () => client,
+        workloadsDir: tmp,
+      });
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

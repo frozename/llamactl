@@ -23,6 +23,7 @@ const mkManifest = (
     workers: [],
     restartPolicy: 'Always',
     gateway: false,
+    allowExternalBind: false,
     timeoutSeconds: 60,
     resources:
       opts.expectedMemoryGiB !== undefined

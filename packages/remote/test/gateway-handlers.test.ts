@@ -25,6 +25,7 @@ function gatewayManifest(node: string, target = 'openai/gpt-4o'): ModelRun {
       extraArgs: [],
       workers: [],
       restartPolicy: 'Always',
+      allowExternalBind: false,
       timeoutSeconds: 60,
     },
   };
@@ -224,6 +225,21 @@ describe('applyOne + gatewayDispatch integration', () => {
         throw new Error('serverStart should not be called on a gateway workload');
       },
     },
+    modelHostStart: {
+      subscribe() {
+        throw new Error('modelHostStart should not be called on a gateway workload');
+      },
+    },
+    modelHostStop: {
+      async mutate() {
+        throw new Error('modelHostStop should not be called on a gateway workload');
+      },
+    },
+    modelHostStatus: {
+      async query() {
+        throw new Error('modelHostStatus should not be called on a gateway workload');
+      },
+    },
     rpcServerStart: {
       subscribe() {
         throw new Error('rpcServerStart should not be called');
@@ -309,6 +325,9 @@ describe('applyOne + gatewayDispatch integration', () => {
       },
       serverStop: noopClient.serverStop,
       serverStart: noopClient.serverStart,
+      modelHostStart: noopClient.modelHostStart,
+      modelHostStop: noopClient.modelHostStop,
+      modelHostStatus: noopClient.modelHostStatus,
       rpcServerStart: noopClient.rpcServerStart,
       rpcServerStop: noopClient.rpcServerStop,
       rpcServerDoctor: noopClient.rpcServerDoctor,

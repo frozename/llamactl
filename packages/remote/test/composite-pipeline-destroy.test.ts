@@ -84,6 +84,9 @@ const stubClient: WorkloadClient = {
       return { unsubscribe: () => {} };
     },
   },
+  modelHostStart: { subscribe() { return { unsubscribe: () => {} }; } },
+  modelHostStop: { async mutate() { return {}; } },
+  modelHostStatus: { async query() { return { state: 'Stopped', pid: null }; } },
   rpcServerStart: { subscribe() { return { unsubscribe: () => {} }; } },
   rpcServerStop: { async mutate() { return {}; } },
   rpcServerDoctor: { async query() { return { ok: true, path: '/fake', llamaCppBin: '/fake' }; } },

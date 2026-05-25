@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { type spawn as nodeSpawn } from 'node:child_process';
 import { ENGINES } from '../../../core/src/engines/index.js';
 import { startModelHost, stopModelHost, statusModelHost } from '../../src/server/modelhost.js';
 
@@ -39,7 +40,7 @@ describe('server/modelhost', () => {
     const fakeBinary = join(tmp, 'omlx');
     mkdirSync(workloadsDir, { recursive: true });
     writeFileSync(fakeBinary, '#!/bin/sh\nexit 0\n');
-    const spawn = mock(() => {
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => {
       expect(readFileSync(join(workloadsDir, 'mlx-host-inline.yaml'), 'utf8')).toContain('name: mlx-host-inline');
       return { pid: 4321 } as const;
     });
@@ -66,7 +67,7 @@ describe('server/modelhost', () => {
         manifest,
         workloadsDir,
         runtimeDir,
-        spawn,
+        spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });
 
@@ -81,19 +82,19 @@ describe('server/modelhost', () => {
   test('keeps the manifest binary as source of truth', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-binary-'));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
-    const spawn = mock(() => ({ pid: 4321 } as const));
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 } as const));
     try {
       const result = await startModelHost({
         key: { name: 'mlx-host-server' },
         workloadsDir,
         runtimeDir,
-        spawn,
+        spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });
 
       expect(result.ok).toBe(true);
       expect(spawn).toHaveBeenCalledTimes(1);
-      const [binary] = spawn.mock.calls[0]!;
+      const [binary] = spawn.mock.calls[0] as unknown as [string, string[], unknown];
       expect(binary).toBe(join(tmp, 'omlx'));
       expect(binary).not.toBe('/tmp/evil.sh');
     } finally {
@@ -104,13 +105,13 @@ describe('server/modelhost', () => {
   test('keeps the manifest endpoint as source of truth', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-endpoint-'));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
-    const spawn = mock(() => ({ pid: 4321 } as const));
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 } as const));
     try {
       const result = await startModelHost({
         key: { name: 'mlx-host-server' },
         workloadsDir,
         runtimeDir,
-        spawn,
+        spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });
 
@@ -136,7 +137,7 @@ describe('server/modelhost', () => {
       order.push(`buildBootCommand:${spec.binary}`);
       return originalBuildBootCommand(spec, env);
     });
-    const spawn = mock(() => ({ pid: 4321 } as const));
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 } as const));
     try {
       engine.prepareLaunch = prepareLaunch;
       engine.buildBootCommand = buildBootCommand;
@@ -144,7 +145,7 @@ describe('server/modelhost', () => {
         key: { name: 'mlx-host-server' },
         workloadsDir,
         runtimeDir,
-        spawn,
+        spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });
 
@@ -165,7 +166,7 @@ describe('server/modelhost', () => {
     const tornDown: number[] = [];
     const engine = ENGINES.omlx;
     const originalTeardown = engine.teardown;
-    const spawn = mock(() => ({ pid: 4321 } as const));
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 } as const));
     try {
       engine.teardown = mock(async (pid: number) => {
         tornDown.push(pid);
@@ -174,7 +175,7 @@ describe('server/modelhost', () => {
         key: { name: 'mlx-host-server' },
         workloadsDir,
         runtimeDir,
-        spawn,
+        spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: false, modelIds: [] }),
       });
 
@@ -189,7 +190,7 @@ describe('server/modelhost', () => {
   test('sanitizes the spawned env to the allowlist', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-env-'));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
-    const spawn = mock(() => ({ pid: 4321 } as const));
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 } as const));
     const env = {
       PATH: '/usr/bin',
       HOME: '/Users/test',
@@ -208,13 +209,13 @@ describe('server/modelhost', () => {
         workloadsDir,
         runtimeDir,
         env,
-        spawn,
+        spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });
 
       expect(result.ok).toBe(true);
       expect(spawn).toHaveBeenCalledTimes(1);
-      const [, , options] = spawn.mock.calls[0]!;
+      const [, , options] = spawn.mock.calls[0] as unknown as [string, string[], { env?: NodeJS.ProcessEnv }];
       expect(options.env?.SECRET_TOKEN).toBeUndefined();
       expect(options.env?.PATH).toBe('/usr/bin');
       expect(options.env?.LLAMA_CPP_BIN).toBe('/bin/llama');
@@ -226,13 +227,13 @@ describe('server/modelhost', () => {
   test('startModelHost writes state sidecar with the spawn pid', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-start-'));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
-    const spawn = mock(() => ({ pid: 4321 } as const));
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 } as const));
     try {
       const result = await startModelHost({
         key: { name: 'mlx-host-server' },
         workloadsDir,
         runtimeDir,
-        spawn,
+        spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });
 
@@ -247,14 +248,14 @@ describe('server/modelhost', () => {
   test('stopModelHost reads state, tears down the pid, and removes sidecar state', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-stop-'));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
-    const spawn = mock(() => ({ pid: 4321 } as const));
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 } as const));
     const tornDown: number[] = [];
     try {
       await startModelHost({
         key: { name: 'mlx-host-server' },
         workloadsDir,
         runtimeDir,
-        spawn,
+        spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });
 
@@ -282,7 +283,7 @@ describe('server/modelhost', () => {
     const fakeBinary = join(tmp, 'omlx');
     mkdirSync(workloadsDir, { recursive: true });
     writeFileSync(fakeBinary, '#!/bin/sh\nexit 0\n');
-    const spawn = mock(() => ({ pid: 4321 } as const));
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 } as const));
     const manifest = {
       apiVersion: 'llamactl/v1',
       kind: 'ModelHost',
@@ -314,13 +315,13 @@ describe('server/modelhost', () => {
         workloadsDir,
         runtimeDir,
         env,
-        spawn,
+        spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });
 
       expect(result.ok).toBe(true);
       expect(spawn).toHaveBeenCalledTimes(1);
-      const [, , options] = spawn.mock.calls[0]!;
+      const [, , options] = spawn.mock.calls[0] as unknown as [string, string[], { env?: NodeJS.ProcessEnv }];
       expect(options.env?.MLX_METAL_MAX_INFLIGHT_PER_STREAM).toBe('1');
       expect(options.env?.MY_CUSTOM).toBe('hello');
       expect(options.env?.SECRET_TOKEN).toBeUndefined();

@@ -55,6 +55,7 @@ const mkManifest = (name: string, overrides: Partial<{
     workers: [],
     restartPolicy: 'Always',
     gateway: false,
+    allowExternalBind: false,
     timeoutSeconds: 60,
     endpoint: { host: '127.0.0.1', port: overrides.port ?? 8181 },
     resources: { expectedMemoryGiB: overrides.ram ?? 8 },

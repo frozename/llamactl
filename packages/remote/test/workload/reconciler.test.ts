@@ -43,7 +43,7 @@ function makeClient(): WorkloadClient {
     },
     serverStop: { mutate: async () => ({ ok: true }) },
     serverStart: {
-      subscribe: async (_input, callbacks) => {
+      subscribe: (_input, callbacks) => {
         queueMicrotask(() => {
           callbacks.onData({ type: 'done', result: { ok: true, pid: 111, endpoint: 'http://127.0.0.1:18080' } });
           callbacks.onComplete();
@@ -52,7 +52,7 @@ function makeClient(): WorkloadClient {
       },
     },
     modelHostStart: {
-      subscribe: async (_input, callbacks) => {
+      subscribe: (_input, callbacks) => {
         queueMicrotask(() => {
           callbacks.onData({ type: 'done', result: { ok: true } });
           callbacks.onComplete();
@@ -74,7 +74,7 @@ function makeClient(): WorkloadClient {
         timeoutSeconds: 60,
       }),
     },
-    rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+    rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
     rpcServerStop: { mutate: async () => ({ ok: true }) },
     rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
   };
@@ -82,7 +82,7 @@ function makeClient(): WorkloadClient {
 
 function makeRunManifest() {
   return {
-    apiVersion: 'llamactl/v1',
+    apiVersion: 'llamactl/v1' as const,
     kind: 'ModelRun' as const,
     metadata: { name: 'run-a', labels: {}, annotations: {} },
     spec: {
@@ -101,7 +101,7 @@ function makeRunManifest() {
 
 function makeHostManifest() {
   return {
-    apiVersion: 'llamactl/v1',
+    apiVersion: 'llamactl/v1' as const,
     kind: 'ModelHost' as const,
     metadata: { name: 'host-a' },
     spec: {
@@ -124,7 +124,7 @@ describe('reconcileOnce', () => {
     const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
     try {
       saveWorkload(makeRunManifest(), dir);
-      saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } } as never, dir);
+      saveModelHost(makeHostManifest(), dir);
       process.env.LOCAL_AI_RUNTIME_DIR = dir;
       // Sidecar with matching specHash → reconciler skips applyOneModelHost.
       seedRunningSidecar(dir, makeHostManifest());
@@ -179,7 +179,7 @@ describe('reconcileOnce', () => {
     const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
     const startCalls: unknown[] = [];
     try {
-      saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } } as never, dir);
+      saveModelHost(makeHostManifest(), dir);
       process.env.LOCAL_AI_RUNTIME_DIR = dir;
       // Sidecar with matching specHash → reconciler skips applyOneModelHost.
       seedRunningSidecar(dir, makeHostManifest());
@@ -203,7 +203,7 @@ describe('reconcileOnce', () => {
             }),
           },
           modelHostStart: {
-            subscribe: mock(async (_input, _callbacks) => {
+            subscribe: mock((_input, _callbacks) => {
               startCalls.push(_input);
               return { unsubscribe() {} };
             }),
@@ -227,7 +227,7 @@ describe('reconcileOnce', () => {
     let startCalls = 0;
     const currentManifest = makeHostManifest();
     try {
-      saveModelHost({ ...currentManifest, status: { phase: 'Running' } }, dir);
+      saveModelHost(currentManifest, dir);
       process.env.LOCAL_AI_RUNTIME_DIR = dir;
 
       const result = await reconcileOnce({
@@ -243,7 +243,6 @@ describe('reconcileOnce', () => {
                     ...currentManifest.spec,
                     extraArgs: ['--threads', '2'],
                   },
-                  status: { phase: 'Running' },
                 } as never,
                 dir,
               );
@@ -262,7 +261,7 @@ describe('reconcileOnce', () => {
             },
           },
           modelHostStart: {
-            subscribe: async (_input, callbacks) => {
+            subscribe: (_input, callbacks) => {
               startCalls += 1;
               queueMicrotask(() => {
                 callbacks.onData({ type: 'done', result: { ok: true, pid: 4321, state: 'Running' } });
@@ -296,11 +295,10 @@ describe('reconcileOnce', () => {
             ...makeHostManifest().spec,
             restartPolicy: 'OnFailure',
           },
-          status: { phase: 'Running' },
         } as never,
         dir,
       );
-      saveModelHost({ ...makeHostManifest(), status: { phase: 'Running' } } as never, dir);
+      saveModelHost(makeHostManifest(), dir);
       process.env.LOCAL_AI_RUNTIME_DIR = dir;
 
       const result = await reconcileOnce({
@@ -322,7 +320,7 @@ describe('reconcileOnce', () => {
             }),
           },
           modelHostStart: {
-            subscribe: async (_input, callbacks) => {
+            subscribe: (_input, callbacks) => {
               startCalls += 1;
               queueMicrotask(() => {
                 callbacks.onData({ type: 'done', result: { ok: true, pid: 4321, state: 'Running' } });
@@ -356,7 +354,6 @@ describe('reconcileOnce', () => {
             ...makeHostManifest().spec,
             enabled: false,
           },
-          status: { phase: 'Stopped' },
         } as never,
         dir,
       );

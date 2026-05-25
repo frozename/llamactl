@@ -68,6 +68,17 @@ function makeClient(): WorkloadClient {
         return { unsubscribe() {} };
       },
     },
+    modelHostStart: {
+      subscribe(_input, callbacks) {
+        queueMicrotask(() => {
+          callbacks.onData({ type: 'done', result: { ok: true } });
+          callbacks.onComplete();
+        });
+        return { unsubscribe() {} };
+      },
+    },
+    modelHostStop: { async mutate() { return {}; } },
+    modelHostStatus: { async query() { return { state: 'Stopped', pid: null }; } },
     rpcServerStart: {
       subscribe(_input, callbacks) {
         queueMicrotask(() => {

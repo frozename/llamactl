@@ -223,6 +223,7 @@ describe('applyOne gateway branch', () => {
         extraArgs: [],
         workers: [],
         restartPolicy: 'Always',
+        allowExternalBind: false,
         timeoutSeconds: 60,
       },
     };

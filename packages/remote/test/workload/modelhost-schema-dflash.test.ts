@@ -30,7 +30,7 @@ const base = {
 describe('ModelHostManifestSchema dflash', () => {
   test('round-trips hostedModels[0].dflash', () => {
     const parsed = ModelHostManifestSchema.parse(base);
-    expect(parsed.spec.hostedModels[0]?.dflash).toEqual(base.spec.hostedModels[0].dflash);
+    expect(parsed.spec.hostedModels[0]?.dflash).toEqual(base.spec.hostedModels[0]!.dflash);
   });
 
   test('round-trips without dflash', () => {

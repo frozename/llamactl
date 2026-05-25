@@ -6,9 +6,12 @@ import { join } from 'node:path';
 import { applyManifest, applyOneModelHost, type WorkloadClient } from '../../src/workload/apply.js';
 import { reconcileOnce } from '../../src/workload/reconciler.js';
 import { listModelHosts, saveModelHost } from '../../src/workload/modelhost-store.js';
+import type { ModelHostManifest } from '../../src/workload/modelhost-schema.js';
+import type { ModelRun } from '../../src/workload/schema.js';
 import { setWorkloadEnabledWithDeps } from '../../../cli/src/commands/setEnabled.js';
 import * as modelHostState from '../../../core/src/engines/state.js';
 import { readModelHostState, removeModelHostState } from '../../../core/src/engines/state.js';
+import { resolveEnv } from '../../../core/src/env.js';
 
 function makeModelRunClient(): WorkloadClient {
   return {
@@ -44,7 +47,7 @@ function makeModelRunClient(): WorkloadClient {
 }
 
 describe('applyManifest — kind dispatch', () => {
-  function makeModelHostManifest(name: string, expectedMemoryGiB: number) {
+  function makeModelHostManifest(name: string, expectedMemoryGiB: number): ModelHostManifest {
     return {
       apiVersion: 'llamactl/v1',
       kind: 'ModelHost',
@@ -111,7 +114,7 @@ describe('applyManifest — kind dispatch', () => {
       return { pid: 99999 } as any;
     });
 
-    const manifest = {
+    const manifest: ModelHostManifest = {
       apiVersion: 'llamactl/v1',
       kind: 'ModelHost',
       metadata: { name: 'mlx-host-test' },
@@ -140,11 +143,12 @@ describe('applyManifest — kind dispatch', () => {
       if (!result.ok) console.log('ERROR:', result); expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.kind).toBe('ModelHost');
+      if (result.kind !== 'ModelHost') return;
       expect(result.pid).toBe(3333);
       // Observed state lives in the sidecar, not the manifest.
       expect(readModelHostState(
         { name: 'mlx-host-test' },
-        { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp } as any,
+        resolveEnv({ ...process.env, LOCAL_AI_RUNTIME_DIR: tmp }),
       )?.pid).toBe(3333);
       expect(captured.spawnCalls).toBe(0);
       expect(captured.statusCalls).toBe(1);
@@ -267,7 +271,7 @@ describe('applyManifest — kind dispatch', () => {
   test('applyOneModelHost surfaces modelHostStop failures when disabling', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-disable-fail-'));
     const workloadsDir = join(tmp, 'workloads');
-    saveModelHost({ ...makeModelHostManifest('mlx-host-smoke', 4), status: { phase: 'Running' } }, workloadsDir);
+    saveModelHost(makeModelHostManifest('mlx-host-smoke', 4), workloadsDir);
     const removeSpy = spyOn(modelHostState, 'removeModelHostState');
     const client: WorkloadClient = {
       serverStatus: {
@@ -365,11 +369,12 @@ describe('applyManifest — kind dispatch', () => {
       if (!result.ok) console.log('ERROR:', result); expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.kind).toBe('ModelHost');
+      if (result.kind !== 'ModelHost') return;
       // Disable removes the controller-side sidecar; there is no
       // observed-phase to assert on the manifest itself.
       expect(readModelHostState(
         { name: 'mlx-host-disabled' },
-        { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp } as any,
+        resolveEnv({ ...process.env, LOCAL_AI_RUNTIME_DIR: tmp }),
       )).toBeNull();
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -426,6 +431,7 @@ describe('applyManifest — kind dispatch', () => {
 
       if (!result.ok) console.log('ERROR:', result); expect(result.ok).toBe(true);
       if (!result.ok) return;
+      if (result.kind !== 'ModelHost') return;
       expect(result.pid).toBe(99);
       expect(captured.statusCalls).toBe(0);
     } finally {
@@ -437,7 +443,7 @@ describe('applyManifest — kind dispatch', () => {
     const fakeSpawn = mock(() => {
       throw new Error('spawn should not be called for ModelRun manifests');
     });
-    const manifest = {
+    const manifest: ModelRun = {
       apiVersion: 'llamactl/v1',
       kind: 'ModelRun',
       metadata: { name: 'modelrun-test', labels: {}, annotations: {} },
@@ -450,6 +456,7 @@ describe('applyManifest — kind dispatch', () => {
         restartPolicy: 'Always',
         timeoutSeconds: 60,
         gateway: false,
+        allowExternalBind: false,
       },
     };
 
@@ -461,6 +468,7 @@ describe('applyManifest — kind dispatch', () => {
     if (!result.ok) console.log('ERROR:', result); expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.kind).toBe('ModelRun');
+      if (result.kind !== 'ModelRun') return;
       expect(result.result.action).toBe('started');
     }
     expect(fakeSpawn).not.toHaveBeenCalled();
@@ -473,15 +481,16 @@ describe('applyManifest — kind dispatch', () => {
     const fakeBinary = join(tmp, 'omlx');
     const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
     const runtimeEnv = { ...process.env, LOCAL_AI_RUNTIME_DIR: runtimeDir };
+    const resolvedRuntimeEnv = resolveEnv(runtimeEnv);
 
     let pid = 4242;
     const client: WorkloadClient = {
       serverStatus: {
         query: async () => ({
-          state: readModelHostState({ name: 'mlx-host-smoke' }, runtimeEnv) ? 'up' : 'down',
+          state: readModelHostState({ name: 'mlx-host-smoke' }, resolvedRuntimeEnv) ? 'up' : 'down',
           rel: null,
           extraArgs: [],
-          pid: readModelHostState({ name: 'mlx-host-smoke' }, runtimeEnv)?.pid ?? null,
+          pid: readModelHostState({ name: 'mlx-host-smoke' }, resolvedRuntimeEnv)?.pid ?? null,
           host: '127.0.0.1',
           port: 8094,
           binary: '/tmp/omlx',
@@ -490,7 +499,7 @@ describe('applyManifest — kind dispatch', () => {
       },
       serverStop: {
         mutate: async () => {
-          removeModelHostState({ name: 'mlx-host-smoke' }, { runtimeDir });
+          removeModelHostState({ name: 'mlx-host-smoke' }, resolvedRuntimeEnv);
           return { ok: true };
         },
       },
@@ -506,14 +515,14 @@ describe('applyManifest — kind dispatch', () => {
       },
       modelHostStop: {
         mutate: async () => {
-          removeModelHostState({ name: 'mlx-host-smoke' }, runtimeEnv);
+          removeModelHostState({ name: 'mlx-host-smoke' }, resolvedRuntimeEnv);
           return { ok: true };
         },
       },
       modelHostStatus: {
         query: async () => ({
-          state: readModelHostState({ name: 'mlx-host-smoke' }, runtimeEnv) ? 'Running' : 'Stopped',
-          pid: readModelHostState({ name: 'mlx-host-smoke' }, runtimeEnv)?.pid ?? null,
+          state: readModelHostState({ name: 'mlx-host-smoke' }, resolvedRuntimeEnv) ? 'Running' : 'Stopped',
+          pid: readModelHostState({ name: 'mlx-host-smoke' }, resolvedRuntimeEnv)?.pid ?? null,
         }),
       },
       rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
@@ -521,7 +530,7 @@ describe('applyManifest — kind dispatch', () => {
       rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
     };
 
-    const manifest = {
+    const manifest: ModelHostManifest = {
       apiVersion: 'llamactl/v1',
       kind: 'ModelHost',
       metadata: { name: 'mlx-host-smoke' },
@@ -563,12 +572,12 @@ describe('applyManifest — kind dispatch', () => {
           return found;
         },
         saveModelHost: (m) => saveModelHost(m, workloadsDir),
-        getNodeClientByName: () => client,
+        getNodeClientByName: () => client as never,
       });
       expect(disabled.code).toBe(0);
-      expect(readModelHostState({ name: 'mlx-host-smoke' }, runtimeEnv)).toBeNull();
+      expect(readModelHostState({ name: 'mlx-host-smoke' }, resolvedRuntimeEnv)).toBeNull();
 
-      removeModelHostState({ name: 'mlx-host-smoke' }, runtimeEnv);
+      removeModelHostState({ name: 'mlx-host-smoke' }, resolvedRuntimeEnv);
 
       const reconciled = await reconcileOnce({
         workloadsDir,
@@ -588,7 +597,7 @@ describe('applyManifest — kind dispatch', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-supervisor-'));
     try {
       const workloadsDir = join(tmp, 'workloads');
-      const manifest = {
+      const manifest: ModelHostManifest = {
         apiVersion: 'llamactl/v1',
         kind: 'ModelHost',
         metadata: { name: 'mlx-host-big' },
@@ -604,7 +613,7 @@ describe('applyManifest — kind dispatch', () => {
           restartPolicy: 'Always',
           timeoutSeconds: 60,
         },
-      } as const;
+      };
 
       let launchCalled = false;
       const client: WorkloadClient = {

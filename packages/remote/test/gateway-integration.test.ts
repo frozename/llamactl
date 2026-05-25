@@ -106,6 +106,7 @@ function manifest(node: string, target: string): ModelRun {
       extraArgs: [],
       workers: [],
       restartPolicy: 'Always',
+      allowExternalBind: false,
       timeoutSeconds: 60,
     },
   };

@@ -76,6 +76,25 @@ function makeMockClient(
         return { unsubscribe() {} };
       },
     },
+    modelHostStart: {
+      subscribe(_input, callbacks) {
+        queueMicrotask(() => {
+          callbacks.onData({ type: 'done', result: { ok: true } });
+          callbacks.onComplete();
+        });
+        return { unsubscribe() {} };
+      },
+    },
+    modelHostStop: {
+      async mutate() {
+        return { ok: true };
+      },
+    },
+    modelHostStatus: {
+      async query() {
+        return { state: 'Stopped', pid: null };
+      },
+    },
     rpcServerStart: {
       subscribe(_input, callbacks) {
         trace.rpcServerStartCalls.push(nodeName);
@@ -113,6 +132,7 @@ function manifest(): ModelRun {
       node: 'coordinator',
       enabled: true,
       gateway: false,
+      allowExternalBind: false,
       target: { kind: 'rel', value: 'tiny.gguf' },
       extraArgs: [],
       restartPolicy: 'Always',
@@ -332,6 +352,17 @@ describe('applyOne preflight — worker rpcServerDoctor', () => {
           return { unsubscribe() {} };
         },
       },
+      modelHostStart: {
+        subscribe(_input, callbacks) {
+          queueMicrotask(() => {
+            callbacks.onData({ type: 'done', result: { ok: true } });
+            callbacks.onComplete();
+          });
+          return { unsubscribe() {} };
+        },
+      },
+      modelHostStop: { async mutate() { return {}; } },
+      modelHostStatus: { async query() { return { state: 'Stopped', pid: null }; } },
       rpcServerStart: {
         subscribe(_input, callbacks) {
           trace.rpcServerStartCalls.push(node);
