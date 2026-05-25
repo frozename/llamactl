@@ -792,6 +792,36 @@ function logSlotInjectionEvent(event: string, fields: Record<string, unknown>): 
   console.debug(JSON.stringify({ event, ...fields }));
 }
 
+function prefixForRestoreEpoch(restoreEpoch: string): string {
+  return `${restoreEpoch.slice(0, 8)}...`;
+}
+
+/**
+ * User requests must not be able to supply oMLX vendor fields directly.
+ * The proxy is the only trusted writer for `x_omlx_request_handle` and
+ * `x_omlx_restore_epoch`; stripping at ingress preserves response-cache
+ * locality while preventing stale or mismatched restore metadata from
+ * replaying across requests.
+ */
+function stripUserSuppliedOmlxVendorFields(
+  body: Record<string, unknown>,
+  model: string,
+  workload: string,
+): boolean {
+  const hadRequestHandle = Object.prototype.hasOwnProperty.call(body, 'x_omlx_request_handle');
+  const hadRestoreEpoch = Object.prototype.hasOwnProperty.call(body, 'x_omlx_restore_epoch');
+  if (!hadRequestHandle && !hadRestoreEpoch) return false;
+  delete body.x_omlx_request_handle;
+  delete body.x_omlx_restore_epoch;
+  logSlotInjectionEvent('slot_injection_user_supplied_stripped', {
+    model,
+    workload,
+    had_handle: hadRequestHandle,
+    had_epoch: hadRestoreEpoch,
+  });
+  return true;
+}
+
 function injectVendorFields(
   body: Record<string, unknown>,
   fields: { x_omlx_request_handle: string; x_omlx_restore_epoch: string },
@@ -845,8 +875,9 @@ async function maybeInjectOmlxRestoreBind(
     logSlotInjectionEvent('slot_injection_overwrote_user_field', {
       workload,
       model,
-      user_value: userValue,
-      proxy_value: basenameStripKvslot(upstreamSlotFile),
+      had_user_value: userValue !== undefined,
+      user_value_len: typeof userValue === 'string' ? userValue.length : 0,
+      proxy_value_prefix: prefixForRestoreEpoch(restoreEpoch),
     });
   }
   const injectedBody = JSON.stringify(parsed);
@@ -859,7 +890,7 @@ async function maybeInjectOmlxRestoreBind(
     workload,
     model,
     request_handle: basenameStripKvslot(upstreamSlotFile),
-    restore_epoch: restoreEpoch,
+    restore_epoch_prefix: prefixForRestoreEpoch(restoreEpoch),
   });
 }
 
@@ -1392,6 +1423,29 @@ export async function proxyOpenAI(
   const translated = maybeTranslate(parsed);
   const routed = await resolveRoute(translated);
   if (routed instanceof Response) return routed;
+  if (routed.bodyText) {
+    let parsedBody: unknown;
+    try {
+      parsedBody = JSON.parse(routed.bodyText);
+    } catch {
+      parsedBody = null;
+    }
+    if (isRecord(parsedBody)) {
+      stripUserSuppliedOmlxVendorFields(
+        parsedBody,
+        requestedModelFromBody(routed.bodyText) ?? routed.route?.model ?? 'unknown',
+        routed.route?.workload ?? 'unknown',
+      );
+      const strippedBodyText = JSON.stringify(parsedBody);
+      if (strippedBodyText !== routed.bodyText) {
+        routed.bodyText = strippedBodyText;
+        routed.init = {
+          ...routed.init,
+          body: strippedBodyText,
+        };
+      }
+    }
+  }
   const withResponseCacheLookup = await maybeResponseCacheLookup(routed);
   if (withResponseCacheLookup.responseCacheHit) {
     return withResponseCacheLookup.responseCacheHit;

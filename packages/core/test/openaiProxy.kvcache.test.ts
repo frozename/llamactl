@@ -748,7 +748,7 @@ test('phase4b logs slot injection applied event on success', async () => {
       workload: 'wl-a',
       model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
       request_handle: sha,
-      restore_epoch: 'abc',
+      restore_epoch_prefix: 'abc...',
     });
   } finally {
     debugSpy.mockRestore();
@@ -869,7 +869,7 @@ test('phase4b logs slot injection skipped with no_restore_epoch reason', async (
   }
 });
 
-test('proxy injection overwrites user supplied vendor fields', async () => {
+test('proxy strips user supplied x_omlx_request_handle at ingress', async () => {
   const runtime = makeTempRuntime();
   const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
   const upstream = await startUpstream({ slotBaseDir, supportsRequestHandle: true, restoreEpoch: 'abc' });
@@ -879,11 +879,14 @@ test('proxy injection overwrites user supplied vendor fields', async () => {
     writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
     const body = JSON.stringify({
       model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
-      messages: [{ role: 'user', content: 'overwrite handle' }],
+      messages: [{ role: 'user', content: 'strip handle' }],
       x_omlx_request_handle: 'user-handle',
-      x_omlx_restore_epoch: 'user-epoch',
     });
-    const sha = shaForBody(body);
+    const strippedBody = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'strip handle' }],
+    });
+    const sha = shaForBody(strippedBody);
     const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, 'slot');
@@ -895,11 +898,11 @@ test('proxy injection overwrites user supplied vendor fields', async () => {
       sha,
       workload: 'wl-a',
       upstreamSlotFile: slotFile,
-      tokens: Buffer.byteLength(body, 'utf8'),
-      prefixByteLength: Buffer.byteLength(body, 'utf8'),
+      tokens: Buffer.byteLength(strippedBody, 'utf8'),
+      prefixByteLength: Buffer.byteLength(strippedBody, 'utf8'),
       workloadEpoch: workloadEpoch!,
-      payloadBytes: Buffer.byteLength(body, 'utf8'),
-      textBytes: Buffer.byteLength(body, 'utf8'),
+      payloadBytes: Buffer.byteLength(strippedBody, 'utf8'),
+      textBytes: Buffer.byteLength(strippedBody, 'utf8'),
       firstResponseToken: 'Hello world',
     }));
     storage.close();
@@ -918,11 +921,157 @@ test('proxy injection overwrites user supplied vendor fields', async () => {
     expect(echoed.x_omlx_request_handle).toBe(sha);
     expect(echoed.x_omlx_restore_epoch).toBe('abc');
     expect(parsedConsoleDebugEvents(debugSpy)).toContainEqual({
+      event: 'slot_injection_user_supplied_stripped',
+      workload: 'wl-a',
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      had_handle: true,
+      had_epoch: false,
+    });
+  } finally {
+    debugSpy.mockRestore();
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('proxy strips user supplied x_omlx_restore_epoch at ingress', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, supportsRequestHandle: true, restoreEpoch: 'abc' });
+  const debugSpy = spyOn(console, 'debug').mockImplementation(() => {});
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'strip epoch' }],
+      x_omlx_restore_epoch: 'user-epoch',
+    });
+    const strippedBody = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'strip epoch' }],
+    });
+    const sha = shaForBody(strippedBody);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(strippedBody, 'utf8'),
+      prefixByteLength: Buffer.byteLength(strippedBody, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(strippedBody, 'utf8'),
+      textBytes: Buffer.byteLength(strippedBody, 'utf8'),
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    const responseJson = await response.json() as { echoed?: string };
+    const echoed = JSON.parse(responseJson.echoed ?? '{}') as Record<string, unknown>;
+    expect(echoed.x_omlx_request_handle).toBe(sha);
+    expect(echoed.x_omlx_restore_epoch).toBe('abc');
+    expect(parsedConsoleDebugEvents(debugSpy)).toContainEqual({
+      event: 'slot_injection_user_supplied_stripped',
+      workload: 'wl-a',
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      had_handle: false,
+      had_epoch: true,
+    });
+  } finally {
+    debugSpy.mockRestore();
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('proxy injection overwrites user supplied vendor fields', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, supportsRequestHandle: true, restoreEpoch: 'abc' });
+  const debugSpy = spyOn(console, 'debug').mockImplementation(() => {});
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'overwrite handle' }],
+      x_omlx_request_handle: 'user-handle',
+      x_omlx_restore_epoch: 'user-epoch',
+    });
+    const strippedBody = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'overwrite handle' }],
+    });
+    const sha = shaForBody(strippedBody);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(strippedBody, 'utf8'),
+      prefixByteLength: Buffer.byteLength(strippedBody, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(strippedBody, 'utf8'),
+      textBytes: Buffer.byteLength(strippedBody, 'utf8'),
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    const responseJson = await response.json() as { echoed?: string };
+    const echoed = JSON.parse(responseJson.echoed ?? '{}') as Record<string, unknown>;
+    expect(echoed.x_omlx_request_handle).toBe(sha);
+    expect(echoed.x_omlx_restore_epoch).toBe('abc');
+    const debugEvents = parsedConsoleDebugEvents(debugSpy);
+    expect(debugEvents).toContainEqual({
+      event: 'slot_injection_user_supplied_stripped',
+      workload: 'wl-a',
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      had_handle: true,
+      had_epoch: true,
+    });
+    expect(parsedConsoleDebugEvents(debugSpy)).toContainEqual({
+      event: 'slot_injection_applied',
+      workload: 'wl-a',
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      request_handle: sha,
+      restore_epoch_prefix: 'abc...',
+    });
+    expect(debugEvents).not.toContainEqual({
       event: 'slot_injection_overwrote_user_field',
       workload: 'wl-a',
       model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
       user_value: 'user-handle',
-      proxy_value: sha,
+      proxy_value: 'abc',
     });
   } finally {
     debugSpy.mockRestore();
