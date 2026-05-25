@@ -1,0 +1,166 @@
+import { Database } from 'bun:sqlite';
+import { expect, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  openResponseCacheStorage,
+  ResponseCacheRegistry,
+  type ResponseCacheEntry,
+} from '../../src/responsecache/index.js';
+import { runMigrations } from '../../src/responsecache/storage.js';
+
+function makeTempRoot(): { root: string; cleanup: () => void } {
+  const root = mkdtempSync(join(tmpdir(), 'llamactl-responsecache-'));
+  return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+function baseEntry(overrides: Partial<ResponseCacheEntry> = {}): ResponseCacheEntry {
+  return {
+    sha: 'sha-1',
+    model: 'Qwen',
+    contentType: 'application/json',
+    statusCode: 200,
+    responseBody: new TextEncoder().encode('{"ok":true}'),
+    requestBodyBytes: 64,
+    responseBodyBytes: 32,
+    createdAt: 1,
+    lastUsed: 1,
+    hits: 0,
+    ...overrides,
+  };
+}
+
+test('schema migration creates schema_version=1 and response_entries columns', () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openResponseCacheStorage(t.root);
+    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    expect(version?.version).toBe(1);
+    const table = storage.db.query(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table' AND name = 'response_entries'
+      LIMIT 1
+    `).get() as { name: string } | null;
+    expect(table?.name).toBe('response_entries');
+    const columns = storage.db.query("PRAGMA table_info('response_entries')").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual([
+      'sha',
+      'model',
+      'content_type',
+      'status_code',
+      'response_body',
+      'request_body_bytes',
+      'response_body_bytes',
+      'created_at',
+      'last_used',
+      'hits',
+    ]);
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('migration from v0 to v1 preserves inserted rows', () => {
+  const t = makeTempRoot();
+  try {
+    const cacheDir = join(t.root, 'responsecache');
+    mkdirSync(cacheDir, { recursive: true });
+    const db = new Database(join(cacheDir, 'responses.db'));
+    db.run('PRAGMA journal_mode = WAL');
+    db.run('CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)');
+    db.query('INSERT INTO schema_version (version) VALUES (0)').run();
+    runMigrations(db, 0, 1);
+    db.query(`
+      INSERT INTO response_entries (
+        sha, model, content_type, status_code, response_body,
+        request_body_bytes, response_body_bytes, created_at, last_used, hits
+      ) VALUES (
+        'sha-legacy', 'Legacy', 'application/json', 200, x'7B7D',
+        2, 2, 1, 1, 0
+      )
+    `).run();
+    db.close();
+
+    const storage = openResponseCacheStorage(t.root);
+    const registry = new ResponseCacheRegistry(storage);
+    const row = registry.findBySha('sha-legacy');
+    expect(row).not.toBeNull();
+    expect(row?.model).toBe('Legacy');
+    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    expect(version?.version).toBe(1);
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('openResponseCacheStorage enables WAL mode', () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openResponseCacheStorage(t.root);
+    const mode = storage.db.query('PRAGMA journal_mode').get() as { journal_mode: string } | null;
+    expect(mode?.journal_mode.toLowerCase()).toBe('wal');
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('ResponseCacheRegistry CRUD and bumpHit round-trip', () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openResponseCacheStorage(t.root);
+    const registry = new ResponseCacheRegistry(storage);
+    registry.insert(baseEntry({ sha: 'roundtrip', hits: 2, lastUsed: 100 }));
+
+    const inserted = registry.findBySha('roundtrip');
+    expect(inserted?.hits).toBe(2);
+    expect(inserted?.lastUsed).toBe(100);
+
+    registry.bumpHit('roundtrip', 250);
+    const bumped = registry.findBySha('roundtrip');
+    expect(bumped?.hits).toBe(3);
+    expect(bumped?.lastUsed).toBe(250);
+
+    expect(registry.tryDelete('roundtrip')).toBe(true);
+    expect(registry.findBySha('roundtrip')).toBeNull();
+    expect(registry.tryDelete('roundtrip')).toBe(false);
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('in-process counters exist and are mutable', () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openResponseCacheStorage(t.root);
+    expect(storage.response_cache_hit_total).toBe(0);
+    expect(storage.response_cache_miss_total).toBe(0);
+    expect(storage.response_cache_evict_total).toBe(0);
+    storage.response_cache_hit_total += 1;
+    storage.response_cache_miss_total += 2;
+    storage.response_cache_evict_total += 3;
+    expect(storage.response_cache_hit_total).toBe(1);
+    expect(storage.response_cache_miss_total).toBe(2);
+    expect(storage.response_cache_evict_total).toBe(3);
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('openResponseCacheStorage creates <dataRoot>/responsecache directory on first open', () => {
+  const t = makeTempRoot();
+  try {
+    const cacheDir = join(t.root, 'responsecache');
+    expect(existsSync(cacheDir)).toBe(false);
+    const storage = openResponseCacheStorage(t.root);
+    expect(existsSync(cacheDir)).toBe(true);
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});

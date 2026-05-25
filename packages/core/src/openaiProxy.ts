@@ -33,6 +33,15 @@ import {
   type KvTrailer,
   type KvStorage,
 } from './kvstore/index.js';
+import {
+  canonicalRequestSha,
+  isDeterministic,
+  openResponseCacheStorage,
+  ResponseCacheRegistry,
+  runResponseCacheEvictionIfOverBudget,
+  type ResponseCacheEntry,
+  type ResponseCacheStorage,
+} from './responsecache/index.js';
 
 const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
 
@@ -189,6 +198,11 @@ interface KvRuntime {
   slotClients: Map<string, { endpoint: string; client: UpstreamSlotClient }>;
 }
 
+interface ResponseCacheRuntime {
+  storage: ResponseCacheStorage;
+  registry: ResponseCacheRegistry;
+}
+
 interface KvRequestState {
   runtime: KvRuntime;
   workload: string;
@@ -206,6 +220,14 @@ interface KvRequestState {
   enforceFirstTokenEquivalence: boolean;
 }
 
+interface ResponseCacheRequestState {
+  runtime: ResponseCacheRuntime;
+  sha: string;
+  model: string;
+  deterministic: boolean;
+  requestBodyBytes: number;
+}
+
 type ProxyContext = {
   req: Request;
   resolved: ResolvedEnv;
@@ -219,6 +241,8 @@ type ProxyContext = {
   anthropicRequest?: AnthropicMessagesRequest;
   route?: RoutedEntry;
   kv?: KvRequestState;
+  responseCache?: ResponseCacheRequestState;
+  responseCacheHit?: Response;
 };
 
 let routeMapCache: { mtimeNs: bigint; map: Map<string, RouteEntry> } | null = null;
@@ -272,7 +296,11 @@ export function __resetOpenAIProxyRouteMapCacheForTests(): void {
   for (const runtime of kvRuntimeByDataRoot.values()) {
     runtime.storage.close();
   }
+  for (const runtime of responseCacheRuntimeByDataRoot.values()) {
+    runtime.storage.close();
+  }
   kvRuntimeByDataRoot.clear();
+  responseCacheRuntimeByDataRoot.clear();
 }
 
 export function __getOpenAIProxyRouteMapBuildCountForTests(): number {
@@ -285,6 +313,18 @@ export function __getOpenAIProxyKvFalseHitTotalForTests(resolved: ResolvedEnv): 
 
 export function __getOpenAIProxyKvReplayMismatchTotalForTests(resolved: ResolvedEnv): number {
   return kvRuntimeFor(resolved).storage.kv_replay_mismatch_total;
+}
+
+export function __getOpenAIProxyResponseCacheHitTotalForTests(resolved: ResolvedEnv): number {
+  return responseCacheRuntimeFor(resolved).storage.response_cache_hit_total;
+}
+
+export function __getOpenAIProxyResponseCacheMissTotalForTests(resolved: ResolvedEnv): number {
+  return responseCacheRuntimeFor(resolved).storage.response_cache_miss_total;
+}
+
+export function __getOpenAIProxyResponseCacheEvictTotalForTests(resolved: ResolvedEnv): number {
+  return responseCacheRuntimeFor(resolved).storage.response_cache_evict_total;
 }
 
 function anthropicTranslationErrorResponse(error: unknown): Response {
@@ -360,6 +400,7 @@ function maybeTranslate(context: ProxyContext): ProxyContext {
 }
 
 const kvRuntimeByDataRoot = new Map<string, KvRuntime>();
+const responseCacheRuntimeByDataRoot = new Map<string, ResponseCacheRuntime>();
 
 function resolveKvDataRoot(resolved: ResolvedEnv): string {
   // KV state is rooted beside workload runtime files to avoid route-map cache churn on each KV write.
@@ -380,6 +421,19 @@ function kvRuntimeFor(resolved: ResolvedEnv): KvRuntime {
     slotClients: new Map(),
   };
   kvRuntimeByDataRoot.set(dataRoot, runtime);
+  return runtime;
+}
+
+function responseCacheRuntimeFor(resolved: ResolvedEnv): ResponseCacheRuntime {
+  const dataRoot = resolveKvDataRoot(resolved);
+  const cached = responseCacheRuntimeByDataRoot.get(dataRoot);
+  if (cached) return cached;
+  const storage = openResponseCacheStorage(dataRoot);
+  const runtime: ResponseCacheRuntime = {
+    storage,
+    registry: new ResponseCacheRegistry(storage),
+  };
+  responseCacheRuntimeByDataRoot.set(dataRoot, runtime);
   return runtime;
 }
 
@@ -474,6 +528,88 @@ function kvBudgetBytes(): number {
 
 function shouldUseKvPath(context: ProxyContext): boolean {
   return context.req.method === 'POST' && context.pathname === '/v1/chat/completions' && typeof context.bodyText === 'string';
+}
+
+function shouldUseResponseCachePath(context: ProxyContext): boolean {
+  return context.req.method === 'POST' && context.pathname === '/v1/chat/completions' && typeof context.bodyText === 'string';
+}
+
+function responseCacheBudgetBytes(): number {
+  const raw = process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB;
+  if (!raw) return 1024 * 1024 * 1024;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 1024 * 1024 * 1024;
+  return parsed * 1024 * 1024;
+}
+
+function responseCacheMaxEntryBytes(): number {
+  const raw = process.env.LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB;
+  if (!raw) return 8 * 1024 * 1024;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 8 * 1024 * 1024;
+  return parsed * 1024 * 1024;
+}
+
+function requestModel(parsedBody: unknown): string | null {
+  if (!parsedBody || typeof parsedBody !== 'object') return null;
+  const maybeModel = (parsedBody as { model?: unknown }).model;
+  return typeof maybeModel === 'string' ? maybeModel : null;
+}
+
+function cacheHitResponse(entry: ResponseCacheEntry): Response {
+  const headers = new Headers();
+  headers.set('content-type', entry.contentType);
+  if (entry.contentType.toLowerCase().startsWith('text/event-stream')) {
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(entry.responseBody));
+          controller.close();
+        },
+      }),
+      {
+        status: entry.statusCode,
+        headers,
+      },
+    );
+  }
+  return new Response(new Uint8Array(entry.responseBody), {
+    status: entry.statusCode,
+    headers,
+  });
+}
+
+async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyContext> {
+  if (!shouldUseResponseCachePath(context)) return context;
+  const bodyText = context.bodyText!;
+  let parsedBody: unknown;
+  try {
+    parsedBody = JSON.parse(bodyText);
+  } catch {
+    return context;
+  }
+  if (!isDeterministic(parsedBody)) return context;
+  const model = requestModel(parsedBody);
+  if (!model) return context;
+  const runtime = responseCacheRuntimeFor(context.resolved);
+  const sha = canonicalRequestSha(bodyText);
+  const requestBodyBytes = Buffer.byteLength(bodyText, 'utf8');
+  context.responseCache = {
+    runtime,
+    sha,
+    model,
+    deterministic: true,
+    requestBodyBytes,
+  };
+  const hit = runtime.registry.findBySha(sha);
+  if (!hit || hit.model !== model) {
+    runtime.storage.response_cache_miss_total += 1;
+    return context;
+  }
+  runtime.storage.response_cache_hit_total += 1;
+  runtime.registry.bumpHit(sha, Date.now());
+  context.responseCacheHit = cacheHitResponse(hit);
+  return context;
 }
 
 function shouldEnforceFirstTokenEquivalence(bodyText: string): boolean {
@@ -753,6 +889,52 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   return context;
 }
 
+async function maybePersistResponseCache(context: ProxyContext, upstream: Response): Promise<Response> {
+  const responseCache = context.responseCache;
+  if (!responseCache) return upstream;
+  if (context.responseCacheHit) return upstream;
+
+  const contentType = upstream.headers.get('content-type') ?? '';
+  const isJson = isJsonContentType(contentType);
+  const isSse = contentType.toLowerCase().startsWith('text/event-stream');
+  const cacheableType = isJson || isSse;
+  const bodyBytes = new Uint8Array(await upstream.arrayBuffer());
+  const replay = new Response(bodyBytes, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers: upstream.headers,
+  });
+  if (upstream.status !== 200 || !responseCache.deterministic || !cacheableType) return replay;
+
+  const totalBytes = responseCache.requestBodyBytes + bodyBytes.byteLength;
+  if (totalBytes > responseCacheMaxEntryBytes()) return replay;
+
+  const now = Date.now();
+  const wrote = responseCache.runtime.storage.safeWrite(() => {
+    responseCache.runtime.registry.insert({
+      sha: responseCache.sha,
+      model: responseCache.model,
+      contentType: isSse ? 'text/event-stream' : 'application/json',
+      statusCode: upstream.status,
+      responseBody: bodyBytes,
+      requestBodyBytes: responseCache.requestBodyBytes,
+      responseBodyBytes: bodyBytes.byteLength,
+      createdAt: now,
+      lastUsed: now,
+      hits: 0,
+    });
+  });
+  if (!wrote.ok) return replay;
+
+  const eviction = runResponseCacheEvictionIfOverBudget(
+    responseCache.runtime.registry,
+    responseCacheBudgetBytes(),
+    now,
+  );
+  responseCache.runtime.storage.response_cache_evict_total += eviction.deleted.length;
+  return replay;
+}
+
 async function resolveRoute(context: ProxyContext): Promise<ProxyContext | Response> {
   const { req, resolved } = context;
   if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -1016,8 +1198,14 @@ export async function proxyOpenAI(
   const translated = maybeTranslate(parsed);
   const routed = await resolveRoute(translated);
   if (routed instanceof Response) return routed;
-  const withKvLookup = await maybeKvLookup(routed);
+  const withResponseCacheLookup = await maybeResponseCacheLookup(routed);
+  if (withResponseCacheLookup.responseCacheHit) {
+    return maybeTranslateResponse(withResponseCacheLookup, withResponseCacheLookup.responseCacheHit);
+  }
+
+  const withKvLookup = await maybeKvLookup(withResponseCacheLookup);
   const upstream = await forward(withKvLookup);
-  await maybePersistKv(withKvLookup, upstream);
-  return maybeTranslateResponse(withKvLookup, upstream);
+  const withResponseCachePersist = await maybePersistResponseCache(withKvLookup, upstream);
+  await maybePersistKv(withKvLookup, withResponseCachePersist);
+  return maybeTranslateResponse(withKvLookup, withResponseCachePersist);
 }

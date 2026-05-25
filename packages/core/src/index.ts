@@ -25,5 +25,6 @@ export * as rpcServer from './rpcServer.js';
 export * as keepAlive from './keepAlive.js';
 export * as lmstudio from './lmstudio.js';
 export * as openaiProxy from './openaiProxy.js';
+export * as responsecache from './responsecache/index.js';
 export * as workloadRuntime from './workloadRuntime.js';
 export * as fsAtomic from './fsAtomic.js';
