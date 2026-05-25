@@ -501,6 +501,7 @@ function quantBitsFromModelId(model: string): number {
 }
 
 function resolveRouteKvMetadata(context: ProxyContext): {
+  model: string;
   workload: string;
   host: string;
   port: number;
@@ -521,6 +522,7 @@ function resolveRouteKvMetadata(context: ProxyContext): {
   const defaultCtx = Number.parseInt(ctxForModel(rel, context.resolved), 10);
   const ctxSize = parseContextWindow(state?.extraArgs, Number.isFinite(defaultCtx) ? defaultCtx : 32768);
   return {
+    model: route.model,
     workload: route.workload,
     host: route.host,
     port: route.port,
@@ -786,6 +788,10 @@ function basenameStripKvslot(path: string): string {
   return file.endsWith('.kvslot') ? file.slice(0, -'.kvslot'.length) : file;
 }
 
+function logSlotInjectionEvent(event: string, fields: Record<string, unknown>): void {
+  console.debug(JSON.stringify({ event, ...fields }));
+}
+
 function injectVendorFields(
   body: Record<string, unknown>,
   fields: { x_omlx_request_handle: string; x_omlx_restore_epoch: string },
@@ -801,13 +807,28 @@ async function maybeInjectOmlxRestoreBind(
   context: ProxyContext,
   slotClient: UpstreamSlotClient,
   workload: string,
+  model: string,
   hitSha: string,
   upstreamSlotFile: string,
   restoreEpoch: string | null,
 ): Promise<void> {
-  if (restoreEpoch === null || context.bodyText === undefined) return;
+  if (restoreEpoch === null || context.bodyText === undefined) {
+    logSlotInjectionEvent('slot_injection_skipped', {
+      workload,
+      model,
+      reason: 'no_restore_epoch',
+    });
+    return;
+  }
   const handleSupported = await slotClient.supportsRequestHandle();
-  if (!handleSupported) return;
+  if (!handleSupported) {
+    logSlotInjectionEvent('slot_injection_skipped', {
+      workload,
+      model,
+      reason: 'capability_missing',
+    });
+    return;
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(context.bodyText);
@@ -815,16 +836,18 @@ async function maybeInjectOmlxRestoreBind(
     return;
   }
   if (!isRecord(parsed)) return;
+  const userValue = parsed.x_omlx_request_handle;
   const overwritten = injectVendorFields(parsed, {
     x_omlx_request_handle: basenameStripKvslot(upstreamSlotFile),
     x_omlx_restore_epoch: restoreEpoch,
   });
   if (overwritten) {
-    console.debug(JSON.stringify({
-      event: 'kv_restore_bind_overwrite_vendor_fields',
+    logSlotInjectionEvent('slot_injection_overwrote_user_field', {
       workload,
-      sha: hitSha,
-    }));
+      model,
+      user_value: userValue,
+      proxy_value: basenameStripKvslot(upstreamSlotFile),
+    });
   }
   const injectedBody = JSON.stringify(parsed);
   context.bodyText = injectedBody;
@@ -832,6 +855,12 @@ async function maybeInjectOmlxRestoreBind(
     ...context.init,
     body: injectedBody,
   };
+  logSlotInjectionEvent('slot_injection_applied', {
+    workload,
+    model,
+    request_handle: basenameStripKvslot(upstreamSlotFile),
+    restore_epoch: restoreEpoch,
+  });
 }
 
 async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
@@ -904,6 +933,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
                   context,
                   slotClient,
                   metadata.workload,
+                  metadata.model,
                   hit.sha,
                   hit.upstreamSlotFile,
                   restore.restore_epoch,
@@ -934,6 +964,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
                 context,
                 slotClient,
                 metadata.workload,
+                metadata.model,
                 hit.sha,
                 hit.upstreamSlotFile,
                 restore.restore_epoch,
@@ -962,6 +993,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
               context,
               slotClient,
               metadata.workload,
+              metadata.model,
               hit.sha,
               hit.upstreamSlotFile,
               restore.restore_epoch,

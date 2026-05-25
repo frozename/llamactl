@@ -188,6 +188,20 @@ function shaForBody(body: string): string {
   return createHash('sha1').update(body).digest('hex');
 }
 
+function parsedConsoleDebugEvents(spy: ReturnType<typeof spyOn>): Array<Record<string, unknown>> {
+  return spy.mock.calls
+    .map((call: unknown[]) => {
+      const [message] = call;
+      if (typeof message !== 'string') return null;
+      try {
+        return JSON.parse(message) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry: Record<string, unknown> | null): entry is Record<string, unknown> => entry !== null);
+}
+
 function entryTemplate(overrides: Partial<KvEntry>): KvEntry {
   return {
     sha: 'sha',
@@ -686,10 +700,180 @@ test('proxy injects vendor fields at top-level only', async () => {
   }
 });
 
+test('phase4b logs slot injection applied event on success', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, supportsRequestHandle: true, restoreEpoch: 'abc' });
+  const debugSpy = spyOn(console, 'debug').mockImplementation(() => {});
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'apply event' }],
+    });
+    const sha = shaForBody(body);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(body, 'utf8'),
+      prefixByteLength: Buffer.byteLength(body, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(body, 'utf8'),
+      textBytes: Buffer.byteLength(body, 'utf8'),
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+
+    expect(parsedConsoleDebugEvents(debugSpy)).toContainEqual({
+      event: 'slot_injection_applied',
+      workload: 'wl-a',
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      request_handle: sha,
+      restore_epoch: 'abc',
+    });
+  } finally {
+    debugSpy.mockRestore();
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('phase4b logs slot injection skipped with capability_missing reason', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, supportsRequestHandle: false, restoreEpoch: 'abc' });
+  const debugSpy = spyOn(console, 'debug').mockImplementation(() => {});
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'skip capability' }],
+    });
+    const sha = shaForBody(body);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(body, 'utf8'),
+      prefixByteLength: Buffer.byteLength(body, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(body, 'utf8'),
+      textBytes: Buffer.byteLength(body, 'utf8'),
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+
+    expect(parsedConsoleDebugEvents(debugSpy)).toContainEqual({
+      event: 'slot_injection_skipped',
+      workload: 'wl-a',
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      reason: 'capability_missing',
+    });
+  } finally {
+    debugSpy.mockRestore();
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('phase4b logs slot injection skipped with no_restore_epoch reason', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir, supportsRequestHandle: true, restoreEpoch: null });
+  const debugSpy = spyOn(console, 'debug').mockImplementation(() => {});
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'skip epoch' }],
+    });
+    const sha = shaForBody(body);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(body, 'utf8'),
+      prefixByteLength: Buffer.byteLength(body, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(body, 'utf8'),
+      textBytes: Buffer.byteLength(body, 'utf8'),
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+
+    expect(parsedConsoleDebugEvents(debugSpy)).toContainEqual({
+      event: 'slot_injection_skipped',
+      workload: 'wl-a',
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      reason: 'no_restore_epoch',
+    });
+  } finally {
+    debugSpy.mockRestore();
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
 test('proxy injection overwrites user supplied vendor fields', async () => {
   const runtime = makeTempRuntime();
   const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
   const upstream = await startUpstream({ slotBaseDir, supportsRequestHandle: true, restoreEpoch: 'abc' });
+  const debugSpy = spyOn(console, 'debug').mockImplementation(() => {});
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
@@ -733,7 +917,15 @@ test('proxy injection overwrites user supplied vendor fields', async () => {
     const echoed = JSON.parse(responseJson.echoed ?? '{}') as Record<string, unknown>;
     expect(echoed.x_omlx_request_handle).toBe(sha);
     expect(echoed.x_omlx_restore_epoch).toBe('abc');
+    expect(parsedConsoleDebugEvents(debugSpy)).toContainEqual({
+      event: 'slot_injection_overwrote_user_field',
+      workload: 'wl-a',
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      user_value: 'user-handle',
+      proxy_value: sha,
+    });
   } finally {
+    debugSpy.mockRestore();
     await upstream.close();
     runtime.cleanup();
   }
