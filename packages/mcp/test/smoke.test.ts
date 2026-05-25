@@ -73,6 +73,7 @@ function seedNodeBudgetFixtures(): void {
         endpoint: { host: '127.0.0.1', port: 8181 },
         timeoutSeconds: 60,
         gateway: false,
+        allowExternalBind: false,
       },
     },
     workloadsDir,

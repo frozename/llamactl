@@ -27,6 +27,7 @@ import { handleArtifact, type ArtifactsHandlerOptions } from './artifacts.js';
 import { handleAgentRollback, handleAgentUpdate } from './agent-update.js';
 import { handleRagChatCompletions } from './rag-chat-endpoint.js';
 import { handleTunnelRelay } from './tunnel-relay.js';
+import { handleFleetSnapshotRoute } from '../routes/fleet.js';
 import {
   createTunnelClient,
   createTunnelRouterHandler,
@@ -414,6 +415,14 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
         appRouter,
         fallback: (forwarded) => handleOpenAI(forwarded, url, clientAddress),
       });
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/fleet/snapshot') {
+      if (allowNoAuth(url.pathname, clientAddress)) {
+        logUnauthenticatedNoAuthRequest(req, clientAddress);
+      } else if (!verifyBearer(req, opts.tokenHash)) {
+        return unauthorizedResponse();
+      }
+      return handleFleetSnapshotRoute(req);
     }
     // OpenAI-compatible gateway. Anything under /v1/* is bearer-auth'd
     // then either listed (GET /v1/models — static, no upstream call)

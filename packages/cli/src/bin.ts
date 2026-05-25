@@ -36,6 +36,7 @@ import { runPlan } from './commands/plan.js';
 import { runInfra } from './commands/infra.js';
 import { runProject } from './commands/project.js';
 import { runTunnel } from './commands/tunnel.js';
+import { runFleet } from './commands/fleet.js';
 import { extractGlobalFlags, setGlobals } from './dispatcher.js';
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
@@ -211,6 +212,8 @@ Agentic operations:
   llamactl tunnel pin-central                 Capture the central agent's TLS
       [--context=<name>] [--url=<url>]        cert + fingerprint and pin the
                                               /tunnel-relay POST against it.
+  llamactl fleet snapshot [--all]             Show local or cluster fleet snapshots
+  llamactl fleet status                       Show one-line fleet pressure summary per node
 
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
@@ -300,6 +303,8 @@ async function main(argv: string[]): Promise<number> {
       return runProject(rest);
     case 'tunnel':
       return runTunnel(rest);
+    case 'fleet':
+      return runFleet(rest);
     case undefined:
     case '--help':
     case '-h':

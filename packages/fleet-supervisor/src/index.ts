@@ -8,3 +8,7 @@ export * from './executor.js';
 export * from './measured-memory.js';
 export * from './status-reader.js';
 export * from './audit-reader.js';
+export * from './snapshot-reader.js';
+export * from './aggregator.js';
+export * from './peer-fetch.js';
+export * from './aggregator-db.js';

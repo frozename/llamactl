@@ -16,6 +16,9 @@ import {
   readAuditEntries,
 } from '@llamactl/fleet-supervisor';
 import { defaultFleetAuditPath } from '../../../fleet-supervisor/src/journal.js';
+import { FleetAggregator } from '../../../fleet-supervisor/src/aggregator.js';
+import { createPeerFetch } from '../../../fleet-supervisor/src/peer-fetch.js';
+import { readClusterConfig } from '../../../remote/src/config/cluster.js';
 
 const CLI_BIN_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../../../cli/src/bin.ts');
 let cliBinChecked = false;
@@ -259,19 +262,23 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         'Return the latest fleet snapshot per node from the fleet-supervisor journal. When node is set, returns at most one snapshot for that node.',
       inputSchema: {
         node: z.string().optional(),
+        all: z.boolean().optional(),
         journalPath: z.string().optional(),
       },
     },
-    async ({ node, journalPath }) => {
+    async ({ node, all, journalPath }) => {
+      if (all) {
+        const cfg = readClusterConfig();
+        const aggregator = new FleetAggregator({
+          peers: cfg.peers,
+          fetchSnapshot: async (peer) => createPeerFetch(peer)(),
+        });
+        await aggregator.pollNow();
+        return toTextContent({ snapshots: aggregator.getAll() });
+      }
       const path = journalPath ?? defaultFleetJournalPath();
       const entries = readJournal(path);
-      const latest = new Map<string, FleetSnapshotEntry>();
-      for (const e of entries) {
-        if (e.kind !== 'fleet-snapshot') continue;
-        if (node !== undefined && e.node !== node) continue;
-        latest.set(e.node, e);
-      }
-      return toTextContent({ snapshots: [...latest.values()] });
+      return toTextContent({ snapshots: collectLatestSnapshots(entries, node) });
     },
   );
 
@@ -388,22 +395,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     async ({ node, pendingOnly = true, limit = 50, sinceIsoTs, journalPath }) => {
       const path = journalPath ?? defaultFleetJournalPath();
       const entries = readJournal(path);
-
-      const executedIds = new Set<string>();
-      for (const e of entries) {
-        if (e.kind === 'fleet-execution') executedIds.add(e.proposalId);
-      }
-
-      const proposals: FleetProposalEntry[] = [];
-      for (const e of entries) {
-        if (e.kind !== 'fleet-proposal') continue;
-        if (node !== undefined && e.node !== node) continue;
-        if (sinceIsoTs !== undefined && e.ts < sinceIsoTs) continue;
-        if (pendingOnly && executedIds.has(e.proposalId)) continue;
-        proposals.push(e);
-      }
-
-      proposals.sort((a, b) => b.ts.localeCompare(a.ts));
+      const proposals = collectProposals(entries, { node, pendingOnly, sinceIsoTs });
       const total = proposals.length;
       return toTextContent({ proposals: proposals.slice(0, limit), total });
     },
@@ -457,6 +449,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
               'fleet-proposal',
               'fleet-execution',
               'fleet-pressure-status',
+              'fleet-placement',
             ]),
           )
           .optional(),
@@ -613,4 +606,39 @@ function readJournal(journalPath: string): FleetJournalEntry[] {
     }
   }
   return entries;
+}
+
+export function collectLatestSnapshots(
+  entries: FleetJournalEntry[],
+  node?: string,
+): FleetSnapshotEntry[] {
+  const latest = new Map<string, FleetSnapshotEntry>();
+  for (const e of entries) {
+    if (e.kind !== 'fleet-snapshot') continue;
+    if (node !== undefined && e.node !== node) continue;
+    const cur = latest.get(e.node);
+    if (!cur || e.ts > cur.ts) latest.set(e.node, e);
+  }
+  return [...latest.values()];
+}
+
+export function collectProposals(
+  entries: FleetJournalEntry[],
+  opts: { node?: string; pendingOnly?: boolean; sinceIsoTs?: string } = {},
+): FleetProposalEntry[] {
+  const executedIds = new Set<string>();
+  for (const e of entries) {
+    if (e.kind === 'fleet-execution') executedIds.add(e.proposalId);
+  }
+
+  const out: FleetProposalEntry[] = [];
+  for (const e of entries) {
+    if (e.kind !== 'fleet-proposal') continue;
+    if (opts.node !== undefined && e.node !== opts.node) continue;
+    if (opts.sinceIsoTs !== undefined && e.ts < opts.sinceIsoTs) continue;
+    if ((opts.pendingOnly ?? true) && executedIds.has(e.proposalId)) continue;
+    out.push(e);
+  }
+  out.sort((a, b) => b.ts.localeCompare(a.ts));
+  return out;
 }
