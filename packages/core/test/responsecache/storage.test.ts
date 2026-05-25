@@ -96,6 +96,63 @@ test('migration from v0 to v1 preserves inserted rows', () => {
   }
 });
 
+test('responsecache migrations are idempotent after a restart replays the same version', () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openResponseCacheStorage(t.root);
+    storage.close();
+
+    const reopened = openResponseCacheStorage(t.root);
+    const version = reopened.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    expect(version?.version).toBe(1);
+    const columns = reopened.db.query("PRAGMA table_info('response_entries')").all() as Array<{ name: string }>;
+    expect(columns.some((column) => column.name === 'hits')).toBe(true);
+    reopened.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('responsecache migration recovers when schema_version lags behind already-added tables', () => {
+  const t = makeTempRoot();
+  try {
+    const cacheDir = join(t.root, 'responsecache');
+    mkdirSync(cacheDir, { recursive: true });
+    const db = new Database(join(cacheDir, 'responses.db'));
+    db.run('PRAGMA journal_mode = WAL');
+    db.run('CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)');
+    db.query('INSERT INTO schema_version (version) VALUES (0)').run();
+    db.run(`
+      CREATE TABLE response_entries (
+        sha TEXT PRIMARY KEY,
+        model TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        status_code INTEGER NOT NULL,
+        response_body BLOB NOT NULL,
+        request_body_bytes INTEGER NOT NULL,
+        response_body_bytes INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_used INTEGER NOT NULL,
+        hits INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    db.close();
+
+    const storage = openResponseCacheStorage(t.root);
+    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    expect(version?.version).toBe(1);
+    const row = storage.db.query(`
+      SELECT sha, model, hits
+      FROM response_entries
+      LIMIT 1
+    `).get() as | { sha: string; model: string; hits: number } | null;
+    expect(row).toBeNull();
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
 test('openResponseCacheStorage enables WAL mode', () => {
   const t = makeTempRoot();
   try {

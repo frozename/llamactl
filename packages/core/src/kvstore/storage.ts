@@ -94,30 +94,51 @@ export function runMigrations(db: Database, fromVersion: number, toVersion: numb
         db.query('UPDATE schema_version SET version = 1').run();
         break;
       case 2:
-        db.run(`
-          ALTER TABLE kv_entries
-          ADD COLUMN state TEXT NOT NULL DEFAULT 'idle' CHECK(state IN ('idle','reserved','active'))
-        `);
+        addColumnIfMissing(
+          db,
+          'kv_entries',
+          'state',
+          `
+            ALTER TABLE kv_entries
+            ADD COLUMN state TEXT NOT NULL DEFAULT 'idle' CHECK(state IN ('idle','reserved','active'))
+          `,
+        );
         db.query('UPDATE schema_version SET version = 2').run();
         break;
       case 3:
-        db.run(`
-          ALTER TABLE kv_entries
-          ADD COLUMN first_response_token TEXT
-        `);
+        addColumnIfMissing(
+          db,
+          'kv_entries',
+          'first_response_token',
+          `
+            ALTER TABLE kv_entries
+            ADD COLUMN first_response_token TEXT
+          `,
+        );
         db.query('UPDATE schema_version SET version = 3').run();
         break;
       case 4:
-        db.run(`
-          ALTER TABLE kv_entries
-          ADD COLUMN ext_flags INTEGER NOT NULL DEFAULT 0
-        `);
+        addColumnIfMissing(
+          db,
+          'kv_entries',
+          'ext_flags',
+          `
+            ALTER TABLE kv_entries
+            ADD COLUMN ext_flags INTEGER NOT NULL DEFAULT 0
+          `,
+        );
         db.query('UPDATE schema_version SET version = 4').run();
         break;
       default:
         throw new Error(`Unsupported kvstore schema migration target ${next}`);
     }
   }
+}
+
+function addColumnIfMissing(db: Database, table: string, column: string, sql: string): void {
+  const columns = db.query(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>;
+  if (columns.some((candidate) => candidate.name === column)) return;
+  db.run(sql);
 }
 
 function runIntegrityScan(storage: KvStorage): void {

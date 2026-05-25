@@ -64,23 +64,30 @@ export function runMigrations(db: Database, fromVersion: number, toVersion: numb
   for (let next = fromVersion + 1; next <= toVersion; next += 1) {
     switch (next) {
       case 1:
-        db.run(`
-          CREATE TABLE IF NOT EXISTS response_entries (
-            sha TEXT PRIMARY KEY,
-            model TEXT NOT NULL,
-            content_type TEXT NOT NULL,
-            status_code INTEGER NOT NULL,
-            response_body BLOB NOT NULL,
-            request_body_bytes INTEGER NOT NULL,
-            response_body_bytes INTEGER NOT NULL,
-            created_at INTEGER NOT NULL,
-            last_used INTEGER NOT NULL,
-            hits INTEGER NOT NULL DEFAULT 0
-          )
-        `);
-        db.run('CREATE INDEX IF NOT EXISTS idx_resp_model ON response_entries (model)');
-        db.run('CREATE INDEX IF NOT EXISTS idx_resp_last_used ON response_entries (last_used)');
-        db.query('UPDATE schema_version SET version = 1').run();
+        db.run('BEGIN IMMEDIATE');
+        try {
+          db.run(`
+            CREATE TABLE IF NOT EXISTS response_entries (
+              sha TEXT PRIMARY KEY,
+              model TEXT NOT NULL,
+              content_type TEXT NOT NULL,
+              status_code INTEGER NOT NULL,
+              response_body BLOB NOT NULL,
+              request_body_bytes INTEGER NOT NULL,
+              response_body_bytes INTEGER NOT NULL,
+              created_at INTEGER NOT NULL,
+              last_used INTEGER NOT NULL,
+              hits INTEGER NOT NULL DEFAULT 0
+            )
+          `);
+          db.run('CREATE INDEX IF NOT EXISTS idx_resp_model ON response_entries (model)');
+          db.run('CREATE INDEX IF NOT EXISTS idx_resp_last_used ON response_entries (last_used)');
+          db.query('UPDATE schema_version SET version = 1').run();
+          db.run('COMMIT');
+        } catch (error) {
+          db.run('ROLLBACK');
+          throw error;
+        }
         break;
       default:
         throw new Error(`Unsupported responsecache schema migration target ${next}`);

@@ -145,6 +145,73 @@ test('migration from v3 to v4 adds ext_flags column with 0 default', () => {
   }
 });
 
+test('kvstore migrations are idempotent after a restart replays the same version', () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openKvStorage(t.root);
+    storage.close();
+
+    const reopened = openKvStorage(t.root);
+    const version = reopened.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    expect(version?.version).toBe(4);
+    const columns = reopened.db.query("PRAGMA table_info('kv_entries')").all() as Array<{ name: string }>;
+    expect(columns.some((column) => column.name === 'ext_flags')).toBe(true);
+    reopened.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('kvstore migration recovers when schema_version lags behind already-added columns', () => {
+  const t = makeTempRoot();
+  try {
+    const kvDir = join(t.root, 'kvstore');
+    mkdirSync(kvDir, { recursive: true });
+    const db = new Database(join(kvDir, 'registry.db'));
+    db.run('PRAGMA journal_mode = WAL');
+    db.run(`
+      CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER NOT NULL
+      )
+    `);
+    db.query('INSERT INTO schema_version (version) VALUES (3)').run();
+    db.run(`
+      CREATE TABLE kv_entries (
+        sha TEXT PRIMARY KEY,
+        workload TEXT NOT NULL,
+        upstream_slot_file TEXT NOT NULL,
+        quant_bits INTEGER NOT NULL,
+        tokens INTEGER NOT NULL,
+        ctx_size INTEGER NOT NULL,
+        hits INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        last_used INTEGER NOT NULL,
+        payload_bytes INTEGER NOT NULL,
+        text_bytes INTEGER NOT NULL,
+        reason TEXT NOT NULL CHECK(reason IN ('cold','continued','evict','shutdown','agent_session')),
+        prefix_byte_length INTEGER NOT NULL,
+        workload_epoch TEXT NOT NULL,
+        quarantined INTEGER NOT NULL DEFAULT 0,
+        state TEXT NOT NULL DEFAULT 'idle' CHECK(state IN ('idle','reserved','active')),
+        first_response_token TEXT,
+        ext_flags INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    db.close();
+
+    const storage = openKvStorage(t.root);
+    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    expect(version?.version).toBe(4);
+    const columns = storage.db.query("PRAGMA table_info('kv_entries')").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain('state');
+    expect(columns.map((column) => column.name)).toContain('first_response_token');
+    expect(columns.map((column) => column.name)).toContain('ext_flags');
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
 test('integrity scan quarantines rows with missing upstream_slot_file on open', () => {
   const t = makeTempRoot();
   try {
