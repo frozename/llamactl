@@ -68,12 +68,10 @@ describe('fleet command', () => {
   });
 
   test('fleet snapshot --all prints table with expected columns', async () => {
-    const cfg = {
-      peers: [{ id: 'mac-mini', endpoint: 'https://mac-mini' }],
-    };
+    const peers = [{ id: 'mac-mini', endpoint: 'https://mac-mini' }];
     const { result, out } = await captureStdout(() => runFleet(['snapshot', '--all'], {
       readLocalSnapshot: async () => snap('local', 2048, 100),
-      readPeers: () => cfg,
+      readPeers: () => peers,
       fetchPeerSnapshot: async () => snap('mac-mini', 3000, 90),
     }));
 
@@ -84,12 +82,10 @@ describe('fleet command', () => {
   });
 
   test('fleet status prints one summary line per node', async () => {
-    const cfg = {
-      peers: [{ id: 'mac-mini', endpoint: 'https://mac-mini' }],
-    };
+    const peers = [{ id: 'mac-mini', endpoint: 'https://mac-mini' }];
     const { result, out } = await captureStdout(() => runFleet(['status'], {
       readLocalSnapshot: async () => snap('local', 200, 3000),
-      readPeers: () => cfg,
+      readPeers: () => peers,
       fetchPeerSnapshot: async () => snap('mac-mini', 3000, 90),
     }));
 

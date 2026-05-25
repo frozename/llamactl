@@ -685,7 +685,7 @@ test('POST /v1/chat/completions forwards peer-only model to peer endpoint', asyn
         id: 'mac-mini',
         endpoint: 'https://macmini.ai:7843',
         certificate: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n',
-        peerToken,
+        token: peerToken,
       },
     ];
     const peerSnapshots = new Map<string, PeerSnapshot>([
@@ -704,11 +704,16 @@ test('POST /v1/chat/completions forwards peer-only model to peer endpoint', asyn
     });
 
     let forwardedAuthorization = '';
+    let forwardedCa = '';
     const calls: Array<{ url: string }> = [];
     globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       if (init?.headers) {
         forwardedAuthorization = new Headers(init.headers).get('authorization') ?? '';
+      }
+      const forwardedInit = init as RequestInit & { tls?: { ca: string } };
+      if (typeof forwardedInit?.tls === 'object' && forwardedInit.tls !== undefined && 'ca' in forwardedInit.tls) {
+        forwardedCa = String(forwardedInit.tls.ca);
       }
       calls.push({ url });
       return Response.json({ ok: true });
@@ -729,6 +734,7 @@ test('POST /v1/chat/completions forwards peer-only model to peer endpoint', asyn
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe('https://macmini.ai:7843/v1/chat/completions');
     expect(forwardedAuthorization).toBe(`Bearer ${peerToken}`);
+    expect(forwardedCa).toBe('-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n');
   } finally {
     t.cleanup();
   }

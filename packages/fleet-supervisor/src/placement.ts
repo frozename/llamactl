@@ -14,15 +14,16 @@ export interface PlacementInput {
 
 const DEFAULT_HEADROOM_MIN_MB = 512;
 const DEFAULT_COMPRESSOR_WARN_MB = 2048;
-const DEFAULT_MODEL_FILE_PENALTY_MB = 128;
+// 4 GB keeps model-cache penalties realistic for representative GGUF binaries.
+const DEFAULT_MODEL_FILE_PENALTY_MB = 4096;
 
 export function scoreNodes(
   rows: ReadonlyArray<SnapshotRow | null | undefined>,
   input: PlacementInput,
-  headroomMinMb = DEFAULT_HEADROOM_MIN_MB,
 ): NodeScore[] {
   const modelFilePenaltyMb = input.modelFilePenaltyMb ?? DEFAULT_MODEL_FILE_PENALTY_MB;
   const compressorWarnMb = input.compressorWarnMb ?? DEFAULT_COMPRESSOR_WARN_MB;
+  const headroomMinMb = input.headroomMinMb ?? DEFAULT_HEADROOM_MIN_MB;
 
   return rows.map((entry) => {
     if (!entry) {
@@ -34,7 +35,7 @@ export function scoreNodes(
         compressorMb: 0,
         requestRate5m: 0,
         eligible: false,
-        reason: 'no_telemetry',
+        ineligibilityReason: 'no_telemetry',
       };
     }
 
@@ -48,15 +49,15 @@ export function scoreNodes(
         compressorMb: 0,
         requestRate5m: 0,
         eligible: false,
-        reason: 'no_telemetry',
+        ineligibilityReason: 'no_telemetry',
       };
     }
 
     const targetModel = input.targetModel.trim();
+    const normalizedTarget = basename(targetModel);
     const modelFilePresent = targetModel.length === 0
       ? true
       : snapshot.workloads.some((workload) => {
-          const normalizedTarget = basename(targetModel);
           return workload.models.some((model) =>
             model === targetModel || model === normalizedTarget,
           );
@@ -88,7 +89,7 @@ export function scoreNodes(
         compressorMb,
         requestRate5m,
         eligible: false,
-        reason: 'pressure',
+        ineligibilityReason: 'pressure',
         pressureState,
       };
     }
@@ -102,7 +103,7 @@ export function scoreNodes(
         compressorMb,
         requestRate5m,
         eligible: false,
-        reason: 'insufficient_headroom',
+        ineligibilityReason: 'insufficient_headroom',
         pressureState,
       };
     }
@@ -117,7 +118,6 @@ export function scoreNodes(
       compressorMb,
       requestRate5m,
       eligible: true,
-      reason: null,
       pressureState,
       modelFilePresent,
     };
@@ -136,11 +136,20 @@ export function chooseBestNode(
   return ranked.find((score) => score.eligible)?.node ?? null;
 }
 
-export function buildPlacementDecision(
-  input: { workload: string; requestedNode: string; expectedMemoryMb: number; scores: NodeScore[]; headroomMinMb?: number; modelFilePenaltyMb?: number; },
+export type BuildPlacementDecisionInput = {
+  workloadName: string;
+  requestedNode: string;
+  expectedMemoryMb: number;
+  scores: NodeScore[];
+  headroomMinMb?: number;
+  modelFilePenaltyMb?: number;
+};
+
+export function makePlacementDecision(
+  input: BuildPlacementDecisionInput,
 ): FleetPlacementDecision {
   return {
-    workload: input.workload,
+    workload: input.workloadName,
     requestedNode: input.requestedNode,
     chosenNode: input.scores.find((score) => score.eligible)?.node ?? '',
     expectedMemoryMb: input.expectedMemoryMb,

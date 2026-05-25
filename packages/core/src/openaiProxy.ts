@@ -167,8 +167,8 @@ function isJsonContentType(contentType: string | null): boolean {
 }
 
 function peerTlsForRoute(route: RoutedEntry | undefined): { ca: string } | undefined {
-  if (!route?.isPeer || !route.peerCertificate) return undefined;
-  return { ca: route.peerCertificate };
+  if (!route?.isPeer || !route.certificate) return undefined;
+  return { ca: route.certificate };
 }
 
 function requestedModelFromBody(bodyText: string): string | undefined {
@@ -207,8 +207,8 @@ type RouteEntry = {
   model: string;
   isPeer?: true;
   peerEndpoint?: string;
-  peerCertificate?: string;
-  peerToken?: string;
+  certificate?: string;
+  token?: string;
   targetNodeId?: string;
 };
 
@@ -311,8 +311,8 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
       model: route.model,
       isPeer: 'isPeer' in route && route.isPeer ? true : undefined,
       peerEndpoint: 'isPeer' in route && route.isPeer ? route.peerEndpoint : undefined,
-      peerCertificate: 'isPeer' in route && route.isPeer ? route.peerCertificate : undefined,
-      peerToken: 'isPeer' in route && route.isPeer ? route.peerToken : undefined,
+      certificate: 'isPeer' in route && route.isPeer ? route.certificate : undefined,
+      token: 'isPeer' in route && route.isPeer ? route.token : undefined,
       targetNodeId: 'isPeer' in route && route.isPeer ? route.targetNodeId : undefined,
     });
   }
@@ -1278,8 +1278,8 @@ async function forward(context: ProxyContext): Promise<Response> {
     ...context.init,
     headers: new Headers(context.init.headers ?? {}),
   };
-  if (context.route?.isPeer && context.route.peerToken) {
-    init.headers.set('authorization', `Bearer ${context.route.peerToken}`);
+  if (context.route?.isPeer && context.route.token) {
+    init.headers.set('authorization', `Bearer ${context.route.token}`);
   }
   const peerTls = peerTlsForRoute(context.route);
   if (peerTls) (init as RequestInit & { tls?: { ca: string } }).tls = peerTls;

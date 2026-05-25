@@ -44,7 +44,7 @@ export interface NodeScore {
   compressorMb: number;
   requestRate5m: number;
   eligible: boolean;
-  reason: string | null;
+  ineligibilityReason?: string;
   pressureState?: 'NORMAL' | 'HIGH';
   modelFilePresent?: boolean;
 }

@@ -65,7 +65,7 @@ describe('scoreNodes', () => {
     expect(scores[0]).toMatchObject({
       node: 'gpu1',
       eligible: false,
-      reason: 'pressure',
+      ineligibilityReason: 'pressure',
       score: Number.NEGATIVE_INFINITY,
       pressureState: 'HIGH',
     });
@@ -85,7 +85,7 @@ describe('scoreNodes', () => {
       compressorMb: 0,
       requestRate5m: 0,
       eligible: false,
-      reason: 'no_telemetry',
+      ineligibilityReason: 'no_telemetry',
     }]);
   });
 
@@ -100,8 +100,32 @@ describe('scoreNodes', () => {
     expect(scores[0]).toMatchObject({
       node: 'gpu1',
       eligible: false,
-      reason: 'insufficient_headroom',
+      ineligibilityReason: 'insufficient_headroom',
       freeAfterMb: 500,
+    });
+  });
+
+  test('uses provided headroomMinMb when selecting eligible nodes', () => {
+    const rows = [
+      snapshot({ node: 'gpu1', freeMb: 6000, compressorMb: 200 }),
+      snapshot({ node: 'gpu2', freeMb: 4000, compressorMb: 200 }),
+    ];
+    const scores = scoreNodes(rows, {
+      workload: 'qwen-run',
+      targetModel: 'qwen3.6-35b',
+      expectedMemoryMb: 0,
+      headroomMinMb: 5000,
+    });
+
+    expect(scores).toHaveLength(2);
+    expect(scores[0]).toMatchObject({
+      node: 'gpu1',
+      eligible: true,
+      freeAfterMb: 6000,
+    });
+    expect(scores[1]).toMatchObject({
+      node: 'gpu2',
+      eligible: false,
     });
   });
 

@@ -37,16 +37,16 @@ export type ClusterRoute =
   | (Omit<LocalRoute, 'pid'> & {
       isPeer: true;
       peerEndpoint: string;
-      peerCertificate?: string;
-      peerToken?: string;
+      certificate?: string;
+      token?: string;
       targetNodeId: string;
     });
 
 export interface ClusterConfigPeer {
   id: string;
   endpoint: string;
-  peerCertificate?: string;
-  peerToken?: string;
+  certificate?: string;
+  token?: string;
 }
 
 export interface ClusterConfigLike {
@@ -97,8 +97,8 @@ export function listClusterRoutes(
         kind: 'ModelRun',
         isPeer: true,
         peerEndpoint: peer.endpoint,
-        peerCertificate: peer.peerCertificate,
-        peerToken: peer.peerToken,
+        certificate: peer.certificate,
+        token: peer.token,
         targetNodeId: peer.id,
       });
     }

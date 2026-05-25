@@ -4,7 +4,7 @@ import { computeModelHostSpecHash, removeModelHostState, writeModelHostState } f
 import { resolveEnv } from '../../../core/src/env.js';
 import {
   appendFleetJournal,
-  buildPlacementDecision,
+  makePlacementDecision,
   chooseBestNode,
   defaultAggregatorDbPath,
   defaultFleetJournalPath,
@@ -167,10 +167,7 @@ interface PlacementContext {
 }
 
 function shouldAutoPlace(manifest: ModelRun): boolean {
-  return (
-    (manifest.spec.node === 'auto' || manifest.spec.placement === 'auto')
-    && manifest.spec.placement !== 'pinned'
-  );
+  return manifest.spec.node === 'auto' && manifest.spec.placement !== 'pinned';
 }
 
 async function runPlacement(context: PlacementContext): Promise<
@@ -196,8 +193,8 @@ async function runPlacement(context: PlacementContext): Promise<
       };
     }
 
-    const decision = buildPlacementDecision({
-      workload: context.manifest.metadata.name,
+    const decision = makePlacementDecision({
+      workloadName: context.manifest.metadata.name,
       requestedNode: context.manifest.spec.node,
       expectedMemoryMb: (context.manifest.spec.resources?.expectedMemoryGiB ?? 0) * 1024,
       scores,

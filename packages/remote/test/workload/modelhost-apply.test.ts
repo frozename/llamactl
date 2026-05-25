@@ -783,7 +783,7 @@ describe('applyManifest — kind dispatch', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelrun-placement-explicit-'));
     const result = await applyManifest({
       manifest: modelRunManifestForPlacement({
-        node: 'node-a',
+        node: 'mac-mini',
         placement: undefined,
       }),
       workloadsDir: tmp,
@@ -795,7 +795,27 @@ describe('applyManifest — kind dispatch', () => {
     if (!result.ok) return;
     expect(result.kind).toBe('ModelRun');
     if (result.kind !== 'ModelRun') return;
-    expect(result.manifest.spec.node).toBe('node-a');
+    expect(result.manifest.spec.node).toBe('mac-mini');
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('placement:auto with explicit node bypasses scheduler', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelrun-placement-explicit-auto-'));
+    const result = await applyManifest({
+      manifest: modelRunManifestForPlacement({
+        node: 'mac-mini',
+        placement: 'auto',
+      }),
+      workloadsDir: tmp,
+      getClient: () => makePlacementClient(),
+      placement: { dbPath: join(tmp, 'does-not-exist.db') },
+    });
+
+    if (!result.ok) console.log('ERROR:', result); expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.kind).toBe('ModelRun');
+    if (result.kind !== 'ModelRun') return;
+    expect(result.manifest.spec.node).toBe('mac-mini');
     rmSync(tmp, { recursive: true, force: true });
   });
 
