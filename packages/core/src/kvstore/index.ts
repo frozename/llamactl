@@ -16,9 +16,7 @@ export type { SweepOrphanSlotFilesOptions, SweepOrphanSlotFilesResult } from './
 export { computeWorkloadEpoch, readWorkloadEpoch } from './workloadEpoch.js';
 export type { WorkloadEpochInput } from './workloadEpoch.js';
 export {
-  EXT_FLAG_RESPONSES_VISIBLE,
   EXT_FLAG_SESSION_TITLE,
-  EXT_FLAG_THINKING_VISIBLE,
   EXT_FLAG_TOOL_MAP,
   readTrailer,
   writeTrailer,

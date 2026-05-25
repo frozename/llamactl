@@ -4,15 +4,13 @@ import { safeWrite, type KvStorage } from './storage.js';
 
 export const EXT_FLAG_TOOL_MAP = 1 << 0;
 export const EXT_FLAG_SESSION_TITLE = 1 << 1;
-export const EXT_FLAG_THINKING_VISIBLE = 1 << 2;
-export const EXT_FLAG_RESPONSES_VISIBLE = 1 << 3;
+
+// ext_flags reserved for future use; THINKING_VISIBLE + RESPONSES_VISIBLE removed 2026-05-24 — never had consumers. Re-add when needed.
 
 export interface KvTrailer {
   extFlags: number;
   toolMap?: Record<string, string>;
   sessionTitle?: string;
-  thinkingVisible?: string;
-  responsesVisible?: string;
 }
 
 function trailerPath(slotFile: string): string {

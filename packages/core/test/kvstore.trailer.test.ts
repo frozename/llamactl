@@ -4,9 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  EXT_FLAG_RESPONSES_VISIBLE,
   EXT_FLAG_SESSION_TITLE,
-  EXT_FLAG_THINKING_VISIBLE,
   EXT_FLAG_TOOL_MAP,
   readTrailer,
   writeTrailer,
@@ -101,9 +99,7 @@ test('writeTrailer returns enospc and increments storage write-fail counter', ()
 });
 
 test('ext flag bit operations are additive and independent', () => {
-  const combined = EXT_FLAG_TOOL_MAP | EXT_FLAG_SESSION_TITLE | EXT_FLAG_THINKING_VISIBLE | EXT_FLAG_RESPONSES_VISIBLE;
+  const combined = EXT_FLAG_TOOL_MAP | EXT_FLAG_SESSION_TITLE;
   expect((combined & EXT_FLAG_TOOL_MAP) !== 0).toBe(true);
   expect((combined & EXT_FLAG_SESSION_TITLE) !== 0).toBe(true);
-  expect((combined & EXT_FLAG_THINKING_VISIBLE) !== 0).toBe(true);
-  expect((combined & EXT_FLAG_RESPONSES_VISIBLE) !== 0).toBe(true);
 });

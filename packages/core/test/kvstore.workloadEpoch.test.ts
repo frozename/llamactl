@@ -15,10 +15,8 @@ import { envForTemp, makeTempRuntime } from './helpers.js';
 
 test('computeWorkloadEpoch is deterministic for the same input', () => {
   const input = {
-    pid: 12345,
     startedAt: '2026-05-24T14:00:00.000Z',
     rel: 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf',
-    argsHash: 'abc123',
   };
   const first = computeWorkloadEpoch(input);
   const second = computeWorkloadEpoch(input);
@@ -27,45 +25,24 @@ test('computeWorkloadEpoch is deterministic for the same input', () => {
 
 test('computeWorkloadEpoch changes when input fields change', () => {
   const base = computeWorkloadEpoch({
-    pid: 100,
     startedAt: '2026-05-24T14:00:00.000Z',
     rel: 'a.gguf',
-    argsHash: 'hash-a',
-  });
-  const pidChanged = computeWorkloadEpoch({
-    pid: 101,
-    startedAt: '2026-05-24T14:00:00.000Z',
-    rel: 'a.gguf',
-    argsHash: 'hash-a',
   });
   const startedAtChanged = computeWorkloadEpoch({
-    pid: 100,
     startedAt: '2026-05-24T14:00:01.000Z',
     rel: 'a.gguf',
-    argsHash: 'hash-a',
   });
   const relChanged = computeWorkloadEpoch({
-    pid: 100,
     startedAt: '2026-05-24T14:00:00.000Z',
     rel: 'b.gguf',
-    argsHash: 'hash-a',
-  });
-  const argsHashChanged = computeWorkloadEpoch({
-    pid: 100,
-    startedAt: '2026-05-24T14:00:00.000Z',
-    rel: 'a.gguf',
-    argsHash: 'hash-b',
   });
 
-  expect(pidChanged).not.toBe(base);
   expect(startedAtChanged).not.toBe(base);
   expect(relChanged).not.toBe(base);
-  expect(argsHashChanged).not.toBe(base);
 });
 
 test('computeWorkloadEpoch returns a 40-char hex sha1', () => {
   const epoch = computeWorkloadEpoch({
-    pid: 1,
     startedAt: '2026-05-24T14:00:00.000Z',
     rel: 'model.gguf',
   });
@@ -91,10 +68,9 @@ test('readWorkloadEpoch returns computed epoch for ModelRun sidecars', () => {
     ensureWorkloadRuntimeDir(resolved, key);
 
     const runtimeDir = workloadRuntimeDir(resolved, key);
-    const pid = 43210;
     const startedAt = '2026-05-24T15:30:00.000Z';
     const rel = 'gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf';
-    writeFileSync(join(runtimeDir, 'llama-server.pid'), `${pid}\n`);
+    writeFileSync(join(runtimeDir, 'llama-server.pid'), `43210\n`);
     writeFileSync(
       join(runtimeDir, 'llama-server.state'),
       JSON.stringify({
@@ -103,20 +79,14 @@ test('readWorkloadEpoch returns computed epoch for ModelRun sidecars', () => {
         host: '127.0.0.1',
         port: '8080',
         binary: '/tmp/llama-server',
-        pid,
+        pid: 43210,
         startedAt,
         tunedProfile: null,
       }),
     );
 
     const epoch = readWorkloadEpoch(key, resolved);
-    expect(epoch).toBe(
-      computeWorkloadEpoch({
-        pid,
-        startedAt,
-        rel,
-      }),
-    );
+    expect(epoch).toBe(computeWorkloadEpoch({ startedAt, rel }));
   } finally {
     temp.cleanup();
   }
