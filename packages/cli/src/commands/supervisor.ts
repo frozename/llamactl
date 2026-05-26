@@ -9,9 +9,12 @@ import {
   type WorkloadTarget,
   type FleetJournalEntry,
   DEFAULT_PRESSURE_THRESHOLDS,
+  createMigrationController,
+  createPeerFetch,
 } from '@llamactl/fleet-supervisor';
 import { env as envMod } from '@llamactl/core';
-import { workloadStore } from '@llamactl/remote';
+import { listPeers, workloadStore } from '@llamactl/remote';
+import { readSchedulerLease } from '../../../remote/src/config/peers.js';
 import { runExecutor } from '../../../fleet-supervisor/src/executor.js';
 import { getGlobals } from '../dispatcher.js';
 import { setWorkloadEnabled } from './setEnabled.js';
@@ -202,6 +205,36 @@ export async function runSupervisor(args: string[]): Promise<number> {
   const writeJournal = (entry: FleetJournalEntry) =>
     appendFleetJournal(entry, journalPath);
 
+  const migrationEnabled = process.env.LLAMACTL_FLEET_MOVE_ENABLED === '1';
+  const migrationController = migrationEnabled
+    ? createMigrationController({
+        peers: listPeers({ currentNodeName: flags.node }).map((peer) => peer.id),
+        fetchSnapshot: async (node) => {
+          const peer = listPeers({ currentNodeName: flags.node }).find((candidate) => candidate.id === node);
+          if (!peer) {
+            throw new Error(`unknown peer: ${node}`);
+          }
+          const fetchSnapshot = createPeerFetch(peer);
+          const snapshot = await fetchSnapshot();
+          if (!snapshot) {
+            throw new Error(`peer ${node} returned no snapshot`);
+          }
+          return {
+            node: snapshot.node,
+            schedulerLeaseHolder: readSchedulerLease()?.holder ?? flags.node,
+            pressureState: 'NORMAL',
+            node_mem: snapshot.node_mem,
+            workloads: snapshot.workloads.map((workload) => ({
+              name: workload.name,
+              reachable: workload.reachable,
+            })),
+          };
+        },
+        leaseholder: readSchedulerLease()?.holder ?? flags.node,
+        getNowMs: () => Date.now(),
+      })
+    : null;
+
   const executorEnabled = flags.auto || flags.executeId !== undefined;
 
   const loopOpts: SupervisorLoopOptions = {
@@ -220,6 +253,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
       consecutiveErrorsForDegraded: flags.consecutiveErrors,
       p95DegradedMs: flags.p95DegradedMs,
     },
+    migrationController,
     onTick: executorEnabled
       ? async () => {
           const results = await runExecutor({

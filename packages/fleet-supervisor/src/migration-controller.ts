@@ -25,8 +25,8 @@ export interface MigrationWorkload {
 export interface MigrationControllerDeps {
   peers: string[];
   fetchSnapshot: (node: string) => Promise<NodeSnapshot>;
-  applyWorkload: (workloadName: string, toNode: string) => Promise<void>;
-  deleteWorkload: (workloadName: string, fromNode: string) => Promise<void>;
+  applyWorkload?: (workloadName: string, toNode: string) => Promise<void>;
+  deleteWorkload?: (workloadName: string, fromNode: string) => Promise<void>;
   leaseholder: string;
   getNowMs?: () => number;
   getCurrentTick?: () => number;
@@ -153,6 +153,9 @@ export class MigrationController {
     proposal: MoveProposal,
     writeJournalEntry: (entry: FleetJournalEntry) => void,
   ): Promise<'executed' | 'timed_out' | 'destination_lost' | 'apply_failed'> {
+    if (!this.deps.applyWorkload || !this.deps.deleteWorkload) {
+      return 'destination_lost';
+    }
     if (new Date(proposal.expiresAt).getTime() < this.nowMs) {
       return 'timed_out';
     }
