@@ -13,3 +13,4 @@ export { makePlacementDecision, chooseBestNode, scoreNodes } from './placement.j
 export * from './aggregator.js';
 export * from './peer-fetch.js';
 export * from './aggregator-db.js';
+export * from './infra-rollout.js';

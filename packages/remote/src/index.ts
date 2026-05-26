@@ -187,3 +187,5 @@ export {
   type CliBinding,
   type CliPreset,
 } from './config/schema.js';
+
+export * from "./client/infra-client.js";

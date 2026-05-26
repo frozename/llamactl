@@ -1,3 +1,8 @@
+import type { PeerNode } from "@llamactl/remote";
+import { getGlobals } from "../dispatcher.js";
+import { listPeers } from "@llamactl/remote";
+import { planRollout, runRollback, runRollout } from "../../../fleet-supervisor/src/infra-rollout.js";
+import { makeInfraClient } from "@llamactl/remote";
 import { infraSpec } from '@llamactl/remote';
 import { getNodeClient } from '../dispatcher.js';
 
@@ -36,7 +41,7 @@ USAGE:
   llamactl infra activate <pkg> --version=<v>            [--node <n>]
   llamactl infra uninstall <pkg> [--version=<v>]         [--node <n>]
   llamactl infra current <pkg>                           [--node <n>]
-  llamactl infra list-specs [--packages-dir=<path>]
+  llamactl infra list-specs [--packages-dir=<path>]\n  llamactl infra rollout <pkg> --version <v> --tarball-url <url> --sha256 <hex> [--nodes <glob>] [--strategy=one-at-a-time|all] [--health-timeout=<s>]\n  llamactl infra rollback <pkg> --previous-version <v> [--nodes <glob>]
   llamactl infra service write-unit <pkg>  [--env=<K=V>] [--node <n>]
   llamactl infra service <start|stop|reload|status> <pkg> [--node <n>]
 
@@ -291,27 +296,108 @@ async function runCurrent(argv: string[]): Promise<number> {
   return 0;
 }
 
+
+export async function executeRollout(
+  groups: PeerNode[][],
+  clientFactory: (peer: PeerNode) => any,
+  opts: { pkg: string, version: string, tarballUrl: string, sha256: string, skipIfPresent: boolean }
+) {
+  return runRollout(groups, clientFactory, opts);
+}
+
+export async function executeRollback(
+  peers: PeerNode[],
+  clientFactory: (peer: PeerNode) => any,
+  opts: { pkg: string, previousVersion: string }
+) {
+  return runRollback(peers, clientFactory, opts);
+}
+
+function matchNodeGlob(name: string, glob: string): boolean {
+  if (glob === '*' || glob === '') return true;
+  if (!glob.includes('*')) return name === glob;
+  const escaped = glob
+    .split('*')
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*');
+  return new RegExp(`^${escaped}$`).test(name);
+}
+
+function filterPeers(glob: string | undefined): PeerNode[] {
+  const globals = getGlobals();
+  const peers = listPeers({ currentNodeName: globals.nodeName ?? undefined });
+  if (!glob) return peers;
+  return peers.filter((peer) => matchNodeGlob(peer.id, glob));
+}
+
+async function runRolloutMain(argv: string[]): Promise<number> {
+  const [pkg] = positionalArgs(argv);
+  const kv = parseKv(argv);
+  const version = kv.get("version");
+  const tarballUrl = kv.get("tarball-url");
+  const sha256 = kv.get("sha256");
+  const strategy = kv.get("strategy") === "all" ? "all" : "one-at-a-time";
+  const healthTimeoutMs = Number.parseInt(kv.get("health-timeout") ?? "60", 10) * 1000;
+  
+  if (!pkg || !version || !tarballUrl || !sha256) {
+    process.stderr.write("infra rollout: pkg, --version, --tarball-url, --sha256 required\n");
+    return 1;
+  }
+
+  const globals = getGlobals();
+  const peers = filterPeers(kv.get("nodes") ?? undefined);
+  const groups = planRollout(peers, globals.nodeName || "local", strategy);
+  const res = await runRollout(groups, makeInfraClient, {
+    pkg,
+    version,
+    tarballUrl,
+    sha256,
+    skipIfPresent: true,
+    healthTimeoutMs,
+  });
+  return res.ok ? 0 : 1;
+}
+
+async function runRollbackMain(argv: string[]): Promise<number> {
+  const [pkg] = positionalArgs(argv);
+  const kv = parseKv(argv);
+  const previousVersion = kv.get("previous-version");
+
+  if (!pkg || !previousVersion) {
+    process.stderr.write("infra rollback: pkg, --previous-version required\n");
+    return 1;
+  }
+
+  const peers = filterPeers(kv.get("nodes") ?? undefined);
+  const res = await runRollback(peers, makeInfraClient, { pkg, previousVersion });
+  return res.ok ? 0 : 1;
+}
+
 export async function runInfra(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
-  if (!sub || sub === '--help' || sub === '-h' || sub === 'help') {
+  if (!sub || sub === "--help" || sub === "-h" || sub === "help") {
     process.stdout.write(USAGE);
     return 0;
   }
   switch (sub) {
-    case 'list':
+    case "list":
       return runList();
-    case 'install':
+    case "install":
       return runInstall(rest);
-    case 'activate':
+    case "activate":
       return runActivate(rest);
-    case 'uninstall':
+    case "uninstall":
       return runUninstall(rest);
-    case 'current':
+    case "current":
       return runCurrent(rest);
-    case 'list-specs':
+    case "list-specs":
       return runListSpecs(rest);
-    case 'service':
+    case "service":
       return runService(rest);
+    case "rollout":
+      return runRolloutMain(rest);
+    case "rollback":
+      return runRollbackMain(rest);
     default:
       process.stderr.write(`infra: unknown subcommand ${sub}\n\n${USAGE}`);
       return 1;
