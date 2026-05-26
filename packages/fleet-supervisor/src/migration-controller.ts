@@ -108,13 +108,15 @@ export class MigrationController {
       if (!peerSnapshotEntry) continue;
       const { peer, snapshot: peerSnapshot } = peerSnapshotEntry;
 
+      const freeMb = peerSnapshot.node_mem?.free_mb;
       const isViable =
         peerSnapshot.pressureState === 'NORMAL' &&
-        peerSnapshot.node_mem.free_mb >= this.minDestinationFreeMb;
+        Number.isFinite(freeMb) &&
+        freeMb >= this.minDestinationFreeMb;
       if (!isViable) continue;
 
-      if (peerSnapshot.node_mem.free_mb > bestFreeMb) {
-        bestFreeMb = peerSnapshot.node_mem.free_mb;
+      if (freeMb > bestFreeMb) {
+        bestFreeMb = freeMb;
         bestNode = peer;
       }
     }
@@ -142,11 +144,11 @@ export class MigrationController {
   isStickyWindowActive(workload: string): boolean {
     const state = this.inFlightMoves.get(workload);
     if (!state) return false;
-    if (state.tick !== undefined && this.deps.getCurrentTick) {
-      return this.currentTick - state.tick < this.stickyTicks;
-    }
-
-    return this.nowMs - state.movedAtMs < this.stickyTicks * this.pollIntervalMs;
+    const active = state.tick !== undefined && this.deps.getCurrentTick
+      ? this.currentTick - state.tick < this.stickyTicks
+      : this.nowMs - state.movedAtMs < this.stickyTicks * this.pollIntervalMs;
+    if (!active) this.inFlightMoves.delete(workload);
+    return active;
   }
 
   async executeMove(
@@ -156,7 +158,8 @@ export class MigrationController {
     if (!this.deps.applyWorkload || !this.deps.deleteWorkload) {
       return 'destination_lost';
     }
-    if (new Date(proposal.expiresAt).getTime() < this.nowMs) {
+    const expiresAtMs = Date.parse(proposal.expiresAt);
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs < this.nowMs) {
       return 'timed_out';
     }
 
@@ -165,9 +168,11 @@ export class MigrationController {
       return 'destination_lost';
     }
 
+    const destFreeMb = destinationSnapshot.node_mem?.free_mb;
     if (
       destinationSnapshot.pressureState !== 'NORMAL' ||
-      destinationSnapshot.node_mem.free_mb < this.minDestinationFreeMb
+      !Number.isFinite(destFreeMb) ||
+      destFreeMb < this.minDestinationFreeMb
     ) {
       return 'destination_lost';
     }
@@ -296,6 +301,7 @@ export class MigrationController {
   ): Promise<MoveProposal | null> {
     const isPressureRise =
       entry.kind === 'fleet-transition' &&
+      entry.subjectKind === 'node' &&
       entry.signal === 'pressure' &&
       entry.from === 'NORMAL' &&
       entry.to === 'HIGH';
