@@ -28,3 +28,4 @@ export * as openaiProxy from './openaiProxy.js';
 export * as responsecache from './responsecache/index.js';
 export * as workloadRuntime from './workloadRuntime.js';
 export * as fsAtomic from './fsAtomic.js';
+export * as probe from './probe.js';

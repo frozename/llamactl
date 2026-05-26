@@ -11,13 +11,13 @@ import {
   workloadSchema,
   workloadStore,
 } from '@llamactl/remote';
-import { probeWorkload } from '@llamactl/fleet-supervisor';
 import {
   listModelHosts,
   saveModelHost,
 } from '../../../remote/src/workload/modelhost-store.js';
 import { ModelHostManifestSchema, type ModelHostManifest } from '../../../remote/src/workload/modelhost-schema.js';
 import { readModelHostState } from '../../../core/src/engines/state.js';
+import { formatEndpoint, probeHealthEndpoint } from '../../../core/src/probe.js';
 import { resolveEnv } from '../../../core/src/env.js';
 import { workloadRuntimeDir } from '../../../core/src/workloadRuntime.js';
 import { getNodeClientByName } from '../dispatcher.js';
@@ -497,10 +497,10 @@ export async function runGet(args: string[]): Promise<number> {
     })),
     ...(await Promise.all(modelHosts.map(async (manifest) => {
       const state = readModelHostState({ name: manifest.metadata.name });
-      const endpoint = state ? `http://${state.host}:${state.port}` : null;
+      const endpoint = state ? formatEndpoint(state.host, state.port) : null;
       let phase: string = 'unknown';
-      if (state && endpoint) {
-        const probe = await probeWorkload({ name: manifest.metadata.name, endpoint, kind: 'ModelHost' });
+      if (state) {
+        const probe = await probeHealthEndpoint(state.host, state.port).catch(() => ({ reachable: false }));
         phase = probe.reachable ? 'Running' : 'Unreachable';
       }
       return {
