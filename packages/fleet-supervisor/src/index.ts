@@ -18,13 +18,6 @@ export * from './migration-controller.js';
 
 import { MigrationController, type MigrationControllerDeps } from './migration-controller.js';
 
-/**
- * Phase 4 gate. Migration orchestration is disabled by default and only
- * wired when LLAMACTL_FLEET_MOVE_ENABLED=1.
- */
-export function createMigrationController(deps: MigrationControllerDeps): MigrationController | null {
-  if (process.env.LLAMACTL_FLEET_MOVE_ENABLED === '1') {
-    return new MigrationController(deps);
-  }
-  return null;
+export function createMigrationController(deps: MigrationControllerDeps): MigrationController {
+  return new MigrationController(deps);
 }

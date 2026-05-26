@@ -12,7 +12,7 @@ describe('migration controller wiring gate', () => {
     process.env.LLAMACTL_FLEET_MOVE_ENABLED = original;
   });
 
-  it('skips wiring when LLAMACTL_FLEET_MOVE_ENABLED is absent', () => {
+  it('wires controller even when LLAMACTL_FLEET_MOVE_ENABLED is absent', () => {
     delete process.env.LLAMACTL_FLEET_MOVE_ENABLED;
 
     const controller = createMigrationController({
@@ -23,6 +23,6 @@ describe('migration controller wiring gate', () => {
       leaseholder: 'm4pro',
     });
 
-    expect(controller).toBeNull();
+    expect(controller).not.toBeNull();
   });
 });

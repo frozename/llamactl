@@ -32,6 +32,16 @@ function makeManifest(tmp: string) {
   return { manifest, workloadsDir, runtimeDir };
 }
 
+function modelHostEnv(tmp: string): NodeJS.ProcessEnv {
+  const modelsDir = join(tmp, 'models');
+  mkdirSync(modelsDir, { recursive: true });
+  return {
+    ...process.env,
+    LLAMACTL_MODELS_DIR: modelsDir,
+    LLAMA_CPP_MODELS: modelsDir,
+  };
+}
+
 describe('server/modelhost', () => {
   test('persists inline manifest to workloadsDir before start', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-inline-'));
@@ -67,6 +77,7 @@ describe('server/modelhost', () => {
         manifest,
         workloadsDir,
         runtimeDir,
+        env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });
@@ -88,6 +99,7 @@ describe('server/modelhost', () => {
         key: { name: 'mlx-host-server' },
         workloadsDir,
         runtimeDir,
+        env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });
@@ -111,6 +123,7 @@ describe('server/modelhost', () => {
         key: { name: 'mlx-host-server' },
         workloadsDir,
         runtimeDir,
+        env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });
@@ -145,6 +158,7 @@ describe('server/modelhost', () => {
         key: { name: 'mlx-host-server' },
         workloadsDir,
         runtimeDir,
+        env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });
@@ -175,6 +189,7 @@ describe('server/modelhost', () => {
         key: { name: 'mlx-host-server' },
         workloadsDir,
         runtimeDir,
+        env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: false, modelIds: [] }),
       });
@@ -233,6 +248,7 @@ describe('server/modelhost', () => {
         key: { name: 'mlx-host-server' },
         workloadsDir,
         runtimeDir,
+        env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });
@@ -255,6 +271,7 @@ describe('server/modelhost', () => {
         key: { name: 'mlx-host-server' },
         workloadsDir,
         runtimeDir,
+        env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
         probeReady: async () => ({ ready: true, modelIds: [] }),
       });

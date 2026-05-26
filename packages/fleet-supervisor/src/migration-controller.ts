@@ -39,8 +39,13 @@ export interface MigrationControllerDeps {
 
 const MOVE_PROPOSAL_TTL_MS = 30_000;
 
+interface InFlightMoveState {
+  movedAtMs: number;
+  tick?: number;
+}
+
 export class MigrationController {
-  private readonly inFlightMoves = new Map<string, number>();
+  private readonly inFlightMoves = new Map<string, InFlightMoveState>();
 
   constructor(private readonly deps: MigrationControllerDeps) {}
 
@@ -87,15 +92,21 @@ export class MigrationController {
     let bestNode: string | null = null;
     let bestFreeMb = -1;
 
-    for (const peer of this.deps.peers) {
-      if (peer === fromNode) continue;
+    const peerSnapshots = await Promise.all(
+      this.deps.peers
+        .filter((peer) => peer !== fromNode)
+        .map(async (peer) => {
+          try {
+            return { peer, snapshot: await this.deps.fetchSnapshot(peer) };
+          } catch {
+            return null;
+          }
+        }),
+    );
 
-      let peerSnapshot: NodeSnapshot;
-      try {
-        peerSnapshot = await this.deps.fetchSnapshot(peer);
-      } catch {
-        continue;
-      }
+    for (const peerSnapshotEntry of peerSnapshots) {
+      if (!peerSnapshotEntry) continue;
+      const { peer, snapshot: peerSnapshot } = peerSnapshotEntry;
 
       const isViable =
         peerSnapshot.pressureState === 'NORMAL' &&
@@ -122,19 +133,26 @@ export class MigrationController {
   }
 
   markMoveInFlight(workload: string, _moveProposalId: string): void {
-    this.inFlightMoves.set(workload, this.currentTick);
+    this.inFlightMoves.set(workload, {
+      movedAtMs: this.nowMs,
+      ...(this.deps.getCurrentTick ? { tick: this.currentTick } : {}),
+    });
   }
 
   isStickyWindowActive(workload: string): boolean {
-    const lastMoveTick = this.inFlightMoves.get(workload);
-    if (lastMoveTick === undefined) return false;
-    return this.currentTick - lastMoveTick < this.stickyTicks;
+    const state = this.inFlightMoves.get(workload);
+    if (!state) return false;
+    if (state.tick !== undefined && this.deps.getCurrentTick) {
+      return this.currentTick - state.tick < this.stickyTicks;
+    }
+
+    return this.nowMs - state.movedAtMs < this.stickyTicks * this.pollIntervalMs;
   }
 
   async executeMove(
     proposal: MoveProposal,
     writeJournalEntry: (entry: FleetJournalEntry) => void,
-  ): Promise<'executed' | 'timed_out' | 'destination_lost'> {
+  ): Promise<'executed' | 'timed_out' | 'destination_lost' | 'apply_failed'> {
     if (new Date(proposal.expiresAt).getTime() < this.nowMs) {
       return 'timed_out';
     }
@@ -152,6 +170,27 @@ export class MigrationController {
     }
 
     const ts = new Date(this.nowMs).toISOString();
+
+    try {
+      await this.deps.applyWorkload(proposal.workload, proposal.toNode);
+    } catch (err) {
+      writeJournalEntry({
+        kind: 'fleet-execution',
+        ts: new Date(this.nowMs).toISOString(),
+        node: this.deps.leaseholder,
+        proposalId: proposal.proposalId,
+        action: {
+          type: 'move',
+          workload: proposal.workload,
+          fromNode: proposal.fromNode,
+          toNode: proposal.toNode,
+          reason: 'rebalance',
+        },
+        status: 'failed',
+        reason: `apply failed: ${(err as Error).message}`,
+      });
+      return 'apply_failed';
+    }
 
     const skippedEvict: FleetExecutionEntry = {
       kind: 'fleet-execution',
@@ -199,7 +238,6 @@ export class MigrationController {
     });
 
     this.markMoveInFlight(proposal.workload, proposal.proposalId);
-    await this.deps.applyWorkload(proposal.workload, proposal.toNode);
 
     const deadline = this.nowMs + this.healthTimeoutMs;
     while (this.nowMs <= deadline) {

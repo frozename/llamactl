@@ -234,4 +234,126 @@ describe('MigrationController', () => {
     expect(DEFAULT_PRESSURE_THRESHOLDS.consecutiveTicks).toBe(3);
     expect(DEFAULT_PRESSURE_THRESHOLDS.clearTicks).toBe(5);
   });
+
+  it('F1: executeMove does not journal move intent before apply succeeds', async () => {
+    const failingController = new MigrationController({
+      peers: ['m2mini', 'm4pro'],
+      fetchSnapshot: async (node) => snapshots[node] ?? {
+        node,
+        pressureState: 'NORMAL',
+        node_mem: { free_mb: 4096 },
+        workloads: [],
+      },
+      applyWorkload: async () => {
+        throw new Error('apply failed');
+      },
+      deleteWorkload: async (w, fromNode) => {
+        deleteCalls.push({ workload: w, fromNode });
+      },
+      leaseholder: 'm4pro',
+      getNowMs: () => nowMs,
+      getCurrentTick: () => tick,
+      healthTimeoutMs: 5,
+      pollIntervalMs: 1,
+      sleep: async () => {
+        nowMs += 1;
+      },
+    });
+
+    snapshots.m2mini = {
+      node: 'm2mini',
+      pressureState: 'NORMAL',
+      node_mem: { free_mb: 8000 },
+      workloads: [{ name: 'model-a', reachable: true }],
+    };
+
+    const proposal: MoveProposal = {
+      workload: 'model-a',
+      fromNode: 'm4pro',
+      toNode: 'm2mini',
+      proposalId: 'move-1',
+      evictProposalId: 'evict-1',
+      expiresAt: new Date(nowMs + 30_000).toISOString(),
+    };
+
+    const result = await failingController.executeMove(proposal, (entry) => journal.push(entry));
+
+    expect(result).toBe('apply_failed');
+    expect(journal.some((entry) => entry.kind === 'fleet-proposal' && entry.proposalId === 'move-1')).toBe(false);
+    expect(journal.some((entry) => entry.kind === 'fleet-move' && entry.proposalId === 'move-1')).toBe(false);
+    expect(journal.some((entry) => entry.kind === 'fleet-execution' && entry.proposalId === 'evict-1' && entry.status === 'skipped')).toBe(false);
+    expect(failingController.isStickyWindowActive('model-a')).toBe(false);
+  });
+
+  it('F2: sticky window clears without getCurrentTick by falling back to elapsed time', () => {
+    const noTickController = new MigrationController({
+      peers: ['m2mini'],
+      fetchSnapshot: async () => ({
+        node: 'm2mini',
+        pressureState: 'NORMAL',
+        node_mem: { free_mb: 4096 },
+        workloads: [],
+      }),
+      applyWorkload: async () => undefined,
+      deleteWorkload: async () => undefined,
+      leaseholder: 'm4pro',
+      getNowMs: () => nowMs,
+      stickyTicks: 2,
+      pollIntervalMs: 100,
+    });
+
+    noTickController.markMoveInFlight('model-a', 'move-1');
+    expect(noTickController.isStickyWindowActive('model-a')).toBe(true);
+
+    nowMs += 250;
+    expect(noTickController.isStickyWindowActive('model-a')).toBe(false);
+  });
+
+  it('F4: evaluateMove fans out peer snapshot fetches in parallel', async () => {
+    const deferred = new Map<string, { resolve: (value: NodeSnapshot) => void; promise: Promise<NodeSnapshot> }>();
+    const peers = ['p1', 'p2', 'p3'];
+    const started: string[] = [];
+
+    for (const peer of peers) {
+      let resolve!: (value: NodeSnapshot) => void;
+      const promise = new Promise<NodeSnapshot>((res) => {
+        resolve = res;
+      });
+      deferred.set(peer, { resolve, promise });
+    }
+
+    const parallelController = new MigrationController({
+      peers,
+      fetchSnapshot: async (node) => {
+        started.push(node);
+        return deferred.get(node)?.promise ?? Promise.resolve({
+          node,
+          pressureState: 'NORMAL',
+          node_mem: { free_mb: 4096 },
+          workloads: [],
+        });
+      },
+      applyWorkload: async () => undefined,
+      deleteWorkload: async () => undefined,
+      leaseholder: 'm4pro',
+      getNowMs: () => nowMs,
+      getCurrentTick: () => tick,
+    });
+
+    const evaluation = parallelController.evaluateMove(
+      workload,
+      sourceSnapshot,
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(started.sort()).toEqual(['p1', 'p2', 'p3']);
+
+    deferred.get('p1')?.resolve({ node: 'p1', pressureState: 'NORMAL', node_mem: { free_mb: 5000 }, workloads: [] });
+    deferred.get('p2')?.resolve({ node: 'p2', pressureState: 'NORMAL', node_mem: { free_mb: 7000 }, workloads: [] });
+    deferred.get('p3')?.resolve({ node: 'p3', pressureState: 'NORMAL', node_mem: { free_mb: 6000 }, workloads: [] });
+
+    const proposal = await evaluation;
+    expect(proposal?.toNode).toBe('p2');
+  });
 });
