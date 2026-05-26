@@ -11,6 +11,7 @@ import {
   workloadSchema,
   workloadStore,
 } from '@llamactl/remote';
+import { probeWorkload } from '@llamactl/fleet-supervisor';
 import {
   listModelHosts,
   saveModelHost,
@@ -494,18 +495,24 @@ export async function runGet(args: string[]): Promise<number> {
       ...row,
       kind: 'modelrun' as const,
     })),
-    ...modelHosts.map((manifest) => {
+    ...(await Promise.all(modelHosts.map(async (manifest) => {
       const state = readModelHostState({ name: manifest.metadata.name });
+      const endpoint = state ? `http://${state.host}:${state.port}` : null;
+      let phase: string = 'unknown';
+      if (state && endpoint) {
+        const probe = await probeWorkload({ name: manifest.metadata.name, endpoint, kind: 'ModelHost' });
+        phase = probe.reachable ? 'Running' : 'Unreachable';
+      }
       return {
         kind: 'modelhost' as const,
         name: manifest.metadata.name,
         node: manifest.spec.node,
-        phase: state ? 'Running' : 'unknown',
+        phase,
         rel: manifest.spec.hostedModels.map((m) => m.rel).join(', '),
-        endpoint: state ? `http://${state.host}:${state.port}` : null,
+        endpoint,
         gateway: false,
       };
-    }),
+    }))),
   ];
   if (json) {
     process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
