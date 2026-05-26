@@ -309,6 +309,7 @@ export const ClusterNodeSchema = z.object({
 export const ClusterSchema = z.object({
   name: z.string().min(1),
   nodes: z.array(ClusterNodeSchema).default([]),
+  schedulerLease: z.object({ holder: z.string().min(1) }).optional(),
 });
 
 export const ContextSchema = z.object({

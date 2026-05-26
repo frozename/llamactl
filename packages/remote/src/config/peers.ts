@@ -65,3 +65,11 @@ export function listPeers(opts?: { currentNodeName?: string }): PeerNode[] {
     }));
 }
 
+
+export function readSchedulerLease(config?: Config): { holder: string } | null {
+  const c = config ?? loadConfig();
+  const context = currentContext(c);
+  const cluster = c.clusters.find((candidate) => candidate.name === context.cluster);
+  if (!cluster) return null;
+  return cluster.schedulerLease ?? null;
+}

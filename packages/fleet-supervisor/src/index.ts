@@ -14,3 +14,14 @@ export * from './aggregator.js';
 export * from './peer-fetch.js';
 export * from './aggregator-db.js';
 export * from './infra-rollout.js';
+export * from './migration-controller.js';
+
+import { MigrationController, type MigrationControllerDeps } from './migration-controller.js';
+
+// Phase 4 gate — set LLAMACTL_FLEET_MOVE_ENABLED=1 to enable cross-node moves
+export function createMigrationController(deps: MigrationControllerDeps): MigrationController | null {
+  if (process.env.LLAMACTL_FLEET_MOVE_ENABLED === '1') {
+    return new MigrationController(deps);
+  }
+  return null;
+}

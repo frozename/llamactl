@@ -113,7 +113,28 @@ export interface FleetPressureStatusEntry {
   compressorBreach: boolean;  // compressor_mb > compressorWarnMb
 }
 
+
+export interface FleetMoveEntry {
+  kind: 'fleet-move';
+  workload: string;
+  fromNode: string;
+  toNode: string;
+  proposalId: string;
+  expiresAt: string;
+  node: string;
+  ts: string;
+}
+
+export interface MoveProposal {
+  workload: string;
+  fromNode: string;
+  toNode: string;
+  proposalId: string;
+  expiresAt: string;
+  evictProposalId: string;
+}
+
 export type FleetJournalEntry =
   | FleetSnapshotEntry | FleetHeartbeatEntry
   | FleetTransitionEntry | FleetProposalEntry | FleetExecutionEntry
-  | FleetPressureStatusEntry | FleetPlacementEntry;
+  | FleetPressureStatusEntry | FleetPlacementEntry | FleetMoveEntry;
