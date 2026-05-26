@@ -52,8 +52,26 @@ export async function runExecutor(opts: ExecutorOptions): Promise<FleetExecution
 
   const pending = proposals.filter((p) => !executedIds.has(p.proposalId));
 
+  const nowMs = Date.now();
   const results: FleetExecutionEntry[] = [];
   for (const proposal of pending) {
+    if (typeof proposal.expiresAt === 'string') {
+      const expiresAtMs = Date.parse(proposal.expiresAt);
+      if (Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs) {
+        const entry: FleetExecutionEntry = {
+          kind: 'fleet-execution',
+          ts: new Date(nowMs).toISOString(),
+          node: opts.node,
+          proposalId: proposal.proposalId,
+          action: proposal.action,
+          status: 'skipped',
+          reason: 'expired',
+        };
+        opts.writeJournal(entry);
+        results.push(entry);
+        continue;
+      }
+    }
     results.push(await executeOne(proposal, opts));
   }
   return results;

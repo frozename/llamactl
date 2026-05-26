@@ -244,4 +244,42 @@ describe('runExecutor', () => {
     expect(results[0]!.status).toBe('failed');
     expect(results[0]!.reason).toContain('ECONNREFUSED');
   });
+
+  it('expired proposal skipped with reason=expired and disable not called', async () => {
+    const proposal: FleetProposalEntry = {
+      ...makeProposal('p1', 'evict'),
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    };
+    let disableCalls = 0;
+    const { opts, written } = makeOpts([proposal], {
+      auto: true,
+      severityThreshold: 3,
+      disable: async () => { disableCalls += 1; return 0; },
+    });
+    const results = await runExecutor(opts);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.status).toBe('skipped');
+    expect(results[0]!.reason).toBe('expired');
+    expect(disableCalls).toBe(0);
+    expect(written).toHaveLength(1);
+    expect(written[0]!.kind).toBe('fleet-execution');
+  });
+
+  it('proposal without expiresAt executes normally', async () => {
+    const proposal = makeProposal('p1', 'mark-degraded');
+    expect(proposal.expiresAt).toBeUndefined();
+    const { opts } = makeOpts([proposal], { auto: true, severityThreshold: 2 });
+    const results = await runExecutor(opts);
+    expect(results[0]!.status).toBe('executed');
+  });
+
+  it('future expiresAt still executes (not yet expired)', async () => {
+    const proposal: FleetProposalEntry = {
+      ...makeProposal('p1', 'mark-degraded'),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const { opts } = makeOpts([proposal], { auto: true, severityThreshold: 2 });
+    const results = await runExecutor(opts);
+    expect(results[0]!.status).toBe('executed');
+  });
 });
