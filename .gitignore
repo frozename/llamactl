@@ -34,3 +34,8 @@ __pycache__/
 
 # Penumbra runtime state
 .penumbra/
+
+# Local tool sandboxes / runtime locks / editor backups
+.antigravitycli/
+.claude/scheduled_tasks.lock
+*.bak
