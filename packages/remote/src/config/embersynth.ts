@@ -234,7 +234,7 @@ function agentToEmbersynthNode(
     modelId: benchSummary?.rel ?? 'default',
     priority,
     auth: { type: 'bearer', token },
-    health: { endpoint: '/healthz', intervalMs: 30000 },
+    health: { endpoint: '/health', intervalMs: 30000 },
     ...(optimization ? { optimization } : {}),
   });
 }

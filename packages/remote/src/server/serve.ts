@@ -326,7 +326,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       | ClientAddress
       | null;
     opts.onRequest?.(url);
-    if (url.pathname === '/healthz') {
+    if (url.pathname === '/health' || url.pathname === '/healthz') {
       return new Response('ok', { status: 200 });
     }
     // Reverse-tunnel endpoints — gated on opts.tunnelCentral. Both

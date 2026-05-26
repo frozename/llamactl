@@ -106,12 +106,9 @@ export async function probeWorkload(
   const start = Date.now();
 
   try {
-    // llamactl-agent endpoints expose /healthz; raw llama-server exposes /health.
-    // Try /healthz first, fall back to /health, so a single probe covers both.
-    let healthRes = await fetchFn(`${target.endpoint}/healthz`, { signal: controller.signal });
-    if (!healthRes.ok && healthRes.status === 404) {
-      healthRes = await fetchFn(`${target.endpoint}/health`, { signal: controller.signal });
-    }
+    // Both llamactl-agent (since the /healthz alias landed) and raw
+    // llama-server expose /health, so a single probe covers both.
+    const healthRes = await fetchFn(`${target.endpoint}/health`, { signal: controller.signal });
     const latency = Date.now() - start;
 
     if (!healthRes.ok) {

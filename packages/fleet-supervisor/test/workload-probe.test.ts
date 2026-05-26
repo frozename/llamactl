@@ -29,12 +29,11 @@ describe('probeWorkload', () => {
     expect(result.consecutiveErrors).toBe(4);
   });
 
-  it('llamactl-agent endpoint with /healthz (no /health) → reachable:true', async () => {
+  it('hits /health only (no /healthz fallback)', async () => {
     const calls: string[] = [];
     const fakeFetch = async (url: string) => {
       calls.push(url);
-      if (url.endsWith('/healthz')) return new Response('ok', { status: 200 });
-      if (url.endsWith('/health')) return new Response('not found', { status: 404 });
+      if (url.endsWith('/health')) return new Response('ok', { status: 200 });
       if (url.endsWith('/v1/models'))
         return new Response(JSON.stringify({ data: [{ id: 'granite-3b' }] }), { status: 200 });
       return new Response('', { status: 404 });
@@ -45,27 +44,7 @@ describe('probeWorkload', () => {
     );
     expect(result.reachable).toBe(true);
     expect(result.models).toEqual(['granite-3b']);
-    expect(calls[0]).toBe('http://127.0.0.1:7944/healthz');
-    // /healthz hit → no /health fallback
-    expect(calls.some((u) => u.endsWith('/health'))).toBe(false);
-  });
-
-  it('raw llama-server endpoint (no /healthz) → falls back to /health', async () => {
-    const calls: string[] = [];
-    const fakeFetch = async (url: string) => {
-      calls.push(url);
-      if (url.endsWith('/healthz')) return new Response('not found', { status: 404 });
-      if (url.endsWith('/health')) return new Response('ok', { status: 200 });
-      if (url.endsWith('/v1/models'))
-        return new Response(JSON.stringify({ data: [] }), { status: 200 });
-      return new Response('', { status: 404 });
-    };
-    const result = await probeWorkload(
-      { name: 'raw-llama', endpoint: 'http://127.0.0.1:8083', kind: 'ModelRun' },
-      { fetch: fakeFetch as unknown as typeof fetch, timeoutMs: 500 },
-    );
-    expect(result.reachable).toBe(true);
-    expect(calls[0]).toBe('http://127.0.0.1:8083/healthz');
-    expect(calls[1]).toBe('http://127.0.0.1:8083/health');
+    expect(calls[0]).toBe('http://127.0.0.1:7944/health');
+    expect(calls.some((u) => u.endsWith('/healthz'))).toBe(false);
   });
 });

@@ -8,8 +8,9 @@ export interface ProbeHealthResult {
 }
 
 /**
- * Lightweight liveness probe for a locally-known endpoint. Tries /healthz
- * first (llamactl-agent shape), then /health on 404 (raw llama-server shape).
+ * Lightweight liveness probe for a locally-known endpoint. Hits /health,
+ * which both llamactl-agent (since the /healthz alias landed) and raw
+ * llama-server expose.
  *
  * Accepts loopback aliases (0.0.0.0, ::1, localhost, 127.0.0.1) and normalizes
  * them so the probe always hits a routable URL: 0.0.0.0 -> 127.0.0.1, IPv6
@@ -25,10 +26,7 @@ export async function probeHealthEndpoint(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    let res = await fetchFn(`${endpoint}/healthz`, { signal: controller.signal });
-    if (!res.ok && res.status === 404) {
-      res = await fetchFn(`${endpoint}/health`, { signal: controller.signal });
-    }
+    const res = await fetchFn(`${endpoint}/health`, { signal: controller.signal });
     return { reachable: res.ok };
   } catch {
     return { reachable: false };

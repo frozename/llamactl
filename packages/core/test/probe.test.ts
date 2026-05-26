@@ -27,23 +27,20 @@ describe('probeHealthEndpoint', () => {
     }) as typeof globalThis.fetch;
   }
 
-  it('returns reachable=true when /healthz returns 200', async () => {
-    const probe = await probeHealthEndpoint('127.0.0.1', 8080, {
-      fetch: makeFetch(() => new Response('ok', { status: 200 })),
-    });
-    expect(probe.reachable).toBe(true);
-  });
-
-  it('falls back to /health when /healthz returns 404', async () => {
+  it('returns reachable=true when /health returns 200', async () => {
     const calls: string[] = [];
     const probe = await probeHealthEndpoint('127.0.0.1', 8080, {
-      fetch: makeFetch((url) => {
-        calls.push(url);
-        return new Response('', { status: url.endsWith('/healthz') ? 404 : 200 });
-      }),
+      fetch: makeFetch((url) => { calls.push(url); return new Response('ok', { status: 200 }); }),
     });
     expect(probe.reachable).toBe(true);
-    expect(calls).toEqual(['http://127.0.0.1:8080/healthz', 'http://127.0.0.1:8080/health']);
+    expect(calls).toEqual(['http://127.0.0.1:8080/health']);
+  });
+
+  it('returns reachable=false on 404 (no /healthz fallback)', async () => {
+    const probe = await probeHealthEndpoint('127.0.0.1', 8080, {
+      fetch: makeFetch(() => new Response('', { status: 404 })),
+    });
+    expect(probe.reachable).toBe(false);
   });
 
   it('returns reachable=false on connection error', async () => {
@@ -58,7 +55,7 @@ describe('probeHealthEndpoint', () => {
     await probeHealthEndpoint('0.0.0.0', 9999, {
       fetch: makeFetch((url) => { urlSeen = url; return new Response('', { status: 200 }); }),
     });
-    expect(urlSeen).toBe('http://127.0.0.1:9999/healthz');
+    expect(urlSeen).toBe('http://127.0.0.1:9999/health');
   });
 
   it('bracket-wraps IPv6 in the probe URL', async () => {
@@ -66,6 +63,6 @@ describe('probeHealthEndpoint', () => {
     await probeHealthEndpoint('::1', 9999, {
       fetch: makeFetch((url) => { urlSeen = url; return new Response('', { status: 200 }); }),
     });
-    expect(urlSeen).toBe('http://[::1]:9999/healthz');
+    expect(urlSeen).toBe('http://[::1]:9999/health');
   });
 });
