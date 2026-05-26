@@ -79,6 +79,7 @@ export interface FleetProposalEntry {
   ts: string; node: string; proposalId: string;
   transition: Pick<FleetTransitionEntry, 'subject' | 'subjectKind' | 'signal' | 'from' | 'to'>;
   action: FleetProposalAction;
+  expiresAt?: string;
 }
 
 export interface FleetExecutionEntry {
@@ -112,7 +113,6 @@ export interface FleetPressureStatusEntry {
   headroomBreach: boolean;    // free_mb < headroomMinMb
   compressorBreach: boolean;  // compressor_mb > compressorWarnMb
 }
-
 
 export interface FleetMoveEntry {
   kind: 'fleet-move';

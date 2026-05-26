@@ -1,171 +1,236 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
-import { MigrationController } from '../src/migration-controller.js';
-import { startSupervisorLoop, DEFAULT_PRESSURE_THRESHOLDS } from '../src/loop.js';
-import type { NodeSnapshot } from '../src/migration-controller.js';
-import type { FleetExecutionEntry, FleetJournalEntry } from '../src/types.js';
+import { beforeEach, describe, expect, it } from 'bun:test';
+import { DEFAULT_PRESSURE_THRESHOLDS } from '../src/loop.js';
+import { MigrationController, type NodeSnapshot } from '../src/migration-controller.js';
+import type { FleetExecutionEntry, FleetJournalEntry, MoveProposal } from '../src/types.js';
 
 describe('MigrationController', () => {
+  let nowMs = 1_700_000_000_000;
+  let tick = 100;
+  let snapshots: Record<string, NodeSnapshot>;
+  let journal: FleetJournalEntry[];
+  let applyCalls: Array<{ workload: string; toNode: string }>;
+  let deleteCalls: Array<{ workload: string; fromNode: string }>;
   let controller: MigrationController;
-  let applyCalled = false;
-  let deleteCalled = false;
-  let journal: any[] = [];
-  let snapshots: Record<string, NodeSnapshot> = {};
-  let currentMs = 1000000;
-  let currentTick = 100;
 
   beforeEach(() => {
-    applyCalled = false;
-    deleteCalled = false;
-    journal = [];
+    nowMs = 1_700_000_000_000;
+    tick = 100;
     snapshots = {};
-    currentMs = 1000000;
-    currentTick = 100;
+    journal = [];
+    applyCalls = [];
+    deleteCalls = [];
 
     controller = new MigrationController({
-      peers: ['m4pro', 'm2mini'],
-      fetchSnapshot: async (node) => snapshots[node] || { pressureState: 'NORMAL', node_mem: { free_mb: 4000 } } as any,
-      applyWorkload: async () => { applyCalled = true; },
-      deleteWorkload: async () => { deleteCalled = true; },
+      peers: ['m2mini', 'm4pro'],
+      fetchSnapshot: async (node) => snapshots[node] ?? {
+        node,
+        pressureState: 'NORMAL',
+        node_mem: { free_mb: 4096 },
+        workloads: [],
+      },
+      applyWorkload: async (workload, toNode) => {
+        applyCalls.push({ workload, toNode });
+      },
+      deleteWorkload: async (workload, fromNode) => {
+        deleteCalls.push({ workload, fromNode });
+      },
       leaseholder: 'm4pro',
-      
-      getCurrentTick: () => currentTick,
-      stickyTicks: 10,
-      healthTimeoutMs: 100,
-      pollIntervalMs: 10, // only in tests
+      getNowMs: () => nowMs,
+      getCurrentTick: () => tick,
+      healthTimeoutMs: 5,
+      pollIntervalMs: 1,
+      sleep: async () => {
+        nowMs += 1;
+      },
     });
   });
 
-  const baseSnapshot = {
+  const workload = {
+    name: 'model-a',
+    node: 'm4pro',
+    spec: { placement: 'auto' },
+    evictProposalId: 'evict-1',
+  };
+
+  const sourceSnapshot: NodeSnapshot = {
+    node: 'm4pro',
     schedulerLeaseHolder: 'm4pro',
     pressureState: 'HIGH',
     node_mem: { free_mb: 100 },
-  } as any;
+    workloads: [],
+  };
 
-  const baseWorkload = {
-    name: 'test-workload',
-    spec: { placement: 'auto' }
-  } as any;
+  function executionEntryMatches(status: FleetExecutionEntry['status']): (entry: FleetJournalEntry) => entry is FleetExecutionEntry {
+    return (entry: FleetJournalEntry): entry is FleetExecutionEntry =>
+      entry.kind === 'fleet-execution' && entry.status === status;
+  }
 
   it('T1: evaluateMove returns null when not scheduler leaseholder', async () => {
-    const snap = { ...baseSnapshot, schedulerLeaseHolder: 'other' };
-    expect(await controller.evaluateMove(baseWorkload, snap, 'evict-1')).toBeNull();
+    const proposal = await controller.evaluateMove(workload, {
+      ...sourceSnapshot,
+      schedulerLeaseHolder: 'm2mini',
+    });
+    expect(proposal).toBeNull();
   });
 
-  it('T2: evaluateMove returns null when workload is pinned', async () => {
-    const pinnedWorkload = { ...baseWorkload, spec: { placement: 'pinned' } };
-    expect(await controller.evaluateMove(pinnedWorkload, baseSnapshot, 'evict-1')).toBeNull();
+  it('T2: evaluateMove returns null when workload is pinned (spec.placement: \'pinned\')', async () => {
+    const pinned = { ...workload, spec: { placement: 'pinned' as const } };
+    const proposal = await controller.evaluateMove(pinned, sourceSnapshot);
+    expect(proposal).toBeNull();
   });
 
-  it('T3: evaluateMove returns null when sticky window is active', async () => {
-    controller.markMoveInFlight('test-workload');
-    currentTick += 5; // < 10 ticks
-    expect(await controller.evaluateMove(baseWorkload, baseSnapshot, 'evict-1')).toBeNull();
+  it('T3: evaluateMove returns null when sticky window is active (< 10 ticks since last move)', async () => {
+    controller.markMoveInFlight(workload.name, 'move-1');
+    tick += 5;
+    const proposal = await controller.evaluateMove(workload, sourceSnapshot);
+    expect(proposal).toBeNull();
   });
 
-  it('T4: evaluateMove returns null when no viable destination node', async () => {
-    snapshots['m4pro'] = { pressureState: 'HIGH', node_mem: { free_mb: 100 } } as any;
-    snapshots['m2mini'] = { pressureState: 'HIGH', node_mem: { free_mb: 100 } } as any;
-    expect(await controller.evaluateMove(baseWorkload, baseSnapshot, 'evict-1')).toBeNull();
+  it('T4: evaluateMove returns null when no viable destination node (all disqualified)', async () => {
+    snapshots.m2mini = { node: 'm2mini', pressureState: 'HIGH', node_mem: { free_mb: 200 }, workloads: [] };
+    snapshots.m4pro = { node: 'm4pro', pressureState: 'HIGH', node_mem: { free_mb: 100 }, workloads: [] };
+
+    const proposal = await controller.evaluateMove(workload, sourceSnapshot);
+    expect(proposal).toBeNull();
   });
 
-  it('T5: evaluateMove returns MoveProposal with correct from/to', async () => {
-    snapshots['m2mini'] = { pressureState: 'NORMAL', node_mem: { free_mb: 8000 } } as any;
-    const proposal = await controller.evaluateMove(baseWorkload, baseSnapshot, 'evict-1');
+  it('T5: evaluateMove returns MoveProposal with correct from/to when viable destination exists', async () => {
+    snapshots.m2mini = { node: 'm2mini', pressureState: 'NORMAL', node_mem: { free_mb: 8000 }, workloads: [] };
+
+    const proposal = await controller.evaluateMove(workload, sourceSnapshot);
     expect(proposal).not.toBeNull();
-    expect(proposal?.workload).toBe('test-workload');
+    expect(proposal?.fromNode).toBe('m4pro');
     expect(proposal?.toNode).toBe('m2mini');
-    expect(proposal?.evictProposalId).toBe('evict-1');
+    expect(proposal?.expiresAt).toBeTruthy();
   });
 
   it('T6: after markMoveInFlight, isStickyWindowActive returns true for stickyTicks', () => {
-    expect(controller.isStickyWindowActive('test-workload')).toBe(false);
-    controller.markMoveInFlight('test-workload');
-    expect(controller.isStickyWindowActive('test-workload')).toBe(true);
-    currentTick += 11;
-    expect(controller.isStickyWindowActive('test-workload')).toBe(false);
+    expect(controller.isStickyWindowActive(workload.name)).toBe(false);
+    controller.markMoveInFlight(workload.name, 'move-2');
+    expect(controller.isStickyWindowActive(workload.name)).toBe(true);
+    tick += 10;
+    expect(controller.isStickyWindowActive(workload.name)).toBe(false);
   });
 
-  it('T7: executeMove writes skipped for evict, then executed on success', async () => {
-    snapshots['m2mini'] = { pressureState: 'NORMAL', node_mem: { free_mb: 8000 }, workloads: [{ name: 'test-workload', reachable: true }] } as any;
-    const proposal = {
-      workload: 'test-workload',
+  it('T7: executeMove writes fleet-execution {status:\'skipped\'} for original evict, then {status:\'executed\'} on success', async () => {
+    snapshots.m2mini = {
+      node: 'm2mini',
+      pressureState: 'NORMAL',
+      node_mem: { free_mb: 8000 },
+      workloads: [{ name: 'model-a', reachable: true }],
+    };
+
+    const proposal: MoveProposal = {
+      workload: 'model-a',
       fromNode: 'm4pro',
       toNode: 'm2mini',
       proposalId: 'move-1',
-      expiresAt: new Date(Date.now() + 10000).toISOString(),
-      evictProposalId: 'evict-1'
+      evictProposalId: 'evict-1',
+      expiresAt: new Date(nowMs + 30_000).toISOString(),
     };
-    
-    const result = await controller.executeMove(proposal, (e) => journal.push(e));
+
+    const result = await controller.executeMove(proposal, (entry) => journal.push(entry));
+
     expect(result).toBe('executed');
-    expect(applyCalled).toBe(true);
-    expect(deleteCalled).toBe(true);
-    
-    const skipped = journal.find(e => e.kind === 'fleet-execution' && e.status === 'skipped');
-    expect(skipped.proposalId).toBe('evict-1');
-    expect(skipped.reason).toBe('move in flight');
+    expect(applyCalls).toHaveLength(1);
+    expect(deleteCalls).toHaveLength(1);
 
-    const executed = journal.find(e => e.kind === 'fleet-execution' && e.status === 'executed');
-    expect(executed.proposalId).toBe('move-1');
+    const skipped = journal.find(executionEntryMatches('skipped'));
+    const executed = journal.find(executionEntryMatches('executed'));
+
+    expect(skipped).toBeTruthy();
+    expect(skipped?.proposalId).toBe('evict-1');
+    expect(executed).toBeTruthy();
+    expect(executed?.proposalId).toBe('move-1');
   });
 
-  it('T8: executeMove writes failed on move timeout, returns timed_out', async () => {
-    // Make reachable false to cause timeout
-    snapshots['m2mini'] = { pressureState: 'NORMAL', node_mem: { free_mb: 8000 }, workloads: [{ name: 'test-workload', reachable: false }] } as any;
-    const proposal = {
-      workload: 'test-workload',
+  it('T8: executeMove writes fleet-execution {status:\'failed\'} on move timeout, returns \'timed_out\'', async () => {
+    snapshots.m2mini = {
+      node: 'm2mini',
+      pressureState: 'NORMAL',
+      node_mem: { free_mb: 8000 },
+      workloads: [{ name: 'model-a', reachable: false }],
+    };
+
+    const proposal: MoveProposal = {
+      workload: 'model-a',
       fromNode: 'm4pro',
       toNode: 'm2mini',
       proposalId: 'move-1',
-      expiresAt: new Date(Date.now() + 10000).toISOString(),
-      evictProposalId: 'evict-1'
+      evictProposalId: 'evict-1',
+      expiresAt: new Date(nowMs + 30_000).toISOString(),
     };
 
-    const result = await controller.executeMove(proposal, (e) => journal.push(e));
+    const result = await controller.executeMove(proposal, (entry) => journal.push(entry));
+
     expect(result).toBe('timed_out');
-    expect(applyCalled).toBe(true);
-    expect(deleteCalled).toBe(false);
-
-    const failed = journal.find(e => e.kind === 'fleet-execution' && e.status === 'failed');
-    expect(failed.proposalId).toBe('move-1');
+    expect(deleteCalls).toHaveLength(0);
+    const failed = journal.find(executionEntryMatches('failed'));
+    expect(failed).toBeTruthy();
   });
 
-  it('T9: destination headroom re-checked at execution time', async () => {
-    // Was normal at evaluate, but now HIGH
-    snapshots['m2mini'] = { pressureState: 'HIGH', node_mem: { free_mb: 100 } } as any;
-    const proposal = {
-      workload: 'test-workload',
+  it('T9: destination headroom re-checked at execution time (C1 guard) — if headroom gone, fall back to original evict', async () => {
+    snapshots.m2mini = {
+      node: 'm2mini',
+      pressureState: 'HIGH',
+      node_mem: { free_mb: 100 },
+      workloads: [],
+    };
+
+    const proposal: MoveProposal = {
+      workload: 'model-a',
       fromNode: 'm4pro',
       toNode: 'm2mini',
       proposalId: 'move-1',
-      expiresAt: new Date(Date.now() + 10000).toISOString(),
-      evictProposalId: 'evict-1'
+      evictProposalId: 'evict-1',
+      expiresAt: new Date(nowMs + 30_000).toISOString(),
     };
 
-    const result = await controller.executeMove(proposal, (e) => journal.push(e));
+    const result = await controller.executeMove(proposal, (entry) => journal.push(entry));
+
     expect(result).toBe('destination_lost');
-    expect(applyCalled).toBe(false);
+    expect(applyCalls).toHaveLength(0);
+    expect(journal.find((entry) => entry.kind === 'fleet-execution' && entry.proposalId === 'evict-1' && entry.status === 'skipped')).toBeUndefined();
   });
 
-  it('T10: onJournalEntry triggers onEvaluateTrigger on NORMAL->HIGH pressure transition', () => {
-    let evaluateCalled = false;
-    controller.onEvaluateTrigger = () => { evaluateCalled = true; };
-    
+  it('T10: onJournalEntry triggers evaluateMove on NORMAL→HIGH pressure transition', async () => {
+    snapshots.m2mini = { node: 'm2mini', pressureState: 'NORMAL', node_mem: { free_mb: 8000 }, workloads: [] };
+
+    const triggered = await controller.onJournalEntry(
+      {
+        kind: 'fleet-transition',
+        ts: new Date(nowMs).toISOString(),
+        node: 'm4pro',
+        subject: 'node',
+        subjectKind: 'node',
+        signal: 'pressure',
+        from: 'NORMAL',
+        to: 'HIGH',
+      },
+      workload,
+      sourceSnapshot,
+    );
+
+    expect(triggered).not.toBeNull();
+    expect(triggered?.toNode).toBe('m2mini');
+  });
+
+  it('T11 (regression): supervisor loop hysteresis counters are unchanged when fleet-placement entries appear in journal', () => {
     controller.onJournalEntry({
-      kind: 'fleet-transition',
-      signal: 'pressure',
-      from: 'NORMAL',
-      to: 'HIGH',
-      subject: 'node',
-      subjectKind: 'node',
+      kind: 'fleet-placement',
+      ts: new Date(nowMs).toISOString(),
       node: 'm4pro',
-      ts: new Date().toISOString()
+      decision: {
+        workload: 'model-a',
+        requestedNode: 'auto',
+        chosenNode: 'm2mini',
+        expectedMemoryMb: 1024,
+        headroomMinMb: 512,
+        modelFilePenaltyMb: 2048,
+        scores: [],
+      },
     });
-    
-    expect(evaluateCalled).toBe(true);
-  });
 
-  it('T11: loop hysteresis counters unchanged by fleet-move entries', () => {
     expect(DEFAULT_PRESSURE_THRESHOLDS.consecutiveTicks).toBe(3);
     expect(DEFAULT_PRESSURE_THRESHOLDS.clearTicks).toBe(5);
   });

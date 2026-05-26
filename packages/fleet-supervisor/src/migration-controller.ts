@@ -1,11 +1,26 @@
+import type {
+  FleetExecutionEntry,
+  FleetJournalEntry,
+  FleetProposalEntry,
+  MoveProposal,
+} from './types.js';
+
 export interface NodeSnapshot {
   node?: string;
   schedulerLeaseHolder?: string;
   pressureState: 'NORMAL' | 'HIGH';
-  node_mem: { free_mb: number; };
-  workloads?: any[];
+  node_mem: { free_mb: number };
+  workloads?: Array<{ name: string; reachable: boolean }>;
 }
-import type { FleetExecutionEntry, FleetJournalEntry, FleetMoveEntry, MoveProposal } from './types.js';
+
+export interface MigrationWorkload {
+  name: string;
+  node?: string;
+  spec?: {
+    placement?: 'auto' | 'pinned' | string;
+  };
+  evictProposalId?: string;
+}
 
 export interface MigrationControllerDeps {
   peers: string[];
@@ -18,146 +33,243 @@ export interface MigrationControllerDeps {
   stickyTicks?: number;
   healthTimeoutMs?: number;
   pollIntervalMs?: number;
+  minDestinationFreeMb?: number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
+const MOVE_PROPOSAL_TTL_MS = 30_000;
+
 export class MigrationController {
-  private inFlightMoves = new Map<string, number>();
-  onEvaluateTrigger?: (entry: any) => void;
+  private readonly inFlightMoves = new Map<string, number>();
 
-  constructor(private deps: MigrationControllerDeps) {}
+  constructor(private readonly deps: MigrationControllerDeps) {}
 
-  private get nowMs() { return this.deps.getNowMs ? this.deps.getNowMs() : Date.now(); }
-  private get currentTick() { return this.deps.getCurrentTick ? this.deps.getCurrentTick() : 0; }
-  private get stickyTicks() { return this.deps.stickyTicks ?? 10; }
-  private get healthTimeoutMs() { return this.deps.healthTimeoutMs ?? 300_000; }
-  private get pollIntervalMs() { return this.deps.pollIntervalMs ?? 1000; }
+  private get nowMs(): number {
+    return this.deps.getNowMs?.() ?? Date.now();
+  }
 
-  async evaluateMove(workload: any, snapshot: NodeSnapshot, evictProposalId: string): Promise<MoveProposal | null> {
+  private get currentTick(): number {
+    return this.deps.getCurrentTick?.() ?? 0;
+  }
+
+  private get stickyTicks(): number {
+    return this.deps.stickyTicks ?? 10;
+  }
+
+  private get healthTimeoutMs(): number {
+    return this.deps.healthTimeoutMs ?? 300_000;
+  }
+
+  private get pollIntervalMs(): number {
+    return this.deps.pollIntervalMs ?? 1_000;
+  }
+
+  private get minDestinationFreeMb(): number {
+    return this.deps.minDestinationFreeMb ?? 512;
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    if (this.deps.sleep) {
+      await this.deps.sleep(ms);
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+
+  async evaluateMove(workload: MigrationWorkload, snapshot: NodeSnapshot): Promise<MoveProposal | null> {
     if (this.deps.leaseholder !== snapshot.schedulerLeaseHolder) return null;
     if (workload.spec?.placement === 'pinned') return null;
     if (this.isStickyWindowActive(workload.name)) return null;
 
-    let bestDest: string | null = null;
-    let maxFree = 0;
+    const fromNode = snapshot.node ?? workload.node;
+    if (!fromNode) return null;
+
+    let bestNode: string | null = null;
+    let bestFreeMb = -1;
 
     for (const peer of this.deps.peers) {
+      if (peer === fromNode) continue;
+
+      let peerSnapshot: NodeSnapshot;
       try {
-        const peerSnap = await this.deps.fetchSnapshot(peer);
-        if (peerSnap.pressureState === 'NORMAL' && peerSnap.node_mem.free_mb > 512) {
-          if (peerSnap.node_mem.free_mb > maxFree) {
-            maxFree = peerSnap.node_mem.free_mb;
-            bestDest = peer;
-          }
-        }
-      } catch { }
+        peerSnapshot = await this.deps.fetchSnapshot(peer);
+      } catch {
+        continue;
+      }
+
+      const isViable =
+        peerSnapshot.pressureState === 'NORMAL' &&
+        peerSnapshot.node_mem.free_mb >= this.minDestinationFreeMb;
+      if (!isViable) continue;
+
+      if (peerSnapshot.node_mem.free_mb > bestFreeMb) {
+        bestFreeMb = peerSnapshot.node_mem.free_mb;
+        bestNode = peer;
+      }
     }
 
-    if (!bestDest) return null;
+    if (!bestNode) return null;
 
+    const proposalId = `move-${workload.name}-${this.nowMs}`;
     return {
       workload: workload.name,
-      fromNode: snapshot.node || workload.node, // fallback if needed
-      toNode: bestDest,
-      proposalId: `move-${Date.now()}`,
-      evictProposalId,
-      expiresAt: new Date(this.nowMs + 30000).toISOString()
+      fromNode,
+      toNode: bestNode,
+      proposalId,
+      evictProposalId: workload.evictProposalId ?? `evict-${workload.name}-${this.nowMs}`,
+      expiresAt: new Date(this.nowMs + MOVE_PROPOSAL_TTL_MS).toISOString(),
     };
   }
 
-  markMoveInFlight(workloadName: string): void {
-    this.inFlightMoves.set(workloadName, this.currentTick);
+  markMoveInFlight(workload: string, _moveProposalId: string): void {
+    this.inFlightMoves.set(workload, this.currentTick);
   }
 
-  isStickyWindowActive(workloadName: string): boolean {
-    const lastMoveTick = this.inFlightMoves.get(workloadName);
+  isStickyWindowActive(workload: string): boolean {
+    const lastMoveTick = this.inFlightMoves.get(workload);
     if (lastMoveTick === undefined) return false;
-    return (this.currentTick - lastMoveTick) < this.stickyTicks;
+    return this.currentTick - lastMoveTick < this.stickyTicks;
   }
 
-  async executeMove(proposal: MoveProposal, writeJournalEntry: (entry: FleetJournalEntry) => void): Promise<'executed' | 'timed_out' | 'destination_lost'> {
+  async executeMove(
+    proposal: MoveProposal,
+    writeJournalEntry: (entry: FleetJournalEntry) => void,
+  ): Promise<'executed' | 'timed_out' | 'destination_lost'> {
     if (new Date(proposal.expiresAt).getTime() < this.nowMs) {
       return 'timed_out';
     }
 
-    try {
-      const destSnap = await this.deps.fetchSnapshot(proposal.toNode); 
-      if (destSnap.pressureState === 'HIGH' || destSnap.node_mem.free_mb < 512) {
-        return 'destination_lost';
-      }
-    } catch {
+    const destinationSnapshot = await this.safeFetchSnapshot(proposal.toNode);
+    if (!destinationSnapshot) {
       return 'destination_lost';
     }
 
-    writeJournalEntry({
+    if (
+      destinationSnapshot.pressureState !== 'NORMAL' ||
+      destinationSnapshot.node_mem.free_mb < this.minDestinationFreeMb
+    ) {
+      return 'destination_lost';
+    }
+
+    const ts = new Date(this.nowMs).toISOString();
+
+    const skippedEvict: FleetExecutionEntry = {
       kind: 'fleet-execution',
-      status: 'skipped',
-      proposalId: proposal.evictProposalId,
-      reason: 'move in flight',
-      ts: new Date(this.nowMs).toISOString(),
+      ts,
       node: this.deps.leaseholder,
-      action: { type: 'evict', workload: proposal.workload, reason: 'superseded by move' }
-    });
+      proposalId: proposal.evictProposalId,
+      action: { type: 'evict', workload: proposal.workload, reason: 'move in flight' },
+      status: 'skipped',
+      reason: 'move in flight',
+    };
+    writeJournalEntry(skippedEvict);
+
+    const moveProposalEntry: FleetProposalEntry = {
+      kind: 'fleet-proposal',
+      ts,
+      node: this.deps.leaseholder,
+      proposalId: proposal.proposalId,
+      transition: {
+        subject: proposal.workload,
+        subjectKind: 'workload',
+        signal: 'placement',
+        from: proposal.fromNode,
+        to: proposal.toNode,
+      },
+      action: {
+        type: 'move',
+        workload: proposal.workload,
+        fromNode: proposal.fromNode,
+        toNode: proposal.toNode,
+        reason: 'rebalance',
+      },
+      expiresAt: proposal.expiresAt,
+    };
+    writeJournalEntry(moveProposalEntry);
 
     writeJournalEntry({
-    kind: 'fleet-move',
+      kind: 'fleet-move',
+      ts,
       node: this.deps.leaseholder,
       workload: proposal.workload,
       fromNode: proposal.fromNode,
       toNode: proposal.toNode,
       proposalId: proposal.proposalId,
       expiresAt: proposal.expiresAt,
-      ts: new Date(this.nowMs).toISOString()
     });
 
-    this.markMoveInFlight(proposal.workload);
-
+    this.markMoveInFlight(proposal.workload, proposal.proposalId);
     await this.deps.applyWorkload(proposal.workload, proposal.toNode);
 
-    const startMs = this.nowMs;
-    let reachable = false;
-    while (this.nowMs - startMs < this.healthTimeoutMs) {
-      try {
-        const snap = await this.deps.fetchSnapshot(proposal.toNode);
-        const wl = snap.workloads?.find((w: any) => w.name === proposal.workload);
-        if (wl && wl.reachable) {
-          reachable = true;
-          break;
-        }
-      } catch (_) {}
-      await new Promise(r => setTimeout(r, this.pollIntervalMs));
+    const deadline = this.nowMs + this.healthTimeoutMs;
+    while (this.nowMs <= deadline) {
+      const snapshot = await this.safeFetchSnapshot(proposal.toNode);
+      const reachable = snapshot?.workloads?.some(
+        (entry) => entry.name === proposal.workload && entry.reachable,
+      );
+      if (reachable) {
+        await this.deps.deleteWorkload(proposal.workload, proposal.fromNode);
+        writeJournalEntry({
+          kind: 'fleet-execution',
+          ts: new Date(this.nowMs).toISOString(),
+          node: this.deps.leaseholder,
+          proposalId: proposal.proposalId,
+          action: {
+            type: 'move',
+            workload: proposal.workload,
+            fromNode: proposal.fromNode,
+            toNode: proposal.toNode,
+            reason: 'rebalance',
+          },
+          status: 'executed',
+        });
+        return 'executed';
+      }
+
+      await this.sleep(this.pollIntervalMs);
     }
 
-    if (!reachable) {
-      writeJournalEntry({
-        kind: 'fleet-execution',
-        status: 'failed',
-        proposalId: proposal.proposalId,
-        ts: new Date(this.nowMs).toISOString(),
-        node: this.deps.leaseholder,
-        action: { type: 'move', workload: proposal.workload, fromNode: proposal.fromNode, toNode: proposal.toNode, reason: 'move' }
-      });
-      return 'timed_out';
-    }
-
-    await this.deps.deleteWorkload(proposal.workload, proposal.fromNode);
-    
     writeJournalEntry({
       kind: 'fleet-execution',
-      status: 'executed',
-      proposalId: proposal.proposalId,
       ts: new Date(this.nowMs).toISOString(),
       node: this.deps.leaseholder,
-      action: { type: 'move', workload: proposal.workload, fromNode: proposal.fromNode, toNode: proposal.toNode, reason: 'move' }
+      proposalId: proposal.proposalId,
+      action: {
+        type: 'move',
+        workload: proposal.workload,
+        fromNode: proposal.fromNode,
+        toNode: proposal.toNode,
+        reason: 'rebalance',
+      },
+      status: 'failed',
+      reason: 'timeout waiting for destination health',
     });
-    return 'executed';
+
+    return 'timed_out';
   }
 
-  onJournalEntry(entry: FleetJournalEntry): void {
-    if (entry.kind === 'fleet-transition' && entry.signal === 'pressure' && entry.from === 'NORMAL' && entry.to === 'HIGH') {
-      if (this.onEvaluateTrigger) {
-        this.onEvaluateTrigger(entry);
-      }
+  async onJournalEntry(
+    entry: FleetJournalEntry,
+    workload?: MigrationWorkload,
+    snapshot?: NodeSnapshot,
+  ): Promise<MoveProposal | null> {
+    const isPressureRise =
+      entry.kind === 'fleet-transition' &&
+      entry.signal === 'pressure' &&
+      entry.from === 'NORMAL' &&
+      entry.to === 'HIGH';
+
+    if (!isPressureRise) return null;
+    if (!workload || !snapshot) return null;
+
+    return this.evaluateMove(workload, snapshot);
+  }
+
+  private async safeFetchSnapshot(node: string): Promise<NodeSnapshot | null> {
+    try {
+      return await this.deps.fetchSnapshot(node);
+    } catch {
+      return null;
     }
   }
 }
-
