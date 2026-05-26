@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { appendFleetJournal } from '../src/journal.js';
+import { appendFleetJournal, readCurrentLeaseHolder } from '../src/journal.js';
 import type { FleetSnapshotEntry } from '../src/types.js';
 
 describe('appendFleetJournal', () => {
@@ -32,5 +32,31 @@ describe('appendFleetJournal', () => {
     expect(parsed.node).toBe('local');
     expect(parsed.workloads[0].name).toBe('qwen-host');
     expect(parsed.node_mem.compressor_mb).toBe(2600);
+  });
+
+  it('readCurrentLeaseHolder returns latest fleet-lease-election holder', () => {
+    dir = mkdtempSync(join(tmpdir(), 'fleet-journal-test-'));
+    const path = join(dir, 'journal.jsonl');
+    appendFleetJournal({
+      kind: 'fleet-lease-election',
+      ts: '2026-05-26T00:00:00.000Z',
+      node: 'node-a',
+      holder: 'node-a',
+    }, path);
+    appendFleetJournal({
+      kind: 'fleet-lease-election',
+      ts: '2026-05-26T00:00:01.000Z',
+      node: 'node-b',
+      holder: 'node-b',
+    }, path);
+
+    expect(readCurrentLeaseHolder(path)).toBe('node-b');
+  });
+
+  it('readCurrentLeaseHolder returns null for empty journal', () => {
+    dir = mkdtempSync(join(tmpdir(), 'fleet-journal-test-'));
+    const path = join(dir, 'journal.jsonl');
+    writeFileSync(path, '', 'utf8');
+    expect(readCurrentLeaseHolder(path)).toBeNull();
   });
 });

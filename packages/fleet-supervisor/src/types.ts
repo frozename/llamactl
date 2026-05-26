@@ -125,6 +125,13 @@ export interface FleetMoveEntry {
   ts: string;
 }
 
+export interface FleetLeaseElectionEntry {
+  kind: 'fleet-lease-election';
+  ts: string;
+  node: string;
+  holder: string;
+}
+
 export interface MoveProposal {
   workload: string;
   fromNode: string;
@@ -137,4 +144,5 @@ export interface MoveProposal {
 export type FleetJournalEntry =
   | FleetSnapshotEntry | FleetHeartbeatEntry
   | FleetTransitionEntry | FleetProposalEntry | FleetExecutionEntry
-  | FleetPressureStatusEntry | FleetPlacementEntry | FleetMoveEntry;
+  | FleetPressureStatusEntry | FleetPlacementEntry | FleetMoveEntry
+  | FleetLeaseElectionEntry;

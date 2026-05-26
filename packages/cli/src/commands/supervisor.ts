@@ -1,3 +1,6 @@
+import { env as envMod } from '@llamactl/core';
+import { listPeers, workloadStore } from '@llamactl/remote';
+import { readSchedulerLease } from '../../../remote/src/config/peers.js';
 import {
   startSupervisorLoop,
   defaultFleetJournalPath,
@@ -11,11 +14,9 @@ import {
   DEFAULT_PRESSURE_THRESHOLDS,
   createMigrationController,
   createPeerFetch,
-} from '@llamactl/fleet-supervisor';
-import { env as envMod } from '@llamactl/core';
-import { listPeers, workloadStore } from '@llamactl/remote';
-import { readSchedulerLease } from '../../../remote/src/config/peers.js';
-import { runExecutor } from '../../../fleet-supervisor/src/executor.js';
+  runExecutor,
+  readRecentMovesFromJournal,
+} from '../../../fleet-supervisor/src/index.js';
 import { getGlobals } from '../dispatcher.js';
 import { setWorkloadEnabled } from './setEnabled.js';
 
@@ -221,7 +222,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
           }
           return {
             node: snapshot.node,
-            schedulerLeaseHolder: readSchedulerLease()?.holder ?? flags.node,
+            schedulerLeaseHolder: readSchedulerLease(journalPath)?.holder ?? flags.node,
             pressureState: 'NORMAL',
             node_mem: snapshot.node_mem,
             workloads: snapshot.workloads.map((workload) => ({
@@ -230,7 +231,8 @@ export async function runSupervisor(args: string[]): Promise<number> {
             })),
           };
         },
-        leaseholder: readSchedulerLease()?.holder ?? flags.node,
+        readRecentMoves: () => readRecentMovesFromJournal(journalPath),
+        leaseholder: readSchedulerLease(journalPath)?.holder ?? flags.node,
         getNowMs: () => Date.now(),
       })
     : null;

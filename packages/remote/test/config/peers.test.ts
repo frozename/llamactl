@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -89,4 +89,46 @@ test('listPeers honors explicit currentNodeName override', () => {
   cfg = upsertNode(cfg, 'home', { name: 'remote-node', endpoint: 'https://remote-node.example:7843' });
   saveConfig(cfg, process.env.LLAMACTL_CONFIG);
   expect(listPeers({ currentNodeName: 'my-self' }).map((peer) => peer.id).sort()).toEqual(['remote-node']);
+});
+
+test('readSchedulerLease reads holder from journal and does not call loadConfig fallback', async () => {
+  const journalPath = join(tmp, 'journal.jsonl');
+  writeFileSync(
+    journalPath,
+    [
+      JSON.stringify({
+        kind: 'fleet-lease-election',
+        ts: '2026-05-26T00:00:00.000Z',
+        node: 'node-a',
+        holder: 'node-a',
+      }),
+      JSON.stringify({
+        kind: 'fleet-lease-election',
+        ts: '2026-05-26T00:00:01.000Z',
+        node: 'node-b',
+        holder: 'node-b',
+      }),
+    ].join('\n') + '\n',
+    'utf8',
+  );
+
+  const loadConfigSpy = mock(() => {
+    throw new Error('loadConfig should not be called');
+  });
+
+  mock.module('../../src/config/kubeconfig.js', () => ({
+    currentContext: () => {
+      throw new Error('currentContext should not be called');
+    },
+    loadConfig: loadConfigSpy,
+    resolveToken: () => undefined,
+    saveConfig,
+    upsertCluster,
+    upsertNode,
+  }));
+
+  const peers = await import(`../../src/config/peers.js?f11-${Date.now()}`);
+  const lease = peers.readSchedulerLease(journalPath);
+  expect(lease).toEqual({ holder: 'node-b' });
+  expect(loadConfigSpy).not.toHaveBeenCalled();
 });

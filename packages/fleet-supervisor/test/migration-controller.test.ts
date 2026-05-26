@@ -112,6 +112,26 @@ describe('MigrationController', () => {
     expect(controller.isStickyWindowActive(workload.name)).toBe(false);
   });
 
+  it('F14: seeds in-flight move stickiness from readRecentMoves on construction', () => {
+    const seeded = new MigrationController({
+      peers: ['m2mini'],
+      fetchSnapshot: async () => ({
+        node: 'm2mini',
+        schedulerLeaseHolder: 'm4pro',
+        pressureState: 'NORMAL',
+        node_mem: { free_mb: 4096 },
+        workloads: [],
+      }),
+      leaseholder: 'm4pro',
+      getNowMs: () => nowMs,
+      stickyTicks: 10,
+      pollIntervalMs: 100,
+      readRecentMoves: () => [{ workload: 'w1', movedAtMs: nowMs - 500 }],
+    });
+
+    expect(seeded.isStickyWindowActive('w1')).toBe(true);
+  });
+
   it('T7: executeMove writes fleet-execution {status:\'skipped\'} for original evict, then {status:\'executed\'} on success', async () => {
     snapshots.m2mini = {
       node: 'm2mini',

@@ -1,7 +1,13 @@
 export * from './types.js';
 export * from './node-probe.js';
 export * from './workload-probe.js';
-export { appendFleetJournal, defaultFleetAuditPath, defaultFleetJournalPath } from './journal.js';
+export {
+  appendFleetJournal,
+  defaultFleetAuditPath,
+  defaultFleetJournalPath,
+  readCurrentLeaseHolder,
+  readRecentMovesFromJournal,
+} from './journal.js';
 export * from './policy.js';
 export * from './loop.js';
 export * from './executor.js';
@@ -20,6 +26,7 @@ import { MigrationController, type MigrationControllerDeps } from './migration-c
 import { createPeerFetch } from './peer-fetch.js';
 import type { AggregatorPeer } from './aggregator.js';
 import { listPeers } from '../../remote/src/config/peers.js';
+import { defaultFleetJournalPath, readRecentMovesFromJournal } from './journal.js';
 
 export function createMigrationController(deps: MigrationControllerDeps): MigrationController {
   return new MigrationController(deps);
@@ -39,6 +46,7 @@ export function createEnabledMigrationController(
     peers: deps.peers?.map((peer) => peer.id) ?? listPeers().map((peer) => peer.id),
     fetchSnapshot: deps.fetchSnapshot,
     leaseholder: deps.leaseholder,
+    readRecentMoves: deps.readRecentMoves ?? (() => readRecentMovesFromJournal(defaultFleetJournalPath())),
   });
 }
 

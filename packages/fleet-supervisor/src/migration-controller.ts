@@ -27,6 +27,7 @@ export interface MigrationControllerDeps {
   fetchSnapshot: (node: string) => Promise<NodeSnapshot>;
   applyWorkload?: (workloadName: string, toNode: string) => Promise<void>;
   deleteWorkload?: (workloadName: string, fromNode: string) => Promise<void>;
+  readRecentMoves?: () => Iterable<{ workload: string; movedAtMs: number }>;
   leaseholder: string;
   getNowMs?: () => number;
   getCurrentTick?: () => number;
@@ -47,7 +48,17 @@ interface InFlightMoveState {
 export class MigrationController {
   private readonly inFlightMoves = new Map<string, InFlightMoveState>();
 
-  constructor(private readonly deps: MigrationControllerDeps) {}
+  constructor(private readonly deps: MigrationControllerDeps) {
+    if (!deps.readRecentMoves) return;
+    for (const recentMove of deps.readRecentMoves()) {
+      if (!recentMove || typeof recentMove.workload !== 'string') continue;
+      if (!Number.isFinite(recentMove.movedAtMs)) continue;
+      const prior = this.inFlightMoves.get(recentMove.workload);
+      if (!prior || recentMove.movedAtMs > prior.movedAtMs) {
+        this.inFlightMoves.set(recentMove.workload, { movedAtMs: recentMove.movedAtMs });
+      }
+    }
+  }
 
   private get nowMs(): number {
     return this.deps.getNowMs?.() ?? Date.now();
