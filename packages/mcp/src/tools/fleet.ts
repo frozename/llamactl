@@ -450,6 +450,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
               'fleet-execution',
               'fleet-pressure-status',
               'fleet-placement',
+              'fleet-move',
             ]),
           )
           .optional(),
