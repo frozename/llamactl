@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { DEFAULT_PRESSURE_THRESHOLDS } from '../src/loop.js';
 import { MigrationController, type NodeSnapshot } from '../src/migration-controller.js';
-import type { FleetJournalEntry, MoveProposal } from '../src/types.js';
+import type { FleetExecutionEntry, FleetJournalEntry, MoveProposal } from '../src/types.js';
 
 describe('Arbitration conflicts', () => {
   let nowMs = 1_700_000_000_000;
@@ -21,13 +20,13 @@ describe('Arbitration conflicts', () => {
       fetchSnapshot: async (node) => snapshots[node] ?? {
         node,
         pressureState: 'NORMAL',
-        node_mem: { free_mb: 4096 },
+        nodeMem: { freeMb: 4096 },
         workloads: [{ name: 'model-a', reachable: true }],
       },
-      applyWorkload: async () => {
+      deployWorkload: async () => {
         applyCalls += 1;
       },
-      deleteWorkload: async () => undefined,
+      removeWorkload: async () => undefined,
       leaseholder: 'm4pro',
       getNowMs: () => nowMs,
       healthTimeoutMs: 5,
@@ -46,22 +45,50 @@ describe('Arbitration conflicts', () => {
       proposalId: 'move-1',
       evictProposalId: 'evict-1',
       expiresAt: new Date(nowMs + 30_000).toISOString(),
+      expiresAtMs: nowMs + 30_000,
       ...overrides,
     };
   }
 
-  it('C1: move supersedes evict only with fresh headroom proof (re-checked at execution)', async () => {
-    snapshots.m2mini = { node: 'm2mini', pressureState: 'HIGH', node_mem: { free_mb: 100 }, workloads: [] };
+  it('C1: destination re-check blocks move when destination is no longer viable', async () => {
+    snapshots.m2mini = { node: 'm2mini', pressureState: 'HIGH', nodeMem: { freeMb: 100 }, workloads: [] };
 
     const result = await controller.executeMove(proposal(), (entry) => journal.push(entry));
 
-    expect(result).toBe('destination_lost');
+    expect(result).toBe('destination_unavailable');
     expect(applyCalls).toBe(0);
     expect(journal.some((entry) => entry.kind === 'fleet-execution' && entry.proposalId === 'evict-1' && entry.status === 'skipped')).toBe(false);
   });
 
+  it('C1b: successful move writes exactly one skipped-evict and one executed move entry', async () => {
+    snapshots.m2mini = {
+      node: 'm2mini',
+      pressureState: 'NORMAL',
+      nodeMem: { freeMb: 9000 },
+      workloads: [{ name: 'model-a', reachable: true }],
+    };
+
+    const result = await controller.executeMove(proposal(), (entry) => journal.push(entry));
+
+    expect(result).toBe('executed');
+    expect(applyCalls).toBe(1);
+
+    const skipped = journal.filter(
+      (entry): entry is FleetExecutionEntry =>
+        entry.kind === 'fleet-execution' && entry.status === 'skipped' && entry.proposalId === 'evict-1',
+    );
+    const executed = journal.filter(
+      (entry): entry is FleetExecutionEntry =>
+        entry.kind === 'fleet-execution' && entry.status === 'executed' && entry.proposalId === 'move-1',
+    );
+
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]?.reason).toBe('evict suppressed by move move-1');
+    expect(executed).toHaveLength(1);
+  });
+
   it('C2: stale move proposal (ts + 30s < now) is not executed', async () => {
-    const stale = proposal({ expiresAt: new Date(nowMs - 1_000).toISOString() });
+    const stale = proposal({ expiresAtMs: nowMs - 1_000, expiresAt: new Date(nowMs - 1_000).toISOString() });
 
     const result = await controller.executeMove(stale, (entry) => journal.push(entry));
 
@@ -69,8 +96,8 @@ describe('Arbitration conflicts', () => {
     expect(applyCalls).toBe(0);
   });
 
-  it('C3: fleet-placement journal entries do not affect supervisor consecutiveTicks', () => {
-    controller.onJournalEntry({
+  it('F17: fleet-placement journal entries do not trigger move proposals', async () => {
+    const triggered = await controller.onJournalEntry({
       kind: 'fleet-placement',
       ts: new Date(nowMs).toISOString(),
       node: 'm4pro',
@@ -85,16 +112,16 @@ describe('Arbitration conflicts', () => {
       },
     });
 
-    expect(DEFAULT_PRESSURE_THRESHOLDS.consecutiveTicks).toBe(3);
-    expect(DEFAULT_PRESSURE_THRESHOLDS.clearTicks).toBe(5);
+    expect(triggered).toBeNull();
+    expect(journal).toHaveLength(0);
   });
 
   it('C4: HIGH-pressure destination refused even if it was NORMAL at proposal time', async () => {
-    snapshots.m2mini = { node: 'm2mini', pressureState: 'HIGH', node_mem: { free_mb: 120 }, workloads: [] };
+    snapshots.m2mini = { node: 'm2mini', pressureState: 'HIGH', nodeMem: { freeMb: 120 }, workloads: [] };
 
     const result = await controller.executeMove(proposal(), (entry) => journal.push(entry));
 
-    expect(result).toBe('destination_lost');
+    expect(result).toBe('destination_unavailable');
     expect(applyCalls).toBe(0);
   });
 
@@ -123,7 +150,7 @@ describe('Arbitration conflicts', () => {
       node: 'm4pro',
       schedulerLeaseHolder: 'm4pro',
       pressureState: 'HIGH',
-      node_mem: { free_mb: 100 },
+      nodeMem: { freeMb: 100 },
       workloads: [],
     });
 

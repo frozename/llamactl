@@ -17,7 +17,7 @@ describe('migration controller wiring gate', () => {
 
     const controller = createEnabledMigrationController({
       peers: [],
-      fetchSnapshot: async () => ({ pressureState: 'NORMAL', node_mem: { free_mb: 4096 }, workloads: [] }),
+      fetchSnapshot: async () => ({ pressureState: 'NORMAL', nodeMem: { freeMb: 4096 }, workloads: [] }),
       leaseholder: 'm4pro',
     });
 
@@ -29,9 +29,9 @@ describe('migration controller wiring gate', () => {
 
     const controller = createEnabledMigrationController({
       peers: [],
-      fetchSnapshot: async () => ({ pressureState: 'NORMAL', node_mem: { free_mb: 4096 }, workloads: [] }),
-      applyWorkload: async () => undefined,
-      deleteWorkload: async () => undefined,
+      fetchSnapshot: async () => ({ pressureState: 'NORMAL', nodeMem: { freeMb: 4096 }, workloads: [] }),
+      deployWorkload: async () => undefined,
+      removeWorkload: async () => undefined,
       leaseholder: 'm4pro',
     });
 

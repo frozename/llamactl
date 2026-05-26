@@ -224,7 +224,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
             node: snapshot.node,
             schedulerLeaseHolder: readSchedulerLease(journalPath)?.holder ?? flags.node,
             pressureState: 'NORMAL',
-            node_mem: snapshot.node_mem,
+            nodeMem: { freeMb: snapshot.node_mem.free_mb },
             workloads: snapshot.workloads.map((workload) => ({
               name: workload.name,
               reachable: workload.reachable,

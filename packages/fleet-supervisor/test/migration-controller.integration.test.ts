@@ -15,11 +15,11 @@ describe('MigrationController integration', () => {
         node: 'm2mini',
         schedulerLeaseHolder: 'm4pro',
         pressureState: 'NORMAL',
-        node_mem: { free_mb: 8000 },
+        nodeMem: { freeMb: 8000 },
         workloads: [{ name: 'model-a', reachable: true }],
       }),
-      applyWorkload: async () => undefined,
-      deleteWorkload: async () => undefined,
+      deployWorkload: async () => undefined,
+      removeWorkload: async () => undefined,
       leaseholder: 'm4pro',
       getNowMs: () => nowMs,
       getCurrentTick: () => tick,
@@ -54,7 +54,7 @@ describe('MigrationController integration', () => {
         node: 'm4pro',
         schedulerLeaseHolder: 'm4pro',
         pressureState: 'HIGH',
-        node_mem: { free_mb: 100 },
+        nodeMem: { freeMb: 100 },
         workloads: [],
       },
     );
@@ -63,7 +63,9 @@ describe('MigrationController integration', () => {
 
     const result = await controller?.executeMove(proposal as MoveProposal, (entry) => journal.push(entry));
     expect(result).toBe('executed');
-    expect(journal.some((entry) => entry.kind === 'fleet-move')).toBe(true);
+    expect(
+      journal.some((entry) => entry.kind === 'fleet-proposal' && entry.action.type === 'move'),
+    ).toBe(true);
     expect(journal.some((entry) => entry.kind === 'fleet-execution' && entry.status === 'executed')).toBe(true);
   });
 });

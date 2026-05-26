@@ -280,7 +280,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
         node: opts.node,
         schedulerLeaseHolder: opts.node,
         pressureState: pressure ? 'HIGH' : 'NORMAL',
-        node_mem,
+        nodeMem: { freeMb: node_mem.free_mb },
         workloads,
       };
       for (const workload of workloads) {

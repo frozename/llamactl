@@ -9,7 +9,7 @@ export interface NodeSnapshot {
   node?: string;
   schedulerLeaseHolder?: string;
   pressureState: 'NORMAL' | 'HIGH';
-  node_mem: { free_mb: number };
+  nodeMem: { freeMb: number };
   workloads?: Array<{ name: string; reachable: boolean }>;
 }
 
@@ -18,6 +18,9 @@ export interface MigrationWorkload {
   node?: string;
   spec?: {
     placement?: 'auto' | 'pinned' | string;
+    resources?: {
+      memoryMb?: number;
+    };
   };
   evictProposalId?: string;
 }
@@ -25,20 +28,25 @@ export interface MigrationWorkload {
 export interface MigrationControllerDeps {
   peers: string[];
   fetchSnapshot: (node: string) => Promise<NodeSnapshot>;
-  applyWorkload?: (workloadName: string, toNode: string) => Promise<void>;
-  deleteWorkload?: (workloadName: string, fromNode: string) => Promise<void>;
+  deployWorkload?: (workloadName: string, toNode: string) => Promise<void>;
+  removeWorkload?: (workloadName: string, fromNode: string) => Promise<void>;
   readRecentMoves?: () => Iterable<{ workload: string; movedAtMs: number }>;
   leaseholder: string;
   getNowMs?: () => number;
   getCurrentTick?: () => number;
-  stickyTicks?: number;
+  moveCooldownTicks?: number;
   healthTimeoutMs?: number;
   pollIntervalMs?: number;
   minDestinationFreeMb?: number;
   sleep?: (ms: number) => Promise<void>;
 }
 
-const MOVE_PROPOSAL_TTL_MS = 30_000;
+export const MIGRATION_POLICY_DEFAULTS = {
+  moveProposalTtlMs: 30_000,
+  moveCooldownTicks: 10,
+  healthTimeoutMs: 300_000,
+  minDestinationFreeMb: 512,
+} as const;
 
 interface InFlightMoveState {
   movedAtMs: number;
@@ -68,12 +76,12 @@ export class MigrationController {
     return this.deps.getCurrentTick?.() ?? 0;
   }
 
-  private get stickyTicks(): number {
-    return this.deps.stickyTicks ?? 10;
+  private get moveCooldownTicks(): number {
+    return this.deps.moveCooldownTicks ?? MIGRATION_POLICY_DEFAULTS.moveCooldownTicks;
   }
 
   private get healthTimeoutMs(): number {
-    return this.deps.healthTimeoutMs ?? 300_000;
+    return this.deps.healthTimeoutMs ?? MIGRATION_POLICY_DEFAULTS.healthTimeoutMs;
   }
 
   private get pollIntervalMs(): number {
@@ -81,7 +89,14 @@ export class MigrationController {
   }
 
   private get minDestinationFreeMb(): number {
-    return this.deps.minDestinationFreeMb ?? 512;
+    return this.deps.minDestinationFreeMb ?? MIGRATION_POLICY_DEFAULTS.minDestinationFreeMb;
+  }
+
+  private minRequiredFreeMb(workloadMemoryMb?: number): number {
+    if (typeof workloadMemoryMb !== 'number' || !Number.isFinite(workloadMemoryMb)) {
+      return this.minDestinationFreeMb;
+    }
+    return Math.max(this.minDestinationFreeMb, workloadMemoryMb);
   }
 
   private async sleep(ms: number): Promise<void> {
@@ -95,13 +110,15 @@ export class MigrationController {
   async evaluateMove(workload: MigrationWorkload, snapshot: NodeSnapshot): Promise<MoveProposal | null> {
     if (this.deps.leaseholder !== snapshot.schedulerLeaseHolder) return null;
     if (workload.spec?.placement === 'pinned') return null;
-    if (this.isStickyWindowActive(workload.name)) return null;
+    if (this.isInMoveCooldown(workload.name)) return null;
 
     const fromNode = snapshot.node ?? workload.node;
     if (!fromNode) return null;
 
     let bestNode: string | null = null;
     let bestFreeMb = -1;
+    const workloadMemoryMb = workload.spec?.resources?.memoryMb;
+    const requiredFreeMb = this.minRequiredFreeMb(workloadMemoryMb);
 
     const peerSnapshots = await Promise.all(
       this.deps.peers
@@ -119,11 +136,11 @@ export class MigrationController {
       if (!peerSnapshotEntry) continue;
       const { peer, snapshot: peerSnapshot } = peerSnapshotEntry;
 
-      const freeMb = peerSnapshot.node_mem?.free_mb;
+      const freeMb = peerSnapshot.nodeMem?.freeMb;
       const isViable =
         peerSnapshot.pressureState === 'NORMAL' &&
         Number.isFinite(freeMb) &&
-        freeMb >= this.minDestinationFreeMb;
+        freeMb >= requiredFreeMb;
       if (!isViable) continue;
 
       if (freeMb > bestFreeMb) {
@@ -141,23 +158,25 @@ export class MigrationController {
       toNode: bestNode,
       proposalId,
       evictProposalId: workload.evictProposalId ?? `evict-${workload.name}-${this.nowMs}`,
-      expiresAt: new Date(this.nowMs + MOVE_PROPOSAL_TTL_MS).toISOString(),
+      expiresAt: new Date(this.nowMs + MIGRATION_POLICY_DEFAULTS.moveProposalTtlMs).toISOString(),
+      expiresAtMs: this.nowMs + MIGRATION_POLICY_DEFAULTS.moveProposalTtlMs,
+      workloadMemoryMb,
     };
   }
 
-  markMoveInFlight(workload: string, _moveProposalId: string): void {
+  markMoveInFlight(workload: string): void {
     this.inFlightMoves.set(workload, {
       movedAtMs: this.nowMs,
       ...(this.deps.getCurrentTick ? { tick: this.currentTick } : {}),
     });
   }
 
-  isStickyWindowActive(workload: string): boolean {
+  isInMoveCooldown(workload: string): boolean {
     const state = this.inFlightMoves.get(workload);
     if (!state) return false;
     const active = state.tick !== undefined && this.deps.getCurrentTick
-      ? this.currentTick - state.tick < this.stickyTicks
-      : this.nowMs - state.movedAtMs < this.stickyTicks * this.pollIntervalMs;
+      ? this.currentTick - state.tick < this.moveCooldownTicks
+      : this.nowMs - state.movedAtMs < this.moveCooldownTicks * this.pollIntervalMs;
     if (!active) this.inFlightMoves.delete(workload);
     return active;
   }
@@ -165,33 +184,34 @@ export class MigrationController {
   async executeMove(
     proposal: MoveProposal,
     writeJournalEntry: (entry: FleetJournalEntry) => void,
-  ): Promise<'executed' | 'timed_out' | 'destination_lost' | 'apply_failed'> {
-    if (!this.deps.applyWorkload || !this.deps.deleteWorkload) {
-      return 'destination_lost';
+  ): Promise<'executed' | 'timed_out' | 'destination_unavailable' | 'apply_failed'> {
+    if (!this.deps.deployWorkload || !this.deps.removeWorkload) {
+      return 'destination_unavailable';
     }
-    const expiresAtMs = Date.parse(proposal.expiresAt);
+    const expiresAtMs = proposal.expiresAtMs ?? Date.parse(proposal.expiresAt);
     if (!Number.isFinite(expiresAtMs) || expiresAtMs < this.nowMs) {
       return 'timed_out';
     }
 
     const destinationSnapshot = await this.safeFetchSnapshot(proposal.toNode);
     if (!destinationSnapshot) {
-      return 'destination_lost';
+      return 'destination_unavailable';
     }
 
-    const destFreeMb = destinationSnapshot.node_mem?.free_mb;
+    const destFreeMb = destinationSnapshot.nodeMem?.freeMb;
+    const requiredFreeMb = this.minRequiredFreeMb(proposal.workloadMemoryMb);
     if (
       destinationSnapshot.pressureState !== 'NORMAL' ||
       !Number.isFinite(destFreeMb) ||
-      destFreeMb < this.minDestinationFreeMb
+      destFreeMb < requiredFreeMb
     ) {
-      return 'destination_lost';
+      return 'destination_unavailable';
     }
 
     const ts = new Date(this.nowMs).toISOString();
 
     try {
-      await this.deps.applyWorkload(proposal.workload, proposal.toNode);
+      await this.deps.deployWorkload(proposal.workload, proposal.toNode);
     } catch (err) {
       writeJournalEntry({
         kind: 'fleet-execution',
@@ -216,9 +236,9 @@ export class MigrationController {
       ts,
       node: this.deps.leaseholder,
       proposalId: proposal.evictProposalId,
-      action: { type: 'evict', workload: proposal.workload, reason: 'move in flight' },
+      action: { type: 'evict', workload: proposal.workload, reason: `evict suppressed by move ${proposal.proposalId}` },
       status: 'skipped',
-      reason: 'move in flight',
+      reason: `evict suppressed by move ${proposal.proposalId}`,
     };
     writeJournalEntry(skippedEvict);
 
@@ -245,18 +265,7 @@ export class MigrationController {
     };
     writeJournalEntry(moveProposalEntry);
 
-    writeJournalEntry({
-      kind: 'fleet-move',
-      ts,
-      node: this.deps.leaseholder,
-      workload: proposal.workload,
-      fromNode: proposal.fromNode,
-      toNode: proposal.toNode,
-      proposalId: proposal.proposalId,
-      expiresAt: proposal.expiresAt,
-    });
-
-    this.markMoveInFlight(proposal.workload, proposal.proposalId);
+    this.markMoveInFlight(proposal.workload);
 
     const deadline = this.nowMs + this.healthTimeoutMs;
     while (this.nowMs <= deadline) {
@@ -265,7 +274,7 @@ export class MigrationController {
         (entry) => entry.name === proposal.workload && entry.reachable,
       );
       if (reachable) {
-        await this.deps.deleteWorkload(proposal.workload, proposal.fromNode);
+        await this.deps.removeWorkload(proposal.workload, proposal.fromNode);
         writeJournalEntry({
           kind: 'fleet-execution',
           ts: new Date(this.nowMs).toISOString(),

@@ -115,6 +115,7 @@ export interface FleetPressureStatusEntry {
 }
 
 export interface FleetMoveEntry {
+  /** @deprecated Moves are now represented by fleet-proposal entries where action.type === 'move'. */
   kind: 'fleet-move';
   workload: string;
   fromNode: string;
@@ -138,7 +139,9 @@ export interface MoveProposal {
   toNode: string;
   proposalId: string;
   expiresAt: string;
+  expiresAtMs: number;
   evictProposalId: string;
+  workloadMemoryMb?: number;
 }
 
 export type FleetJournalEntry =

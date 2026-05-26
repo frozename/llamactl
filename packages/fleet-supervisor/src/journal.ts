@@ -50,14 +50,29 @@ export function readRecentMovesFromJournal(
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const parsed = JSON.parse(trimmed) as { kind?: string; workload?: string; ts?: string };
-      if (parsed.kind !== 'fleet-move') continue;
-      if (typeof parsed.workload !== 'string' || typeof parsed.ts !== 'string') continue;
+      const parsed = JSON.parse(trimmed) as {
+        kind?: string;
+        workload?: string;
+        ts?: string;
+        action?: { type?: string };
+        transition?: { subject?: string };
+      };
+      let workload: string | null = null;
+      if (parsed.kind === 'fleet-move') {
+        workload = typeof parsed.workload === 'string' ? parsed.workload : null;
+      } else if (
+        parsed.kind === 'fleet-proposal' &&
+        parsed.action?.type === 'move' &&
+        typeof parsed.transition?.subject === 'string'
+      ) {
+        workload = parsed.transition.subject;
+      }
+      if (!workload || typeof parsed.ts !== 'string') continue;
       const movedAtMs = Date.parse(parsed.ts);
       if (!Number.isFinite(movedAtMs)) continue;
-      const prior = latestByWorkload.get(parsed.workload);
+      const prior = latestByWorkload.get(workload);
       if (prior === undefined || movedAtMs > prior) {
-        latestByWorkload.set(parsed.workload, movedAtMs);
+        latestByWorkload.set(workload, movedAtMs);
       }
     } catch {
       // Best-effort scan: malformed lines are ignored.

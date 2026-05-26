@@ -25,7 +25,7 @@ describe('migration supervisor integration', () => {
             node: 'm2mini',
             schedulerLeaseHolder: 'm4pro',
             pressureState: 'NORMAL',
-            node_mem: { free_mb: 8192 },
+            nodeMem: { freeMb: 8192 },
             workloads: [{ name: 'model-a', reachable: moved }],
           };
         }
@@ -34,14 +34,14 @@ describe('migration supervisor integration', () => {
           node: 'm4pro',
           schedulerLeaseHolder: 'm4pro',
           pressureState: 'HIGH',
-          node_mem: { free_mb: 128 },
+          nodeMem: { freeMb: 128 },
           workloads: [],
         };
       },
-      applyWorkload: async () => {
+      deployWorkload: async () => {
         moved = true;
       },
-      deleteWorkload: async () => undefined,
+      removeWorkload: async () => undefined,
       leaseholder: 'm4pro',
       getNowMs: () => 1_700_000_000_000,
     });

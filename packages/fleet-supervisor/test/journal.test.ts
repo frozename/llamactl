@@ -2,7 +2,11 @@ import { describe, it, expect, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { appendFleetJournal, readCurrentLeaseHolder } from '../src/journal.js';
+import {
+  appendFleetJournal,
+  readCurrentLeaseHolder,
+  readRecentMovesFromJournal,
+} from '../src/journal.js';
 import type { FleetSnapshotEntry } from '../src/types.js';
 
 describe('appendFleetJournal', () => {
@@ -58,5 +62,45 @@ describe('appendFleetJournal', () => {
     const path = join(dir, 'journal.jsonl');
     writeFileSync(path, '', 'utf8');
     expect(readCurrentLeaseHolder(path)).toBeNull();
+  });
+
+  it('readRecentMovesFromJournal seeds from fleet-proposal move entries', () => {
+    dir = mkdtempSync(join(tmpdir(), 'fleet-journal-test-'));
+    const path = join(dir, 'journal.jsonl');
+    appendFleetJournal({
+      kind: 'fleet-proposal',
+      ts: '2026-05-26T00:00:00.000Z',
+      node: 'local',
+      proposalId: 'move-1',
+      transition: {
+        subject: 'w1',
+        subjectKind: 'workload',
+        signal: 'placement',
+        from: 'node-a',
+        to: 'node-b',
+      },
+      action: { type: 'move', workload: 'w1', fromNode: 'node-a', toNode: 'node-b', reason: 'rebalance' },
+      expiresAt: '2026-05-26T00:00:30.000Z',
+    }, path);
+    appendFleetJournal({
+      kind: 'fleet-proposal',
+      ts: '2026-05-26T00:00:01.000Z',
+      node: 'local',
+      proposalId: 'move-2',
+      transition: {
+        subject: 'w1',
+        subjectKind: 'workload',
+        signal: 'placement',
+        from: 'node-b',
+        to: 'node-c',
+      },
+      action: { type: 'move', workload: 'w1', fromNode: 'node-b', toNode: 'node-c', reason: 'rebalance' },
+      expiresAt: '2026-05-26T00:00:31.000Z',
+    }, path);
+
+    const moves = readRecentMovesFromJournal(path);
+    expect(moves).toHaveLength(1);
+    expect(moves[0]?.workload).toBe('w1');
+    expect(moves[0]?.movedAtMs).toBe(Date.parse('2026-05-26T00:00:01.000Z'));
   });
 });
