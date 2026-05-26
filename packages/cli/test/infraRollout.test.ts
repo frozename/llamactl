@@ -1,7 +1,7 @@
 
 import { test, expect } from "bun:test";
-import { planRollout, runRollout, runRollback } from "../../fleet-supervisor/src/infra-rollout.js";
-import type { PeerNode } from "../../remote/src/config/peers.js";
+import { planRollout, runRollout, runRollback } from "@llamactl/fleet-supervisor";
+import type { PeerNode } from "@llamactl/remote";
 
 const mockPeers: PeerNode[] = [
   { id: "node-a", endpoint: "http://a" } as any,

@@ -1,10 +1,11 @@
-import type { PeerNode } from "../../../remote/src/config/peers.js";
-import { getGlobals } from "../dispatcher.js";
-import { listPeers } from "../../../remote/src/config/peers.js";
-import { planRollout, runRollback, runRollout } from "../../../fleet-supervisor/src/infra-rollout.js";
-import { makeInfraClient } from "../../../remote/src/client/infra-client.js";
-import { infraSpec } from '@llamactl/remote';
-import { getNodeClient } from '../dispatcher.js';
+import { getGlobals, getNodeClient } from '../dispatcher.js';
+import {
+  infraSpec,
+  listPeers,
+  makeInfraClient,
+  type PeerNode,
+} from '@llamactl/remote';
+import { planRollout, runRollback, runRollout } from '@llamactl/fleet-supervisor';
 
 type InfraPlatformKind = infraSpec.InfraPlatformKind;
 const ALLOWED_PLATFORMS: InfraPlatformKind[] = [

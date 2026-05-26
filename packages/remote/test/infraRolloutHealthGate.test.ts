@@ -1,6 +1,6 @@
 
 import { test, expect } from "bun:test";
-import { healthGate } from "../../fleet-supervisor/src/infra-rollout.js";
+import { healthGate } from "@llamactl/fleet-supervisor";
 
 test("T1: healthGate resolves \"healthy\" when all workloads reachable=true before timeout", async () => {
   let calls = 0;
