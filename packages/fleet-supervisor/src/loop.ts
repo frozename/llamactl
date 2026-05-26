@@ -1,7 +1,7 @@
 import { probeNodeMem as defaultProbeNodeMem } from './node-probe.js';
 import { probeWorkload as defaultProbeWorkload, redactEndpoint, type WorkloadTarget } from './workload-probe.js';
 import { appendFleetJournal, defaultFleetJournalPath } from './journal.js';
-import { MigrationController } from './migration-controller.js';
+import { MigrationController, type MigrationWorkload, type NodeSnapshot } from './migration-controller.js';
 import {
   PressureWindow, detectPressure, detectDegradation, isPressureHot,
   type PressureThresholds, type DegradationThresholds, type WorkloadHealthState,
@@ -13,7 +13,6 @@ import type {
   FleetSnapshotEntry,
   FleetTransitionEntry,
   NodeMemSnapshot,
-  MoveProposal,
   WorkloadSnapshot,
 } from './types.js';
 
@@ -159,9 +158,6 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
     writeJournalEntry(heartbeat);
     pressureWindow.push(node_mem, workloads);
     const pressure = detectPressure(pressureWindow, pressureThresholds);
-    let pressureRise = false;
-    let pressureRiseProposal: MoveProposal | null = null;
-
     if (pressure && lastPressureLevel === 'NORMAL') {
       const transition: FleetTransitionEntry = {
         kind: 'fleet-transition',
@@ -187,7 +183,6 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       consecutiveClearTicks = 0;
       enteredHighAt = ts;
       ticksInHigh = 0;
-      pressureRise = true;
 
       const statusEntry: import('./types.js').FleetPressureStatusEntry = {
         kind: 'fleet-pressure-status',
@@ -280,64 +275,28 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       }
     }
 
-    if (migrationController && pressureRise) {
+    if (migrationController) {
+      const nodeSnapshot: NodeSnapshot = {
+        node: opts.node,
+        schedulerLeaseHolder: opts.node,
+        pressureState: pressure ? 'HIGH' : 'NORMAL',
+        node_mem,
+        workloads,
+      };
       for (const workload of workloads) {
-        const proposal = await migrationController.onJournalEntry(
-          {
-            kind: 'fleet-transition',
-            ts,
-            node: opts.node,
-            subject: 'node',
-            subjectKind: 'node',
-            signal: 'pressure',
-            from: 'NORMAL',
-            to: 'HIGH',
-          },
-          {
-            name: workload.name,
-            node: opts.node,
-            spec: { placement: 'auto' },
-            evictProposalId: `evict-${workload.name}-${ts}`,
-          },
-          {
-            node: opts.node,
-            schedulerLeaseHolder: opts.node,
-            pressureState: 'HIGH',
-            node_mem,
-            workloads,
-          },
-        );
-
+        const migrationWorkload: MigrationWorkload = {
+          name: workload.name,
+          node: opts.node,
+          spec: { placement: 'auto' },
+          evictProposalId: `evict-${workload.name}-${ts}`,
+        };
+        const proposal = await migrationController.evaluateMove(migrationWorkload, nodeSnapshot);
         if (proposal) {
-          pressureRiseProposal = proposal;
-          writeJournalEntry({
-            kind: 'fleet-proposal',
-            ts,
-            node: opts.node,
-            proposalId: proposal.proposalId,
-            transition: {
-              subject: proposal.workload,
-              subjectKind: 'workload',
-              signal: 'placement',
-              from: proposal.fromNode,
-              to: proposal.toNode,
-            },
-            action: {
-              type: 'move',
-              workload: proposal.workload,
-              fromNode: proposal.fromNode,
-              toNode: proposal.toNode,
-              reason: 'rebalance',
-            },
-            expiresAt: proposal.expiresAt,
-          });
           await migrationController.executeMove(proposal, writeJournalEntry);
-          break;
         }
       }
     }
 
-    void pressureRiseProposal;
     await opts.onTick?.(snapshot);
   };
 

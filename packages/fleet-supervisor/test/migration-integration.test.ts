@@ -16,6 +16,7 @@ describe('migration supervisor integration', () => {
     process.env.LLAMACTL_FLEET_MOVE_ENABLED = '1';
 
     const entries: FleetJournalEntry[] = [];
+    let moved = false;
     const controller = createMigrationController({
       peers: ['m2mini', 'm4pro'],
       fetchSnapshot: async (node) => {
@@ -25,7 +26,7 @@ describe('migration supervisor integration', () => {
             schedulerLeaseHolder: 'm4pro',
             pressureState: 'NORMAL',
             node_mem: { free_mb: 8192 },
-            workloads: [],
+            workloads: [{ name: 'model-a', reachable: moved }],
           };
         }
 
@@ -37,6 +38,10 @@ describe('migration supervisor integration', () => {
           workloads: [],
         };
       },
+      applyWorkload: async () => {
+        moved = true;
+      },
+      deleteWorkload: async () => undefined,
       leaseholder: 'm4pro',
       getNowMs: () => 1_700_000_000_000,
     });

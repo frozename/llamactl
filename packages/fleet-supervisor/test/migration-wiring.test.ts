@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { createMigrationController } from '../src/index.js';
+import { createEnabledMigrationController } from '../src/index.js';
 
 describe('migration controller wiring gate', () => {
   const original = process.env.LLAMACTL_FLEET_MOVE_ENABLED;
@@ -12,10 +12,22 @@ describe('migration controller wiring gate', () => {
     process.env.LLAMACTL_FLEET_MOVE_ENABLED = original;
   });
 
-  it('wires controller even when LLAMACTL_FLEET_MOVE_ENABLED is absent', () => {
+  it('returns null when LLAMACTL_FLEET_MOVE_ENABLED is absent', () => {
     delete process.env.LLAMACTL_FLEET_MOVE_ENABLED;
 
-    const controller = createMigrationController({
+    const controller = createEnabledMigrationController({
+      peers: [],
+      fetchSnapshot: async () => ({ pressureState: 'NORMAL', node_mem: { free_mb: 4096 }, workloads: [] }),
+      leaseholder: 'm4pro',
+    });
+
+    expect(controller).toBeNull();
+  });
+
+  it('constructs a controller when LLAMACTL_FLEET_MOVE_ENABLED=1', () => {
+    process.env.LLAMACTL_FLEET_MOVE_ENABLED = '1';
+
+    const controller = createEnabledMigrationController({
       peers: [],
       fetchSnapshot: async () => ({ pressureState: 'NORMAL', node_mem: { free_mb: 4096 }, workloads: [] }),
       applyWorkload: async () => undefined,
