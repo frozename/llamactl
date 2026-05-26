@@ -1,8 +1,8 @@
-import type { PeerNode } from "@llamactl/remote";
+import type { PeerNode } from "../../../remote/src/config/peers.js";
 import { getGlobals } from "../dispatcher.js";
-import { listPeers } from "@llamactl/remote";
+import { listPeers } from "../../../remote/src/config/peers.js";
 import { planRollout, runRollback, runRollout } from "../../../fleet-supervisor/src/infra-rollout.js";
-import { makeInfraClient } from "@llamactl/remote";
+import { makeInfraClient } from "../../../remote/src/client/infra-client.js";
 import { infraSpec } from '@llamactl/remote';
 import { getNodeClient } from '../dispatcher.js';
 

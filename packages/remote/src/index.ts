@@ -189,3 +189,4 @@ export {
 } from './config/schema.js';
 
 export * from "./client/infra-client.js";
+export { type PeerNode, listPeers } from './config/peers.js';
