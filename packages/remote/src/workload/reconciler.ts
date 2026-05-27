@@ -6,7 +6,7 @@ import { listWorkloads, saveWorkload, defaultWorkloadsDir } from './store.js';
 import { listModelHosts, saveModelHost } from './modelhost-store.js';
 import { listNodeRuns } from './noderun-store.js';
 import type { ModelRun } from './schema.js';
-import type { ModelHostManifest } from './modelhost-schema.js';
+import { LOCAL_NODE_ID, type ModelHostManifest } from './modelhost-schema.js';
 
 export interface ReconcileNodeReport {
   name: string;
@@ -135,17 +135,16 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
         });
         continue;
       }
-      // Idempotent reconcile with spec-drift detection. modelHostStatus
-      // surfaces state + pid; the launch spec is recorded in the
-      // controller-local sidecar via specHash at apply time. Skip the
-      // restart iff the host is Running AND the sidecar's recorded
-      // hash matches the desired manifest. If the sidecar is missing
-      // (first reconcile after upgrade) or the hash diverges, fall
-      // through to applyOneModelHost so the sidecar gets a fresh
-      // specHash and the live spec converges.
-      const persistedState = readModelHostState({ name }, resolveEnv(process.env));
+      // Idempotent reconcile with spec-drift detection. For local
+      // workloads, the controller-owned sidecar is the source of truth
+      // for observed specHash. For remote workloads, trust the remote
+      // modelHostStatus.specHash surfaced by the node dispatcher. Skip
+      // restart iff Running and observedHash matches desiredHash.
       const desiredHash = computeModelHostSpecHash(spec);
-      if (current.state === 'Running' && persistedState?.specHash === desiredHash) {
+      const observedHash = spec.node === LOCAL_NODE_ID
+        ? readModelHostState({ name }, resolveEnv(process.env))?.specHash
+        : current.specHash;
+      if (current.state === 'Running' && observedHash === desiredHash) {
         reports.push({
           name,
           node: spec.node,

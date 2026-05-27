@@ -88,7 +88,7 @@ function mkModelHostManifest(name: string, overrides: Partial<ModelHostManifest[
   };
 }
 
-function mkModelHostClient(): WorkloadClient {
+function makeModelHostClient(): WorkloadClient {
   return {
     serverStatus: { query: async () => ({ state: 'down', pid: null, rel: null, extraArgs: [], host: null, port: null, binary: null, endpoint: '' }) } as any,
     serverStop: { mutate: async () => ({ stopped: true }) } as any,
@@ -218,13 +218,13 @@ test('concurrent applies on the same node serialize through the mutex', async ()
   expect(callOrder[1]).toBe(callOrder[0]!.replace('start:', 'done:'));
 });
 
-test('ModelHost on a non-local node does not write a local sidecar', async () => {
+test('ModelHost on a remote node does not write a local sidecar', async () => {
   const runtimeDir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-sidecar-'));
   const env = { ...process.env, LOCAL_AI_RUNTIME_DIR: runtimeDir };
   const resolved = resolveEnv(env);
   const manifest = mkModelHostManifest('remote-host', { node: 'mac-mini' });
   try {
-    const result = await applyOneModelHost(manifest, () => mkModelHostClient(), undefined, { env });
+    const result = await applyOneModelHost(manifest, () => makeModelHostClient(), undefined, { env });
     expect(result.ok).toBe(true);
     expect(readModelHostState({ name: manifest.metadata.name }, resolved)).toBeNull();
   } finally {
@@ -232,7 +232,7 @@ test('ModelHost on a non-local node does not write a local sidecar', async () =>
   }
 });
 
-test('ModelHost disable on a non-local node does not remove pre-existing local sidecar', async () => {
+test('ModelHost disable on a remote node sweeps any pre-existing local sidecar (handles pre-fix leaks)', async () => {
   const runtimeDir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-sidecar-'));
   const env = { ...process.env, LOCAL_AI_RUNTIME_DIR: runtimeDir };
   const resolved = resolveEnv(env);
@@ -252,9 +252,9 @@ test('ModelHost disable on a non-local node does not remove pre-existing local s
   );
   const manifest = mkModelHostManifest(name, { node: 'mac-mini', enabled: false });
   try {
-    const result = await applyOneModelHost(manifest, () => mkModelHostClient(), undefined, { env });
+    const result = await applyOneModelHost(manifest, () => makeModelHostClient(), undefined, { env });
     expect(result.ok).toBe(true);
-    expect(readModelHostState({ name }, resolved)?.pid).toBe(4444);
+    expect(readModelHostState({ name }, resolved)).toBeNull();
   } finally {
     rmSync(runtimeDir, { recursive: true, force: true });
   }
@@ -266,7 +266,7 @@ test('ModelHost on local node still writes local sidecar', async () => {
   const resolved = resolveEnv(env);
   const manifest = mkModelHostManifest('local-host', { node: 'local' });
   try {
-    const result = await applyOneModelHost(manifest, () => mkModelHostClient(), undefined, { env });
+    const result = await applyOneModelHost(manifest, () => makeModelHostClient(), undefined, { env });
     expect(result.ok).toBe(true);
     expect(readModelHostState({ name: manifest.metadata.name }, resolved)?.pid).toBe(12345);
   } finally {

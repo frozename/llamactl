@@ -57,6 +57,7 @@ export interface StatusModelHostOptions {
 export interface StatusModelHostResult {
   state: 'Running' | 'Stopped';
   pid?: number | null;
+  specHash?: string;
 }
 
 function toRuntimeEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
@@ -231,5 +232,5 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
   const resolved = resolveEnv(withRuntimeDir(toRuntimeEnv(opts.env), opts.runtimeDir));
   const state = readModelHostState(opts.key, resolved);
   if (!state) return { state: 'Stopped' };
-  return { state: 'Running', pid: state.pid };
+  return { state: 'Running', pid: state.pid, specHash: state.specHash };
 }

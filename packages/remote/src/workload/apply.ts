@@ -17,7 +17,7 @@ import {
 } from '@llamactl/fleet-supervisor';
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
 import { ModelRunSchema } from './schema.js';
-import { ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
+import { LOCAL_NODE_ID, ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
 import type { GatewayDispatch } from './gateway-handlers/types.js';
 import { computeNodeBudget, defaultNodeBudgetGiB } from './admission.js';
 import { defaultWorkloadsDir, listAnyWorkloadsForAdmission, listWorkloads } from './store.js';
@@ -89,7 +89,7 @@ export interface WorkloadClient {
     mutate(input: { workload: string; graceSeconds?: number }): Promise<unknown>;
   };
   modelHostStatus: {
-    query(input: { workload: string }): Promise<{ state: string; pid?: number | null }>;
+    query(input: { workload: string }): Promise<{ state: string; pid?: number | null; specHash?: string }>;
   };
   rpcServerStart: {
     subscribe(
@@ -328,9 +328,9 @@ async function applyModelHostManifest(
         return { ok: false, error: `modelHostStop failed: ${message}` };
       }
     }
-    if (manifest.spec.node === 'local') {
-      removeModelHostState({ name: manifest.metadata.name }, resolved);
-    }
+    // Idempotent cleanup: sweep any local sidecar (including pre-a6cab9e
+    // leaks for remote workloads) before signaling disable.
+    removeModelHostState({ name: manifest.metadata.name }, resolved);
     return {
       ok: true,
       kind: 'ModelHost',
@@ -426,10 +426,12 @@ async function applyModelHostManifest(
 
   const rel = manifest.spec.hostedModels[0]!.rel;
   const modelAliases = Array.from(new Set([rel, basename(rel)]));
-  // Only persist the controller-local sidecar when we have an authoritative
-  // pid from the dispatcher. Without one, the sidecar's liveness/teardown
-  // semantics are wrong, so skip it — the dispatcher owns the real state.
-  if (manifest.spec.node === 'local' && typeof status.pid === 'number' && status.pid > 0) {
+  // Only write the local sidecar when this controller owns the process
+  // (spec.node === 'local'). For remote nodes the remote dispatcher owns
+  // state; writing here would leak a stale entry into local consumers
+  // (probe, openai-proxy routing, workloadEpoch). Also require a real
+  // pid — without one the sidecar liveness/teardown semantics are wrong.
+  if (manifest.spec.node === LOCAL_NODE_ID && typeof status.pid === 'number' && status.pid > 0) {
     writeModelHostState(
       {
         kind: 'ModelHost',

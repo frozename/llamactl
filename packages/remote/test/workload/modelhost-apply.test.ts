@@ -164,7 +164,7 @@ describe('applyManifest — kind dispatch', () => {
     };
   }
 
-  test('applyOneModelHost persists status and uses node dispatch client methods', async () => {
+  test('applyOneModelHost on a remote node does not persist local sidecar state and uses node dispatch client methods', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-'));
     const captured: { spawnCalls: number; startInput?: unknown; statusCalls: number } = {
       spawnCalls: 0,
@@ -242,11 +242,11 @@ describe('applyManifest — kind dispatch', () => {
       expect(result.kind).toBe('ModelHost');
       if (result.kind !== 'ModelHost') return;
       expect(result.pid).toBe(3333);
-      // Observed state lives in the sidecar, not the manifest.
+      // Remote-node dispatch owns sidecar state; local controller must not write one.
       expect(readModelHostState(
         { name: 'mlx-host-test' },
         resolveEnv({ ...process.env, LOCAL_AI_RUNTIME_DIR: tmp }),
-      )?.pid).toBe(3333);
+      )).toBeNull();
       expect(captured.spawnCalls).toBe(0);
       expect(captured.statusCalls).toBe(1);
       expect(captured.startInput).toEqual({

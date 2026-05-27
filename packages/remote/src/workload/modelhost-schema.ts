@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const LOCAL_NODE_ID = 'local' as const;
+
 export const ModelHostHostedModelSchema = z.object({
   rel: z.string().min(1),
   dflash: z.object({
