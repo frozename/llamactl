@@ -328,7 +328,9 @@ async function applyModelHostManifest(
         return { ok: false, error: `modelHostStop failed: ${message}` };
       }
     }
-    removeModelHostState({ name: manifest.metadata.name }, resolved);
+    if (manifest.spec.node === 'local') {
+      removeModelHostState({ name: manifest.metadata.name }, resolved);
+    }
     return {
       ok: true,
       kind: 'ModelHost',
@@ -427,7 +429,7 @@ async function applyModelHostManifest(
   // Only persist the controller-local sidecar when we have an authoritative
   // pid from the dispatcher. Without one, the sidecar's liveness/teardown
   // semantics are wrong, so skip it — the dispatcher owns the real state.
-  if (typeof status.pid === 'number' && status.pid > 0) {
+  if (manifest.spec.node === 'local' && typeof status.pid === 'number' && status.pid > 0) {
     writeModelHostState(
       {
         kind: 'ModelHost',

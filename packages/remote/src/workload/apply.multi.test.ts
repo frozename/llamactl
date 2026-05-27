@@ -1,5 +1,11 @@
 import { expect, test } from 'bun:test';
-import { applyOne, type WorkloadClient } from './apply.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
+import { resolveEnv } from '../../../core/src/env.js';
+import { applyOne, applyOneModelHost, type WorkloadClient } from './apply.js';
+import type { ModelHostManifest } from './modelhost-schema.js';
 import type { ModelRun } from './schema.js';
 
 function makeClient(state: Map<string, { up: boolean; rel: string; args: string[] }>): WorkloadClient {
@@ -61,6 +67,51 @@ const mkManifest = (name: string, overrides: Partial<{
     resources: { expectedMemoryGiB: overrides.ram ?? 8 },
   },
 });
+
+function mkModelHostManifest(name: string, overrides: Partial<ModelHostManifest['spec']> = {}): ModelHostManifest {
+  return {
+    apiVersion: 'llamactl/v1',
+    kind: 'ModelHost',
+    metadata: { name },
+    spec: {
+      engine: 'omlx',
+      node: 'local',
+      enabled: true,
+      binary: '/usr/bin/true',
+      endpoint: { host: '127.0.0.1', port: 18094 },
+      hostedModels: [{ rel: `${name}.gguf` }],
+      extraArgs: [],
+      restartPolicy: 'Always',
+      timeoutSeconds: 60,
+      ...overrides,
+    },
+  };
+}
+
+function mkModelHostClient(): WorkloadClient {
+  return {
+    serverStatus: { query: async () => ({ state: 'down', pid: null, rel: null, extraArgs: [], host: null, port: null, binary: null, endpoint: '' }) } as any,
+    serverStop: { mutate: async () => ({ stopped: true }) } as any,
+    serverStart: { subscribe: async () => ({ unsubscribe() {} }) } as any,
+    modelHostStart: {
+      subscribe: async (
+        _input: unknown,
+        callbacks: { onData: (e: unknown) => void; onError: (err: unknown) => void; onComplete: () => void },
+      ) => {
+        queueMicrotask(() => {
+          callbacks.onData({ type: 'done', result: { ok: true, pid: 12345, state: 'Running' } });
+          callbacks.onComplete();
+        });
+        return { unsubscribe() {} };
+      },
+    } as any,
+    modelHostStop: { mutate: async () => ({ stopped: true }) } as any,
+    modelHostStatus: { query: async () => ({ state: 'Running', pid: 12345 }) } as any,
+    rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) } as any,
+    rpcServerStop: { mutate: async () => ({ stopped: true }) } as any,
+    rpcServerDoctor: { query: async () => ({ ok: true, path: '', llamaCppBin: '' }) } as any,
+  } as any;
+}
 
 test('disabled manifest stops the server if running and reports Disabled', async () => {
   const state = new Map([['a', { up: true, rel: 'a.gguf', args: [] }]]);
@@ -165,4 +216,60 @@ test('concurrent applies on the same node serialize through the mutex', async ()
   ]);
   expect(callOrder[0]?.startsWith('start:')).toBe(true);
   expect(callOrder[1]).toBe(callOrder[0]!.replace('start:', 'done:'));
+});
+
+test('ModelHost on a non-local node does not write a local sidecar', async () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-sidecar-'));
+  const env = { ...process.env, LOCAL_AI_RUNTIME_DIR: runtimeDir };
+  const resolved = resolveEnv(env);
+  const manifest = mkModelHostManifest('remote-host', { node: 'mac-mini' });
+  try {
+    const result = await applyOneModelHost(manifest, () => mkModelHostClient(), undefined, { env });
+    expect(result.ok).toBe(true);
+    expect(readModelHostState({ name: manifest.metadata.name }, resolved)).toBeNull();
+  } finally {
+    rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('ModelHost disable on a non-local node does not remove pre-existing local sidecar', async () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-sidecar-'));
+  const env = { ...process.env, LOCAL_AI_RUNTIME_DIR: runtimeDir };
+  const resolved = resolveEnv(env);
+  const name = 'remote-host-disabled';
+  writeModelHostState(
+    {
+      kind: 'ModelHost',
+      engine: 'omlx',
+      pid: 4444,
+      host: '127.0.0.1',
+      port: 18094,
+      modelAliases: ['seed.gguf'],
+      startedAt: new Date().toISOString(),
+    },
+    { name },
+    resolved,
+  );
+  const manifest = mkModelHostManifest(name, { node: 'mac-mini', enabled: false });
+  try {
+    const result = await applyOneModelHost(manifest, () => mkModelHostClient(), undefined, { env });
+    expect(result.ok).toBe(true);
+    expect(readModelHostState({ name }, resolved)?.pid).toBe(4444);
+  } finally {
+    rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('ModelHost on local node still writes local sidecar', async () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-sidecar-'));
+  const env = { ...process.env, LOCAL_AI_RUNTIME_DIR: runtimeDir };
+  const resolved = resolveEnv(env);
+  const manifest = mkModelHostManifest('local-host', { node: 'local' });
+  try {
+    const result = await applyOneModelHost(manifest, () => mkModelHostClient(), undefined, { env });
+    expect(result.ok).toBe(true);
+    expect(readModelHostState({ name: manifest.metadata.name }, resolved)?.pid).toBe(12345);
+  } finally {
+    rmSync(runtimeDir, { recursive: true, force: true });
+  }
 });
