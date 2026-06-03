@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
@@ -7,6 +7,7 @@ import { resolveEnv } from '../../../core/src/env.js';
 import { applyOne, applyOneModelHost, type WorkloadClient } from './apply.js';
 import type { ModelHostManifest } from './modelhost-schema.js';
 import type { ModelRun } from './schema.js';
+import { saveWorkload } from './store.js';
 
 function makeClient(state: Map<string, { up: boolean; rel: string; args: string[] }>): WorkloadClient {
   return {
@@ -111,6 +112,14 @@ function makeModelHostClient(): WorkloadClient {
     rpcServerStop: { mutate: async () => ({ stopped: true }) } as any,
     rpcServerDoctor: { query: async () => ({ ok: true, path: '', llamaCppBin: '' }) } as any,
   } as any;
+}
+
+function seedModelDir(modelsDir: string, rel: string, sizeBytes: number): void {
+  const dir = join(modelsDir, rel);
+  mkdirSync(dir, { recursive: true });
+  const weights = join(dir, 'weights.bin');
+  writeFileSync(weights, '');
+  truncateSync(weights, sizeBytes);
 }
 
 test('disabled manifest stops the server if running and reports Disabled', async () => {
@@ -266,10 +275,62 @@ test('ModelHost on local node still writes local sidecar', async () => {
   const resolved = resolveEnv(env);
   const manifest = mkModelHostManifest('local-host', { node: 'local' });
   try {
-    const result = await applyOneModelHost(manifest, () => makeModelHostClient(), undefined, { env });
+    const result = await applyOneModelHost(manifest, () => makeModelHostClient(), undefined, {
+      env,
+      workloadsDir: join(runtimeDir, 'workloads'),
+    });
     expect(result.ok).toBe(true);
     expect(readModelHostState({ name: manifest.metadata.name }, resolved)?.pid).toBe(12345);
   } finally {
     rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
+test('ModelHost admission uses expectedMemoryGiB instead of model-size fallback when present', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-expected-memory-'));
+  const workloadsDir = join(tmp, 'workloads');
+  const modelsDir = join(tmp, 'models');
+  const rel = 'mlx-community/big-model';
+  const env = { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp, LLAMA_CPP_MODELS: modelsDir };
+  seedModelDir(modelsDir, rel, 23 * 1024 ** 3);
+  saveWorkload(mkManifest('small-run', { ram: 5 }), workloadsDir);
+  const manifest = mkModelHostManifest('mlx-host-expected', {
+    hostedModels: [{ rel }],
+    resources: { expectedMemoryGiB: 24 },
+  });
+  try {
+    const result = await applyOneModelHost(manifest, () => makeModelHostClient(), undefined, {
+      env,
+      workloadsDir,
+      getNodeBudgetGiB: () => 36,
+    });
+    expect(result.ok).toBe(true);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('ModelHost admission falls back to model-size heuristic when expectedMemoryGiB is absent', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-memory-fallback-'));
+  const workloadsDir = join(tmp, 'workloads');
+  const modelsDir = join(tmp, 'models');
+  const rel = 'mlx-community/big-model';
+  const env = { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp, LLAMA_CPP_MODELS: modelsDir };
+  seedModelDir(modelsDir, rel, 23 * 1024 ** 3);
+  saveWorkload(mkManifest('small-run', { ram: 5 }), workloadsDir);
+  const manifest = mkModelHostManifest('mlx-host-fallback', {
+    hostedModels: [{ rel }],
+    resources: undefined,
+  });
+  try {
+    const result = await applyOneModelHost(manifest, () => makeModelHostClient(), undefined, {
+      env,
+      workloadsDir,
+      getNodeBudgetGiB: () => 36,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('would reserve');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
 });

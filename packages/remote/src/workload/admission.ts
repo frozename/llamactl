@@ -1,8 +1,11 @@
 import { totalmem } from 'node:os';
-import { statSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ResolvedEnv } from '@llamactl/core';
+import type { ModelHostManifest } from './modelhost-schema.js';
 import type { ModelRun } from './schema.js';
+
+const MODEL_HOST_MEMORY_HEURISTIC_MULTIPLIER = 2;
 
 export interface AdmissionInput {
   nodeName: string;
@@ -57,6 +60,31 @@ export function estimateWorkloadMemoryGiB(
   try {
     const sz = statSync(ggufPath).size;
     return (sz * 1.1) / 1024 ** 3;
+  } catch {
+    return null;
+  }
+}
+
+function pathSizeBytes(path: string): number {
+  const st = statSync(path);
+  if (!st.isDirectory()) return st.size;
+  let total = 0;
+  for (const entry of readdirSync(path)) {
+    total += pathSizeBytes(join(path, entry));
+  }
+  return total;
+}
+
+export function estimateModelHostMemoryGiB(
+  manifest: ModelHostManifest,
+  resolved: ResolvedEnv,
+): number | null {
+  const declared = manifest.spec.resources?.expectedMemoryGiB;
+  if (declared !== undefined) return declared;
+  const rel = manifest.spec.hostedModels[0]?.rel;
+  if (!rel) return null;
+  try {
+    return (pathSizeBytes(join(resolved.LLAMA_CPP_MODELS, rel)) * MODEL_HOST_MEMORY_HEURISTIC_MULTIPLIER) / 1024 ** 3;
   } catch {
     return null;
   }

@@ -10,8 +10,10 @@ import {
 import { homedir } from 'node:os';
 import { join, basename } from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import type { ResolvedEnv } from '@llamactl/core';
 import { ModelRunSchema, type ModelRun } from './schema.js';
 import { ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
+import { estimateModelHostMemoryGiB } from './admission.js';
 
 export function defaultWorkloadsDir(
   env: NodeJS.ProcessEnv = process.env,
@@ -206,7 +208,10 @@ export function listWorkloads(
   return out.sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 }
 
-function projectModelHostToModelRun(manifest: ModelHostManifest): ModelRun {
+function projectModelHostToModelRun(manifest: ModelHostManifest, resolved?: ResolvedEnv): ModelRun {
+  const expectedMemoryGiB = resolved
+    ? estimateModelHostMemoryGiB(manifest, resolved)
+    : manifest.spec.resources?.expectedMemoryGiB ?? null;
   return {
     apiVersion: manifest.apiVersion,
     kind: 'ModelRun',
@@ -222,7 +227,7 @@ function projectModelHostToModelRun(manifest: ModelHostManifest): ModelRun {
       extraArgs: manifest.spec.extraArgs,
       workers: [],
       restartPolicy: manifest.spec.restartPolicy,
-      resources: manifest.spec.resources,
+      resources: expectedMemoryGiB !== null ? { expectedMemoryGiB } : undefined,
       timeoutSeconds: manifest.spec.timeoutSeconds,
       endpoint: manifest.spec.endpoint,
       binary: manifest.spec.binary,
@@ -234,6 +239,7 @@ function projectModelHostToModelRun(manifest: ModelHostManifest): ModelRun {
 
 export function listAnyWorkloadsForAdmission(
   dir: string = defaultWorkloadsDir(),
+  resolved?: ResolvedEnv,
 ): ModelRun[] {
   if (!existsSync(dir)) return [];
   const out: ModelRun[] = [];
@@ -249,7 +255,7 @@ export function listAnyWorkloadsForAdmission(
         out.push(ModelRunSchema.parse(parsed));
       } else if (parsed?.kind === 'ModelHost') {
         const host = ModelHostManifestSchema.parse(parsed);
-        out.push(projectModelHostToModelRun(host));
+        out.push(projectModelHostToModelRun(host, resolved));
       }
     } catch {
       // Malformed files are ignored during admission; describe/load paths surface the error.

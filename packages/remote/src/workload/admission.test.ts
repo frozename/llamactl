@@ -1,11 +1,16 @@
 import { expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   computeNodeBudget,
   defaultNodeBudgetGiB,
+  estimateModelHostMemoryGiB,
   estimateWorkloadMemoryGiB,
   sumReservedForNode,
   type AdmissionInput,
 } from './admission.js';
+import type { ModelHostManifest } from './modelhost-schema.js';
 import type { ModelRun } from './schema.js';
 
 const mkManifest = (
@@ -24,6 +29,30 @@ const mkManifest = (
     restartPolicy: 'Always',
     gateway: false,
     allowExternalBind: false,
+    timeoutSeconds: 60,
+    resources:
+      opts.expectedMemoryGiB !== undefined
+        ? { expectedMemoryGiB: opts.expectedMemoryGiB }
+        : undefined,
+  },
+});
+
+const mkModelHost = (
+  name: string,
+  opts: Partial<{ expectedMemoryGiB: number; rel: string }> = {},
+): ModelHostManifest => ({
+  apiVersion: 'llamactl/v1',
+  kind: 'ModelHost',
+  metadata: { name },
+  spec: {
+    engine: 'omlx',
+    node: 'local',
+    enabled: true,
+    binary: '/usr/bin/true',
+    endpoint: { host: '127.0.0.1', port: 18094 },
+    hostedModels: [{ rel: opts.rel ?? `${name}.gguf` }],
+    extraArgs: [],
+    restartPolicy: 'Always',
     timeoutSeconds: 60,
     resources:
       opts.expectedMemoryGiB !== undefined
@@ -98,4 +127,31 @@ test('estimateWorkloadMemoryGiB returns null when file is missing', () => {
   expect(
     estimateWorkloadMemoryGiB(mkManifest('a'), { LLAMA_CPP_MODELS: '/nonexistent' } as any),
   ).toBe(null);
+});
+
+test('estimateModelHostMemoryGiB uses expectedMemoryGiB before model-size fallback', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-admission-'));
+  const modelsDir = join(tmp, 'models');
+  const rel = 'mlx-community/big-model';
+  const modelDir = join(modelsDir, rel);
+  try {
+    mkdirSync(modelDir, { recursive: true });
+    const weights = join(modelDir, 'weights.bin');
+    writeFileSync(weights, '');
+    truncateSync(weights, 23 * 1024 ** 3);
+    expect(
+      estimateModelHostMemoryGiB(
+        mkModelHost('declared', { expectedMemoryGiB: 24, rel }),
+        { LLAMA_CPP_MODELS: modelsDir } as any,
+      ),
+    ).toBe(24);
+    expect(
+      estimateModelHostMemoryGiB(
+        mkModelHost('fallback', { rel }),
+        { LLAMA_CPP_MODELS: modelsDir } as any,
+      ),
+    ).toBe(46);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });

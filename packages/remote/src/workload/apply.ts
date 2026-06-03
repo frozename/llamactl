@@ -19,7 +19,7 @@ import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
 import { ModelRunSchema } from './schema.js';
 import { LOCAL_NODE_ID, ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
 import type { GatewayDispatch } from './gateway-handlers/types.js';
-import { computeNodeBudget, defaultNodeBudgetGiB } from './admission.js';
+import { computeNodeBudget, defaultNodeBudgetGiB, estimateModelHostMemoryGiB } from './admission.js';
 import { defaultWorkloadsDir, listAnyWorkloadsForAdmission, listWorkloads } from './store.js';
 import { withNodeLock } from './node-mutex.js';
 import { basename } from 'node:path';
@@ -342,10 +342,11 @@ async function applyModelHostManifest(
 
   const budget = opts.getNodeBudgetGiB?.(manifest.spec.node) ?? defaultNodeBudgetGiB();
   const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir();
-  const livingManifests = listAnyWorkloadsForAdmission(workloadsDir)
+  const livingManifests = listAnyWorkloadsForAdmission(workloadsDir, resolved)
     .filter((m) => m.metadata.name !== manifest.metadata.name)
     .filter((m) => m.spec.node === manifest.spec.node)
     .filter((m) => m.spec.enabled !== false);
+  const expectedMemoryGiB = estimateModelHostMemoryGiB(manifest, resolved);
   const admit = computeNodeBudget({
     nodeName: manifest.spec.node,
     nodeBudgetGiB: budget,
@@ -364,7 +365,7 @@ async function applyModelHostManifest(
         timeoutSeconds: manifest.spec.timeoutSeconds,
         gateway: false,
         allowExternalBind: false,
-        ...(manifest.spec.resources ? { resources: manifest.spec.resources } : {}),
+        ...(expectedMemoryGiB !== null ? { resources: { expectedMemoryGiB } } : {}),
       },
     },
     forceAdmit: false,
