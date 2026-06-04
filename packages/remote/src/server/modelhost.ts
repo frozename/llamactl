@@ -8,6 +8,15 @@ import { ModelHostManifestSchema, type ModelHostManifest } from '../workload/mod
 import type { WorkloadKey } from '../../../core/src/workloadRuntime.js';
 import type { EngineBootEnv } from '../../../core/src/engines/types.js';
 
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface ModelHostSpawnResult {
   pid: number | null;
 }
@@ -154,6 +163,16 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     return result;
   }
 
+  // Reap a prior live ModelHost for this workload before spawning a new one.
+  // Without this, applying over a still-running host leaves the old process
+  // holding the endpoint port: the new omlx fails to bind and exits, yet
+  // probeReady is satisfied by the OLD listener, so we would record the new
+  // child's already-dead pid — which listLocalRoutes then drops from routing.
+  const priorState = readModelHostState(opts.key, resolved);
+  if (priorState && isProcessAlive(priorState.pid)) {
+    await engine.teardown(priorState.pid).catch(() => {});
+  }
+
   const bootEnv: EngineBootEnv = {
     LLAMACTL_MODELS_DIR: env.LLAMACTL_MODELS_DIR,
     LLAMA_CPP_MODELS: env.LLAMA_CPP_MODELS,
@@ -186,6 +205,17 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     const readiness = await (opts.probeReady ?? engine.probeReady)(endpoint, (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000);
     if (!readiness.ready) {
       throw new Error('modelhost failed readiness probe');
+    }
+
+    // The readiness probe can be satisfied by a DIFFERENT process already bound
+    // to this endpoint (e.g. a prior omlx we did not reap). If our spawned child
+    // has already exited, refuse to record its dead pid — recording it would make
+    // listLocalRoutes drop the ModelHost from routing. exitCode is null while the
+    // child runs and a number once it exits (undefined for test stubs → running).
+    if (child.exitCode != null) {
+      throw new Error(
+        `modelhost child pid ${pid} exited before readiness (endpoint ${endpoint.host}:${endpoint.port} likely served by another process); refusing to record a stale pid`,
+      );
     }
 
     const modelAliases = Array.from(new Set([manifest.spec.hostedModels[0]!.rel, basename(manifest.spec.hostedModels[0]!.rel)]));

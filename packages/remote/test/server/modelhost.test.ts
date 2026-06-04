@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type spawn as nodeSpawn } from 'node:child_process';
@@ -355,6 +355,84 @@ describe('server/modelhost', () => {
         runtimeDir: join(tmp, 'runtime'),
       })).toEqual({ state: 'Stopped' });
     } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('reaps a prior live ModelHost before spawning a replacement', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-reap-'));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown;
+    const tornDown: number[] = [];
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 } as const));
+    try {
+      // Seed a prior sidecar whose pid is genuinely alive (this test process),
+      // so the reap path fires and tears it down BEFORE the replacement spawns.
+      const hostDir = join(runtimeDir, 'workloads', 'mlx-host-server');
+      mkdirSync(hostDir, { recursive: true });
+      writeFileSync(
+        join(hostDir, 'modelhost.state'),
+        JSON.stringify({
+          kind: 'ModelHost',
+          engine: 'omlx',
+          pid: process.pid,
+          host: '127.0.0.1',
+          port: 8094,
+          modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit', 'Qwen3-8B-MLX-4bit'],
+          startedAt: new Date().toISOString(),
+        }),
+      );
+      // Mock teardown so the reap does NOT actually signal this test process.
+      engine.teardown = mock(async (pid: number) => {
+        tornDown.push(pid);
+      });
+
+      const result = await startModelHost({
+        key: { name: 'mlx-host-server' },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: async () => ({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(tornDown).toEqual([process.pid]); // old listener reaped first
+      expect(spawn).toHaveBeenCalledTimes(1);
+      // The replacement's real pid is recorded, not the stale one.
+      expect(readFileSync(join(hostDir, 'modelhost.state'), 'utf8')).toContain('"pid": 4321');
+    } finally {
+      engine.teardown = originalTeardown;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('refuses to record a stale pid when the spawned child already exited', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-stalepid-'));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown;
+    // The new child fails to bind the still-held port and has already exited;
+    // probeReady is satisfied by the OLD listener that still owns the port.
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321, exitCode: 1 } as const));
+    try {
+      engine.teardown = mock(async () => {});
+      const result = await startModelHost({
+        key: { name: 'mlx-host-server' },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: async () => ({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('exited before readiness');
+      // No sidecar is written for the dead pid, so listLocalRoutes won't drop it.
+      expect(existsSync(join(runtimeDir, 'workloads', 'mlx-host-server', 'modelhost.state'))).toBe(false);
+    } finally {
+      engine.teardown = originalTeardown;
       rmSync(tmp, { recursive: true, force: true });
     }
   });
