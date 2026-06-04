@@ -91,3 +91,40 @@ test('readWorkloadEpoch returns computed epoch for ModelRun sidecars', () => {
     temp.cleanup();
   }
 });
+
+test('readWorkloadEpoch computes epoch for ModelHost (omlx) sidecars via modelAliases', () => {
+  const temp = makeTempRuntime();
+  try {
+    const resolved = resolveEnv(envForTemp(temp));
+    const key: WorkloadKey = { name: 'mlx-host-a' };
+    ensureWorkloadRuntimeDir(resolved, key);
+
+    const runtimeDir = workloadRuntimeDir(resolved, key);
+    const startedAt = '2026-06-03T22:49:01.403Z';
+    // omlx ModelHost sidecars carry `modelAliases`, never `rel`.
+    const modelAliases = [
+      'Open4bits/Qwen3-Coder-Next-mlx-2Bit',
+      'Qwen3-Coder-Next-mlx-2Bit',
+    ];
+    writeFileSync(join(runtimeDir, 'modelhost.pid'), `60549\n`);
+    writeFileSync(
+      join(runtimeDir, 'modelhost.state'),
+      JSON.stringify({
+        kind: 'ModelHost',
+        engine: 'omlx',
+        pid: 60549,
+        host: '127.0.0.1',
+        port: 8086,
+        modelAliases,
+        startedAt,
+        specHash: '{}',
+      }),
+    );
+
+    const epoch = readWorkloadEpoch(key, resolved);
+    expect(epoch).toBe(computeWorkloadEpoch({ startedAt, rel: modelAliases[0]! }));
+    expect(epoch).toMatch(/^[0-9a-f]{40}$/);
+  } finally {
+    temp.cleanup();
+  }
+});

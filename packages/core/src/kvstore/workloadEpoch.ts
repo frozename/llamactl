@@ -31,16 +31,25 @@ export function readWorkloadEpoch(key: WorkloadKey, resolved: ResolvedEnv): stri
 
   const modelHostState = readModelHostState(key, resolved);
   if (!modelHostState) return null;
-  const hostLike = modelHostState as unknown as { startedAt?: unknown; rel?: unknown };
-  if (
-    typeof hostLike.startedAt === 'string' &&
+  const hostLike = modelHostState as unknown as {
+    startedAt?: unknown;
+    rel?: unknown;
+    modelAliases?: unknown;
+  };
+  // ModelHost (omlx) sidecars carry `modelAliases`, not `rel` (a ModelRun/llama-server
+  // field). Derive the epoch identity from the canonical first alias so omlx prefix-KV
+  // caching engages; fall back to `rel` if a future sidecar shape provides it.
+  const hostRel =
     typeof hostLike.rel === 'string'
-  ) {
-    return computeWorkloadEpoch({
-      startedAt: hostLike.startedAt,
-      rel: hostLike.rel,
-    });
+      ? hostLike.rel
+      : Array.isArray(hostLike.modelAliases) && typeof hostLike.modelAliases[0] === 'string'
+        ? hostLike.modelAliases[0]
+        : null;
+  if (typeof hostLike.startedAt === 'string' && hostRel !== null) {
+    return computeWorkloadEpoch({ startedAt: hostLike.startedAt, rel: hostRel });
   }
-  console.warn(`[kvstore] workload_epoch unavailable for ModelHost '${key.name}': sidecar missing startedAt/rel`);
+  console.warn(
+    `[kvstore] workload_epoch unavailable for ModelHost '${key.name}': sidecar missing startedAt/modelAliases`,
+  );
   return null;
 }
