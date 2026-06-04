@@ -511,11 +511,17 @@ function slotAllocatorFor(runtime: KvRuntime, workload: string): SlotAllocator {
   return allocator;
 }
 
-function slotClientFor(runtime: KvRuntime, workload: string, host: string, port: number): UpstreamSlotClient {
+function slotClientFor(
+  runtime: KvRuntime,
+  workload: string,
+  host: string,
+  port: number,
+  engine?: string,
+): UpstreamSlotClient {
   const endpoint = `http://${host}:${port}`;
   const cached = runtime.slotClients.get(workload);
   if (cached && cached.endpoint === endpoint) return cached.client;
-  const client = new UpstreamSlotClient(endpoint);
+  const client = new UpstreamSlotClient(endpoint, engine === 'omlx' ? { engine: 'omlx' } : undefined);
   runtime.slotClients.set(workload, { endpoint, client });
   return client;
 }
@@ -975,11 +981,16 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
     if (reserveWrite.ok && reserved) {
       const lease = slotAllocatorFor(runtime, metadata.workload).acquire();
       if (lease) {
-        const slotClient = slotClientFor(runtime, metadata.workload, metadata.host, metadata.port);
+        const slotClient = slotClientFor(runtime, metadata.workload, metadata.host, metadata.port, context.route?.engine);
         // llama-server's slot API only accepts a bare filename (relative to its
         // --slot-save-path). We store the absolute path in the registry for
         // orphan sweep + integrity scan, but pass basename to the upstream call.
-        const restore = await slotClient.restore(lease.slotId, basename(hit.upstreamSlotFile));
+        // oMLX additionally requires `model` in the payload (HTTP 400 otherwise).
+        const restore = await slotClient.restore(
+          lease.slotId,
+          basename(hit.upstreamSlotFile),
+          context.route?.engine === 'omlx' ? { model: metadata.model } : undefined,
+        );
         let activated = false;
         const activateWrite = runtime.storage.safeWrite(() => {
           activated = runtime.registry.activate(hit.sha);
@@ -1358,11 +1369,16 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
       mkdirSync(slotDir, { recursive: true });
       const slotBasename = `${kv.sha}.kvslot`;
       const slotFile = join(slotDir, slotBasename);
-      const slotClient = slotClientFor(kv.runtime, kv.workload, kv.host, kv.port);
+      const slotClient = slotClientFor(kv.runtime, kv.workload, kv.host, kv.port, context.route?.engine);
       // llama-server's slot API only accepts a bare filename (relative to its
       // --slot-save-path). We store the absolute path in the registry for
       // orphan sweep + integrity scan, but pass basename to the upstream call.
-      const saved = await slotClient.save(lease.slotId, slotBasename);
+      // oMLX additionally requires `model` in the payload (HTTP 400 otherwise).
+      const saved = await slotClient.save(
+        lease.slotId,
+        slotBasename,
+        context.route?.engine === 'omlx' ? { model: context.route.model } : undefined,
+      );
       if (!saved.ok) {
         console.warn(`[kvstore] slot save skipped for workload='${kv.workload}' sha='${kv.sha}': ${saved.reason}`);
         return;

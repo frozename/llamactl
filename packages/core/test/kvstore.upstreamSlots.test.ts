@@ -56,6 +56,70 @@ async function acquireClosedLocalPort(): Promise<number> {
   return port;
 }
 
+test('omlx engine: save sends model in payload + probes /v1/slots/capabilities', async () => {
+  let saveBody = null as { filename?: string; model?: string } | null;
+  let capsPath = null as string | null;
+  const upstream = await startTestServer(async (req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/v1/slots/capabilities') {
+      capsPath = url.pathname;
+      json(res, 200, { slots: { api_version: 2, supports_request_handle: true } });
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/slots/0') {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      saveBody = JSON.parse(body) as { filename?: string; model?: string };
+      json(res, 200, { n_saved: 7 });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl, { engine: 'omlx' });
+    const saved = await client.save(0, 'abc.kvslot', { model: 'Qwen3-Coder-Next-mlx-2Bit' });
+    expect(saved.ok).toBe(true);
+    expect(saveBody?.filename).toBe('abc.kvslot');
+    expect(saveBody?.model).toBe('Qwen3-Coder-Next-mlx-2Bit');
+    expect(await client.supportsRequestHandle()).toBe(true);
+    expect(capsPath).toBe('/v1/slots/capabilities');
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('default (llamacpp) engine: save omits model + probes /props', async () => {
+  let saveBody = null as { filename?: string; model?: string } | null;
+  let propsPath = null as string | null;
+  const upstream = await startTestServer(async (req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      propsPath = url.pathname;
+      json(res, 200, { slots: { api_version: 0 } });
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/slots/0') {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      saveBody = JSON.parse(body) as { filename?: string; model?: string };
+      json(res, 200, { n_saved: 3 });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl);
+    const saved = await client.save(0, 'x.kvslot');
+    expect(saved.ok).toBe(true);
+    expect(saveBody?.filename).toBe('x.kvslot');
+    expect(saveBody !== null && 'model' in saveBody).toBe(false);
+    expect(await client.supportsRequestHandle()).toBe(false);
+    expect(propsPath).toBe('/props');
+  } finally {
+    await upstream.close();
+  }
+});
+
 test('save success returns ok + tokensSaved + sends filename in JSON body', async () => {
   let sentFilename: string | null = null as string | null;
   const upstream = await startTestServer(async (req, res, url) => {

@@ -2,10 +2,19 @@ const SLOT_REQUEST_TIMEOUT_MS = 10_000;
 const SUPPORTS_REQUEST_HANDLE_TTL_MS = 60_000;
 
 export interface SlotClient {
-  save(slotId: number, filename: string): Promise<SlotSaveResult>;
-  restore(slotId: number, filename: string): Promise<SlotRestoreResult>;
+  save(slotId: number, filename: string, opts?: SlotActionOpts): Promise<SlotSaveResult>;
+  restore(slotId: number, filename: string, opts?: SlotActionOpts): Promise<SlotRestoreResult>;
   supportsSlots(): Promise<boolean>;
   supportsRequestHandle(): Promise<boolean>;
+}
+
+/**
+ * Extra fields some engines require in the slot save/restore payload. oMLX's
+ * `POST /slots/{id}` rejects payloads without `model` (HTTP 400 "Missing model");
+ * llama-server reads only `filename` and ignores the rest.
+ */
+export interface SlotActionOpts {
+  model?: string;
 }
 
 export type SlotSaveResult =
@@ -27,17 +36,22 @@ type FetchResult =
 
 export class UpstreamSlotClient implements SlotClient {
   private readonly baseUrl: URL;
+  private readonly engine: 'llamacpp' | 'omlx' | undefined;
   private supportsSlotsProbe: Promise<boolean> | null = null;
   private _supportsRequestHandleCache: { value: boolean; expiresAt: number } | null = null;
   private readonly supportsRequestHandleTtlMs: number;
 
-  constructor(baseUrl: string, opts?: { fetch?: typeof fetch; supportsRequestHandleTtlMs?: number }) {
+  constructor(
+    baseUrl: string,
+    opts?: { fetch?: typeof fetch; supportsRequestHandleTtlMs?: number; engine?: 'llamacpp' | 'omlx' },
+  ) {
     this.baseUrl = new URL(baseUrl);
+    this.engine = opts?.engine;
     this.supportsRequestHandleTtlMs = opts?.supportsRequestHandleTtlMs ?? SUPPORTS_REQUEST_HANDLE_TTL_MS;
   }
 
-  async save(slotId: number, filename: string): Promise<SlotSaveResult> {
-    const result = await this.postSlotAction(slotId, 'save', filename);
+  async save(slotId: number, filename: string, opts?: SlotActionOpts): Promise<SlotSaveResult> {
+    const result = await this.postSlotAction(slotId, 'save', filename, opts);
     if (!result.ok) {
       this.invalidateCapabilityCache();
       return { ok: false, reason: 'network', error: result.error };
@@ -63,8 +77,8 @@ export class UpstreamSlotClient implements SlotClient {
     return { ok: true, tokensSaved };
   }
 
-  async restore(slotId: number, filename: string): Promise<SlotRestoreResult> {
-    const result = await this.postSlotAction(slotId, 'restore', filename);
+  async restore(slotId: number, filename: string, opts?: SlotActionOpts): Promise<SlotRestoreResult> {
+    const result = await this.postSlotAction(slotId, 'restore', filename, opts);
     if (!result.ok) {
       this.invalidateCapabilityCache();
       return { ok: false, reason: 'network', error: result.error };
@@ -121,10 +135,13 @@ export class UpstreamSlotClient implements SlotClient {
     slotId: number,
     action: 'save' | 'restore',
     filename: string,
+    opts?: SlotActionOpts,
   ): Promise<FetchResult> {
     const url = new URL(`/slots/${slotId}`, this.baseUrl);
     url.searchParams.set('action', action);
-    return this.fetchWithTimeout(url, 'POST', JSON.stringify({ filename }));
+    const payload: Record<string, unknown> = { filename };
+    if (opts?.model !== undefined) payload.model = opts.model;
+    return this.fetchWithTimeout(url, 'POST', JSON.stringify(payload));
   }
 
   private async probeSupportsSlots(): Promise<boolean> {
@@ -143,7 +160,9 @@ export class UpstreamSlotClient implements SlotClient {
   }
 
   private async fetchProps(): Promise<{ ok: true; value: unknown } | { ok: false }> {
-    const url = new URL('/props', this.baseUrl);
+    // llama-server advertises slot capabilities at /props; oMLX at /v1/slots/capabilities.
+    const path = this.engine === 'omlx' ? '/v1/slots/capabilities' : '/props';
+    const url = new URL(path, this.baseUrl);
     const result = await this.fetchWithTimeout(url, 'GET');
     if (!result.ok || !result.response.ok) return { ok: false };
     const parsed = await this.parseJsonBody(result.response);
