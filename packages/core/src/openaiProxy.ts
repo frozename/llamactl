@@ -592,10 +592,16 @@ function resolveRouteKvMetadata(context: ProxyContext): {
 }
 
 export function isRouteKvEligible(route: { kind: 'ModelRun' | 'ModelHost'; engine: string }): boolean {
-  return (
-    (route.kind === 'ModelRun' && route.engine === 'llamacpp') ||
-    (route.kind === 'ModelHost' && route.engine === 'omlx')
-  );
+  // Only llama-server (ModelRun/llamacpp) participates in the proxy slot cache.
+  // oMLX ModelHosts are intentionally excluded: oMLX self-manages KV persistence (its
+  // paged-ssd cache does live prefix reuse + on-disk block persistence), and its slot
+  // save requires prompt_token_ids to reconstruct the prefix from the paged cache —
+  // server.py:_extract_slot_request_payload raises "no cache state available for slot
+  // save" without them, and the proxy's boundary-naive byte-prefix path can't supply
+  // token ids yet. The upstream client + protocol wiring (model field, capability
+  // probe) already speak oMLX's dialect; re-enable the ModelHost/omlx arm here once
+  // proxy token accounting lands.
+  return route.kind === 'ModelRun' && route.engine === 'llamacpp';
 }
 
 function kvBudgetBytes(): number {

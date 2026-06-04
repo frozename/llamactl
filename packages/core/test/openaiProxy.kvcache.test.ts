@@ -274,7 +274,7 @@ test('cold miss saves a new idle kv entry', async () => {
   }
 });
 
-test('cold miss saves a new idle kv entry for ModelHost omxl', async () => {
+test('ModelHost omlx is excluded from the proxy slot cache (no cold-miss save)', async () => {
   const runtime = makeTempRuntime();
   const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
   const upstream = await startUpstream({ slotBaseDir });
@@ -311,24 +311,22 @@ test('cold miss saves a new idle kv entry for ModelHost omxl', async () => {
     );
     expect(response.status).toBe(200);
 
+    // oMLX is excluded from the proxy slot cache (it self-persists KV) — nothing is saved.
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
-    const entry = registry.get(shaForBody(body));
-    expect(entry).not.toBeNull();
-    expect(entry?.state).toBe('idle');
-    expect(entry?.workload).toBe('wl-a');
+    expect(registry.get(shaForBody(body))).toBeNull();
     storage.close();
 
-    expect(upstream.events).toEqual(['chat-forward', 'slot-save']);
+    expect(upstream.events).toEqual(['chat-forward']);
   } finally {
     await upstream.close();
     runtime.cleanup();
   }
 });
 
-test('kv eligibility admits ModelRun llamacpp and ModelHost omlx only', () => {
+test('kv eligibility admits only ModelRun llamacpp (oMLX self-persists, excluded)', () => {
   expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'llamacpp' })).toBe(true);
-  expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'omlx' })).toBe(true);
+  expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'omlx' })).toBe(false);
   expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'llamacpp' })).toBe(false);
   expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'omlx' })).toBe(false);
 });
