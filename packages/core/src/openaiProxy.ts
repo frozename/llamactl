@@ -1,5 +1,5 @@
 import type { ModelInfo, ModelListResponse } from '@nova/contracts';
-import { mkdirSync, statSync } from 'node:fs';
+import { mkdirSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import {
@@ -146,14 +146,46 @@ function buildListOpenAIModels(resolved: ResolvedEnv): ModelListResponse {
   return { object: 'list', data };
 }
 
-let modelsResponseCache: { mtimeNs: bigint; response: ModelListResponse } | null = null;
+const WORKLOAD_STATE_FILES = ['llama-server.pid', 'server.state', 'modelhost.pid', 'modelhost.state'];
+
+function statMtimeNs(path: string): string {
+  try {
+    return statSync(path, { bigint: true }).mtimeNs.toString();
+  } catch {
+    return '-';
+  }
+}
+
+// Cache key for the route/models caches. The parent workloads/ dir mtime alone
+// is stale-prone: a model restart rewrites workloads/<name>/{modelhost,server}.state
+// in place, which bumps the FILE mtime but not the parent dir's — so the caches
+// kept serving the old route until a manual `touch` of the workloads dir. Fold
+// each workload subdir AND its pid/state files into the signature so any restart
+// invalidates the cache automatically.
+function workloadRuntimeCacheSignature(resolved: ResolvedEnv): string {
+  const root = workloadRuntime.workloadRuntimeRoot(resolved);
+  const parts: string[] = [statMtimeNs(root)];
+  try {
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const dir = join(root, entry.name);
+      parts.push(entry.name, statMtimeNs(dir));
+      for (const file of WORKLOAD_STATE_FILES) parts.push(statMtimeNs(join(dir, file)));
+    }
+  } catch {
+    // workloads root missing/unreadable — signature is just the root stat.
+  }
+  return parts.join('|');
+}
+
+let modelsResponseCache: { sig: string; response: ModelListResponse } | null = null;
 
 function getCachedModelsResponse(resolved: ResolvedEnv): ModelListResponse {
   try {
-    const mtimeNs = statSync(workloadRuntime.workloadRuntimeRoot(resolved), { bigint: true }).mtimeNs;
-    if (modelsResponseCache && modelsResponseCache.mtimeNs === mtimeNs) return modelsResponseCache.response;
+    const sig = workloadRuntimeCacheSignature(resolved);
+    if (modelsResponseCache && modelsResponseCache.sig === sig) return modelsResponseCache.response;
     const response = buildListOpenAIModels(resolved);
-    modelsResponseCache = { mtimeNs, response };
+    modelsResponseCache = { sig, response };
     return response;
   } catch {
     return buildListOpenAIModels(resolved);
@@ -271,7 +303,7 @@ type ProxyContext = {
   responseCacheHit?: Response;
 };
 
-let routeMapCache: { mtimeNs: bigint; map: Map<string, RouteEntry> } | null = null;
+let routeMapCache: { sig: string; map: Map<string, RouteEntry> } | null = null;
 let routeMapBuildCount = 0;
 let clusterRoutingOverrideForTests: {
   clusterPeers?: PeerNode[];
@@ -321,10 +353,10 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
 
 function getRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
   try {
-    const mtimeNs = statSync(workloadRuntime.workloadRuntimeRoot(resolved), { bigint: true }).mtimeNs;
-    if (routeMapCache && routeMapCache.mtimeNs === mtimeNs) return routeMapCache.map;
+    const sig = workloadRuntimeCacheSignature(resolved);
+    if (routeMapCache && routeMapCache.sig === sig) return routeMapCache.map;
     const map = buildRouteMap(resolved);
-    routeMapCache = { mtimeNs, map };
+    routeMapCache = { sig, map };
     return map;
   } catch {
     return buildRouteMap(resolved);

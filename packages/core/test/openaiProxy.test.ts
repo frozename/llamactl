@@ -67,6 +67,66 @@ test('routes chat completions to a ModelHost by rel alias', async () => {
   }
 });
 
+test('route cache invalidates when a workload state file is rewritten in place', async () => {
+  const t = tempEnv();
+  try {
+    const workload = join(t.dir, 'workloads', 'mlx-host');
+    mkdirSync(workload, { recursive: true });
+    writeFileSync(join(workload, 'modelhost.pid'), `${process.pid}\n`);
+    const writeState = (port: number) =>
+      writeFileSync(
+        join(workload, 'modelhost.state'),
+        JSON.stringify({
+          kind: 'ModelHost',
+          engine: 'omlx',
+          pid: process.pid,
+          host: '127.0.0.1',
+          port,
+          modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit', 'Qwen3-8B-MLX-4bit'],
+          startedAt: new Date().toISOString(),
+        }),
+      );
+    writeState(8123);
+
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: Request | URL | string) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push(url);
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+
+    const req = () =>
+      openaiProxy.proxyOpenAI(
+        new Request('http://localhost/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: 'mlx-community/Qwen3-8B-MLX-4bit',
+            messages: [{ role: 'user', content: 'hi' }],
+          }),
+        }),
+        t.env,
+      );
+
+    await req();
+    const builds1 = openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests();
+    await req();
+    expect(openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests()).toBe(builds1); // cached: no change
+
+    // Restart the model on a new port by rewriting modelhost.state IN PLACE.
+    // The parent workloads/ dir mtime does NOT change — the old parent-mtime key
+    // would keep serving 8123; the per-subdir signature must invalidate.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    writeState(8200);
+
+    await req();
+    expect(openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests()).toBe(builds1 + 1); // invalidated
+    expect(calls[calls.length - 1]).toBe('http://127.0.0.1:8200/v1/chat/completions');
+  } finally {
+    t.cleanup();
+  }
+});
+
 test('routes chat completions to a ModelHost by basename alias', async () => {
   const t = tempEnv();
   try {
