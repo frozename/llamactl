@@ -1,0 +1,43 @@
+[
+  {
+    "name": "gemma4-12b-llamacpp-Q4KM",
+    "engine": "llamacpp",
+    "family": "gemma-4",
+    "quant": "Q4_K_M",
+    "size_params": "12B",
+    "host": "127.0.0.1",
+    "port": 8140,
+    "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/gemma-4-12B-it-GGUF/gemma-4-12B-it-Q4_K_M.gguf",
+    "extra_args": [],
+    "binary": "/Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server",
+    "start_args": [
+      "--ctx-size", "32768",
+      "-ngl", "999",
+      "--flash-attn", "on",
+      "-ctk", "q8_0",
+      "-ctv", "q8_0",
+      "--no-warmup",
+      "-np", "1",
+      "--jinja",
+      "--reasoning", "off",
+      "--alias", "local"
+    ],
+    "managed": true
+  },
+  {
+    "name": "gemma4-12b-omlx-MLX-4bit",
+    "engine": "omlx",
+    "family": "gemma-4",
+    "quant": "MLX-4bit",
+    "size_params": "12B",
+    "host": "127.0.0.1",
+    "port": 8144,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/llama.cpp/models",
+    "request_model_id": "gemma-4-12B-it-4bit",
+    "extra_args": ["--max-concurrent-requests", "1"],
+    "start_args": [],
+    "gguf_path": "",
+    "managed": true
+  }
+]

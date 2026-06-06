@@ -1,0 +1,102 @@
+[
+  {
+    "name": "gemma4-12b-llamacpp-Q4KM",
+    "engine": "llamacpp",
+    "family": "gemma-4",
+    "quant": "Q4_K_M",
+    "size_params": "12B",
+    "host": "127.0.0.1",
+    "port": 8140,
+    "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/gemma-4-12B-it-GGUF/gemma-4-12B-it-Q4_K_M.gguf",
+    "extra_args": [],
+    "binary": "/Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server",
+    "start_args": [
+      "--ctx-size", "32768",
+      "-ngl", "999",
+      "--flash-attn", "on",
+      "-ctk", "q8_0",
+      "-ctv", "q8_0",
+      "--no-warmup",
+      "-np", "1",
+      "--jinja",
+      "--reasoning", "off",
+      "--alias", "local"
+    ],
+    "managed": true
+  },
+  {
+    "name": "gemma4-12b-llamacpp-QAT-Q4_0",
+    "engine": "llamacpp",
+    "family": "gemma-4",
+    "quant": "QAT-Q4_0",
+    "size_params": "12B",
+    "host": "127.0.0.1",
+    "port": 8141,
+    "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/gemma-4-12B-it-qat-q4_0-gguf/gemma-4-12b-it-qat-q4_0.gguf",
+    "extra_args": [],
+    "binary": "/Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server",
+    "start_args": [
+      "--ctx-size", "32768",
+      "-ngl", "999",
+      "--flash-attn", "on",
+      "-ctk", "q8_0",
+      "-ctv", "q8_0",
+      "--no-warmup",
+      "-np", "1",
+      "--jinja",
+      "--reasoning", "off",
+      "--alias", "local"
+    ],
+    "managed": true
+  },
+  {
+    "name": "gemma4-26b-a4b-llamacpp-UDQ4KXL",
+    "engine": "llamacpp",
+    "family": "gemma-4",
+    "quant": "UD-Q4_K_XL",
+    "size_params": "26B-A4B",
+    "host": "127.0.0.1",
+    "port": 8142,
+    "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+    "extra_args": [],
+    "binary": "/Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server",
+    "start_args": [
+      "--ctx-size", "32768",
+      "-ngl", "999",
+      "--flash-attn", "on",
+      "-ctk", "q8_0",
+      "-ctv", "q8_0",
+      "--no-warmup",
+      "-np", "1",
+      "--jinja",
+      "--reasoning", "off",
+      "--alias", "local"
+    ],
+    "managed": true
+  },
+  {
+    "name": "gemma4-e4b-llamacpp-UDQ4KXL",
+    "engine": "llamacpp",
+    "family": "gemma-4",
+    "quant": "UD-Q4_K_XL",
+    "size_params": "E4B",
+    "host": "127.0.0.1",
+    "port": 8143,
+    "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf",
+    "extra_args": [],
+    "binary": "/Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server",
+    "start_args": [
+      "--ctx-size", "32768",
+      "-ngl", "999",
+      "--flash-attn", "on",
+      "-ctk", "q8_0",
+      "-ctv", "q8_0",
+      "--no-warmup",
+      "-np", "1",
+      "--jinja",
+      "--reasoning", "off",
+      "--alias", "local"
+    ],
+    "managed": true
+  }
+]
