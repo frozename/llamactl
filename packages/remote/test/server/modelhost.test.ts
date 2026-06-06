@@ -497,6 +497,32 @@ describe('server/modelhost', () => {
     }
   });
 
+  test('defers (does not spawn) when a live process holds the endpoint but is not yet adoptable', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-defer-'));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 9999 } as const));
+    try {
+      seedDeadSidecar(runtimeDir);
+      const result = await startModelHost({
+        key: { name: 'mlx-host-server' },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        // A live process owns the port but is still loading (not ready).
+        probeReady: async () => ({ ready: false, modelIds: [] }),
+        findListenerPid: async () => process.pid,
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('deferring restart');
+      // Must NOT spawn a competitor that cannot bind the held port.
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test('spawns a replacement when the recorded pid is dead and no live host serves the endpoint', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-deadrespawn-'));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);

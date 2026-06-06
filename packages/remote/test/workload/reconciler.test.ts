@@ -174,6 +174,36 @@ describe('reconcileOnce', () => {
     }
   });
 
+  test('sweeps a stale sidecar for a disabled, non-running ModelHost', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llamactl-reconciler-disabled-sweep-'));
+    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    try {
+      const base = makeHostManifest();
+      saveModelHost({ ...base, spec: { ...base.spec, enabled: false } }, dir);
+      process.env.LOCAL_AI_RUNTIME_DIR = dir;
+      // Leftover sidecar from a prior out-of-band exit (recorded pid now dead).
+      seedRunningSidecar(dir, base);
+      expect(readModelHostState({ name: 'host-a' }, resolveEnv({ LOCAL_AI_RUNTIME_DIR: dir }))).not.toBeNull();
+
+      const result = await reconcileOnce({
+        workloadsDir: dir,
+        getClient: () => ({
+          ...makeClient(),
+          modelHostStatus: { query: async () => ({ state: 'Stopped' }) },
+        }),
+      });
+
+      expect(result.errors).toBe(0);
+      expect(result.reports.find((r) => r.name === 'host-a')?.action).toBe('unchanged');
+      // The stale sidecar is swept so it does not leak for a disabled host.
+      expect(readModelHostState({ name: 'host-a' }, resolveEnv({ LOCAL_AI_RUNTIME_DIR: dir }))).toBeNull();
+    } finally {
+      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
+      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('skips ModelHost start when the persisted Running spec still matches', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'llamactl-reconciler-host-unchanged-'));
     const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;

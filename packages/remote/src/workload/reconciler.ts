@@ -1,5 +1,5 @@
 import { applyOne, applyOneModelHost, type ApplyEvent, type ApplyResult, type WorkloadClient } from './apply.js';
-import { computeModelHostSpecHash, readModelHostState } from '../../../core/src/engines/state.js';
+import { computeModelHostSpecHash, readModelHostState, removeModelHostState } from '../../../core/src/engines/state.js';
 import { resolveEnv } from '../../../core/src/env.js';
 import { defaultNodeBudgetGiB } from './admission.js';
 import { listWorkloads, saveWorkload, defaultWorkloadsDir } from './store.js';
@@ -128,6 +128,14 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
       const client = opts.getClient(spec.node);
       const current = await client.modelHostStatus.query({ workload: name });
       if (spec.enabled === false && current.state !== 'Running') {
+        // A disabled host that isn't Running may still have a stale sidecar
+        // (e.g. a dead-pid sidecar left by an out-of-band exit). statusModelHost
+        // reports Stopped for a dead pid, so this short-circuit now runs before
+        // the apply path that would otherwise remove it — sweep it here so the
+        // sidecar does not leak. No-op when the sidecar is already absent.
+        if (spec.node === LOCAL_NODE_ID) {
+          removeModelHostState({ name }, resolveEnv(process.env));
+        }
         reports.push({
           name,
           node: spec.node,

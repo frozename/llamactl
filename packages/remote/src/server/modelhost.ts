@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
 import { ENGINES } from '../../../core/src/engines/index.js';
 import { computeModelHostSpecHash, readModelHostState, removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
@@ -145,48 +146,81 @@ function buildModelHostSpec(manifest: ModelHostManifest) {
 // Short probe window for adoption: a process already bound to the endpoint
 // answers quickly, so we should not wait the full launch timeout to confirm.
 const ADOPT_PROBE_TIMEOUT_MS = 3000;
+// Hard cap on the listener-pid lookup. The reconcile host loop is serial, so
+// a wedged lsof (stuck mount, fd contention) must never hang the whole pass.
+const FIND_LISTENER_TIMEOUT_MS = 2000;
 
-function defaultFindListenerPid(endpoint: { host: string; port: number }): Promise<number | null> {
+// Resolve lsof by absolute path: macOS ships it in /usr/sbin, which is NOT on
+// the controller's launchd PATH — a bare `lsof` would ENOENT there and silently
+// disable adoption in production. Fall back to a bare name only if neither
+// canonical location exists (e.g. an unusual Linux layout on PATH).
+function resolveLsofPath(): string {
+  for (const candidate of ['/usr/sbin/lsof', '/usr/bin/lsof']) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return 'lsof';
+}
+
+function defaultFindListenerPid(
+  endpoint: { host: string; port: number },
+  signal?: AbortSignal,
+): Promise<number | null> {
   return new Promise((resolve) => {
+    let settled = false;
+    let child: ChildProcess | null = null;
+    const finish = (value: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        child?.kill('SIGKILL');
+      } catch {}
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), FIND_LISTENER_TIMEOUT_MS);
     try {
-      const child = nodeSpawn('lsof', ['-nP', `-iTCP:${endpoint.port}`, '-sTCP:LISTEN', '-t'], {
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
+      // Constrain to the exact bind address so a process listening on a
+      // different address of the same port (e.g. 0.0.0.0 / ::1) is not matched.
+      child = nodeSpawn(
+        resolveLsofPath(),
+        ['-nP', `-iTCP@${endpoint.host}:${endpoint.port}`, '-sTCP:LISTEN', '-t'],
+        { stdio: ['ignore', 'pipe', 'ignore'] },
+      );
       let out = '';
       child.stdout?.on('data', (chunk) => {
         out += String(chunk);
       });
-      child.on('error', () => resolve(null));
+      child.on('error', () => finish(null));
       child.on('close', () => {
         const pid = out
           .split(/\s+/)
           .map((token) => Number.parseInt(token, 10))
           .find((value) => Number.isInteger(value) && value > 0);
-        resolve(pid ?? null);
+        finish(pid ?? null);
       });
     } catch {
-      resolve(null);
+      finish(null);
+    }
+    if (signal) {
+      if (signal.aborted) finish(null);
+      else signal.addEventListener('abort', () => finish(null), { once: true });
     }
   });
 }
 
-// When the recorded pid is dead but a live process is already serving the
-// endpoint (an out-of-band relaunch — manual restart, or a crash + external
-// respawn), adopt it: re-record the live pid so the proxy route recovers,
-// rather than spawning a competitor that would fail to bind the held port
-// (and whose dead pid the post-probe guard would then refuse to record,
-// leaving the route silently dropped). Returns the adopted result, or null
-// when no healthy listener owns the endpoint (caller then spawns normally).
+// Given a live process (`livePid`) already bound to the endpoint, adopt it iff
+// it is serving OUR model: re-record its pid so the proxy route recovers,
+// rather than spawning a competitor that could not bind the held port. Returns
+// null when the live process is not (yet) confirmable as ours — the caller then
+// DEFERS rather than spawning, since a spawn cannot win a held port.
 async function tryAdoptLiveHost(
   manifest: ModelHostManifest,
   opts: StartModelHostOptions,
   resolved: ReturnType<typeof resolveEnv>,
   probeReady: NonNullable<StartModelHostOptions['probeReady']>,
+  livePid: number,
 ): Promise<StartModelHostResult | null> {
   const endpoint = manifest.spec.endpoint;
-  const findListenerPid = opts.findListenerPid ?? defaultFindListenerPid;
-  const livePid = await findListenerPid(endpoint).catch(() => null);
-  if (livePid == null || !isProcessAlive(livePid)) return null;
   const readiness = await probeReady(endpoint, ADOPT_PROBE_TIMEOUT_MS).catch(() => ({
     ready: false,
     modelIds: [] as string[],
@@ -194,14 +228,17 @@ async function tryAdoptLiveHost(
   if (!readiness.ready) return null;
   const rel = manifest.spec.hostedModels[0]!.rel;
   const aliases = new Set([rel, basename(rel)]);
-  // Defensive: only adopt a process that serves our model (when it advertises
-  // any ids), never an unrelated squatter that grabbed the freed port.
+  // Only adopt a process that advertises OUR model. Empty modelIds means we
+  // cannot confirm ownership — refuse (the caller defers) rather than adopt an
+  // unrelated squatter that happened to grab the freed port.
   if (
-    readiness.modelIds.length > 0 &&
+    readiness.modelIds.length === 0 ||
     !readiness.modelIds.some((id) => aliases.has(id) || aliases.has(basename(id)))
   ) {
     return null;
   }
+  // TOCTOU: the listener may have exited between discovery and now.
+  if (!isProcessAlive(livePid)) return null;
   writeModelHostState(
     {
       kind: 'ModelHost',
@@ -256,15 +293,38 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   if (priorState && isProcessAlive(priorState.pid)) {
     await engine.teardown(priorState.pid).catch(() => {});
   } else if (priorState) {
-    // Recorded pid is dead but a sidecar exists: a live process may already
-    // be serving the endpoint after an out-of-band relaunch. Adopt it instead
-    // of spawning a competitor (see tryAdoptLiveHost). On no healthy listener
-    // we fall through to a normal spawn (the port is presumed free).
-    const adopted = await tryAdoptLiveHost(manifest, opts, resolved, opts.probeReady ?? engine.probeReady);
-    if (adopted) {
-      opts.onEvent?.({ type: 'done', result: adopted });
-      return adopted;
+    // Recorded pid is dead but a sidecar exists. Decide adopt-vs-spawn on
+    // listener PRESENCE, not on the short readiness window: if a live process
+    // already owns the endpoint (an out-of-band relaunch — manual restart, or
+    // a crash + external respawn), a fresh spawn cannot bind the held port, so
+    // we must never fall through to it.
+    const findListenerPid =
+      opts.findListenerPid ?? ((endpoint) => defaultFindListenerPid(endpoint, opts.signal));
+    const livePid = await findListenerPid(manifest.spec.endpoint).catch(() => null);
+    if (livePid != null && isProcessAlive(livePid)) {
+      const adopted = await tryAdoptLiveHost(
+        manifest,
+        opts,
+        resolved,
+        opts.probeReady ?? engine.probeReady,
+        livePid,
+      );
+      if (adopted) {
+        opts.onEvent?.({ type: 'done', result: adopted });
+        return adopted;
+      }
+      // A live process owns the port but is not (yet) confirmable as ours
+      // (still loading, or an unrelated process). Defer to the next reconcile
+      // tick rather than spawn a competitor that would only fail to bind.
+      const deferred: StartModelHostResult = {
+        ok: false,
+        pid: null,
+        error: `endpoint ${manifest.spec.endpoint.host}:${manifest.spec.endpoint.port} is held by live pid ${livePid} that is not yet adoptable (readiness/model unconfirmed); deferring restart`,
+      };
+      opts.onEvent?.({ type: 'done', result: deferred });
+      return deferred;
     }
+    // No live listener — the port is free; fall through to a normal spawn.
   }
 
   const bootEnv: EngineBootEnv = {
