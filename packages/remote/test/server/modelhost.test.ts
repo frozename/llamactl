@@ -436,4 +436,89 @@ describe('server/modelhost', () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  // A pid that is essentially never alive (above any plausible pid_max), so
+  // process.kill(pid, 0) reliably throws ESRCH → treated as dead.
+  const DEAD_PID = 2 ** 31 - 1;
+
+  function seedDeadSidecar(runtimeDir: string): string {
+    const hostDir = join(runtimeDir, 'workloads', 'mlx-host-server');
+    mkdirSync(hostDir, { recursive: true });
+    const state = {
+      kind: 'ModelHost',
+      engine: 'omlx',
+      pid: DEAD_PID,
+      host: '127.0.0.1',
+      port: 8094,
+      modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit', 'Qwen3-8B-MLX-4bit'],
+      startedAt: new Date().toISOString(),
+    };
+    writeFileSync(join(hostDir, 'modelhost.state'), JSON.stringify(state));
+    writeFileSync(join(hostDir, 'modelhost.pid'), `${DEAD_PID}\n`);
+    return hostDir;
+  }
+
+  test('statusModelHost reports Stopped when the recorded pid is dead', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-deadpid-'));
+    const runtimeDir = join(tmp, 'runtime');
+    try {
+      seedDeadSidecar(runtimeDir);
+      expect(statusModelHost({ key: { name: 'mlx-host-server' }, runtimeDir }).state).toBe('Stopped');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('adopts a live out-of-band host (dead recorded pid) instead of spawning a competitor', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-adopt-'));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 9999 } as const));
+    try {
+      const hostDir = seedDeadSidecar(runtimeDir);
+      const result = await startModelHost({
+        key: { name: 'mlx-host-server' },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: async () => ({ ready: true, modelIds: ['mlx-community/Qwen3-8B-MLX-4bit'] }),
+        // A genuinely-alive pid serving the endpoint out-of-band.
+        findListenerPid: async () => process.pid,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.pid).toBe(process.pid);
+      // Adopted the live process — did NOT spawn a competitor for the held port.
+      expect(spawn).not.toHaveBeenCalled();
+      // The live pid is re-recorded so listLocalRoutes restores the route.
+      expect(readFileSync(join(hostDir, 'modelhost.state'), 'utf8')).toContain(`"pid": ${process.pid}`);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('spawns a replacement when the recorded pid is dead and no live host serves the endpoint', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-deadrespawn-'));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 } as const));
+    try {
+      const hostDir = seedDeadSidecar(runtimeDir);
+      const result = await startModelHost({
+        key: { name: 'mlx-host-server' },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: async () => ({ ready: true, modelIds: [] }),
+        // Port is free — nothing to adopt.
+        findListenerPid: async () => null,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(readFileSync(join(hostDir, 'modelhost.state'), 'utf8')).toContain('"pid": 4321');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
