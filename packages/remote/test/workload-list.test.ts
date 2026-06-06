@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import { router } from '../src/router.js';
 import { parseWorkload, saveWorkload } from '../src/workload/store.js';
+import { parseModelHost, saveModelHost } from '../src/workload/modelhost-store.js';
 
 /**
  * E.4 — `workloadList` returns a per-row summary of each declared
@@ -54,6 +55,23 @@ spec:
     value: gemma.gguf
 `;
 
+const modelHostYaml = `
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: mlx-host
+spec:
+  engine: omlx
+  node: local
+  enabled: true
+  binary: /usr/bin/omlx
+  endpoint:
+    host: 127.0.0.1
+    port: 8094
+  hostedModels:
+    - rel: Qwen3-8B-MLX-4bit
+`;
+
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'llamactl-workload-list-'));
   Object.assign(process.env, {
@@ -93,5 +111,25 @@ describe('workloadList', () => {
     expect(solo).toBeDefined();
     expect(solo!.workerCount).toBe(0);
     expect(solo!.workerNodes).toEqual([]);
+  });
+
+  test('includes ModelHost workloads tagged with kind', async () => {
+    saveWorkload(parseWorkload(singleNodeYaml), tmp);
+    saveModelHost(parseModelHost(modelHostYaml), tmp);
+
+    const caller = router.createCaller({});
+    const rows = await caller.workloadList();
+    const byName = Object.fromEntries(rows.map((r) => [r.name, r] as const));
+
+    const host = byName['mlx-host'];
+    expect(host).toBeDefined();
+    expect(host!.kind).toBe('ModelHost');
+    expect(host!.node).toBe('local');
+    expect(host!.rel).toBe('Qwen3-8B-MLX-4bit');
+    // No live state file in the tempdir -> Stopped, not a crash.
+    expect(host!.phase).toBe('Stopped');
+
+    // Existing ModelRun rows gain the discriminator too.
+    expect(byName['gemma-solo']!.kind).toBe('ModelRun');
   });
 });

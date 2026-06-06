@@ -32,6 +32,7 @@ export {
 export { providerForNode, providerForCloudNode } from './providers/factory.js';
 export * as workloadSchema from './workload/schema.js';
 export * as workloadStore from './workload/store.js';
+export * as modelHostStore from './workload/modelhost-store.js';
 export * as workloadApply from './workload/apply.js';
 export * as workloadGatewayHandlers from './workload/gateway-handlers/index.js';
 export * as tunnel from './tunnel/index.js';

@@ -15,6 +15,7 @@ import {
   resolveNodeKind,
   router,
   workloadStore,
+  modelHostStore,
   type ClusterNode,
 } from '@llamactl/remote';
 import {
@@ -152,22 +153,32 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   server.registerTool(
     'llamactl.workload.list',
     {
-      title: 'List persisted ModelRun manifests',
+      title: 'List persisted ModelRun + ModelHost manifests',
       description:
-        'Return every ModelRun manifest under ~/.llamactl/workloads/, each with the last-recorded status field. Live runtime phase (per-node server probing) is a CLI-only operation — callers chaining several steps should cross-reference llamactl.server.status for the control plane\'s node.',
+        'Return every ModelRun and ModelHost manifest under ~/.llamactl/workloads/, each tagged with `kind` and its last-recorded status field. ModelHosts (oMLX etc.) are charged against the same node budget as ModelRuns, so they are listed here too. Live runtime phase (per-node server probing) is a CLI-only operation — callers chaining several steps should cross-reference llamactl.server.status for the control plane\'s node.',
       inputSchema: {},
     },
     async () => {
-      const manifests = workloadStore.listWorkloads();
-      const rows = manifests.map((m) => ({
+      const rows = workloadStore.listWorkloads().map((m) => ({
         name: m.metadata.name,
+        kind: 'ModelRun' as const,
         node: m.spec.node,
         rel: m.spec.target.value,
         gateway: m.spec.gateway,
         restartPolicy: m.spec.restartPolicy,
         status: m.status ?? null,
       }));
-      return toTextContent({ count: rows.length, workloads: rows });
+      const hostRows = modelHostStore.listModelHosts().map((h) => ({
+        name: h.metadata.name,
+        kind: 'ModelHost' as const,
+        node: h.spec.node,
+        rel: h.spec.hostedModels[0]!.rel,
+        gateway: false,
+        restartPolicy: h.spec.restartPolicy,
+        status: null,
+      }));
+      const workloads = [...rows, ...hostRows].sort((a, b) => a.name.localeCompare(b.name));
+      return toTextContent({ count: workloads.length, workloads });
     },
   );
 

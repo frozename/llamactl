@@ -16,8 +16,9 @@ import * as infraServicesMod from './infra/services.js';
 import type { ClusterNode, Config } from './config/schema.js';
 import * as workloadStoreMod from './workload/store.js';
 import * as workloadApplyMod from './workload/apply.js';
-import { defaultNodeBudgetGiB } from './workload/admission.js';
+import { defaultNodeBudgetGiB, estimateModelHostMemoryGiB } from './workload/admission.js';
 import * as nodeRunStoreMod from './workload/noderun-store.js';
+import * as modelHostStoreMod from './workload/modelhost-store.js';
 import * as reconcileLoopMod from './workload/reconcileLoop.js';
 import * as benchScheduleMod from './bench/schedule.js';
 import * as benchScheduleLoopMod from './bench/scheduleLoop.js';
@@ -1064,6 +1065,7 @@ export const router = t.router({
         const workers = manifest.spec.workers ?? [];
         return {
           name: manifest.metadata.name,
+          kind: 'ModelRun' as const,
           node: nodeName,
           rel: manifest.spec.target.value,
           phase,
@@ -1082,7 +1084,30 @@ export const router = t.router({
         };
       }),
     );
-    return rows;
+    // ModelHosts (oMLX etc.) live in the same workloads dir but a
+    // separate store. They were previously invisible to this list —
+    // and to nodeBudget — even though admission counts them. Surface
+    // them with the same row shape, discriminated by `kind`.
+    const hostRows = modelHostStoreMod.listModelHosts().map((manifest) => {
+      const status = statusModelHost({ key: { name: manifest.metadata.name } });
+      const ep = manifest.spec.endpoint;
+      return {
+        name: manifest.metadata.name,
+        kind: 'ModelHost' as const,
+        node: manifest.spec.node,
+        rel: manifest.spec.hostedModels[0]!.rel,
+        phase: (status.state === 'Running' ? 'Running' : 'Stopped') as
+          | 'Running'
+          | 'Stopped'
+          | 'Mismatch'
+          | 'Unreachable',
+        endpoint: ep ? `http://${ep.host ?? '127.0.0.1'}:${ep.port}` : null,
+        status: null,
+        workerCount: 0,
+        workerNodes: [] as string[],
+      };
+    });
+    return [...rows, ...hostRows];
   }),
 
   workloadDescribe: t.procedure
@@ -1106,27 +1131,43 @@ export const router = t.router({
       const nodeRuns = nodeRunStoreMod.listNodeRuns();
       const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
       const budget = defaultNodeBudgetGiB(node?.spec.budget?.memoryGiB);
-      const manifests = workloadStoreMod
+      const resolved = envMod.resolveEnv();
+      const runRows = workloadStoreMod
         .listWorkloads()
-        .filter((m) => m.spec.node === input.node);
-      const live = manifests.filter((m) => m.spec.enabled !== false);
-      const reserved = live.reduce(
-        (sum, manifest) => sum + (manifest.spec.resources?.expectedMemoryGiB ?? 0),
-        0,
-      );
-      return {
-        budget,
-        reserved,
-        workloads: manifests.map((manifest) => ({
+        .filter((m) => m.spec.node === input.node)
+        .map((manifest) => ({
           name: manifest.metadata.name,
+          kind: 'ModelRun' as const,
           enabled: manifest.spec.enabled !== false,
           expectedMemoryGiB: manifest.spec.resources?.expectedMemoryGiB ?? null,
           endpoint: manifest.spec.endpoint
             ? `${manifest.spec.endpoint.host ?? '127.0.0.1'}:${manifest.spec.endpoint.port ?? '?'}`
             : null,
-          phase: manifest.status?.phase ?? 'Pending',
-        })),
-      };
+          phase: (manifest.status?.phase ?? 'Pending') as string,
+        }));
+      // ModelHosts are charged against the same node budget by admission
+      // (listAnyWorkloadsForAdmission), but were omitted here — so
+      // `reserved` under-reported and the rollup silently disagreed with
+      // what `apply` actually enforces. Count them with the admission
+      // estimator so the two views match.
+      const hostRows = modelHostStoreMod
+        .listModelHosts()
+        .filter((h) => h.spec.node === input.node)
+        .map((manifest) => ({
+          name: manifest.metadata.name,
+          kind: 'ModelHost' as const,
+          enabled: manifest.spec.enabled !== false,
+          expectedMemoryGiB: estimateModelHostMemoryGiB(manifest, resolved),
+          endpoint: manifest.spec.endpoint
+            ? `${manifest.spec.endpoint.host ?? '127.0.0.1'}:${manifest.spec.endpoint.port ?? '?'}`
+            : null,
+          phase: statusModelHost({ key: { name: manifest.metadata.name } }).state as string,
+        }));
+      const workloads = [...runRows, ...hostRows].sort((a, b) => a.name.localeCompare(b.name));
+      const reserved = workloads
+        .filter((w) => w.enabled)
+        .reduce((sum, w) => sum + (w.expectedMemoryGiB ?? 0), 0);
+      return { budget, reserved, workloads };
     }),
 
   workloadApply: t.procedure
