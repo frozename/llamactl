@@ -623,17 +623,21 @@ function resolveRouteKvMetadata(context: ProxyContext): {
   };
 }
 
+/** Proxy-side dark-launch gate for the oMLX KV save-handle path (default off). */
+export function omlxKvSaveEnabled(): boolean {
+  const raw = process.env.LLAMACTL_OMLX_KV_SAVE_ENABLED;
+  return raw !== undefined && ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
+}
+
 export function isRouteKvEligible(route: { kind: 'ModelRun' | 'ModelHost'; engine: string }): boolean {
-  // Only llama-server (ModelRun/llamacpp) participates in the proxy slot cache.
-  // oMLX ModelHosts are intentionally excluded: oMLX self-manages KV persistence (its
-  // paged-ssd cache does live prefix reuse + on-disk block persistence), and its slot
-  // save requires prompt_token_ids to reconstruct the prefix from the paged cache —
-  // server.py:_extract_slot_request_payload raises "no cache state available for slot
-  // save" without them, and the proxy's boundary-naive byte-prefix path can't supply
-  // token ids yet. The upstream client + protocol wiring (model field, capability
-  // probe) already speak oMLX's dialect; re-enable the ModelHost/omlx arm here once
-  // proxy token accounting lands.
-  return route.kind === 'ModelRun' && route.engine === 'llamacpp';
+  // llama-server (ModelRun/llamacpp) always participates in the proxy slot cache.
+  if (route.kind === 'ModelRun' && route.engine === 'llamacpp') return true;
+  // oMLX ModelHosts participate only when the save-handle path is enabled (L4):
+  // the proxy injects x_omlx_save_handle on the chat so the server records the
+  // prompt token-ids and can serialize the slot on the subsequent save. Dark by
+  // default behind LLAMACTL_OMLX_KV_SAVE_ENABLED + the supports_save_handle probe.
+  if (route.kind === 'ModelHost' && route.engine === 'omlx' && omlxKvSaveEnabled()) return true;
+  return false;
 }
 
 function kvBudgetBytes(): number {
@@ -907,14 +911,17 @@ function stripUserSuppliedOmlxVendorFields(
 ): boolean {
   const hadRequestHandle = Object.prototype.hasOwnProperty.call(body, 'x_omlx_request_handle');
   const hadRestoreEpoch = Object.prototype.hasOwnProperty.call(body, 'x_omlx_restore_epoch');
-  if (!hadRequestHandle && !hadRestoreEpoch) return false;
+  const hadSaveHandle = Object.prototype.hasOwnProperty.call(body, 'x_omlx_save_handle');
+  if (!hadRequestHandle && !hadRestoreEpoch && !hadSaveHandle) return false;
   delete body.x_omlx_request_handle;
   delete body.x_omlx_restore_epoch;
+  delete body.x_omlx_save_handle;
   logSlotInjectionEvent('slot_injection_user_supplied_stripped', {
     model,
     workload,
     had_handle: hadRequestHandle,
     had_epoch: hadRestoreEpoch,
+    had_save_handle: hadSaveHandle,
   });
   return true;
 }
@@ -989,6 +996,40 @@ async function maybeInjectOmlxRestoreBind(
     request_handle: basenameStripKvslot(upstreamSlotFile),
     restore_epoch_prefix: prefixForRestoreEpoch(restoreEpoch),
   });
+}
+
+/**
+ * Inject the save-intent handle on a save-eligible oMLX chat (L4). The handle is
+ * this request's sha, which becomes the slot filename on save (`<sha>.kvslot` ->
+ * server request_handle=sha), so the server records the prompt token-ids under it
+ * and can serialize the slot when the proxy later calls save. Forces non-stream
+ * (streaming never records). Gated on the upstream advertising supports_save_handle.
+ */
+async function maybeInjectOmlxSaveHandle(
+  context: ProxyContext,
+  slotClient: UpstreamSlotClient,
+  workload: string,
+  model: string,
+  sha: string,
+): Promise<void> {
+  if (context.bodyText === undefined) return;
+  if (!(await slotClient.supportsSaveHandle())) {
+    logSlotInjectionEvent('save_handle_skipped', { workload, model, reason: 'capability_missing' });
+    return;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(context.bodyText);
+  } catch {
+    return;
+  }
+  if (!isRecord(parsed)) return;
+  parsed.x_omlx_save_handle = sha;
+  parsed.stream = false;
+  const injectedBody = JSON.stringify(parsed);
+  context.bodyText = injectedBody;
+  context.init = { ...context.init, body: injectedBody };
+  logSlotInjectionEvent('save_handle_injected', { workload, model, request_handle: sha });
 }
 
 async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
@@ -1159,6 +1200,14 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
         runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
       }
     }
+  }
+
+  // L4: cold-miss path for a save-eligible oMLX route — inject the save handle
+  // (= this request's sha, which becomes the slot filename on save) so the server
+  // records the prompt token-ids for the upcoming save. No-op for llama.cpp.
+  if (context.route?.engine === 'omlx') {
+    const saveSlotClient = slotClientFor(runtime, metadata.workload, metadata.host, metadata.port, context.route.engine);
+    await maybeInjectOmlxSaveHandle(context, saveSlotClient, metadata.workload, metadata.model, sha);
   }
 
   context.kv = {
@@ -1399,6 +1448,13 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
     if (contentType?.toLowerCase().startsWith('text/event-stream')) return;
     if (upstream.status !== 200 || !isJsonContentType(contentType) || upstreamJson === null) return;
 
+    // oMLX save requires the save-by-handle path; if this server can't do it,
+    // skip before acquiring a lease (avoids the slot_serialize_failed noise that
+    // 4e101c7 removed, and a leaked lease). Gate the probe to the omlx engine.
+    if (context.route?.engine === 'omlx') {
+      const saveProbeClient = slotClientFor(kv.runtime, kv.workload, kv.host, kv.port, context.route.engine);
+      if (!(await saveProbeClient.supportsSaveHandle())) return;
+    }
     const allocator = slotAllocatorFor(kv.runtime, kv.workload);
     const lease = allocator.acquire();
     if (!lease) return;

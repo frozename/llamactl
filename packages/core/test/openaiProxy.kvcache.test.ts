@@ -324,11 +324,25 @@ test('ModelHost omlx is excluded from the proxy slot cache (no cold-miss save)',
   }
 });
 
-test('kv eligibility admits only ModelRun llamacpp (oMLX self-persists, excluded)', () => {
-  expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'llamacpp' })).toBe(true);
-  expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'omlx' })).toBe(false);
-  expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'llamacpp' })).toBe(false);
-  expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'omlx' })).toBe(false);
+test('kv eligibility: llamacpp ModelRun always; oMLX ModelHost only when the save-handle gate is on', () => {
+  const prev = process.env.LLAMACTL_OMLX_KV_SAVE_ENABLED;
+  try {
+    // Gate OFF (default): oMLX ModelHost excluded (dark by default).
+    delete process.env.LLAMACTL_OMLX_KV_SAVE_ENABLED;
+    expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'llamacpp' })).toBe(true);
+    expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'omlx' })).toBe(false);
+    expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'llamacpp' })).toBe(false);
+    expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'omlx' })).toBe(false);
+    // Gate ON: the oMLX ModelHost arm flips; the other arms are unchanged.
+    process.env.LLAMACTL_OMLX_KV_SAVE_ENABLED = '1';
+    expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'omlx' })).toBe(true);
+    expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'llamacpp' })).toBe(true);
+    expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'llamacpp' })).toBe(false);
+    expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'omlx' })).toBe(false);
+  } finally {
+    if (prev === undefined) delete process.env.LLAMACTL_OMLX_KV_SAVE_ENABLED;
+    else process.env.LLAMACTL_OMLX_KV_SAVE_ENABLED = prev;
+  }
 });
 
 test('anthropic cold save writes trailer toolMap and ext_flags when upstream returns tool_calls', async () => {
@@ -924,6 +938,7 @@ test('proxy strips user supplied x_omlx_request_handle at ingress', async () => 
       model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
       had_handle: true,
       had_epoch: false,
+      had_save_handle: false,
     });
   } finally {
     debugSpy.mockRestore();
@@ -989,6 +1004,7 @@ test('proxy strips user supplied x_omlx_restore_epoch at ingress', async () => {
       model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
       had_handle: false,
       had_epoch: true,
+      had_save_handle: false,
     });
   } finally {
     debugSpy.mockRestore();
@@ -1056,6 +1072,7 @@ test('proxy injection overwrites user supplied vendor fields', async () => {
       model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
       had_handle: true,
       had_epoch: true,
+      had_save_handle: false,
     });
     expect(parsedConsoleDebugEvents(debugSpy)).toContainEqual({
       event: 'slot_injection_applied',

@@ -6,6 +6,7 @@ export interface SlotClient {
   restore(slotId: number, filename: string, opts?: SlotActionOpts): Promise<SlotRestoreResult>;
   supportsSlots(): Promise<boolean>;
   supportsRequestHandle(): Promise<boolean>;
+  supportsSaveHandle(): Promise<boolean>;
 }
 
 /**
@@ -39,6 +40,7 @@ export class UpstreamSlotClient implements SlotClient {
   private readonly engine: 'llamacpp' | 'omlx' | undefined;
   private supportsSlotsProbe: Promise<boolean> | null = null;
   private _supportsRequestHandleCache: { value: boolean; expiresAt: number } | null = null;
+  private _supportsSaveHandleCache: { value: boolean; expiresAt: number } | null = null;
   private readonly supportsRequestHandleTtlMs: number;
 
   constructor(
@@ -127,8 +129,17 @@ export class UpstreamSlotClient implements SlotClient {
     return this.probeSupportsRequestHandle();
   }
 
+  supportsSaveHandle(): Promise<boolean> {
+    const cache = this._supportsSaveHandleCache;
+    if (cache && cache.value === true && Date.now() < cache.expiresAt) {
+      return Promise.resolve(cache.value);
+    }
+    return this.probeSupportsSaveHandle();
+  }
+
   invalidateCapabilityCache(): void {
     this._supportsRequestHandleCache = null;
+    this._supportsSaveHandleCache = null;
   }
 
   private async postSlotAction(
@@ -153,6 +164,16 @@ export class UpstreamSlotClient implements SlotClient {
     const parsed = await this.fetchProps();
     const value = parsed.ok && hasRequestHandleCapability(parsed.value);
     this._supportsRequestHandleCache = {
+      value,
+      expiresAt: Date.now() + this.supportsRequestHandleTtlMs,
+    };
+    return value;
+  }
+
+  private async probeSupportsSaveHandle(): Promise<boolean> {
+    const parsed = await this.fetchProps();
+    const value = parsed.ok && hasSaveHandleCapability(parsed.value);
+    this._supportsSaveHandleCache = {
       value,
       expiresAt: Date.now() + this.supportsRequestHandleTtlMs,
     };
@@ -219,6 +240,15 @@ function hasRequestHandleCapability(value: unknown): boolean {
   const version = (slots as Record<string, unknown>).api_version;
   if (typeof version !== 'number' || !Number.isFinite(version) || version < 2) return false;
   return (slots as Record<string, unknown>).supports_request_handle === true;
+}
+
+function hasSaveHandleCapability(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const slots = (value as Record<string, unknown>).slots;
+  if (!slots || typeof slots !== 'object') return false;
+  const version = (slots as Record<string, unknown>).api_version;
+  if (typeof version !== 'number' || !Number.isFinite(version) || version < 2) return false;
+  return (slots as Record<string, unknown>).supports_save_handle === true;
 }
 
 function toError(error: unknown): Error {
