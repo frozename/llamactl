@@ -732,8 +732,23 @@ function cacheHitResponse(entry: ResponseCacheEntry): Response {
 
 async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyContext> {
   if (!shouldUseResponseCachePath(context)) return context;
-  const metadata = resolveRouteKvMetadata(context);
-  if (!metadata) return context;
+  // Response-cache metadata is resolved independently of the KV *slot* path
+  // (resolveRouteKvMetadata, local-only) so this can also cover cross-node peer
+  // routes. The key needs a workload epoch for invalidation:
+  //  - local workloads use their tracked epoch (changes on restart);
+  //  - peer routes have no local epoch, so key on a stable synthetic epoch
+  //    (peer node + model id). Identical deterministic requests to a peer model
+  //    are then served from THIS proxy's cache without a round-trip. Trade-off:
+  //    a peer-side restart of the SAME model keeps serving identical responses
+  //    (correct for deterministic requests); swapping a different model under
+  //    the same alias would need a manual cache flush.
+  const route = context.route;
+  if (!route || !isRouteKvEligible(route)) return context;
+  const isPeer = 'isPeer' in route && route.isPeer === true;
+  const workloadEpoch = isPeer
+    ? `peer:${route.targetNodeId ?? route.workload}:${route.model}`
+    : readWorkloadEpoch({ name: route.workload }, context.resolved);
+  if (!workloadEpoch) return context;
   const bodyText = context.bodyText!;
   let parsedBody: unknown;
   try {
@@ -752,8 +767,8 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
     runtime,
     sha,
     model,
-    workload: metadata.workload,
-    workloadEpoch: metadata.workloadEpoch,
+    workload: route.workload,
+    workloadEpoch,
     protocolVariant,
     deterministic: true,
     requestBodyBytes,
@@ -761,8 +776,8 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
   const lookup = {
     sha,
     model,
-    workload: metadata.workload,
-    workloadEpoch: metadata.workloadEpoch,
+    workload: route.workload,
+    workloadEpoch,
     protocolVariant,
   } as const;
   const hit = runtime.registry.findBySha(lookup);
