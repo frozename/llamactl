@@ -17,15 +17,49 @@ export interface BootResult {
   proc: ChildProcess | null;
 }
 
+/**
+ * Signal the whole process group of an owned server proc. Owned procs are
+ * spawned `detached: true` (a new session/group leader, so the process-group id
+ * equals the pid), so a negative-pid signal reaches the server AND any worker
+ * subprocesses it forked (e.g. oMLX model workers) — signalling only the direct
+ * child orphans those. Falls back to a direct child kill when the proc has no
+ * pid (never spawned) or the group is already gone.
+ */
+function signalOwnedProcessGroup(proc: ChildProcess, signal: NodeJS.Signals): void {
+  const pid = proc.pid;
+  if (pid === undefined) {
+    try {
+      proc.kill(signal);
+    } catch {}
+    return;
+  }
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      proc.kill(signal);
+    } catch {}
+  }
+}
+
+/**
+ * A child has terminated once it reports either an exit code or a death signal.
+ * A SIGTERM/SIGKILL-terminated process keeps `exitCode === null` and reports the
+ * signal in `signalCode`, so checking only `exitCode` never observes a
+ * signal-killed server and spins the teardown wait loop for its full timeout.
+ * Loose `!= null` treats an absent field (plain mock procs) as "not exited".
+ */
+function hasExited(proc: ChildProcess): boolean {
+  return proc.exitCode !== null || proc.signalCode != null;
+}
+
 function installExitHook() {
   if (exitHookInstalled) return;
   exitHookInstalled = true;
   const cleanup = () => {
     for (const p of ownedProcs) {
-      if (p.exitCode === null) {
-        try {
-          p.kill('SIGTERM');
-        } catch {}
+      if (!hasExited(p)) {
+        signalOwnedProcessGroup(p, 'SIGTERM');
       }
     }
   };
@@ -152,7 +186,9 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
     await ENGINES.omlx.prepareLaunch?.(spec, env);
   }
   const boot = buildBootCommandForModelSpec(model);
-  const proc = spawn(boot.binary, boot.args, { stdio: 'pipe', detached: false });
+  // detached: true makes the server its own process-group leader so teardown
+  // can signal the whole group (the server + any worker subprocesses it forks).
+  const proc = spawn(boot.binary, boot.args, { stdio: 'pipe', detached: true });
   const stderrTail: string[] = [];
   function pushStderr(chunk: Buffer | string) {
     const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
@@ -176,7 +212,7 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
       // load. 30s isn't always enough on slow links; give them 180s.
       const probeTimeoutMs = (model as { dflash?: unknown }).dflash ? 180_000 : 30_000;
       if (!(await probeInference(model.host, model.port, probeTimeoutMs, model.request_model_id ?? 'local'))) {
-        proc.kill('SIGTERM');
+        signalOwnedProcessGroup(proc, 'SIGTERM');
         throw new Error(
           `llama-server for ${model.name} /v1 boot-probe failed\n--- stderr tail ---\n${stderrTail.join('\n')}`,
         );
@@ -187,21 +223,21 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
     }
     await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
   }
-  proc.kill('SIGTERM');
+  signalOwnedProcessGroup(proc, 'SIGTERM');
   throw new Error(
     `llama-server for ${model.name} health timeout after ${HEALTH_TIMEOUT_MS}ms\n--- stderr tail ---\n${stderrTail.join('\n')}`,
   );
 }
 
 export async function teardownIfOwned(boot: BootResult): Promise<void> {
-  if (!boot.owned || !boot.proc || boot.proc.exitCode !== null) return;
+  if (!boot.owned || !boot.proc || hasExited(boot.proc)) return;
   ownedProcs.delete(boot.proc);
-  boot.proc.kill('SIGTERM');
+  signalOwnedProcessGroup(boot.proc, 'SIGTERM');
   const deadline = Date.now() + 5000;
-  while (Date.now() < deadline && boot.proc.exitCode === null) {
+  while (Date.now() < deadline && !hasExited(boot.proc)) {
     await new Promise((r) => setTimeout(r, 100));
   }
-  if (boot.proc.exitCode === null) boot.proc.kill('SIGKILL');
+  if (!hasExited(boot.proc)) signalOwnedProcessGroup(boot.proc, 'SIGKILL');
 }
 
 export function __ownedProcsForTests(): ReadonlySet<ChildProcess> {

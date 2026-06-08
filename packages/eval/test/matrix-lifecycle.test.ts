@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   __ownedProcsForTests,
   __seedOwnedProcForTests,
@@ -8,6 +12,24 @@ import {
   teardownIfOwned,
   type ModelSpec,
 } from '../src/index.js';
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitUntil(pred: () => boolean, timeoutMs: number, stepMs = 50): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (pred()) return true;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+  return pred();
+}
 
 function baseModel(overrides: Partial<ModelSpec>): ModelSpec {
   return {
@@ -216,5 +238,52 @@ describe('teardownIfOwned', () => {
     expect(__ownedProcsForTests().has(proc)).toBe(true);
     await teardownIfOwned({ owned: true, proc });
     expect(__ownedProcsForTests().has(proc)).toBe(false);
+  });
+
+  // Real process-tree teardown: owned servers (e.g. oMLX) fork worker
+  // subprocesses, so a teardown that signals only the direct child orphans
+  // them. ensureModelServing spawns owned procs `detached: true` (their own
+  // process-group leader); teardownIfOwned must signal the whole group.
+  test('reaps a forked grandchild of an owned detached proc (no orphan)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llamactl-lifecycle-pgid-'));
+    const gpidFile = join(dir, 'grandchild.pid');
+    // detached: true mirrors ensureModelServing's spawn so `proc` is a
+    // process-group leader (pgid === pid). The parent backgrounds a long-lived
+    // grandchild (models the oMLX worker) and waits so it stays alive.
+    const proc = spawn('bash', ['-c', `sleep 600 & echo $! > "${gpidFile}"; wait`], {
+      stdio: 'pipe',
+      detached: true,
+    });
+    try {
+      const wrote = await waitUntil(
+        () => existsSync(gpidFile) && readFileSync(gpidFile, 'utf8').trim() !== '',
+        5000,
+      );
+      expect(wrote).toBe(true);
+      const grandchildPid = Number.parseInt(readFileSync(gpidFile, 'utf8').trim(), 10);
+      expect(Number.isInteger(grandchildPid) && grandchildPid > 0).toBe(true);
+      expect(isAlive(grandchildPid)).toBe(true);
+
+      await teardownIfOwned({ owned: true, proc });
+
+      // The group signal reaps the grandchild too. Pre-fix (direct-child kill)
+      // the grandchild survived as an orphan and this assertion failed.
+      expect(await waitUntil(() => !isAlive(grandchildPid), 4000)).toBe(true);
+      expect(isAlive(proc.pid!)).toBe(false);
+    } finally {
+      // Safety net so a failed assertion never leaks the process tree.
+      if (proc.pid) {
+        try {
+          process.kill(-proc.pid, 'SIGKILL');
+        } catch {}
+      }
+      try {
+        if (existsSync(gpidFile)) {
+          const g = Number.parseInt(readFileSync(gpidFile, 'utf8').trim(), 10);
+          if (Number.isInteger(g) && g > 0) process.kill(g, 'SIGKILL');
+        }
+      } catch {}
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
