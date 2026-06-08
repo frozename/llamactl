@@ -1,4 +1,9 @@
-import { setPeerSnapshots } from '../../../core/src/openaiProxy.js';
+// Import via '@llamactl/core' (NOT the relative core path) so this resolves to
+// the SAME openaiProxy module instance serve.ts uses. Under bun the symlinked
+// package path and the relative path are distinct module instances, so a
+// relative import would publish to a productionPeerSnapshots the proxy never
+// reads (routes silently never appear).
+import { openaiProxy } from '@llamactl/core';
 import type { PeerSnapshot } from '../../../core/src/workloadRuntime.js';
 import { listPeers, type PeerNode } from '../config/peers.js';
 import { makePinnedFetch } from '../client/links.js';
@@ -15,13 +20,15 @@ import type { ClusterNode } from '../config/schema.js';
  */
 
 interface RawFleetSnapshot {
-  node_mem?: { free_mb?: number };
+  node_mem?: { free_mb?: number; inactive_mb?: number };
   workloads?: Array<{ models?: string[]; endpoint?: string; reachable?: boolean }>;
 }
 
-// Below this free memory the peer is treated as HIGH pressure and its routes
-// are dropped by listClusterRoutes — avoids piling work onto a thrashing node.
-const HIGH_PRESSURE_FREE_MB = 1024;
+// Treat a peer as HIGH pressure (routes dropped by listClusterRoutes) only when
+// AVAILABLE memory is genuinely low. On macOS `free_mb` alone is a poor signal —
+// the OS holds most RAM as reclaimable `inactive` cache, so free_mb is routinely
+// a few hundred MB even when GBs are available. Use free + inactive.
+const HIGH_PRESSURE_AVAILABLE_MB = 768;
 
 async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSnapshot | null> {
   const headers: Record<string, string> = {};
@@ -62,9 +69,13 @@ async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSna
     }
   }
   if (workloads.length === 0) return null;
-  const freeMb = snap.node_mem?.free_mb;
+  const nm = snap.node_mem;
+  const availableMb =
+    typeof nm?.free_mb === 'number' || typeof nm?.inactive_mb === 'number'
+      ? (nm?.free_mb ?? 0) + (nm?.inactive_mb ?? 0)
+      : null;
   const pressure: PeerSnapshot['pressure'] =
-    typeof freeMb === 'number' && freeMb < HIGH_PRESSURE_FREE_MB ? 'HIGH' : 'NORMAL';
+    availableMb !== null && availableMb < HIGH_PRESSURE_AVAILABLE_MB ? 'HIGH' : 'NORMAL';
   return { workloads, pressure, fetchedAt: nowMs };
 }
 
@@ -88,7 +99,7 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
   const nowFn = opts.nowFn ?? (() => Date.now());
   const discover = opts.listPeersFn ?? (() => listPeers());
   const fetchOne = opts.fetchFn ?? fetchPeerSnapshot;
-  const publish = opts.publish ?? setPeerSnapshots;
+  const publish = opts.publish ?? openaiProxy.setPeerSnapshots;
   let stopped = false;
   let inflight = false;
   let lastPublished = new Map<string, PeerSnapshot>();
@@ -116,8 +127,13 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
         }),
       );
       if (!stopped) {
+        const before = [...lastPublished.values()].flatMap((s) => s.workloads.map((w) => w.modelId)).sort().join(',');
+        const after = [...next.values()].flatMap((s) => s.workloads.map((w) => w.modelId)).sort().join(',');
         lastPublished = next;
         publish(next);
+        if (before !== after) {
+          process.stderr.write(`[peer-poll] published ${next.size} peer(s); models=[${after}]\n`);
+        }
       }
     } catch {
       // Keep the previous published snapshots on a transient failure.
