@@ -157,11 +157,15 @@ The M4 Pro :7944 proxy now routes peer-node (mac-mini) models with cache:
   (`peer:<node>:<model>`), so a model SWAP under the same peer alias needs a
   manual cache flush.
 
+### Embed RESOLVED (pm-5) — routes via :7944
+bge-m3 now adopted like granite: symlinked the cached GGUF into the models dir
+(`bge-m3-GGUF/bge-m3-FP16.gguf`, for the spec target's existsSync), restarted the
+server with `--alias bge-m3`, created+enabled `bge-m3-embed-mac-mini` (ModelRun,
+DevStorage workloads), node-agent adopted it (`/v1/models` lists rel + `bge-m3`).
+**Embeddings via :7944 (model=`bge-m3`) → dim 1024** (was 501). start-workloads.sh
+updated with the `--alias`. Config/infra only — no repo code change.
+
 ### Still open (non-blocking)
-- **mac-mini embed via :7944 returns 501** — bge-m3 is hand-started without a
-  ModelRun spec, so the node-agent can't route `gpustack/bge-m3-GGUF` (falls back
-  to granite, no `--embeddings`). Fix = give the embed a spec/alias + adopt it
-  (like granite). Reachable directly at :8098 meanwhile.
 - **Reboot durability** still needs the one-time GUI step
   (`REGISTER-WORKLOADS-LOGIN-ITEM.sh` from the mac-mini console).
 - **Peer response-cache unit test** — behavior verified live + 80 regression
