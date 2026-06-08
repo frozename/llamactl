@@ -152,6 +152,17 @@ export function listLocalWorkloads(resolved: ResolvedEnv = resolveEnv()): Worklo
   return entries;
 }
 
+// Extract `--alias`/`-a` values from llama-server extraArgs. Inlined here (not
+// imported from server.ts) to avoid a circular module dependency.
+function aliasesFromExtraArgs(extraArgs: readonly string[] | undefined): string[] {
+  if (!extraArgs) return [];
+  const out: string[] = [];
+  for (let i = 0; i + 1 < extraArgs.length; i += 1) {
+    if (extraArgs[i] === '--alias' || extraArgs[i] === '-a') out.push(extraArgs[i + 1]!);
+  }
+  return out;
+}
+
 export function listLocalRoutes(resolved: ResolvedEnv = resolveEnv()): LocalRoute[] {
   const root = workloadRuntimeRoot(resolved);
   if (!existsSync(root)) return [];
@@ -183,15 +194,25 @@ export function listLocalRoutes(resolved: ResolvedEnv = resolveEnv()): LocalRout
     if (runPid === null || !isProcessAlive(runPid)) continue;
     const state = readServerState(key, resolved);
     if (!state?.rel || !state.host || state.port == null) continue;
-    out.push({
-      workload: dirent.name,
-      model: state.rel,
-      host: state.host,
-      port: Number(state.port),
-      engine: 'llamacpp',
-      kind: 'ModelRun',
-      pid: runPid,
-    });
+    // Route by the model rel AND any `--alias` the server advertises. The
+    // server reports its alias (not the rel) on /v1/models, so peer snapshots
+    // and clients that use the alias must resolve to a real route rather than
+    // falling through to the node's default endpoint (wrong model).
+    const models = [state.rel, ...aliasesFromExtraArgs(state.extraArgs)];
+    const seen = new Set<string>();
+    for (const model of models) {
+      if (!model || seen.has(model)) continue;
+      seen.add(model);
+      out.push({
+        workload: dirent.name,
+        model,
+        host: state.host,
+        port: Number(state.port),
+        engine: 'llamacpp',
+        kind: 'ModelRun',
+        pid: runPid,
+      });
+    }
   }
   return out;
 }
