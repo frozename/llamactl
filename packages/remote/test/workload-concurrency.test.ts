@@ -194,4 +194,46 @@ describe('workload apply concurrency', () => {
     expect(alpha.status?.conditions[0]?.reason).toBe('PortCollision');
     expect(beta.status?.phase).not.toBe('Failed');
   });
+
+  test('reconcileOnce status write does not clobber a spec edit landed during the pass', async () => {
+    // Workload starts enabled; serverStatus reports stopped so applyOne starts it.
+    saveWorkload(makeManifest('gamma', 'local'), dir);
+
+    // Simulate `llamactl disable gamma` (or a manual edit) landing mid-pass:
+    // while we are inside applyOne for this workload (serverStart firing), flip
+    // spec.enabled=false on disk. The reconcile snapshot still has enabled=true,
+    // so a naive `saveWorkload({ ...snapshot, status })` would revert the edit.
+    let injected = false;
+    const racingClient: WorkloadClient = {
+      ...makeClient(),
+      serverStart: {
+        subscribe(_input, callbacks) {
+          queueMicrotask(() => {
+            if (!injected) {
+              injected = true;
+              const onDisk = loadWorkloadByName('gamma', dir);
+              saveWorkload(
+                { ...onDisk, spec: { ...onDisk.spec, enabled: false } },
+                dir,
+              );
+            }
+            callbacks.onData({
+              type: 'done',
+              result: { ok: true, pid: 1234, endpoint: 'http://127.0.0.1:8181' },
+            });
+            callbacks.onComplete();
+          });
+          return { unsubscribe() {} };
+        },
+      },
+    };
+
+    await reconcileOnce({ workloadsDir: dir, getClient: () => racingClient });
+
+    const after = loadWorkloadByName('gamma', dir);
+    // The concurrent disable must survive the status write...
+    expect(after.spec.enabled).toBe(false);
+    // ...and this pass's status is still persisted.
+    expect(after.status?.phase).toBeDefined();
+  });
 });

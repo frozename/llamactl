@@ -2,7 +2,7 @@ import { applyOne, applyOneModelHost, type ApplyEvent, type ApplyResult, type Wo
 import { computeModelHostSpecHash, readModelHostState, removeModelHostState } from '../../../core/src/engines/state.js';
 import { resolveEnv } from '../../../core/src/env.js';
 import { defaultNodeBudgetGiB } from './admission.js';
-import { listWorkloads, saveWorkload, defaultWorkloadsDir } from './store.js';
+import { listWorkloads, loadWorkloadByName, saveWorkload, defaultWorkloadsDir } from './store.js';
 import { listModelHosts, saveModelHost } from './modelhost-store.js';
 import { listNodeRuns } from './noderun-store.js';
 import type { ModelRun } from './schema.js';
@@ -112,8 +112,20 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
         action: result.action,
         ...(result.error ? { error: result.error } : {}),
       });
-      const updated: ModelRun = { ...manifest, status: result.statusSection };
-      saveWorkload(updated, dir);
+      // Persist status WITHOUT clobbering a concurrent spec edit. A reconcile
+      // pass snapshots every manifest up-front (listWorkloads) and can run for
+      // minutes when a serverStart on another workload is slow or times out. If
+      // `llamactl enable/disable` (or a manual edit) writes spec.enabled to disk
+      // during that window, writing back the pass-start snapshot would silently
+      // revert it. Re-read the current on-disk manifest and merge only our
+      // status; the next pass observes the new spec and converges.
+      let toPersist: ModelRun = { ...manifest, status: result.statusSection };
+      try {
+        toPersist = { ...loadWorkloadByName(name, dir), status: result.statusSection };
+      } catch {
+        // Manifest deleted/renamed mid-pass — fall back to snapshot + status.
+      }
+      saveWorkload(toPersist, dir);
     } catch (err) {
       errors++;
       const message = (err as Error).message;
