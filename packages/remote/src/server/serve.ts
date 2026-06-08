@@ -18,6 +18,7 @@ import {
   statusClass,
 } from './metrics.js';
 import { publishAgentMdns, type PublishedAgent } from './mdns.js';
+import { startPeerSnapshotPoller } from './peer-snapshot-poller.js';
 import { handleRegister, type RegisterHandlerOptions } from './register.js';
 import {
   handleInstallScript,
@@ -61,6 +62,14 @@ export interface StartAgentOptions {
    * otherwise (hermetic test agents shouldn't pollute the network).
    */
   advertiseMdns?: boolean;
+  /**
+   * Poll cluster peers' /v1/fleet/snapshot and publish them to the openaiProxy
+   * so peer models route through this proxy (with prefix-cache). Off by default
+   * — only the production CLI (`agent serve`) enables it; hermetic test agents
+   * must not make network calls to real peers.
+   */
+  peerSnapshotPoll?: boolean;
+  peerSnapshotPollIntervalMs?: number;
   /**
    * Override paths for the /register handler. Production leaves this
    * unset so the handler uses ~/.llamactl/bootstrap-tokens and
@@ -252,6 +261,11 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   }
 
   startSearchIngest().catch(() => {});
+  const stopPeerSnapshotPoller = opts.peerSnapshotPoll
+    ? startPeerSnapshotPoller(
+        opts.peerSnapshotPollIntervalMs ? { intervalMs: opts.peerSnapshotPollIntervalMs } : {},
+      )
+    : null;
   agentInfo.set(
     {
       node_name: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? 'agent',
@@ -570,6 +584,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     },
     stop: async () => {
       stopSearchIngest();
+      stopPeerSnapshotPoller?.();
       // Best-effort — never let a tunnel-client teardown error
       // prevent the HTTP server from also stopping.
       if (tunnelClient) {

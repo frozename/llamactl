@@ -115,7 +115,7 @@ function listRoutesForProxy(resolved: ResolvedEnv): workloadRuntime.ClusterRoute
   const clusterConfig = {
     peers,
   };
-  const peerSnapshots = clusterRoutingOverrideForTests?.peerSnapshots ?? new Map<string, workloadRuntime.PeerSnapshot>();
+  const peerSnapshots = clusterRoutingOverrideForTests?.peerSnapshots ?? productionPeerSnapshots;
   return workloadRuntime.listClusterRoutes(localRoutes, peerSnapshots, clusterConfig);
 }
 
@@ -309,6 +309,23 @@ let clusterRoutingOverrideForTests: {
   clusterPeers?: PeerNode[];
   peerSnapshots?: Map<string, workloadRuntime.PeerSnapshot>;
 } | null = null;
+// Production peer-snapshot store, refreshed by the peer-snapshot poller running
+// in the proxy process (startAgentServer). Empty until the poller publishes —
+// so a node with no peers (or before the first poll) routes only local models.
+let productionPeerSnapshots: Map<string, workloadRuntime.PeerSnapshot> = new Map();
+
+/**
+ * Publish the latest peer fleet snapshots so cross-node (peer) models become
+ * routable through this proxy. listClusterRoutes already filters stale entries
+ * (>30s by fetchedAt) and HIGH-pressure peers; the poller just keeps the map
+ * fresh. Invalidates the route-map cache since its signature does not track
+ * peer-snapshot changes.
+ */
+export function setPeerSnapshots(snapshots: Map<string, workloadRuntime.PeerSnapshot>): void {
+  productionPeerSnapshots = snapshots;
+  routeMapCache = null;
+  modelsResponseCache = null;
+}
 function invalidateRouteCacheEntry(model: string): void {
   if (routeMapCache) {
     routeMapCache.map.delete(model);

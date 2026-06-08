@@ -475,6 +475,9 @@ async function runServe(args: string[]): Promise<number> {
       port: parsed.port ?? cfg.port,
       tokenHash: cfg.tokenHash,
       tls: { certPath: cfg.certPath, keyPath: cfg.keyPath },
+      // Publish cluster peers' fleet snapshots so peer models route through this
+      // proxy with prefix-cache. No-op when listPeers() is empty (single-node).
+      peerSnapshotPoll: true,
       // Undefined → journal.ts resolves the default path (honors
       // $LLAMACTL_TUNNEL_JOURNAL and $DEV_STORAGE).
       ...(parsed.tunnelJournal ? { tunnelJournalPath: parsed.tunnelJournal } : {}),
