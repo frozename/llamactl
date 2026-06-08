@@ -137,16 +137,35 @@ Durability: `~/.llamactl-agent/start-workloads.sh` (idempotent bring-up of all 3
 until reboot); **reboot-durability needs the user to run the REGISTER script from
 the mac-mini GUI once** (System Events needs UI session; SSH can't).
 
-### Remaining (non-blocking; penumbra works without these)
-- **Alias routing (link 4)**: `listLocalRoutes` keys ModelRun by `state.rel`
-  only, so a bare `--alias` request falls to the default endpoint. Consumers must
-  use the rel (works). To fix: surface aliases (from `aliasesFromArgs(extraArgs)`)
-  as additional routes in `workloadRuntime.ts:listLocalRoutes`; rebuild+redeploy.
-- **M4 Pro :7944 central proxy peer-routing**: UNBUILT in production — the
-  `peerSnapshots` map is test-only (`clusterRoutingOverrideForTests`), nothing
-  polls peers' `/v1/fleet/snapshot` into the live proxy. Not needed (penumbra
-  goes direct to :7843). To build: a poller in the :7944 process (use
-  infra-client) → a production `setPeerSnapshots` on openaiProxy.
+### Central-proxy peer-routing — BUILT + cache-verified (2026-06-08 pm-5)
+The M4 Pro :7944 proxy now routes peer-node (mac-mini) models with cache:
+- **Production peer-snapshot poller** (`peer-snapshot-poller.ts`, wired into
+  `startAgentServer` via `peerSnapshotPoll`): fetches each peer's
+  `/v1/fleet/snapshot` and publishes via `openaiProxy.setPeerSnapshots`. Commits
+  `160a4df` (poller+setter), `7a13a32` (retain-on-transient-failure),
+  `c6ebe73` (two bugs: relative-vs-`@llamactl/core` module-instance mismatch →
+  publish to a singleton the proxy never read; macOS `free_mb` always-low →
+  every peer wrongly HIGH pressure → use free+inactive).
+- **Link 4 (alias routing)** `7deba69` + node-agent redeploy: `listLocalRoutes`
+  surfaces `--alias` as a first-class route. node-agent `/v1/models` lists both
+  rel + `granite-mini-3b`. (Same adoption binary rebuilt; deploy = scp+swap+
+  start-agent.sh, verified.)
+- **Cache effectiveness verified**: prompt/prefix cache ~19× prefill speedup
+  (1969ms→~100ms, 898/907 tokens reused) on the peer path; response cache now
+  covers peer routes too (`9b3e674`) — identical deterministic request to the
+  mac-mini 0.355s→0.011s (~33×). Peer response-cache epoch is synthetic
+  (`peer:<node>:<model>`), so a model SWAP under the same peer alias needs a
+  manual cache flush.
+
+### Still open (non-blocking)
+- **mac-mini embed via :7944 returns 501** — bge-m3 is hand-started without a
+  ModelRun spec, so the node-agent can't route `gpustack/bge-m3-GGUF` (falls back
+  to granite, no `--embeddings`). Fix = give the embed a spec/alias + adopt it
+  (like granite). Reachable directly at :8098 meanwhile.
+- **Reboot durability** still needs the one-time GUI step
+  (`REGISTER-WORKLOADS-LOGIN-ITEM.sh` from the mac-mini console).
+- **Peer response-cache unit test** — behavior verified live + 80 regression
+  tests pass; a dedicated peer-epoch unit test would lock it.
 
 ## ORIGINAL DEEP DIAGNOSIS (superseded by RESOLUTION above) — the 4 broken links
 
