@@ -6,7 +6,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   benchProfileFile,
   defaultModeForRel,
@@ -403,6 +403,152 @@ async function detectPortConflict(endpointUrl: string): Promise<string | null> {
   }
 }
 
+// --- Adoption of an already-bound healthy server -------------------------
+// When `detectPortConflict` finds a server already answering on our endpoint,
+// it may be one WE want (an externally-started llama-server, or one a prior
+// process left running) rather than a foreign squatter. If it serves OUR
+// model, adopt it — record its pid + state so listLocalRoutes/the proxy route
+// recover — instead of failing or spawning a competitor that cannot bind the
+// held port. This is what makes remote-node servers (where direct spawn is
+// unreliable) routable + managed. Mirrors modelhost.ts `tryAdoptLiveHost`.
+
+const ADOPT_PROBE_TIMEOUT_MS = 3000;
+const FIND_LISTENER_TIMEOUT_MS = 2000;
+
+// Resolve lsof by absolute path: macOS ships it in /usr/sbin, which is NOT on
+// the launchd PATH — a bare `lsof` would ENOENT there and silently disable
+// adoption in production.
+function resolveLsofPath(): string {
+  for (const candidate of ['/usr/sbin/lsof', '/usr/bin/lsof']) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return 'lsof';
+}
+
+function findListenerPid(host: string, port: number): Promise<number | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let child: ReturnType<typeof spawn> | null = null;
+    const finish = (value: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        child?.kill('SIGKILL');
+      } catch {}
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), FIND_LISTENER_TIMEOUT_MS);
+    try {
+      // Constrain to the exact bind address so a process on a different
+      // address of the same port (0.0.0.0 / ::1) is not mis-matched.
+      child = spawn(
+        resolveLsofPath(),
+        ['-nP', `-iTCP@${host}:${port}`, '-sTCP:LISTEN', '-t'],
+        { stdio: ['ignore', 'pipe', 'ignore'] },
+      );
+      let out = '';
+      child.stdout?.on('data', (chunk) => {
+        out += String(chunk);
+      });
+      child.on('error', () => finish(null));
+      child.on('close', () => {
+        const pid = out
+          .split(/\s+/)
+          .map((token) => Number.parseInt(token, 10))
+          .find((value) => Number.isInteger(value) && value > 0);
+        finish(pid ?? null);
+      });
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+async function probeServerModelIds(endpointUrl: string, timeoutMs: number): Promise<string[]> {
+  try {
+    const res = await fetch(`${endpointUrl}/v1/models`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return [];
+    const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
+    return (body.data ?? [])
+      .map((m) => (typeof m?.id === 'string' ? m.id : ''))
+      .filter((id): id is string => id.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** Extract `--alias <name>` values from llama-server extraArgs. llama.cpp
+ *  advertises the alias (not the model rel) on /v1/models, so adoption must
+ *  match against it. */
+export function aliasesFromArgs(extraArgs: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i + 1 < extraArgs.length; i += 1) {
+    if (extraArgs[i] === '--alias' || extraArgs[i] === '-a') out.push(extraArgs[i + 1]!);
+  }
+  return out;
+}
+
+export interface AdoptDeps {
+  findListenerPid: (host: string, port: number) => Promise<number | null>;
+  probeModelIds: (endpointUrl: string, timeoutMs: number) => Promise<string[]>;
+}
+
+/**
+ * A healthy server is already bound to our endpoint. Adopt it iff it serves
+ * OUR model — by rel, basename(rel), or a configured `--alias`. On success,
+ * record its pid + sidecar state and return the adopted pid; return null when
+ * ownership cannot be confirmed (empty model list, mismatch, or the listener
+ * vanished). `deps` is injectable for tests; production uses lsof + a real
+ * /v1/models probe.
+ */
+export async function tryAdoptExistingServer(args: {
+  resolved: ResolvedEnv;
+  key: WorkloadKey;
+  endpointUrl: string;
+  host: string;
+  port: number;
+  rel: string;
+  extraArgs: string[];
+  binary: string;
+  deps?: Partial<AdoptDeps>;
+}): Promise<number | null> {
+  const probe = args.deps?.probeModelIds ?? probeServerModelIds;
+  const find = args.deps?.findListenerPid ?? findListenerPid;
+  const modelIds = await probe(args.endpointUrl, ADOPT_PROBE_TIMEOUT_MS);
+  const aliases = new Set<string>([
+    args.rel,
+    basename(args.rel),
+    ...aliasesFromArgs(args.extraArgs),
+  ]);
+  // Only adopt a server advertising OUR model. Empty ids = unconfirmable →
+  // refuse rather than adopt an unrelated squatter on the freed port.
+  if (
+    modelIds.length === 0 ||
+    !modelIds.some((id) => aliases.has(id) || aliases.has(basename(id)))
+  ) {
+    return null;
+  }
+  const pid = await find(args.host, args.port);
+  // TOCTOU: the listener may have exited between probe and now.
+  if (pid === null || !isProcessAlive(pid)) return null;
+  writeServerPid(args.resolved, args.key, pid);
+  writeServerState(args.resolved, args.key, {
+    rel: args.rel,
+    extraArgs: args.extraArgs,
+    host: args.host,
+    port: String(args.port),
+    binary: args.binary,
+    pid,
+    startedAt: new Date().toISOString(),
+    tunedProfile: null,
+  });
+  return pid;
+}
+
 interface PollReadyResult {
   outcome: 'ready' | 'exited' | 'timeout' | 'aborted';
   /** Last HTTP status code the probe saw on the health endpoint, if
@@ -549,6 +695,31 @@ export async function startServer(
   // the offending HTTP code so the operator knows what to kill.
   const portConflictHint = await detectPortConflict(endpoint(resolved, launchEndpoint));
   if (portConflictHint) {
+    // Something already answers on our endpoint. If it's serving OUR model,
+    // adopt it (record pid + state so it's managed + routable) instead of
+    // failing — a spawn could not win the held port anyway. Only a genuine
+    // foreign listener falls through to the error.
+    const adoptedPid = await tryAdoptExistingServer({
+      resolved,
+      key,
+      endpointUrl: endpoint(resolved, launchEndpoint),
+      host: launchHost,
+      port: Number(launchPort),
+      rel,
+      extraArgs: opts.extraArgs ?? [],
+      binary: bin,
+    });
+    if (adoptedPid !== null) {
+      opts.onEvent?.({ type: 'ready', pid: adoptedPid, endpoint: endpoint(resolved, launchEndpoint) });
+      return {
+        ok: true,
+        pid: adoptedPid,
+        endpoint: endpoint(resolved, launchEndpoint),
+        advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
+        tunedProfile: null,
+        retried: false,
+      };
+    }
     return {
       ok: false,
       pid: null,
