@@ -425,7 +425,7 @@ function resolveLsofPath(): string {
   return 'lsof';
 }
 
-function findListenerPid(host: string, port: number): Promise<number | null> {
+function lsofListenerPid(filter: string): Promise<number | null> {
   return new Promise((resolve) => {
     let settled = false;
     let child: ReturnType<typeof spawn> | null = null;
@@ -440,11 +440,9 @@ function findListenerPid(host: string, port: number): Promise<number | null> {
     };
     const timer = setTimeout(() => finish(null), FIND_LISTENER_TIMEOUT_MS);
     try {
-      // Constrain to the exact bind address so a process on a different
-      // address of the same port (0.0.0.0 / ::1) is not mis-matched.
       child = spawn(
         resolveLsofPath(),
-        ['-nP', `-iTCP@${host}:${port}`, '-sTCP:LISTEN', '-t'],
+        ['-nP', filter, '-sTCP:LISTEN', '-t'],
         { stdio: ['ignore', 'pipe', 'ignore'] },
       );
       let out = '';
@@ -463,6 +461,19 @@ function findListenerPid(host: string, port: number): Promise<number | null> {
       finish(null);
     }
   });
+}
+
+async function findListenerPid(host: string, port: number): Promise<number | null> {
+  // Prefer the exact bind address so an unrelated process on a different
+  // address of the same port isn't mis-matched. Fall back to any address on
+  // the port: a server launched with `--host 0.0.0.0` (LAN-reachable) binds
+  // 0.0.0.0:<port>, which the loopback-scoped `-iTCP@host:port` filter misses
+  // even though detectPortConflict reached it via 127.0.0.1. Ownership is
+  // already confirmed by the /v1/models probe in the caller, so the
+  // port-only fallback is safe.
+  const exact = await lsofListenerPid(`-iTCP@${host}:${port}`);
+  if (exact !== null) return exact;
+  return lsofListenerPid(`-iTCP:${port}`);
 }
 
 async function probeServerModelIds(endpointUrl: string, timeoutMs: number): Promise<string[]> {
