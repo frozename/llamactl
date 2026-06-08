@@ -1,0 +1,7 @@
+model	mode	tok_s	draft_n	draft_acc	accept_rate
+12B	baseline	28.4	0	0	-
+12B	mtp	28.11	173	147	0.8497
+26B-A4B	baseline	65.62	0	0	-
+26B-A4B	mtp	72.16	176	147	0.8352
+31B	baseline	12.3	0	0	-
+31B	mtp	7.29	246	129	0.5244
