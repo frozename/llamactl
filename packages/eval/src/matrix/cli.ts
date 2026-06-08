@@ -13,6 +13,11 @@ import {
   parseKvWarmBenchRunArgs,
   runKvWarmBench,
 } from './workloads/kv-warm-bench.js';
+import {
+  reasoningMmluProWorkload,
+  reasoningGsm8kWorkload,
+  reasoningArcWorkload,
+} from './workloads/reasoning-mc.js';
 import { renderCsvReport, renderMarkdownReport } from './report.js';
 import type { ModelSpec, WorkloadEval } from './types.js';
 
@@ -138,6 +143,9 @@ function getKnownWorkloads(): Record<string, WorkloadEval> {
     'memory-recall': memoryRecallWorkload,
     'project-brief-gen': projectBriefGenWorkload,
     'kv-warm-bench': kvWarmBenchWorkload,
+    'reasoning-mmlu-pro': reasoningMmluProWorkload,
+    'reasoning-gsm8k': reasoningGsm8kWorkload,
+    'reasoning-arc': reasoningArcWorkload,
   };
 }
 
