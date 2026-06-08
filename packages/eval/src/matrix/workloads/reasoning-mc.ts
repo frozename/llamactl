@@ -104,7 +104,10 @@ export function buildReasoningMcWorkload(opts: { name: string; corpus_path: stri
     name: opts.name,
     corpus_path: opts.corpus_path,
     primary_metric_name: 'mean_exact_match',
-    maxTokens: 768,
+    // 1024 (was 768): the hard MMLU-Pro suite truncated ~13-15% of answers
+    // before the final-answer line at 768 with reasoning-capable models, inflating
+    // no_answer. 1024 leaves headroom for the chain-of-thought to land the answer.
+    maxTokens: 1024,
     temperature: 0,
     prompt_builder: (row) => {
       const r = row as ReasoningRow;
