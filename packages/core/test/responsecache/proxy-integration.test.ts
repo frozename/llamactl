@@ -6,6 +6,8 @@ import { openaiProxy } from '../../src/index.js';
 import { translateAnthropicRequest } from '../../src/anthropic/translateRequest.js';
 import { readWorkloadEpoch } from '../../src/kvstore/index.js';
 import { ResponseCacheRegistry, canonicalRequestSha, openResponseCacheStorage } from '../../src/responsecache/index.js';
+import type { PeerSnapshot } from '../../src/workloadRuntime.js';
+import type { PeerNode } from '../../../remote/src/config/peers.js';
 
 interface TempRuntime {
   root: string;
@@ -862,6 +864,135 @@ test('/v1/messages warm-hit returns cached anthropic bytes without translation',
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(cachedAnthropic);
     expect(upstream.calls).toBe(0);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+const PEER_NODE_ID = 'mac-mini';
+const PEER_MODEL = 'peer/granite-3b.gguf';
+
+// A cross-node (peer) route advertised through __setOpenAIProxyClusterRoutingForTests.
+// listClusterRoutes derives the route host/port from the peer endpoint and synthesises
+// workload=`<node>:<model>`, engine=llamacpp, kind=ModelRun, isPeer=true. The response
+// cache then keys on the synthetic epoch `peer:<node>:<model>` (no local workload epoch
+// exists for a peer). endpoint === the test upstream so the cold-miss forward is mockable.
+function peerClusterRouting(
+  upstreamBaseUrl: string,
+  port: number,
+  fetchedAt: number,
+): { clusterPeers: PeerNode[]; peerSnapshots: Map<string, PeerSnapshot> } {
+  const clusterPeers: PeerNode[] = [{ id: PEER_NODE_ID, endpoint: upstreamBaseUrl }];
+  const snapshot: PeerSnapshot = {
+    workloads: [{ modelId: PEER_MODEL, port }],
+    pressure: 'NORMAL',
+    fetchedAt,
+  };
+  return { clusterPeers, peerSnapshots: new Map([[PEER_NODE_ID, snapshot]]) };
+}
+
+test('peer route response cache: cold miss forwards, warm hit served under synthetic peer epoch', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream('json');
+  try {
+    const port = Number.parseInt(new URL(upstream.baseUrl).port, 10);
+    // No local workload is written, so PEER_MODEL routes only via the peer snapshot.
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests(peerClusterRouting(upstream.baseUrl, port, Date.now()));
+    const body = JSON.stringify({
+      model: PEER_MODEL,
+      messages: [{ role: 'user', content: 'peer cached json' }],
+      temperature: 0,
+    });
+
+    // Cold miss: forwarded across the node boundary exactly once.
+    const first = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(first.status).toBe(200);
+    expect(upstream.calls).toBe(1);
+
+    // Warm hit: served from THIS proxy's cache without a second cross-node round-trip.
+    const second = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    const secondJson = (await second.json()) as { id: string };
+    expect(second.status).toBe(200);
+    expect(secondJson.id).toBe('chatcmpl-1');
+    expect(upstream.calls).toBe(1);
+    expect(openaiProxy.__getOpenAIProxyResponseCacheHitTotalForTests(runtime.env as any)).toBe(1);
+
+    // The entry is keyed on the synthetic peer epoch `peer:<node>:<model>` and the
+    // peer workload id `<node>:<model>` — not a local/empty workload epoch.
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    const peerScope = lookupScope({
+      sha: canonicalRequestSha(body),
+      model: PEER_MODEL,
+      workload: `${PEER_NODE_ID}:${PEER_MODEL}`,
+      workloadEpoch: `peer:${PEER_NODE_ID}:${PEER_MODEL}`,
+    });
+    expect(registry.findBySha(peerScope)).not.toBeNull();
+    // A lookup under any other epoch must miss — proves the key is the synthetic
+    // peer epoch and not an accidental local/empty one.
+    expect(registry.findBySha({ ...peerScope, workloadEpoch: 'local-style-epoch' })).toBeNull();
+    storage.close();
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('peer route cache survives a peer re-poll (stable synthetic epoch, no re-forward)', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream('json');
+  try {
+    const port = Number.parseInt(new URL(upstream.baseUrl).port, 10);
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests(peerClusterRouting(upstream.baseUrl, port, Date.now()));
+    const body = JSON.stringify({
+      model: PEER_MODEL,
+      messages: [{ role: 'user', content: 'peer survives repoll' }],
+      temperature: 0,
+    });
+
+    const first = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(first.status).toBe(200);
+    expect(upstream.calls).toBe(1);
+
+    // The poller refreshes the snapshot (new fetchedAt) — modelling a peer-side
+    // restart of the SAME model. The synthetic epoch keys on node+model only, so
+    // the cached deterministic response is still served (documents the trade-off:
+    // a different model swapped under the same peer alias would need a manual flush).
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests(peerClusterRouting(upstream.baseUrl, port, Date.now()));
+
+    const second = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(second.status).toBe(200);
+    expect(((await second.json()) as { id: string }).id).toBe('chatcmpl-1');
+    expect(upstream.calls).toBe(1);
   } finally {
     await upstream.close();
     runtime.cleanup();
