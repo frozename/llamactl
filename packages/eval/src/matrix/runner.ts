@@ -215,19 +215,29 @@ export async function runMatrix(
             : workload.primary_metric_name === 'mean_ndcg5'
             ? (() => {
                 let sum = 0;
+                let recallSum = 0;
                 let n = 0;
                 let nParseErrors = 0;
+                let nFallback = 0;
                 for (const metrics of rowMetrics) {
                   if (typeof metrics.ndcg5 === 'number') {
                     sum += metrics.ndcg5;
+                    recallSum += typeof metrics.recall5 === 'number' ? metrics.recall5 : 0;
                     n += 1;
                   }
                   if (typeof metrics.parse_error === 'number' && metrics.parse_error > 0) nParseErrors += 1;
+                  if (typeof metrics.fallback === 'number' && metrics.fallback > 0) nFallback += 1;
                 }
                 const mean = n > 0 ? sum / n : 0;
                 return {
                   primary_metric_value: mean,
-                  per_class_metrics_json: JSON.stringify({ mean_ndcg5: mean, n_scored: n, n_parse_error: nParseErrors }),
+                  per_class_metrics_json: JSON.stringify({
+                    mean_ndcg5: mean,
+                    mean_recall5: n > 0 ? recallSum / n : 0,
+                    n_scored: n,
+                    n_parse_error: nParseErrors,
+                    n_fallback: nFallback,
+                  }),
                 };
               })()
             : workload.primary_metric_name === 'mean_brief_quality'

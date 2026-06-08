@@ -8,7 +8,7 @@
     "host": "127.0.0.1",
     "port": 8182,
     "extra_args": [],
-    "binary": "/Volumes/WorkSSD/src/llama.cpp-atomic/build/bin/llama-server",
+    "binary": "/Volumes/WorkSSD/src/llama.cpp/build/bin/llama-server",
     "start_args": [
       "--alias", "local",
       "-ngl", "999",

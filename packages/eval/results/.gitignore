@@ -1,0 +1,4 @@
+# Regenerable bench artifacts — produced by `matrix/cli.ts`, not source.
+*.db
+*.csv
+*.md

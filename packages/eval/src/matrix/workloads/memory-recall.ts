@@ -71,6 +71,39 @@ export function ndcgAtK(ranking: string[], goldIds: string[], k = 5): number {
   return idcg > 0 ? dcg / idcg : 0;
 }
 
+/**
+ * Order-insensitive recall@k: how many gold IDs land in the top-k of the
+ * ranking, regardless of their order. ndcg5 penalizes a model that retrieves
+ * the right memory set but orders them differently; recall5 measures pure
+ * retrieval. Denominator is min(k, |gold|) so a gold set larger than k can
+ * still reach 1.0.
+ */
+export function recallAtK(ranking: string[], goldIds: string[], k = 5): number {
+  if (goldIds.length === 0) return 0;
+  const goldSet = new Set(goldIds);
+  const topK = new Set(ranking.slice(0, k));
+  let hit = 0;
+  for (const g of goldSet) if (topK.has(g)) hit += 1;
+  return hit / Math.min(k, goldSet.size);
+}
+
+/**
+ * Fallback when a model doesn't emit the {"ranking":[...]} JSON (e.g. lfm2
+ * emits prose). Recover an implicit ranking by scanning the raw completion
+ * for each candidate ID and ordering by first appearance. Returns null only
+ * when the output mentions no candidate IDs at all.
+ */
+export function extractIdsByAppearance(text: string, candidates: Candidate[]): string[] | null {
+  const found: Array<{ id: string; at: number }> = [];
+  for (const c of candidates) {
+    const at = text.indexOf(c.id);
+    if (at >= 0) found.push({ id: c.id, at });
+  }
+  if (found.length === 0) return null;
+  found.sort((a, b) => a.at - b.at);
+  return found.map((f) => f.id);
+}
+
 export const memoryRecallWorkload: WorkloadEval = {
   name: 'memory-recall',
   corpus_path: 'packages/eval/corpora/memory-recall/v0/test.jsonl',
@@ -86,19 +119,25 @@ export const memoryRecallWorkload: WorkloadEval = {
   },
   scorer: (row, completion) => {
     const r = row as CorpusRow;
-    const parsed = parseRanking(completion);
+    let parsed = parseRanking(completion);
+    let fallback = 0;
+    if (!parsed) {
+      parsed = extractIdsByAppearance(completion, r.candidates);
+      fallback = parsed ? 1 : 0;
+    }
     if (!parsed) {
       return {
         prediction: '__parse_error__',
         gold: r.gold_ids.join(','),
-        metrics: { ndcg5: 0, parse_error: 1 },
+        metrics: { ndcg5: 0, recall5: 0, parse_error: 1, fallback: 0 },
       };
     }
-    const score = ndcgAtK(parsed, r.gold_ids, 5);
+    const ndcg5 = ndcgAtK(parsed, r.gold_ids, 5);
+    const recall5 = recallAtK(parsed, r.gold_ids, 5);
     return {
       prediction: parsed.slice(0, 5).join(','),
       gold: r.gold_ids.join(','),
-      metrics: { ndcg5: score, parse_error: 0 },
+      metrics: { ndcg5, recall5, parse_error: 0, fallback },
     };
   },
 };
