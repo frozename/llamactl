@@ -63,6 +63,37 @@ describe('startPeerSnapshotPoller', () => {
     expect([...cap.published!.keys()]).toEqual(['up']);
   });
 
+  test('retains a peer snapshot across a transient fetch failure (no route flap)', async () => {
+    const publishes: Map<string, PeerSnapshot>[] = [];
+    let calls = 0;
+    let n = 0;
+    let resolve!: () => void;
+    const twoTicks = new Promise<void>((r) => {
+      resolve = () => {
+        if (++n >= 2) r();
+      };
+    });
+    const stop = startPeerSnapshotPoller({
+      intervalMs: 15,
+      listPeersFn: () => [peer('mac-mini')],
+      fetchFn: async () => {
+        calls += 1;
+        // First tick succeeds; every later tick fails (returns null).
+        return calls === 1
+          ? { workloads: [{ modelId: 'granite-mini-3b', port: 8086 }], pressure: 'NORMAL', fetchedAt: 1 }
+          : null;
+      },
+      publish: (m) => {
+        publishes.push(new Map(m));
+        resolve();
+      },
+    });
+    await twoTicks;
+    stop();
+    expect(publishes[0]!.has('mac-mini')).toBe(true); // first tick: fetched
+    expect(publishes[publishes.length - 1]!.has('mac-mini')).toBe(true); // later tick failed -> retained
+  });
+
   test('publishes an empty map when there are no peers (local-only routing)', async () => {
     const cap = capture();
     const stop = startPeerSnapshotPoller({

@@ -91,20 +91,34 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
   const publish = opts.publish ?? setPeerSnapshots;
   let stopped = false;
   let inflight = false;
+  let lastPublished = new Map<string, PeerSnapshot>();
 
   const tick = async (): Promise<void> => {
     if (stopped || inflight) return;
     inflight = true;
     try {
       const peers = discover();
-      const map = new Map<string, PeerSnapshot>();
+      // Seed with the previous snapshot for each still-configured peer so a
+      // single transient fetch failure (TLS keepalive, a 204 between supervisor
+      // journal writes) does NOT wipe the peer's routes. listClusterRoutes
+      // still drops a snapshot once it ages past its staleness window, so a
+      // genuinely-down peer falls out on its own; peers removed from the config
+      // are dropped immediately by not seeding them.
+      const next = new Map<string, PeerSnapshot>();
+      for (const peer of peers) {
+        const prev = lastPublished.get(peer.id);
+        if (prev) next.set(peer.id, prev);
+      }
       await Promise.all(
         peers.map(async (peer) => {
           const snap = await fetchOne(peer, nowFn());
-          if (snap) map.set(peer.id, snap);
+          if (snap) next.set(peer.id, snap);
         }),
       );
-      if (!stopped) publish(map);
+      if (!stopped) {
+        lastPublished = next;
+        publish(next);
+      }
     } catch {
       // Keep the previous published snapshots on a transient failure.
     } finally {
