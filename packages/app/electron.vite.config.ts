@@ -28,7 +28,12 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: { index: resolve('electron/main.ts') },
-        external: ['electron'],
+        // `bun` / `bun:sqlite` are Bun runtime builtins, not bundleable npm
+        // modules — externalize them like `electron` / `node:*`. Bundled
+        // workspace code (the eval harness, core's kv/responsecache stores,
+        // the fleet-supervisor aggregator) imports them, but those paths
+        // never execute under Electron's non-Bun runtime.
+        external: ['electron', /^bun(:.*)?$/],
         output: {
           format: 'cjs',
           entryFileNames: '[name].cjs',
@@ -42,7 +47,12 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: { index: resolve('electron/preload.ts') },
-        external: ['electron'],
+        // `bun` / `bun:sqlite` are Bun runtime builtins, not bundleable npm
+        // modules — externalize them like `electron` / `node:*`. Bundled
+        // workspace code (the eval harness, core's kv/responsecache stores,
+        // the fleet-supervisor aggregator) imports them, but those paths
+        // never execute under Electron's non-Bun runtime.
+        external: ['electron', /^bun(:.*)?$/],
         output: {
           format: 'cjs',
           entryFileNames: '[name].cjs',
