@@ -54,7 +54,16 @@ fi
 run() {
   echo
   echo "──── $1 ────"
-  bun run "$1" --executable="$ELECTRON_BIN" --args="$APP_DIR"
+  # Launch hermetically, matching the (passing) ui-audit driver: pass the
+  # test profile so the app boots in test mode (no real daemon/cluster to
+  # reach in CI) and a private userDataDir so launches don't collide on
+  # Electron's singleton lock. Without these the launch hangs and the
+  # driver's electron_launch times out at 30s.
+  local userdata
+  userdata="$(mktemp -d -t llamactl-tier-a-userdata)"
+  bun run "$1" --executable="$ELECTRON_BIN" --args="$APP_DIR" \
+    --env="LLAMACTL_TEST_PROFILE=$LLAMACTL_TEST_PROFILE" \
+    --userDataDir="$userdata"
 }
 
 run tests/ui-flows/tier-a-modules.ts
