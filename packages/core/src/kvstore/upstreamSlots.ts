@@ -140,6 +140,7 @@ export class UpstreamSlotClient implements SlotClient {
   invalidateCapabilityCache(): void {
     this._supportsRequestHandleCache = null;
     this._supportsSaveHandleCache = null;
+    this.supportsSlotsProbe = null;
   }
 
   private async postSlotAction(

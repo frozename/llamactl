@@ -284,6 +284,26 @@ test('timeout returns network', async () => {
   }
 }, 35_000);
 
+test('supportsSlots re-probes after invalidateCapabilityCache', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/props') {
+      json(res, 200, { n_slots: 8 });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl);
+    expect(await client.supportsSlots()).toBe(true);
+    client.invalidateCapabilityCache();
+    expect(await client.supportsSlots()).toBe(true);
+    expect(upstream.requestCount()).toBe(2);
+  } finally {
+    await upstream.close();
+  }
+});
+
 test('supportsSlots caches probe result per client', async () => {
   const upstream = await startTestServer((req, res, url) => {
     if (req.method === 'GET' && url.pathname === '/props') {

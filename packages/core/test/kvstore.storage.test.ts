@@ -248,6 +248,7 @@ test('kvstore migration recovers when schema_version lags behind already-added c
     expect(columns.map((column) => column.name)).toContain('state');
     expect(columns.map((column) => column.name)).toContain('first_response_token');
     expect(columns.map((column) => column.name)).toContain('ext_flags');
+    expect(columns.map((column) => column.name)).toContain('model');
     storage.close();
   } finally {
     t.cleanup();
