@@ -47,4 +47,35 @@ describe('probeWorkload', () => {
     expect(calls[0]).toBe('http://127.0.0.1:7944/health');
     expect(calls.some((u) => u.endsWith('/healthz'))).toBe(false);
   });
+
+  it('captures revision from the max /v1/models `created` (boot token)', async () => {
+    const fakeFetch = async (url: string) => {
+      if (url.endsWith('/health')) return new Response('ok', { status: 200 });
+      if (url.endsWith('/v1/models'))
+        return new Response(
+          JSON.stringify({ data: [{ id: 'granite-mini-3b', created: 1780988120 }, { id: 'granite-rel', created: 1780988100 }] }),
+          { status: 200 },
+        );
+      return new Response('', { status: 404 });
+    };
+    const result = await probeWorkload(
+      { name: 'granite-mini-3b', endpoint: 'http://127.0.0.1:8086', kind: 'ModelRun' },
+      { fetch: fakeFetch as unknown as typeof fetch, timeoutMs: 500 },
+    );
+    expect(result.revision).toBe('1780988120');
+  });
+
+  it('revision is null when /v1/models omits `created` (older engine)', async () => {
+    const fakeFetch = async (url: string) => {
+      if (url.endsWith('/health')) return new Response('ok', { status: 200 });
+      if (url.endsWith('/v1/models'))
+        return new Response(JSON.stringify({ data: [{ id: 'qwen' }] }), { status: 200 });
+      return new Response('', { status: 404 });
+    };
+    const result = await probeWorkload(
+      { name: 'qwen', endpoint: 'http://127.0.0.1:8090', kind: 'ModelHost' },
+      { fetch: fakeFetch as unknown as typeof fetch, timeoutMs: 500 },
+    );
+    expect(result.revision).toBeNull();
+  });
 });

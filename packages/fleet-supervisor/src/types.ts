@@ -17,6 +17,12 @@ export interface WorkloadSnapshot {
   models: string[];
   reachable: boolean;
   consecutiveErrors: number;
+  /**
+   * Boot token (the served model's `created` start time) used by cross-node
+   * consumers to invalidate caches when this workload's server restarts/swaps.
+   * Optional for back-compat: snapshots from older nodes omit it.
+   */
+  revision?: string | null;
 }
 
 export interface FleetSnapshotEntry {

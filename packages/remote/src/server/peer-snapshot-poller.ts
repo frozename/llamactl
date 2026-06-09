@@ -21,7 +21,7 @@ import type { ClusterNode } from '../config/schema.js';
 
 interface RawFleetSnapshot {
   node_mem?: { free_mb?: number; inactive_mb?: number };
-  workloads?: Array<{ models?: string[]; endpoint?: string; reachable?: boolean }>;
+  workloads?: Array<{ models?: string[]; endpoint?: string; reachable?: boolean; revision?: string | null }>;
 }
 
 // Treat a peer as HIGH pressure (routes dropped by listClusterRoutes) only when
@@ -51,7 +51,7 @@ async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSna
   if (!snap?.workloads?.length) return null;
 
   const seen = new Set<string>();
-  const workloads: Array<{ modelId: string; port: number }> = [];
+  const workloads: Array<{ modelId: string; port: number; revision?: string | null }> = [];
   for (const w of snap.workloads) {
     if (w.reachable === false) continue;
     let port = 0;
@@ -62,10 +62,11 @@ async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSna
         port = 0;
       }
     }
+    const revision = w.revision ?? null;
     for (const modelId of w.models ?? []) {
       if (!modelId || seen.has(modelId)) continue;
       seen.add(modelId);
-      workloads.push({ modelId, port });
+      workloads.push({ modelId, port, revision });
     }
   }
   if (workloads.length === 0) return null;

@@ -242,6 +242,9 @@ type RouteEntry = {
   certificate?: string;
   token?: string;
   targetNodeId?: string;
+  /** Peer boot token (the peer server's /v1/models `created`); folded into the
+   *  response-cache epoch so a peer restart/swap invalidates cross-node entries. */
+  revision?: string | null;
 };
 
 type RoutedEntry = RouteEntry & { target: string };
@@ -363,6 +366,7 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
       certificate: 'isPeer' in route && route.isPeer ? route.certificate : undefined,
       token: 'isPeer' in route && route.isPeer ? route.token : undefined,
       targetNodeId: 'isPeer' in route && route.isPeer ? route.targetNodeId : undefined,
+      revision: 'isPeer' in route && route.isPeer ? route.revision : undefined,
     });
   }
   return out;
@@ -736,17 +740,20 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
   // (resolveRouteKvMetadata, local-only) so this can also cover cross-node peer
   // routes. The key needs a workload epoch for invalidation:
   //  - local workloads use their tracked epoch (changes on restart);
-  //  - peer routes have no local epoch, so key on a stable synthetic epoch
-  //    (peer node + model id). Identical deterministic requests to a peer model
-  //    are then served from THIS proxy's cache without a round-trip. Trade-off:
-  //    a peer-side restart of the SAME model keeps serving identical responses
-  //    (correct for deterministic requests); swapping a different model under
-  //    the same alias would need a manual cache flush.
+  //  - peer routes have no local epoch, so key on a synthetic epoch
+  //    (peer node + model id + the peer's boot token `revision`). The revision
+  //    is the peer server's /v1/models `created` (start time), carried in the
+  //    peer snapshot; it changes when the peer restarts — including a model/quant
+  //    swap under the same alias — so the cache invalidates automatically. When a
+  //    peer doesn't advertise a revision (older node / engine without `created`),
+  //    the epoch falls back to node+model (today's behaviour: stable, no
+  //    restart-invalidation).
   const route = context.route;
   if (!route || !isRouteKvEligible(route)) return context;
   const isPeer = 'isPeer' in route && route.isPeer === true;
+  const peerRevision = isPeer && 'revision' in route && route.revision ? `:${route.revision}` : '';
   const workloadEpoch = isPeer
-    ? `peer:${route.targetNodeId ?? route.workload}:${route.model}`
+    ? `peer:${route.targetNodeId ?? route.workload}:${route.model}${peerRevision}`
     : readWorkloadEpoch({ name: route.workload }, context.resolved);
   if (!workloadEpoch) return context;
   const bodyText = context.bodyText!;

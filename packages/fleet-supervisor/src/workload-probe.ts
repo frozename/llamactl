@@ -23,6 +23,14 @@ export interface WorkloadProbeResult {
   reachable: boolean;
   healthLatencyMs: number;
   models: string[];
+  /**
+   * Boot token for cross-node cache invalidation: the served model's `created`
+   * (the server's start time, from /v1/models), stringified. It changes when the
+   * server restarts — including a model/quant swap under the same alias — so a
+   * consumer keying a cache on it invalidates automatically. null when unknown
+   * (unreachable, no /v1/models, or the engine omits `created`).
+   */
+  revision: string | null;
   consecutiveErrors: number;
 }
 
@@ -96,7 +104,7 @@ export async function probeWorkload(
     validateProbeEndpoint(target.endpoint, allowPublicEndpoints);
   } catch (err) {
     if (err instanceof InvalidEndpointError) {
-      return { reachable: false, healthLatencyMs: 0, models: [], consecutiveErrors: priorConsecutiveErrors + 1 };
+      return { reachable: false, healthLatencyMs: 0, models: [], revision: null, consecutiveErrors: priorConsecutiveErrors + 1 };
     }
     throw err;
   }
@@ -113,10 +121,11 @@ export async function probeWorkload(
 
     if (!healthRes.ok) {
       clearTimeout(timer);
-      return { reachable: false, healthLatencyMs: latency, models: [], consecutiveErrors: priorConsecutiveErrors + 1 };
+      return { reachable: false, healthLatencyMs: latency, models: [], revision: null, consecutiveErrors: priorConsecutiveErrors + 1 };
     }
 
     let models: string[] = [];
+    let revision: string | null = null;
     try {
       // Reuse the same per-probe timeout budget for /v1/models. A malicious
       // endpoint that returns /health fast then stalls /v1/models would
@@ -124,8 +133,16 @@ export async function probeWorkload(
       // outer timeout aborts both.
       const modelsRes = await fetchFn(`${target.endpoint}/v1/models`, { signal: controller.signal });
       if (modelsRes.ok) {
-        const body = await modelsRes.json() as { data: Array<{ id: string }> };
+        const body = await modelsRes.json() as { data: Array<{ id: string; created?: number }> };
         models = body.data.map((m) => m.id);
+        // A workload serves one server; its model objects share the server's
+        // `created` (start time). Take the max as the boot token — it changes on
+        // restart/swap, stays fixed within a boot (so cache hits persist).
+        const maxCreated = body.data.reduce(
+          (max, m) => (typeof m.created === 'number' && m.created > max ? m.created : max),
+          0,
+        );
+        revision = maxCreated > 0 ? String(maxCreated) : null;
       }
     } catch {
       // models fetch failure does not make the endpoint unreachable
@@ -133,9 +150,9 @@ export async function probeWorkload(
       clearTimeout(timer);
     }
 
-    return { reachable: true, healthLatencyMs: latency, models, consecutiveErrors: 0 };
+    return { reachable: true, healthLatencyMs: latency, models, revision, consecutiveErrors: 0 };
   } catch {
     clearTimeout(timer);
-    return { reachable: false, healthLatencyMs: Date.now() - start, models: [], consecutiveErrors: priorConsecutiveErrors + 1 };
+    return { reachable: false, healthLatencyMs: Date.now() - start, models: [], revision: null, consecutiveErrors: priorConsecutiveErrors + 1 };
   }
 }

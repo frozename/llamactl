@@ -111,6 +111,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       models: result.models,
       reachable: result.reachable,
       consecutiveErrors: result.consecutiveErrors,
+      revision: result.revision,
     } satisfies WorkloadSnapshot;
   });
 
@@ -131,6 +132,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
     models: [],
     reachable: false,
     consecutiveErrors: (consecutiveErrors.get(target.name) ?? 0) + 1,
+    revision: null,
   });
 
   const tick = async (): Promise<void> => {

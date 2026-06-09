@@ -27,7 +27,10 @@ export interface LocalRoute {
 }
 
 export interface PeerSnapshot {
-  workloads: Array<{ modelId: string; port: number }>;
+  /** revision = the peer server's boot token (its /v1/models `created`), used to
+   *  invalidate cross-node response caches on a peer restart/swap. Optional for
+   *  back-compat with peers that don't advertise it. */
+  workloads: Array<{ modelId: string; port: number; revision?: string | null }>;
   pressure: 'NORMAL' | 'HIGH';
   fetchedAt: number;
 }
@@ -40,6 +43,9 @@ export type ClusterRoute =
       certificate?: string;
       token?: string;
       targetNodeId: string;
+      /** Boot token of the peer's server (its /v1/models `created`); changes on
+       *  restart/swap so the proxy can invalidate the cross-node response cache. */
+      revision?: string | null;
     });
 
 export interface ClusterConfigPeer {
@@ -100,6 +106,7 @@ export function listClusterRoutes(
         certificate: peer.certificate,
         token: peer.token,
         targetNodeId: peer.id,
+        revision: workload.revision ?? null,
       });
     }
   }

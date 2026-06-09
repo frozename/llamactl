@@ -882,10 +882,11 @@ function peerClusterRouting(
   upstreamBaseUrl: string,
   port: number,
   fetchedAt: number,
+  revision: string | null = null,
 ): { clusterPeers: PeerNode[]; peerSnapshots: Map<string, PeerSnapshot> } {
   const clusterPeers: PeerNode[] = [{ id: PEER_NODE_ID, endpoint: upstreamBaseUrl }];
   const snapshot: PeerSnapshot = {
-    workloads: [{ modelId: PEER_MODEL, port }],
+    workloads: [{ modelId: PEER_MODEL, port, revision }],
     pressure: 'NORMAL',
     fetchedAt,
   };
@@ -993,6 +994,56 @@ test('peer route cache survives a peer re-poll (stable synthetic epoch, no re-fo
     expect(second.status).toBe(200);
     expect(((await second.json()) as { id: string }).id).toBe('chatcmpl-1');
     expect(upstream.calls).toBe(1);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('peer route cache invalidates when the peer revision changes (restart/swap)', async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream('json');
+  try {
+    const port = Number.parseInt(new URL(upstream.baseUrl).port, 10);
+    // Boot 1 advertises revision rev-1.
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests(peerClusterRouting(upstream.baseUrl, port, Date.now(), 'rev-1'));
+    const body = JSON.stringify({
+      model: PEER_MODEL,
+      messages: [{ role: 'user', content: 'peer revision invalidation' }],
+      temperature: 0,
+    });
+    const mkReq = () =>
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      });
+
+    // Cold miss then warm hit under rev-1 — exactly one cross-node forward.
+    expect((await openaiProxy.proxyOpenAI(mkReq(), runtime.env as any)).status).toBe(200);
+    expect((await openaiProxy.proxyOpenAI(mkReq(), runtime.env as any)).status).toBe(200);
+    expect(upstream.calls).toBe(1);
+
+    // The peer restarts with a new boot token (rev-2) — e.g. a model/quant swap
+    // under the same alias. The revision-qualified epoch changes, so the identical
+    // request misses the rev-1 entry and is re-forwarded (automatic invalidation).
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests(peerClusterRouting(upstream.baseUrl, port, Date.now(), 'rev-2'));
+    expect((await openaiProxy.proxyOpenAI(mkReq(), runtime.env as any)).status).toBe(200);
+    expect(upstream.calls).toBe(2);
+
+    // Each boot's entry is stored under its own revision-qualified epoch.
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    const scopeFor = (rev: string) =>
+      lookupScope({
+        sha: canonicalRequestSha(body),
+        model: PEER_MODEL,
+        workload: `${PEER_NODE_ID}:${PEER_MODEL}`,
+        workloadEpoch: `peer:${PEER_NODE_ID}:${PEER_MODEL}:${rev}`,
+      });
+    expect(registry.findBySha(scopeFor('rev-1'))).not.toBeNull();
+    expect(registry.findBySha(scopeFor('rev-2'))).not.toBeNull();
+    storage.close();
   } finally {
     await upstream.close();
     runtime.cleanup();
