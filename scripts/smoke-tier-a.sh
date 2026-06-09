@@ -34,6 +34,12 @@ APP_DIR="${APP_DIR:-$REPO_ROOT/packages/app}"
 LLAMACTL_TEST_PROFILE="${LLAMACTL_TEST_PROFILE:-$(mktemp -d -t llamactl-tier-a)}"
 export LLAMACTL_TEST_PROFILE
 export ELECTRON_MCP_DIR
+# The MCP server's default launch timeout is 30s, which leaves no
+# headroom for a slow first launch on a cold CI runner (renderer build
+# warm-up, page-cache misses). Give it 4 minutes; the flows'
+# client-side RPC timeout for electron_launch is 270s so the
+# server-side verdict always arrives first.
+export ELECTRON_MCP_LAUNCH_TIMEOUT="${ELECTRON_MCP_LAUNCH_TIMEOUT:-240000}"
 
 if [[ -z "${SKIP_BUILD:-}" ]]; then
   echo "──── build ────"
@@ -51,10 +57,42 @@ if [[ ! -x "$ELECTRON_BIN" ]]; then
   exit 1
 fi
 
+# Raw launch probe (opt-in): spawn Electron exactly the way Playwright's
+# electron.launch does (--inspect=0 --remote-debugging-port=0 <app>) and
+# dump everything it prints. Playwright's handshake waits for
+# 'Debugger listening on ws://' then 'DevTools listening on ws://' on the
+# child's stderr; when electron.launch hangs, this shows which line never
+# appeared and what the app said instead. LLAMACTL_TEST_PROFILE is
+# already exported, so the probe boots the same hermetic profile the
+# flows use.
+if [[ -n "${TIER_A_LAUNCH_PROBE:-}" ]]; then
+  echo
+  echo "──── raw launch probe (30s) ────"
+  PROBE_OUT=$(mktemp -t tier-a-probe)
+  "$ELECTRON_BIN" --inspect=0 --remote-debugging-port=0 "$APP_DIR" >"$PROBE_OUT" 2>&1 &
+  PROBE_PID=$!
+  sleep 30
+  kill "$PROBE_PID" 2>/dev/null || true
+  wait "$PROBE_PID" 2>/dev/null || true
+  echo "── probe output (first 200 lines) ──"
+  head -200 "$PROBE_OUT"
+  echo "── handshake lines ──"
+  grep -E "Debugger listening|DevTools listening" "$PROBE_OUT" || echo "NO HANDSHAKE LINES SEEN"
+fi
+
 run() {
   echo
   echo "──── $1 ────"
-  bun run "$1" --executable="$ELECTRON_BIN" --args="$APP_DIR"
+  # Launch hermetically, matching the (passing) ui-audit driver: pass the
+  # test profile so the app boots in test mode (no real daemon/cluster to
+  # reach in CI) and a private userDataDir so launches don't collide on
+  # Electron's singleton lock. Without these the launch hangs and the
+  # driver's electron_launch times out at 30s.
+  local userdata
+  userdata="$(mktemp -d -t llamactl-tier-a-userdata)"
+  bun run "$1" --executable="$ELECTRON_BIN" --args="$APP_DIR" \
+    --env="LLAMACTL_TEST_PROFILE=$LLAMACTL_TEST_PROFILE" \
+    --userDataDir="$userdata"
 }
 
 run tests/ui-flows/tier-a-modules.ts

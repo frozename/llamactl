@@ -383,7 +383,7 @@ export const APP_MODULES: AppModule[] = [
     group: 'observability',
     beaconGroup: 'hidden',
     beaconKind: 'static',
-    smokeAffordance: 'cost-tier',
+    smokeAffordance: 'cost-root',
   },
   {
     id: 'settings',

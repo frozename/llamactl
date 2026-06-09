@@ -150,7 +150,7 @@ const RAIL_VIEW_IDS = ['explorer', 'search', 'sessions', 'fleet'] as const;
 type RailViewId = (typeof RAIL_VIEW_IDS)[number];
 
 const TAB_OPENERS = [
-  { id: 'cost' as const,     affordance: 'cost-tier' },
+  { id: 'cost' as const,     affordance: 'cost-root' },
   { id: 'settings' as const, affordance: 'settings-root' },
 ];
 
@@ -237,7 +237,7 @@ async function main(): Promise<void> {
     if (Object.keys(args.env).length > 0) launchArgMap.env = args.env;
     if (args.userDataDir !== undefined) launchArgMap.userDataDir = args.userDataDir;
 
-    const launch = (await client.call('electron_launch', launchArgMap, 60_000)) as {
+    const launch = (await client.call('electron_launch', launchArgMap, 270_000)) as {
       sessionId?: string;
     };
     const sessionId = launch.sessionId;
