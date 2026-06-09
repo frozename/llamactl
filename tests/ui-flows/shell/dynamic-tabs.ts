@@ -176,7 +176,7 @@ async function main(): Promise<void> {
     if (Object.keys(args.env).length > 0) launchArgMap.env = args.env;
     if (args.userDataDir !== undefined) launchArgMap.userDataDir = args.userDataDir;
 
-    const launch = (await client.call('electron_launch', launchArgMap, 60_000)) as {
+    const launch = (await client.call('electron_launch', launchArgMap, 270_000)) as {
       sessionId?: string;
     };
     const sessionId = launch.sessionId;

@@ -60,6 +60,24 @@ jobs:
         working-directory: electron-mcp
         run: bun run build
 
+      # Diagnose the never-green electron_launch timeout: surface
+      # quarantine/codesign state and pay the first-exec Gatekeeper/
+      # XProtect scan cost outside the launch timeout window, with
+      # timing so the stall (if any) is visible in the log.
+      - name: Electron first-launch diagnostics
+        working-directory: llamactl
+        run: |
+          ELECTRON_APP="packages/app/node_modules/electron/dist/Electron.app"
+          ELECTRON_BIN="$ELECTRON_APP/Contents/MacOS/Electron"
+          echo "── xattr (quarantine?) ──"
+          xattr -lr "$ELECTRON_APP" 2>/dev/null | head -20 || true
+          echo "── codesign ──"
+          codesign -dv "$ELECTRON_APP" 2>&1 || true
+          echo "── spctl assess ──"
+          time spctl --assess --type execute "$ELECTRON_APP" 2>&1 || true
+          echo "── first exec: electron --version ──"
+          time "$ELECTRON_BIN" --version || true
+
       - name: Run Tier A
         working-directory: llamactl
         env:
