@@ -1,5 +1,3 @@
-import { runGlobalSearchFlow } from './global-search-flow.js';
-import { runPaletteSearchFlow } from './palette-search-flow.js';
 /**
  * Tier-A module smoke harness — palette navigation pass.
  *
@@ -121,7 +119,7 @@ class McpClient {
 
 interface DriverArgs {
   executable: string;
-  execArgs: string[, runGlobalSearchFlow, runPaletteSearchFlow];
+  execArgs: string[];
   env: Record<string, string>;
   userDataDir?: string;
 }
