@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { openaiProxy } from '../src/index.js';
-import { isRouteKvEligible } from '../src/openaiProxy.js';
+import { isRouteKvEligible, __getOpenAIProxyKvModelMismatchTotalForTests } from '../src/openaiProxy.js';
 import {
   EXT_FLAG_TOOL_MAP,
   KvRegistry,
@@ -89,6 +89,7 @@ async function startUpstream(opts: {
   saveMode?: 'ok' | 'invalid';
   restoreMode?: 'ok' | 'http_error';
   supportsRequestHandle?: boolean;
+  supportsSaveHandle?: boolean;
   restoreEpoch?: string | null;
   chatMode?: 'json' | 'sse';
   firstJsonToken?: string;
@@ -98,6 +99,7 @@ async function startUpstream(opts: {
   const saveMode = opts.saveMode ?? 'ok';
   const restoreMode = opts.restoreMode ?? 'ok';
   const supportsRequestHandle = opts.supportsRequestHandle ?? false;
+  const supportsSaveHandle = opts.supportsSaveHandle ?? false;
   const restoreEpoch = opts.restoreEpoch ?? null;
   const chatMode = opts.chatMode ?? 'json';
   const firstJsonToken = opts.firstJsonToken ?? 'Hello';
@@ -174,6 +176,16 @@ async function startUpstream(opts: {
         },
       });
     }
+    // oMLX advertises slot capabilities here instead of /props.
+    if (method === 'GET' && parsed.pathname === '/v1/slots/capabilities') {
+      return Response.json({
+        slots: {
+          api_version: 2,
+          supports_request_handle: true,
+          supports_save_handle: supportsSaveHandle,
+        },
+      });
+    }
     return new Response('', { status: 404 });
   }) as typeof fetch;
 
@@ -206,6 +218,7 @@ function entryTemplate(overrides: Partial<KvEntry>): KvEntry {
   return {
     sha: 'sha',
     workload: 'wl-a',
+    model: null,
     upstreamSlotFile: '/tmp/file.kvslot',
     quantBits: 8,
     tokens: 128,
@@ -274,9 +287,10 @@ test('cold miss saves a new idle kv entry', async () => {
   }
 });
 
-test('ModelHost omlx is excluded from the proxy slot cache (no cold-miss save)', async () => {
+test('ModelHost omlx without save-handle capability performs no cold-miss save (capability probe guards)', async () => {
   const runtime = makeTempRuntime();
   const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  // No supportsSaveHandle: this upstream advertises no save-by-handle capability.
   const upstream = await startUpstream({ slotBaseDir });
   try {
     const url = new URL(upstream.baseUrl);
@@ -311,7 +325,8 @@ test('ModelHost omlx is excluded from the proxy slot cache (no cold-miss save)',
     );
     expect(response.status).toBe(200);
 
-    // oMLX is excluded from the proxy slot cache (it self-persists KV) — nothing is saved.
+    // oMLX is KV-eligible now, but this upstream advertises no supports_save_handle,
+    // so the cold-miss save bails on the capability probe — nothing is saved.
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
     expect(registry.get(shaForBody(body))).toBeNull();
@@ -324,25 +339,70 @@ test('ModelHost omlx is excluded from the proxy slot cache (no cold-miss save)',
   }
 });
 
-test('kv eligibility: llamacpp ModelRun always; oMLX ModelHost only when the save-handle gate is on', () => {
-  const prev = process.env.LLAMACTL_OMLX_KV_SAVE_ENABLED;
+test('ModelHost omlx with save-handle capability saves a cold-miss kv entry (always-on)', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  // This upstream advertises supports_save_handle via /v1/slots/capabilities.
+  const upstream = await startUpstream({ slotBaseDir, supportsSaveHandle: true });
   try {
-    // Gate OFF (default): oMLX ModelHost excluded (dark by default).
-    delete process.env.LLAMACTL_OMLX_KV_SAVE_ENABLED;
-    expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'llamacpp' })).toBe(true);
-    expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'omlx' })).toBe(false);
-    expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'llamacpp' })).toBe(false);
-    expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'omlx' })).toBe(false);
-    // Gate ON: the oMLX ModelHost arm flips; the other arms are unchanged.
-    process.env.LLAMACTL_OMLX_KV_SAVE_ENABLED = '1';
-    expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'omlx' })).toBe(true);
-    expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'llamacpp' })).toBe(true);
-    expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'llamacpp' })).toBe(false);
-    expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'omlx' })).toBe(false);
+    const url = new URL(upstream.baseUrl);
+    writeModelHostWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), 'omlx', [
+      'mlx-community/Qwen3-8B-MLX-4bit',
+    ]);
+    writeFileSync(
+      join(runtime.root, 'workloads', 'wl-a', 'modelhost.state'),
+      JSON.stringify({
+        kind: 'ModelHost',
+        engine: 'omlx',
+        pid: process.pid,
+        host: '127.0.0.1',
+        port: Number.parseInt(url.port, 10),
+        modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit'],
+        startedAt: '2026-05-24T00:00:00.000Z',
+        rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      }),
+    );
+
+    const body = JSON.stringify({
+      model: 'mlx-community/Qwen3-8B-MLX-4bit',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+
+    // oMLX is eligible (always-on) and this upstream can save-by-handle, so the
+    // cold miss writes an idle kv entry — the same path llama.cpp already uses.
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    const entry = registry.get(shaForBody(body));
+    expect(entry).not.toBeNull();
+    expect(entry?.state).toBe('idle');
+    expect(entry?.workload).toBe('wl-a');
+    expect(entry?.model).toBe('mlx-community/Qwen3-8B-MLX-4bit');
+    storage.close();
+
+    expect(upstream.events).toEqual(['chat-forward', 'slot-save']);
   } finally {
-    if (prev === undefined) delete process.env.LLAMACTL_OMLX_KV_SAVE_ENABLED;
-    else process.env.LLAMACTL_OMLX_KV_SAVE_ENABLED = prev;
+    await upstream.close();
+    runtime.cleanup();
   }
+});
+
+test('kv eligibility: llamacpp ModelRun and oMLX ModelHost always participate; other arms excluded', () => {
+  // oMLX ModelHosts are eligible unconditionally (symmetric with llama.cpp);
+  // the supports_save_handle capability probe is the only runtime guard.
+  expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'omlx' })).toBe(true);
+  expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'llamacpp' })).toBe(true);
+  // The other engine/kind combinations stay excluded.
+  expect(isRouteKvEligible({ kind: 'ModelHost', engine: 'llamacpp' })).toBe(false);
+  expect(isRouteKvEligible({ kind: 'ModelRun', engine: 'omlx' })).toBe(false);
 });
 
 test('anthropic cold save writes trailer toolMap and ext_flags when upstream returns tool_calls', async () => {
@@ -438,6 +498,59 @@ test('warm hit restores slot before upstream forward', async () => {
     expect(response.status).toBe(200);
     expect(upstream.events.indexOf('slot-restore')).toBeLessThan(upstream.events.indexOf('chat-forward'));
     expect(upstream.events).toEqual(['slot-restore', 'chat-forward']);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('KV restore is skipped when the saved entry model differs from the request model (defense-in-depth)', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'warm' }],
+    });
+    const sha = shaForBody(body);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    // Seed a hit whose stored model does NOT match the request's model.
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      model: 'a-different-model',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(body, 'utf8'),
+      prefixByteLength: Buffer.byteLength(body, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(body, 'utf8'),
+      textBytes: Buffer.byteLength(body, 'utf8'),
+      lastUsed: Date.now() - 10_000,
+      createdAt: Date.now() - 10_000,
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    // The model mismatch must prevent a restore; the request falls through to cold prefill.
+    expect(upstream.events).not.toContain('slot-restore');
+    expect(__getOpenAIProxyKvModelMismatchTotalForTests(runtime.env as any)).toBe(1);
   } finally {
     await upstream.close();
     runtime.cleanup();

@@ -123,7 +123,7 @@ export class UpstreamSlotClient implements SlotClient {
 
   supportsRequestHandle(): Promise<boolean> {
     const cache = this._supportsRequestHandleCache;
-    if (cache && cache.value === true && Date.now() < cache.expiresAt) {
+    if (cache && Date.now() < cache.expiresAt) {
       return Promise.resolve(cache.value);
     }
     return this.probeSupportsRequestHandle();
@@ -131,7 +131,7 @@ export class UpstreamSlotClient implements SlotClient {
 
   supportsSaveHandle(): Promise<boolean> {
     const cache = this._supportsSaveHandleCache;
-    if (cache && cache.value === true && Date.now() < cache.expiresAt) {
+    if (cache && Date.now() < cache.expiresAt) {
       return Promise.resolve(cache.value);
     }
     return this.probeSupportsSaveHandle();
@@ -140,6 +140,7 @@ export class UpstreamSlotClient implements SlotClient {
   invalidateCapabilityCache(): void {
     this._supportsRequestHandleCache = null;
     this._supportsSaveHandleCache = null;
+    this.supportsSlotsProbe = null;
   }
 
   private async postSlotAction(
@@ -162,6 +163,11 @@ export class UpstreamSlotClient implements SlotClient {
 
   private async probeSupportsRequestHandle(): Promise<boolean> {
     const parsed = await this.fetchProps();
+    if (!parsed.ok && !parsed.reachable) {
+      // Transient (server unreachable): do not cache, so the next request
+      // re-probes once the server is back rather than staying dark for the TTL.
+      return false;
+    }
     const value = parsed.ok && hasRequestHandleCapability(parsed.value);
     this._supportsRequestHandleCache = {
       value,
@@ -172,6 +178,10 @@ export class UpstreamSlotClient implements SlotClient {
 
   private async probeSupportsSaveHandle(): Promise<boolean> {
     const parsed = await this.fetchProps();
+    if (!parsed.ok && !parsed.reachable) {
+      // Transient (server unreachable): do not cache; re-probe next request.
+      return false;
+    }
     const value = parsed.ok && hasSaveHandleCapability(parsed.value);
     this._supportsSaveHandleCache = {
       value,
@@ -180,14 +190,17 @@ export class UpstreamSlotClient implements SlotClient {
     return value;
   }
 
-  private async fetchProps(): Promise<{ ok: true; value: unknown } | { ok: false }> {
+  private async fetchProps(): Promise<{ ok: true; value: unknown } | { ok: false; reachable: boolean }> {
     // llama-server advertises slot capabilities at /props; oMLX at /v1/slots/capabilities.
     const path = this.engine === 'omlx' ? '/v1/slots/capabilities' : '/props';
     const url = new URL(path, this.baseUrl);
     const result = await this.fetchWithTimeout(url, 'GET');
-    if (!result.ok || !result.response.ok) return { ok: false };
+    // Distinguish "server responded but lacks the capability" (reachable -> cacheable)
+    // from "could not reach the server" (transient -> not cacheable).
+    if (!result.ok) return { ok: false, reachable: false };
+    if (!result.response.ok) return { ok: false, reachable: true };
     const parsed = await this.parseJsonBody(result.response);
-    if (!parsed.ok) return { ok: false };
+    if (!parsed.ok) return { ok: false, reachable: true };
     return { ok: true, value: parsed.value };
   }
 

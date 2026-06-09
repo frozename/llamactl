@@ -6,6 +6,7 @@ export type KvEntryState = 'idle' | 'reserved' | 'active';
 export interface KvEntry {
   sha: string;
   workload: string;
+  model: string | null;
   upstreamSlotFile: string;
   quantBits: number;
   tokens: number;
@@ -27,6 +28,7 @@ export interface KvEntry {
 interface KvEntryRow {
   sha: string;
   workload: string;
+  model: string | null;
   upstream_slot_file: string;
   quant_bits: number;
   tokens: number;
@@ -53,6 +55,7 @@ export class KvRegistry {
       INSERT INTO kv_entries (
         sha,
         workload,
+        model,
         upstream_slot_file,
         quant_bits,
         tokens,
@@ -72,6 +75,7 @@ export class KvRegistry {
       ) VALUES (
         $sha,
         $workload,
+        $model,
         $upstream_slot_file,
         $quant_bits,
         $tokens,
@@ -91,6 +95,7 @@ export class KvRegistry {
       )
       ON CONFLICT(sha) DO UPDATE SET
         workload=excluded.workload,
+        model=excluded.model,
         upstream_slot_file=excluded.upstream_slot_file,
         quant_bits=excluded.quant_bits,
         tokens=excluded.tokens,
@@ -186,6 +191,7 @@ function toQueryParams(entry: KvEntry): Record<string, number | string | null> {
   return {
     $sha: entry.sha,
     $workload: entry.workload,
+    $model: entry.model,
     $upstream_slot_file: entry.upstreamSlotFile,
     $quant_bits: entry.quantBits,
     $tokens: entry.tokens,
@@ -217,6 +223,7 @@ function fromRow(row: KvEntryRow): KvEntry {
   return {
     sha: row.sha,
     workload: row.workload,
+    model: row.model,
     upstreamSlotFile: row.upstream_slot_file,
     quantBits: row.quant_bits,
     tokens: row.tokens,

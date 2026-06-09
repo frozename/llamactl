@@ -264,6 +264,7 @@ interface ResponseCacheRuntime {
 interface KvRequestState {
   runtime: KvRuntime;
   workload: string;
+  model?: string | null;
   host: string;
   port: number;
   quantBits: number;
@@ -421,6 +422,10 @@ export function __getOpenAIProxyKvFalseHitTotalForTests(resolved: ResolvedEnv): 
 
 export function __getOpenAIProxyKvReplayMismatchTotalForTests(resolved: ResolvedEnv): number {
   return kvRuntimeFor(resolved).storage.kv_replay_mismatch_total;
+}
+
+export function __getOpenAIProxyKvModelMismatchTotalForTests(resolved: ResolvedEnv): number {
+  return kvRuntimeFor(resolved).storage.kv_model_mismatch_total;
 }
 
 export function __getOpenAIProxyResponseCacheHitTotalForTests(resolved: ResolvedEnv): number {
@@ -644,20 +649,15 @@ function resolveRouteKvMetadata(context: ProxyContext): {
   };
 }
 
-/** Proxy-side dark-launch gate for the oMLX KV save-handle path (default off). */
-export function omlxKvSaveEnabled(): boolean {
-  const raw = process.env.LLAMACTL_OMLX_KV_SAVE_ENABLED;
-  return raw !== undefined && ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
-}
-
 export function isRouteKvEligible(route: { kind: 'ModelRun' | 'ModelHost'; engine: string }): boolean {
   // llama-server (ModelRun/llamacpp) always participates in the proxy slot cache.
   if (route.kind === 'ModelRun' && route.engine === 'llamacpp') return true;
-  // oMLX ModelHosts participate only when the save-handle path is enabled (L4):
-  // the proxy injects x_omlx_save_handle on the chat so the server records the
-  // prompt token-ids and can serialize the slot on the subsequent save. Dark by
-  // default behind LLAMACTL_OMLX_KV_SAVE_ENABLED + the supports_save_handle probe.
-  if (route.kind === 'ModelHost' && route.engine === 'omlx' && omlxKvSaveEnabled()) return true;
+  // oMLX ModelHosts always participate too, symmetric with llama.cpp. The proxy
+  // injects x_omlx_save_handle on the chat so the server records the prompt
+  // token-ids and can serialize the slot on the subsequent save (L4). Activation
+  // is guarded at runtime by the supports_save_handle capability probe
+  // (/v1/slots/capabilities), so a server that can't save-by-handle is a no-op.
+  if (route.kind === 'ModelHost' && route.engine === 'omlx') return true;
   return false;
 }
 
@@ -1082,13 +1082,29 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   let sha = boundaryNaiveBytePrefixSha(bodyText);
 
   // Phase 6 is boundary-naive: use byte length as both byte prefix and token guard until token accounting lands.
-  const hit = longestPrefixLookup(runtime.registry, {
+  let hit = longestPrefixLookup(runtime.registry, {
     candidatePrefixes: [{ sha, prefixByteLength: prefixMetric, tokenCount: prefixMetric }],
     workload: metadata.workload,
     quantBits: metadata.quantBits,
     ctxSize: metadata.ctxSize,
     workloadEpoch: metadata.workloadEpoch,
   });
+
+  if (hit && hit.model !== null && hit.model !== metadata.model) {
+    // Defense-in-depth: a slot saved under a different model id must never be
+    // restored into another model. The sha already encodes the request body
+    // (model included) and one oMLX ModelHost serves one model, so this should
+    // be unreachable — log it and fall through to a cold prefill if it ever is.
+    runtime.storage.kv_model_mismatch_total += 1;
+    console.warn(JSON.stringify({
+      event: 'kv_model_mismatch',
+      workload: metadata.workload,
+      sha: hit.sha,
+      expected: hit.model,
+      got: metadata.model,
+    }));
+    hit = null;
+  }
 
   if (hit) {
     let replayMismatch = false;
@@ -1252,6 +1268,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   context.kv = {
     runtime,
     workload: metadata.workload,
+    model: metadata.model,
     host: metadata.host,
     port: metadata.port,
     quantBits: metadata.quantBits,
@@ -1544,6 +1561,7 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
         kv.runtime.registry.insert({
           sha: kv.sha,
           workload: kv.workload,
+          model: kv.model ?? null,
           upstreamSlotFile: slotFile,
           quantBits: kv.quantBits,
           tokens: kv.prefixMetric,
