@@ -39,3 +39,6 @@ __pycache__/
 .antigravitycli/
 .claude/scheduled_tasks.lock
 *.bak
+
+# Failure screenshots emitted by tests/ui-flows (uploaded as CI artifacts)
+tests/ui-flows/screenshots/
