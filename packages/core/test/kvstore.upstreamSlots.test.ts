@@ -443,7 +443,7 @@ test('supportsRequestHandle re-probes after TTL expiry', async () => {
   }
 });
 
-test('supportsRequestHandle re-probes on every call when previous result was false', async () => {
+test('supportsRequestHandle caches a reachable "no capability" result within TTL', async () => {
   const upstream = await startTestServer((req, res, url) => {
     if (req.method === 'GET' && url.pathname === '/props') {
       json(res, 200, { n_slots: 8 });
@@ -456,7 +456,68 @@ test('supportsRequestHandle re-probes on every call when previous result was fal
     const client = new UpstreamSlotClient(upstream.baseUrl, { supportsRequestHandleTtlMs: 60_000 });
     expect(await client.supportsRequestHandle()).toBe(false);
     expect(await client.supportsRequestHandle()).toBe(false);
-    expect(upstream.requestCount()).toBe(2);
+    // A definitive "no capability" from a reachable server is cached: one probe only.
+    expect(upstream.requestCount()).toBe(1);
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('supportsRequestHandle does NOT cache a transient network-error result (re-probes)', async () => {
+  const originalFetch = globalThis.fetch;
+  let probes = 0;
+  globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
+    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+    if (url.pathname === '/props') {
+      probes += 1;
+      throw new TypeError('network down');
+    }
+    return originalFetch(input as Parameters<typeof fetch>[0], init);
+  }) as typeof fetch;
+  try {
+    const client = new UpstreamSlotClient('http://127.0.0.1:9', { supportsRequestHandleTtlMs: 60_000 });
+    expect(await client.supportsRequestHandle()).toBe(false);
+    expect(await client.supportsRequestHandle()).toBe(false);
+    // Unreachable is transient, not a verdict — re-probe so we recover at the next request.
+    expect(probes).toBe(2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('supportsSaveHandle caches a reachable "no capability" result within TTL (omlx)', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/v1/slots/capabilities') {
+      json(res, 200, { slots: { api_version: 2, supports_request_handle: true, supports_save_handle: false } });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl, { engine: 'omlx', supportsRequestHandleTtlMs: 60_000 });
+    expect(await client.supportsSaveHandle()).toBe(false);
+    expect(await client.supportsSaveHandle()).toBe(false);
+    expect(upstream.requestCount()).toBe(1);
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('supportsSaveHandle caches true within TTL (omlx)', async () => {
+  const upstream = await startTestServer((req, res, url) => {
+    if (req.method === 'GET' && url.pathname === '/v1/slots/capabilities') {
+      json(res, 200, { slots: { api_version: 2, supports_request_handle: true, supports_save_handle: true } });
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  try {
+    const client = new UpstreamSlotClient(upstream.baseUrl, { engine: 'omlx', supportsRequestHandleTtlMs: 60_000 });
+    expect(await client.supportsSaveHandle()).toBe(true);
+    expect(await client.supportsSaveHandle()).toBe(true);
+    expect(upstream.requestCount()).toBe(1);
   } finally {
     await upstream.close();
   }
