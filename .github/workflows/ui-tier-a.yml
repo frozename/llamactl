@@ -82,6 +82,13 @@ jobs:
         working-directory: llamactl
         env:
           ELECTRON_MCP_DIR: ${{ github.workspace }}/electron-mcp
+          # Diagnosis for the hard launch hang (240s timeout exhausted,
+          # so not a slow first-launch scan): raw-spawn the app with
+          # Playwright's exact flags and dump its output, and turn on
+          # Playwright's browser-launch debug log inside the MCP server
+          # so the child's stderr is visible through the real path too.
+          TIER_A_LAUNCH_PROBE: '1'
+          DEBUG: 'pw:browser*'
         run: scripts/smoke-tier-a.sh
 
       - name: Upload screenshots on failure
