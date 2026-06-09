@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+
 const POLL_MS = 100;
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -16,9 +18,41 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-export async function gracefulShutdown(pid: number, graceMs = 10_000): Promise<void> {
+/**
+ * The process-group id of `pid` (via `ps`), or null if it can't be read. Used
+ * to decide whether a group-wide signal is safe: only when `pid` IS its own
+ * group leader (pgid === pid).
+ */
+function processGroupId(pid: number): number | null {
   try {
-    process.kill(pid, 'SIGTERM');
+    const out = spawnSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' });
+    if (out.status !== 0) return null;
+    const parsed = Number.parseInt(out.stdout.trim(), 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the signal target for `pid`: the whole process group (`-pid`) when
+ * `pid` is its own group leader — true for our `detached: true` spawns and any
+ * setsid'd server, so forked workers (e.g. oMLX Python workers) are reaped too
+ * — otherwise just `pid`. The fallback means an adopted process that merely
+ * shares another group (e.g. a hand-started `nohup` server) can never take its
+ * unrelated group down with it: worst case equals a plain direct kill.
+ */
+function shutdownSignalTarget(pid: number): number {
+  return pid > 1 && processGroupId(pid) === pid ? -pid : pid;
+}
+
+export async function gracefulShutdown(pid: number, graceMs = 10_000): Promise<void> {
+  // Decide group-vs-direct ONCE, while the leader is alive: after it dies its
+  // pgid is unreadable, but the group id (== the original pid) stays valid for
+  // the SIGKILL sweep of any worker that ignored SIGTERM.
+  const target = shutdownSignalTarget(pid);
+  try {
+    process.kill(target, 'SIGTERM');
   } catch {}
 
   const deadline = Date.now() + graceMs;
@@ -31,7 +65,7 @@ export async function gracefulShutdown(pid: number, graceMs = 10_000): Promise<v
   }
 
   try {
-    process.kill(pid, 'SIGKILL');
+    process.kill(target, 'SIGKILL');
   } catch {}
 }
 
