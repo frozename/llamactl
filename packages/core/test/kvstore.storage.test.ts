@@ -275,6 +275,41 @@ test('integrity scan quarantines rows with missing upstream_slot_file on open', 
   }
 });
 
+test('integrity scan self-heals quarantined rows when the slot file reappears and purges stale quarantines after grace', () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openKvStorage(t.root);
+    const registry = new KvRegistry(storage);
+    const missing = join(t.root, 'missing.slot');
+    const healed = join(t.root, 'healed.slot');
+    writeFileSync(healed, 'payload');
+    registry.insert(baseEntry({ sha: 'missing', upstreamSlotFile: missing, quarantined: 1, lastUsed: Date.now() - 1000 * 60 * 60 * 25 }));
+    registry.insert(baseEntry({ sha: 'healed', upstreamSlotFile: healed, quarantined: 1, lastUsed: Date.now() }));
+    storage.close();
+
+    const reopened = openKvStorage(t.root);
+    const healedRow = new KvRegistry(reopened).get('healed');
+    expect(healedRow?.quarantined).toBe(0);
+    const missingRow = new KvRegistry(reopened).get('missing');
+    expect(missingRow).toBeNull();
+    reopened.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('openKvStorage sets busy_timeout to 5000', () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openKvStorage(t.root);
+    const row = storage.db.query('PRAGMA busy_timeout').get() as { timeout: number } | null;
+    expect(row?.timeout).toBe(5000);
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
 test('openKvStorage enables WAL mode', () => {
   const t = makeTempRoot();
   try {

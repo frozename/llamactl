@@ -37,6 +37,7 @@ spec:
     - "20%"
     - --paged-ssd-cache-dir
     - /Volumes/AI-DATA/cache/omlx-slot-canary
+    # Deliberately exempt from auto: this canary bypasses the proxy KV registry and is managed manually.
     - --slot-save-path
     - /Volumes/AI-DATA/cache/omlx-slot-canary-slots
   restartPolicy: Always

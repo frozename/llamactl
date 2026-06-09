@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KvRegistry, longestPrefixLookup, openKvStorage, type KvEntry } from '../src/kvstore/index.js';
@@ -13,6 +13,7 @@ function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
   return {
     sha: 'sha-base',
     workload: 'foo',
+    model: null,
     upstreamSlotFile: '/tmp/slot.bin',
     quantBits: 4,
     tokens: 128,
@@ -273,6 +274,36 @@ test('safeWrite reports ENOSPC, increments counter, and keeps reads available', 
     if (!writeResult.ok) expect(writeResult.reason).toBe('enospc');
     expect(storage.registry_write_fail_total).toBe(1);
     expect(registry.findBySha('keep')?.sha).toBe('keep');
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('delete and tryDelete unlink slot files and trailer siblings, and deleteEpochStale only targets stale idle rows', () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openKvStorage(t.root);
+    const registry = new KvRegistry(storage);
+    const live = join(t.root, 'live.kvslot');
+    const stale = join(t.root, 'stale.kvslot');
+    const active = join(t.root, 'active.kvslot');
+    writeFileSync(live, 'live');
+    writeFileSync(`${live}.trailer.json`, 'trailer');
+    writeFileSync(stale, 'stale');
+    writeFileSync(`${stale}.trailer.json`, 'trailer');
+    writeFileSync(active, 'active');
+    writeFileSync(`${active}.trailer.json`, 'trailer');
+    registry.insert(baseEntry({ sha: 'live', upstreamSlotFile: live, workloadEpoch: 'epoch-1' }));
+    registry.insert(baseEntry({ sha: 'stale', upstreamSlotFile: stale, workloadEpoch: 'epoch-old' }));
+    registry.insert(baseEntry({ sha: 'active', upstreamSlotFile: active, workloadEpoch: 'epoch-old', state: 'active' }));
+    expect(registry.delete('live')).toBe(true);
+    expect(existsSync(live)).toBe(false);
+    expect(existsSync(`${live}.trailer.json`)).toBe(false);
+    expect(registry.deleteEpochStale('foo', 'epoch-1')).toBe(true);
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(`${stale}.trailer.json`)).toBe(false);
+    expect(existsSync(active)).toBe(true);
     storage.close();
   } finally {
     t.cleanup();

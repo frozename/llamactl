@@ -18,6 +18,11 @@ import {
 import { resolveBuildId } from './build.js';
 import { ctxForModel } from './ctx.js';
 import { resolveEnv } from './env.js';
+import {
+  defaultReadProcessCommand,
+  parseSlotSavePathFromCommand,
+  resolveSlotSavePathArgs,
+} from './kvstore/index.js';
 import { resolveTarget } from './target.js';
 import type { ResolvedEnv } from './types.js';
 import type { WorkloadKey } from './workloadRuntime.js';
@@ -201,6 +206,7 @@ function isProcessAlive(pid: number): boolean {
 export interface ServerState {
   rel: string;
   extraArgs: string[];
+  slotSavePath?: string | null;
   host: string;
   port: string;
   binary: string;
@@ -259,6 +265,7 @@ export function readServerState(
       && typeof parsed.startedAt === 'string'
     ) {
       if (typeof parsed.binary !== 'string') parsed.binary = '';
+      parsed.slotSavePath = typeof parsed.slotSavePath === 'string' ? parsed.slotSavePath : null;
       return parsed;
     }
     return null;
@@ -506,6 +513,7 @@ export function aliasesFromArgs(extraArgs: readonly string[]): string[] {
 export interface AdoptDeps {
   findListenerPid: (host: string, port: number) => Promise<number | null>;
   probeModelIds: (endpointUrl: string, timeoutMs: number) => Promise<string[]>;
+  readProcessCommand?: (pid: number) => Promise<string | null> | string | null;
 }
 
 /**
@@ -529,6 +537,7 @@ export async function tryAdoptExistingServer(args: {
 }): Promise<number | null> {
   const probe = args.deps?.probeModelIds ?? probeServerModelIds;
   const find = args.deps?.findListenerPid ?? findListenerPid;
+  const readProcessCommand = args.deps?.readProcessCommand ?? defaultReadProcessCommand;
   const modelIds = await probe(args.endpointUrl, ADOPT_PROBE_TIMEOUT_MS);
   const aliases = new Set<string>([
     args.rel,
@@ -546,10 +555,12 @@ export async function tryAdoptExistingServer(args: {
   const pid = await find(args.host, args.port);
   // TOCTOU: the listener may have exited between probe and now.
   if (pid === null || !isProcessAlive(pid)) return null;
+  const cmdline = await Promise.resolve(readProcessCommand(pid)).catch(() => null);
   writeServerPid(args.resolved, args.key, pid);
   writeServerState(args.resolved, args.key, {
     rel: args.rel,
     extraArgs: args.extraArgs,
+    slotSavePath: typeof cmdline === 'string' ? parseSlotSavePathFromCommand(cmdline) : null,
     host: args.host,
     port: String(args.port),
     binary: args.binary,
@@ -751,6 +762,10 @@ export async function startServer(
   // sets e.g. `-ub 1024` isn't doubled up with the profile's `-ub 512`.
   let tunedProfile: string | null = null;
   const extra = opts.extraArgs ?? [];
+  const slotPathResolved = resolveSlotSavePathArgs(extra, resolved.LOCAL_AI_RUNTIME_DIR, key.name);
+  if (slotPathResolved.slotSavePath !== null) {
+    mkdirSync(slotPathResolved.slotSavePath, { recursive: true });
+  }
   const launchArgs: string[] = [];
   let profileArgs: string[] = [];
   if (!opts.skipTuned && useTunedArgsEnabled(env)) {
@@ -769,8 +784,8 @@ export async function startServer(
   } else {
     profileArgs = serverProfileArgs('default').split(/\s+/).filter(Boolean);
   }
-  launchArgs.push(...filterProfileArgs(profileArgs, extra));
-  launchArgs.push(...extra);
+  launchArgs.push(...filterProfileArgs(profileArgs, slotPathResolved.args));
+  launchArgs.push(...slotPathResolved.args);
 
   validateHostBind(launchArgs, opts.allowExternalBind);
   const pid = await launchBackground({
@@ -788,6 +803,7 @@ export async function startServer(
   writeServerState(resolved, key, {
     rel,
     extraArgs: extra,
+    slotSavePath: slotPathResolved.slotSavePath,
     host: launchHost,
     port: String(launchPort),
     binary: bin,

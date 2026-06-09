@@ -50,7 +50,7 @@ spec:
     - --alias
     - local
     - --slot-save-path
-    - /Users/acordeiro/.llamactl/data/kvstore/slots/granite41-3b-long-lived-local
+    - auto
     - --jinja
     - --ctx-size
     - "65536"

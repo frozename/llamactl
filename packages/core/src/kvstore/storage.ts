@@ -20,6 +20,7 @@ export function openKvStorage(dataRoot: string): KvStorage {
   mkdirSync(kvDir, { recursive: true });
   const db = new Database(join(kvDir, 'registry.db'));
   db.run('PRAGMA journal_mode = WAL');
+  db.run('PRAGMA busy_timeout = 5000');
   migrate(db);
   const storage: KvStorage = {
     db,
@@ -156,16 +157,38 @@ function addColumnIfMissing(db: Database, table: string, column: string, sql: st
 }
 
 function runIntegrityScan(storage: KvStorage): void {
-  const rows = storage.db.query('SELECT sha, upstream_slot_file FROM kv_entries').all() as Array<{
-    sha: string;
-    upstream_slot_file: string;
-  }>;
-  const quarantine = storage.db.query('UPDATE kv_entries SET quarantined = 1 WHERE sha = ?');
-  for (const row of rows) {
-    if (existsSync(row.upstream_slot_file)) continue;
-    quarantine.run(row.sha);
-    storage.registry_integrity_errors_total += 1;
-  }
+  const graceMs = (() => {
+    const raw = process.env.LLAMACTL_KV_QUARANTINE_PURGE_HOURS;
+    const hours = raw ? Number.parseFloat(raw) : 24;
+    return Number.isFinite(hours) && hours > 0 ? hours * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+  })();
+  const now = Date.now();
+  storage.db.transaction(() => {
+    const rows = storage.db.query('SELECT sha, upstream_slot_file, quarantined, last_used FROM kv_entries').all() as Array<{
+      sha: string;
+      upstream_slot_file: string;
+      quarantined: number;
+      last_used: number;
+    }>;
+    const quarantine = storage.db.query('UPDATE kv_entries SET quarantined = 1 WHERE sha = ?');
+    const unquarantine = storage.db.query('UPDATE kv_entries SET quarantined = 0 WHERE sha = ?');
+    const purge = storage.db.query('DELETE FROM kv_entries WHERE sha = ?');
+    for (const row of rows) {
+      const exists = existsSync(row.upstream_slot_file);
+      if (exists && row.quarantined === 1) {
+        unquarantine.run(row.sha);
+        continue;
+      }
+      if (!exists && row.quarantined === 0) {
+        quarantine.run(row.sha);
+        storage.registry_integrity_errors_total += 1;
+        continue;
+      }
+      if (!exists && row.quarantined === 1 && now - row.last_used > graceMs) {
+        purge.run(row.sha);
+      }
+    }
+  })();
 }
 
 function isEnospcError(error: Error & { code?: unknown }): boolean {

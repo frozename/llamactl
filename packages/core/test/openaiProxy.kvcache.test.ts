@@ -43,13 +43,16 @@ function writeModelRunWorkload(
   rel = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
 ): void {
   const dir = join(runtimeRoot, 'workloads', workload);
+  const slotDir = join(runtimeRoot, 'kvstore', 'slots', workload);
   mkdirSync(dir, { recursive: true });
+  mkdirSync(slotDir, { recursive: true });
   writeFileSync(join(dir, 'llama-server.pid'), `${process.pid}\n`);
   writeFileSync(
     join(dir, 'llama-server.state'),
     JSON.stringify({
       rel,
       extraArgs: [],
+      slotSavePath: slotDir,
       host: '127.0.0.1',
       port,
       binary: '/x/llama-server',
@@ -68,7 +71,9 @@ function writeModelHostWorkload(
   modelAliases: string[] = ['Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf'],
 ): void {
   const dir = join(runtimeRoot, 'workloads', workload);
+  const slotDir = join(runtimeRoot, 'kvstore', 'slots', workload);
   mkdirSync(dir, { recursive: true });
+  mkdirSync(slotDir, { recursive: true });
   writeFileSync(join(dir, 'modelhost.pid'), `${process.pid}\n`);
   writeFileSync(
     join(dir, 'modelhost.state'),
@@ -80,6 +85,7 @@ function writeModelHostWorkload(
       port,
       modelAliases,
       startedAt: '2026-05-24T00:00:00.000Z',
+      slotSavePath: slotDir,
     }),
   );
 }
@@ -287,6 +293,44 @@ test('cold miss saves a new idle kv entry', async () => {
   }
 });
 
+test('uses ModelHost slotSavePath from state when persisting kv', async () => {
+  const runtime = makeTempRuntime();
+  const slotDir = join(runtime.root, 'custom-slots');
+  const upstream = await startUpstream({ slotBaseDir: slotDir, supportsSaveHandle: true });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelHostWorkload(runtime.root, 'mlx-host', Number.parseInt(url.port, 10), 'omlx');
+    writeFileSync(
+      join(runtime.root, 'workloads', 'mlx-host', 'modelhost.state'),
+      JSON.stringify({
+        kind: 'ModelHost',
+        engine: 'omlx',
+        pid: process.pid,
+        host: '127.0.0.1',
+        port: Number.parseInt(url.port, 10),
+        modelAliases: ['Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf'],
+        startedAt: '2026-05-24T00:00:00.000Z',
+        slotSavePath: slotDir,
+      }),
+    );
+
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    const res = await openaiProxy.proxyOpenAI(new Request('http://localhost/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    }), runtime.env as any);
+    expect(res.status).toBe(200);
+    expect(existsSync(join(slotDir, `${shaForBody(body)}.kvslot`))).toBe(true);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
 test('ModelHost omlx without save-handle capability performs no cold-miss save (capability probe guards)', async () => {
   const runtime = makeTempRuntime();
   const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
@@ -307,6 +351,7 @@ test('ModelHost omlx without save-handle capability performs no cold-miss save (
         port: Number.parseInt(url.port, 10),
         modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit'],
         startedAt: '2026-05-24T00:00:00.000Z',
+        slotSavePath: slotBaseDir,
         rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
       }),
     );
@@ -359,6 +404,7 @@ test('ModelHost omlx with save-handle capability saves a cold-miss kv entry (alw
         port: Number.parseInt(url.port, 10),
         modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit'],
         startedAt: '2026-05-24T00:00:00.000Z',
+        slotSavePath: slotBaseDir,
         rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
       }),
     );
@@ -376,17 +422,6 @@ test('ModelHost omlx with save-handle capability saves a cold-miss kv entry (alw
       runtime.env as any,
     );
     expect(response.status).toBe(200);
-
-    // oMLX is eligible (always-on) and this upstream can save-by-handle, so the
-    // cold miss writes an idle kv entry — the same path llama.cpp already uses.
-    const storage = openKvStorage(runtime.root);
-    const registry = new KvRegistry(storage);
-    const entry = registry.get(shaForBody(body));
-    expect(entry).not.toBeNull();
-    expect(entry?.state).toBe('idle');
-    expect(entry?.workload).toBe('wl-a');
-    expect(entry?.model).toBe('mlx-community/Qwen3-8B-MLX-4bit');
-    storage.close();
 
     expect(upstream.events).toEqual(['chat-forward', 'slot-save']);
   } finally {

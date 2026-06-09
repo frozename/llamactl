@@ -261,6 +261,32 @@ describe('server/modelhost', () => {
     }
   });
 
+  test('startModelHost records the resolved slotSavePath in state and preserves raw extraArgs in the spec hash input', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-slotpath-'));
+    const { workloadsDir, runtimeDir, manifest: baseManifest } = makeManifest(tmp);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 } as const));
+    try {
+      const result = await startModelHost({
+        key: { name: 'mlx-host-server' },
+        manifest: {
+          ...baseManifest,
+          spec: { ...baseManifest.spec, extraArgs: ['--slot-save-path', 'auto'] },
+        },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: async () => ({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      const state = JSON.parse(readFileSync(join(runtimeDir, 'workloads', 'mlx-host-server', 'modelhost.state'), 'utf8')) as { slotSavePath?: string | null };
+      expect(state.slotSavePath).toBe(join(runtimeDir, 'kvstore', 'slots', 'mlx-host-server'));
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test('stopModelHost reads state, tears down the pid, and removes sidecar state', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-stop-'));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);

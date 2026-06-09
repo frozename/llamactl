@@ -24,11 +24,13 @@ import {
   KvRegistry,
   SlotAllocator,
   UpstreamSlotClient,
+  parseAbsoluteSlotSavePath,
   longestPrefixLookup,
   openKvStorage,
   readTrailer,
   readWorkloadEpoch,
   runEvictionIfOverBudget,
+  sweepOrphanSlotFiles,
   writeTrailer,
   type KvTrailer,
   type KvStorage,
@@ -264,6 +266,7 @@ interface ResponseCacheRuntime {
 interface KvRequestState {
   runtime: KvRuntime;
   workload: string;
+  slotDir: string;
   model?: string | null;
   host: string;
   port: number;
@@ -625,9 +628,11 @@ function resolveRouteKvMetadata(context: ProxyContext): {
   quantBits: number;
   ctxSize: number;
   workloadEpoch: string;
+  slotDir: string;
 } | null {
   const route = context.route;
   if (!route) return null;
+  if ('isPeer' in route && route.isPeer === true) return null;
   if (!isRouteKvEligible(route)) return null;
 
   const key = { name: route.workload };
@@ -635,9 +640,15 @@ function resolveRouteKvMetadata(context: ProxyContext): {
   if (!workloadEpoch) return null;
 
   const state = readServerState(key, context.resolved);
+  const modelHostState = route.kind === 'ModelHost' ? readModelHostState(key, context.resolved) : null;
   const rel = state?.rel ?? route.model;
   const defaultCtx = Number.parseInt(ctxForModel(rel, context.resolved), 10);
   const ctxSize = parseContextWindow(state?.extraArgs, Number.isFinite(defaultCtx) ? defaultCtx : 32768);
+  const slotDir =
+    route.kind === 'ModelRun'
+      ? state?.slotSavePath ?? parseAbsoluteSlotSavePath(state?.extraArgs ?? [])
+      : modelHostState?.slotSavePath ?? null;
+  if (slotDir === null) return null;
   return {
     model: route.model,
     workload: route.workload,
@@ -646,6 +657,7 @@ function resolveRouteKvMetadata(context: ProxyContext): {
     quantBits: quantBitsFromModelId(rel),
     ctxSize,
     workloadEpoch,
+    slotDir,
   };
 }
 
@@ -1173,6 +1185,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
                 context.kv = {
                   runtime,
                   workload: metadata.workload,
+                  slotDir: metadata.slotDir,
                   host: metadata.host,
                   port: metadata.port,
                   quantBits: metadata.quantBits,
@@ -1202,6 +1215,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
               context.kv = {
                 runtime,
                 workload: metadata.workload,
+                slotDir: metadata.slotDir,
                 host: metadata.host,
                 port: metadata.port,
                 quantBits: metadata.quantBits,
@@ -1231,6 +1245,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
             context.kv = {
               runtime,
               workload: metadata.workload,
+              slotDir: metadata.slotDir,
               host: metadata.host,
               port: metadata.port,
               quantBits: metadata.quantBits,
@@ -1269,6 +1284,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
     runtime,
     workload: metadata.workload,
     model: metadata.model,
+    slotDir: metadata.slotDir,
     host: metadata.host,
     port: metadata.port,
     quantBits: metadata.quantBits,
@@ -1515,7 +1531,7 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
     const lease = allocator.acquire();
     if (!lease) return;
     try {
-      const slotDir = join(resolveKvDataRoot(context.resolved), 'kvstore', 'slots', kv.workload);
+      const slotDir = kv.slotDir;
       mkdirSync(slotDir, { recursive: true });
       const slotBasename = `${kv.sha}.kvslot`;
       const slotFile = join(slotDir, slotBasename);
@@ -1569,7 +1585,13 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
           hits: 0,
           createdAt: now,
           lastUsed: now,
-          payloadBytes: kv.prefixMetric,
+          payloadBytes: (() => {
+            try {
+              return statSync(slotFile).size;
+            } catch {
+              return kv.prefixMetric;
+            }
+          })(),
           textBytes: kv.prefixMetric,
           reason: 'cold',
           prefixByteLength: kv.prefixMetric,
@@ -1589,6 +1611,16 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
           workload: kv.workload,
           sha: blockedSha,
         }));
+      }
+      try {
+        kv.runtime.registry.deleteEpochStale(kv.workload, kv.workloadEpoch);
+      } catch (error) {
+        console.warn(`[kvstore] stale epoch purge failed for workload='${kv.workload}': ${error instanceof Error ? error.message : String(error)}`);
+      }
+      try {
+        sweepOrphanSlotFiles({ slotDir: kv.slotDir, registry: kv.runtime.registry, ttlMs: 24 * 60 * 60 * 1000, now });
+      } catch (error) {
+        console.warn(`[kvstore] orphan sweep failed for workload='${kv.workload}': ${error instanceof Error ? error.message : String(error)}`);
       }
     } finally {
       lease.release();
@@ -1701,10 +1733,19 @@ export async function proxyOpenAI(
     return withResponseCacheLookup.responseCacheHit;
   }
 
-  const withKvLookup = await maybeKvLookup(withResponseCacheLookup);
+  let withKvLookup = withResponseCacheLookup;
+  try {
+    withKvLookup = await maybeKvLookup(withResponseCacheLookup);
+  } catch (error) {
+    console.warn(`[openaiProxy] kv lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
   try {
     const upstream = await forward(withKvLookup);
-    await maybePersistKv(withKvLookup, upstream);
+    try {
+      await maybePersistKv(withKvLookup, upstream);
+    } catch (error) {
+      console.warn(`[openaiProxy] kv persist failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const translatedResponse = await maybeTranslateResponse(withKvLookup, upstream);
     return await maybePersistResponseCache(withKvLookup, translatedResponse);
   } finally {

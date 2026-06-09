@@ -39,7 +39,8 @@ describe('engines/state', () => {
       startedAt: '2026-05-19T00:00:00Z',
     };
     writeModelHostState(state, KEY, env);
-    expect(readModelHostState(KEY, env)).toEqual(state);
+    // readModelHostState normalizes a missing slotSavePath to null (legacy sidecars).
+    expect(readModelHostState(KEY, env)).toEqual({ ...state, slotSavePath: null });
   });
 
   test('returns null when no state file exists', () => {
