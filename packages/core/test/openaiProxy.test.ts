@@ -59,9 +59,11 @@ test('routes chat completions to a ModelHost by rel alias', async () => {
       t.env,
     );
     expect(res.status).toBe(200);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe('http://127.0.0.1:8123/v1/chat/completions');
-    expect(calls[0]!.body).toContain('"model":"mlx-community/Qwen3-8B-MLX-4bit"');
+    // Filter to the chat forward; omlx ModelHosts also probe /v1/slots/capabilities (KV, orthogonal to routing).
+    const chatCalls = calls.filter((c) => c.url.includes('/v1/chat/completions'));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.url).toBe('http://127.0.0.1:8123/v1/chat/completions');
+    expect(chatCalls[0]!.body).toContain('"model":"mlx-community/Qwen3-8B-MLX-4bit"');
   } finally {
     t.cleanup();
   }
@@ -121,7 +123,9 @@ test('route cache invalidates when a workload state file is rewritten in place',
 
     await req();
     expect(openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests()).toBe(builds1 + 1); // invalidated
-    expect(calls[calls.length - 1]).toBe('http://127.0.0.1:8200/v1/chat/completions');
+    // Filter to chat forwards; omlx ModelHosts also probe /v1/slots/capabilities (KV, orthogonal to routing).
+    const chatCalls = calls.filter((u) => u.includes('/v1/chat/completions'));
+    expect(chatCalls[chatCalls.length - 1]).toBe('http://127.0.0.1:8200/v1/chat/completions');
   } finally {
     t.cleanup();
   }
@@ -165,8 +169,10 @@ test('routes chat completions to a ModelHost by basename alias', async () => {
       t.env,
     );
     expect(res.status).toBe(200);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe('http://127.0.0.1:8124/v1/chat/completions');
+    // Filter to the chat forward; omlx ModelHosts also probe /v1/slots/capabilities (KV, orthogonal to routing).
+    const chatCalls = calls.filter((c) => c.url.includes('/v1/chat/completions'));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.url).toBe('http://127.0.0.1:8124/v1/chat/completions');
   } finally {
     t.cleanup();
   }
@@ -528,7 +534,9 @@ test('route map cache build count stays stable across identical requests', async
       );
       expect(res.status).toBe(200);
     }
-    expect(seen).toHaveLength(5);
+    // Filter to chat forwards; omlx ModelHosts also probe /v1/slots/capabilities (KV, orthogonal to routing).
+    const chatCalls = seen.filter((u) => u.includes('/v1/chat/completions'));
+    expect(chatCalls).toHaveLength(5);
     expect(openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests()).toBe(before + 1);
   } finally {
     t.cleanup();
@@ -685,8 +693,10 @@ test('same-kind alias collision keeps the alphabetically earlier workload', asyn
       t.env,
     );
     expect(res.status).toBe(200);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe('http://127.0.0.1:8115/v1/chat/completions');
+    // Filter to the chat forward; omlx ModelHosts also probe /v1/slots/capabilities (KV, orthogonal to routing).
+    const chatCalls = calls.filter((c) => c.url.includes('/v1/chat/completions'));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.url).toBe('http://127.0.0.1:8115/v1/chat/completions');
   } finally {
     warnSpy.mockRestore();
     t.cleanup();

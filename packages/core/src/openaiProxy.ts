@@ -644,20 +644,15 @@ function resolveRouteKvMetadata(context: ProxyContext): {
   };
 }
 
-/** Proxy-side dark-launch gate for the oMLX KV save-handle path (default off). */
-export function omlxKvSaveEnabled(): boolean {
-  const raw = process.env.LLAMACTL_OMLX_KV_SAVE_ENABLED;
-  return raw !== undefined && ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
-}
-
 export function isRouteKvEligible(route: { kind: 'ModelRun' | 'ModelHost'; engine: string }): boolean {
   // llama-server (ModelRun/llamacpp) always participates in the proxy slot cache.
   if (route.kind === 'ModelRun' && route.engine === 'llamacpp') return true;
-  // oMLX ModelHosts participate only when the save-handle path is enabled (L4):
-  // the proxy injects x_omlx_save_handle on the chat so the server records the
-  // prompt token-ids and can serialize the slot on the subsequent save. Dark by
-  // default behind LLAMACTL_OMLX_KV_SAVE_ENABLED + the supports_save_handle probe.
-  if (route.kind === 'ModelHost' && route.engine === 'omlx' && omlxKvSaveEnabled()) return true;
+  // oMLX ModelHosts always participate too, symmetric with llama.cpp. The proxy
+  // injects x_omlx_save_handle on the chat so the server records the prompt
+  // token-ids and can serialize the slot on the subsequent save (L4). Activation
+  // is guarded at runtime by the supports_save_handle capability probe
+  // (/v1/slots/capabilities), so a server that can't save-by-handle is a no-op.
+  if (route.kind === 'ModelHost' && route.engine === 'omlx') return true;
   return false;
 }
 
