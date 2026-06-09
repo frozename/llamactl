@@ -34,10 +34,10 @@ APP_DIR="${APP_DIR:-$REPO_ROOT/packages/app}"
 LLAMACTL_TEST_PROFILE="${LLAMACTL_TEST_PROFILE:-$(mktemp -d -t llamactl-tier-a)}"
 export LLAMACTL_TEST_PROFILE
 export ELECTRON_MCP_DIR
-# First launch of a freshly-extracted Electron.app on a macOS CI runner
-# can stall well past 30s (Gatekeeper/XProtect scan of the bundle), and
-# the MCP server's default launch timeout is 30s. Give it 4 minutes; the
-# flows' client-side RPC timeout for electron_launch is 270s so the
+# The MCP server's default launch timeout is 30s, which leaves no
+# headroom for a slow first launch on a cold CI runner (renderer build
+# warm-up, page-cache misses). Give it 4 minutes; the flows'
+# client-side RPC timeout for electron_launch is 270s so the
 # server-side verdict always arrives first.
 export ELECTRON_MCP_LAUNCH_TIMEOUT="${ELECTRON_MCP_LAUNCH_TIMEOUT:-240000}"
 
