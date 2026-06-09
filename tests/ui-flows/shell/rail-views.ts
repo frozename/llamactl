@@ -150,7 +150,7 @@ const RAIL_VIEW_IDS = ['explorer', 'search', 'sessions', 'fleet'] as const;
 type RailViewId = (typeof RAIL_VIEW_IDS)[number];
 
 const TAB_OPENERS = [
-  { id: 'cost' as const,     affordance: 'cost-tier' },
+  { id: 'cost' as const,     affordance: 'cost-root' },
   { id: 'settings' as const, affordance: 'settings-root' },
 ];
 

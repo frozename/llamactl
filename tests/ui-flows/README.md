@@ -7,7 +7,7 @@ Scripted end-to-end flows that drive llamactl's Electron app via
 `electron-mcp-server`'s MCP tools. These moved out of
 electron-mcp-server during the cross-repo genericization pass because
 they're llamactl-feature-specific — they hardcode selectors like
-`[data-testid="plan-result"]`, `[data-testid="cost-tier"]`, and the
+`[data-testid="plan-result"]`, `[data-testid="cost-root"]`, and the
 Operator Console transcript structure. Keeping them here localizes the
 llamactl knowledge and lets the upstream driver stay library-generic.
 
