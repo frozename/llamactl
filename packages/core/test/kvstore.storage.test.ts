@@ -16,6 +16,7 @@ function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
   return {
     sha: 'abc123',
     workload: 'wl-a',
+    model: null,
     upstreamSlotFile: '/tmp/slot.bin',
     quantBits: 8,
     tokens: 2048,
@@ -36,12 +37,12 @@ function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
   };
 }
 
-test('schema migration creates schema_version=4 and kv_entries columns', () => {
+test('schema migration creates schema_version=5 and kv_entries columns', () => {
   const t = makeTempRoot();
   try {
     const storage = openKvStorage(t.root);
     const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
-    expect(version?.version).toBe(4);
+    expect(version?.version).toBe(5);
     const table = storage.db.query(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name = 'kv_entries'
@@ -68,6 +69,7 @@ test('schema migration creates schema_version=4 and kv_entries columns', () => {
       'state',
       'first_response_token',
       'ext_flags',
+      'model',
     ]);
     storage.close();
   } finally {
@@ -92,7 +94,7 @@ test('schema is preserved across reopens with existing rows', () => {
     expect(row).not.toBeNull();
     expect(row?.upstreamSlotFile).toBe(slotFile);
     const version = second.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
-    expect(version?.version).toBe(4);
+    expect(version?.version).toBe(5);
     second.close();
   } finally {
     t.cleanup();
@@ -128,7 +130,7 @@ test('migration from v3 to v4 adds ext_flags column with 0 default', () => {
 
     const storage = openKvStorage(t.root);
     const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
-    expect(version?.version).toBe(4);
+    expect(version?.version).toBe(5);
     const row = storage.db.query(`
       SELECT state, first_response_token, ext_flags
       FROM kv_entries
@@ -145,6 +147,46 @@ test('migration from v3 to v4 adds ext_flags column with 0 default', () => {
   }
 });
 
+test('migration from v4 to v5 adds model column defaulting to NULL for legacy rows', () => {
+  const t = makeTempRoot();
+  try {
+    const kvDir = join(t.root, 'kvstore');
+    mkdirSync(kvDir, { recursive: true });
+    const dbPath = join(kvDir, 'registry.db');
+    const db = new Database(dbPath);
+    db.run('PRAGMA journal_mode = WAL');
+    db.run(`
+      CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER NOT NULL
+      )
+    `);
+    db.query('INSERT INTO schema_version (version) VALUES (0)').run();
+    runMigrations(db, 0, 4);
+    db.query(`
+      INSERT INTO kv_entries (
+        sha, workload, upstream_slot_file, quant_bits, tokens, ctx_size, hits,
+        created_at, last_used, payload_bytes, text_bytes, reason,
+        prefix_byte_length, workload_epoch, quarantined, state, first_response_token, ext_flags
+      ) VALUES (
+        'legacy-sha', 'wl-a', '/tmp/legacy.slot', 8, 123, 32768, 0,
+        1, 1, 10, 5, 'cold', 64, 'epoch-legacy', 0, 'idle', NULL, 0
+      )
+    `).run();
+    db.close();
+
+    const storage = openKvStorage(t.root);
+    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    expect(version?.version).toBe(5);
+    const row = storage.db.query('SELECT model FROM kv_entries WHERE sha = ?').get('legacy-sha') as
+      | { model: string | null }
+      | null;
+    expect(row?.model ?? null).toBeNull();
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
 test('kvstore migrations are idempotent after a restart replays the same version', () => {
   const t = makeTempRoot();
   try {
@@ -153,7 +195,7 @@ test('kvstore migrations are idempotent after a restart replays the same version
 
     const reopened = openKvStorage(t.root);
     const version = reopened.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
-    expect(version?.version).toBe(4);
+    expect(version?.version).toBe(5);
     const columns = reopened.db.query("PRAGMA table_info('kv_entries')").all() as Array<{ name: string }>;
     expect(columns.some((column) => column.name === 'ext_flags')).toBe(true);
     reopened.close();
@@ -201,7 +243,7 @@ test('kvstore migration recovers when schema_version lags behind already-added c
 
     const storage = openKvStorage(t.root);
     const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
-    expect(version?.version).toBe(4);
+    expect(version?.version).toBe(5);
     const columns = storage.db.query("PRAGMA table_info('kv_entries')").all() as Array<{ name: string }>;
     expect(columns.map((column) => column.name)).toContain('state');
     expect(columns.map((column) => column.name)).toContain('first_response_token');

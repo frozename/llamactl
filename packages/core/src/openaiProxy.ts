@@ -264,6 +264,7 @@ interface ResponseCacheRuntime {
 interface KvRequestState {
   runtime: KvRuntime;
   workload: string;
+  model?: string | null;
   host: string;
   port: number;
   quantBits: number;
@@ -421,6 +422,10 @@ export function __getOpenAIProxyKvFalseHitTotalForTests(resolved: ResolvedEnv): 
 
 export function __getOpenAIProxyKvReplayMismatchTotalForTests(resolved: ResolvedEnv): number {
   return kvRuntimeFor(resolved).storage.kv_replay_mismatch_total;
+}
+
+export function __getOpenAIProxyKvModelMismatchTotalForTests(resolved: ResolvedEnv): number {
+  return kvRuntimeFor(resolved).storage.kv_model_mismatch_total;
 }
 
 export function __getOpenAIProxyResponseCacheHitTotalForTests(resolved: ResolvedEnv): number {
@@ -1077,13 +1082,29 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   let sha = boundaryNaiveBytePrefixSha(bodyText);
 
   // Phase 6 is boundary-naive: use byte length as both byte prefix and token guard until token accounting lands.
-  const hit = longestPrefixLookup(runtime.registry, {
+  let hit = longestPrefixLookup(runtime.registry, {
     candidatePrefixes: [{ sha, prefixByteLength: prefixMetric, tokenCount: prefixMetric }],
     workload: metadata.workload,
     quantBits: metadata.quantBits,
     ctxSize: metadata.ctxSize,
     workloadEpoch: metadata.workloadEpoch,
   });
+
+  if (hit && hit.model !== null && hit.model !== metadata.model) {
+    // Defense-in-depth: a slot saved under a different model id must never be
+    // restored into another model. The sha already encodes the request body
+    // (model included) and one oMLX ModelHost serves one model, so this should
+    // be unreachable — log it and fall through to a cold prefill if it ever is.
+    runtime.storage.kv_model_mismatch_total += 1;
+    console.warn(JSON.stringify({
+      event: 'kv_model_mismatch',
+      workload: metadata.workload,
+      sha: hit.sha,
+      expected: hit.model,
+      got: metadata.model,
+    }));
+    hit = null;
+  }
 
   if (hit) {
     let replayMismatch = false;
@@ -1247,6 +1268,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   context.kv = {
     runtime,
     workload: metadata.workload,
+    model: metadata.model,
     host: metadata.host,
     port: metadata.port,
     quantBits: metadata.quantBits,
@@ -1539,6 +1561,7 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
         kv.runtime.registry.insert({
           sha: kv.sha,
           workload: kv.workload,
+          model: kv.model ?? null,
           upstreamSlotFile: slotFile,
           quantBits: kv.quantBits,
           tokens: kv.prefixMetric,

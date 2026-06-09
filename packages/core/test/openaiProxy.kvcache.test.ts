@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { openaiProxy } from '../src/index.js';
-import { isRouteKvEligible } from '../src/openaiProxy.js';
+import { isRouteKvEligible, __getOpenAIProxyKvModelMismatchTotalForTests } from '../src/openaiProxy.js';
 import {
   EXT_FLAG_TOOL_MAP,
   KvRegistry,
@@ -218,6 +218,7 @@ function entryTemplate(overrides: Partial<KvEntry>): KvEntry {
   return {
     sha: 'sha',
     workload: 'wl-a',
+    model: null,
     upstreamSlotFile: '/tmp/file.kvslot',
     quantBits: 8,
     tokens: 128,
@@ -384,6 +385,7 @@ test('ModelHost omlx with save-handle capability saves a cold-miss kv entry (alw
     expect(entry).not.toBeNull();
     expect(entry?.state).toBe('idle');
     expect(entry?.workload).toBe('wl-a');
+    expect(entry?.model).toBe('mlx-community/Qwen3-8B-MLX-4bit');
     storage.close();
 
     expect(upstream.events).toEqual(['chat-forward', 'slot-save']);
@@ -496,6 +498,59 @@ test('warm hit restores slot before upstream forward', async () => {
     expect(response.status).toBe(200);
     expect(upstream.events.indexOf('slot-restore')).toBeLessThan(upstream.events.indexOf('chat-forward'));
     expect(upstream.events).toEqual(['slot-restore', 'chat-forward']);
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test('KV restore is skipped when the saved entry model differs from the request model (defense-in-depth)', async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, 'kvstore', 'slots', 'wl-a');
+  const upstream = await startUpstream({ slotBaseDir });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+      messages: [{ role: 'user', content: 'warm' }],
+    });
+    const sha = shaForBody(body);
+    const slotFile = join(runtime.root, 'kvstore', 'slots', 'wl-a', `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, 'slot');
+    const workloadEpoch = readWorkloadEpoch({ name: 'wl-a' }, runtime.env as any);
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    // Seed a hit whose stored model does NOT match the request's model.
+    registry.insert(entryTemplate({
+      sha,
+      workload: 'wl-a',
+      model: 'a-different-model',
+      upstreamSlotFile: slotFile,
+      tokens: Buffer.byteLength(body, 'utf8'),
+      prefixByteLength: Buffer.byteLength(body, 'utf8'),
+      workloadEpoch: workloadEpoch!,
+      payloadBytes: Buffer.byteLength(body, 'utf8'),
+      textBytes: Buffer.byteLength(body, 'utf8'),
+      lastUsed: Date.now() - 10_000,
+      createdAt: Date.now() - 10_000,
+      firstResponseToken: 'Hello world',
+    }));
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request('http://localhost/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      }),
+      runtime.env as any,
+    );
+    expect(response.status).toBe(200);
+    // The model mismatch must prevent a restore; the request falls through to cold prefill.
+    expect(upstream.events).not.toContain('slot-restore');
+    expect(__getOpenAIProxyKvModelMismatchTotalForTests(runtime.env as any)).toBe(1);
   } finally {
     await upstream.close();
     runtime.cleanup();
