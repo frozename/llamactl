@@ -32,6 +32,6 @@ spec:
     - --paged-ssd-cache-dir
     - /Volumes/WorkSSD/cache/omlx-35b
     - --slot-save-path
-    - /Volumes/WorkSSD/cache/omlx-qwen36-35b-slots
+    - auto
   restartPolicy: Always
   timeoutSeconds: 180

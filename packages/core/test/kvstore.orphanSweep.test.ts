@@ -13,6 +13,7 @@ function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
   return {
     sha: 'sha-base',
     workload: 'foo',
+    model: null,
     upstreamSlotFile: '/tmp/slot.bin',
     quantBits: 4,
     tokens: 128,

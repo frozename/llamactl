@@ -11,6 +11,14 @@ export type { EvictionRunResult } from './policy.js';
 export { UpstreamSlotClient } from './upstreamSlots.js';
 export type { SlotClient, SlotRestoreResult, SlotSaveResult } from './upstreamSlots.js';
 export { SlotAllocator } from './slotAllocator.js';
+export {
+  SLOT_SAVE_PATH_AUTO,
+  canonicalSlotDir,
+  defaultReadProcessCommand,
+  parseAbsoluteSlotSavePath,
+  parseSlotSavePathFromCommand,
+  resolveSlotSavePathArgs,
+} from './slotPath.js';
 export { sweepOrphanSlotFiles } from './orphanSweep.js';
 export type { SweepOrphanSlotFilesOptions, SweepOrphanSlotFilesResult } from './orphanSweep.js';
 export { computeWorkloadEpoch, readWorkloadEpoch } from './workloadEpoch.js';

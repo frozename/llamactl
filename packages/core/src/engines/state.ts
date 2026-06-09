@@ -15,6 +15,7 @@ export interface ModelHostState {
   port: number;
   modelAliases: string[];
   startedAt: string;
+  slotSavePath?: string | null;
   /**
    * Stable hash of the launch-affecting spec fields at the time the
    * sidecar was written. Used by the reconciler to detect spec drift
@@ -98,7 +99,10 @@ export function readModelHostState(
           /[\t\r\n]/.test(alias),
       )
     ) return null;
-    return parsed;
+    return {
+      ...parsed,
+      slotSavePath: typeof parsed.slotSavePath === 'string' ? parsed.slotSavePath : null,
+    };
   } catch {
     return null;
   }

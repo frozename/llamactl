@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import { ENGINES } from '../../../core/src/engines/index.js';
-import { computeModelHostSpecHash, removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
+import { computeModelHostSpecHash, readModelHostState, removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
 import { resolveEnv } from '../../../core/src/env.js';
 import {
   appendFleetJournal,
@@ -427,6 +427,7 @@ async function applyModelHostManifest(
 
   const rel = manifest.spec.hostedModels[0]!.rel;
   const modelAliases = Array.from(new Set([rel, basename(rel)]));
+  const existing = readModelHostState({ name: manifest.metadata.name }, resolved);
   // Only write the local sidecar when this controller owns the process
   // (spec.node === 'local'). For remote nodes the remote dispatcher owns
   // state; writing here would leak a stale entry into local consumers
@@ -442,6 +443,7 @@ async function applyModelHostManifest(
         port: manifest.spec.endpoint.port,
         modelAliases,
         startedAt: new Date().toISOString(),
+        slotSavePath: existing && existing.pid === status.pid ? existing.slotSavePath ?? null : null,
         specHash: computeModelHostSpecHash(manifest.spec),
       },
       { name: manifest.metadata.name },

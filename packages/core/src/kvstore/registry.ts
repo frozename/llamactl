@@ -1,3 +1,4 @@
+import { unlinkSync } from 'node:fs';
 import type { KvStorage } from './storage.js';
 
 export type KvEntryReason = 'cold' | 'continued' | 'evict' | 'shutdown' | 'agentSession';
@@ -125,8 +126,7 @@ export class KvRegistry {
   }
 
   delete(sha: string): boolean {
-    const result = this.storage.db.query('DELETE FROM kv_entries WHERE sha = ?').run(sha) as { changes?: number };
-    return (result.changes ?? 0) > 0;
+    return deleteReturning(this.storage, 'DELETE FROM kv_entries WHERE sha = ? RETURNING upstream_slot_file', sha);
   }
 
   reserve(sha: string): boolean {
@@ -157,11 +157,21 @@ export class KvRegistry {
   }
 
   tryDelete(sha: string): boolean {
-    const result = this.storage.db.query(`
+    return deleteReturning(this.storage, `
       DELETE FROM kv_entries
       WHERE sha = ? AND state = 'idle'
-    `).run(sha) as { changes?: number };
-    return (result.changes ?? 0) > 0;
+      RETURNING upstream_slot_file
+    `, sha);
+  }
+
+  deleteEpochStale(workload: string, currentEpoch: string): boolean {
+    const rows = this.storage.db.query(`
+      DELETE FROM kv_entries
+      WHERE workload = ? AND workload_epoch != ? AND state = 'idle'
+      RETURNING upstream_slot_file
+    `).all(workload, currentEpoch) as Array<{ upstream_slot_file: string }>;
+    for (const row of rows) unlinkSlotArtifacts(row.upstream_slot_file);
+    return rows.length > 0;
   }
 
   listAll(): KvEntry[] {
@@ -185,6 +195,23 @@ export class KvRegistry {
       WHERE sha = ?
     `).run(extFlags, sha);
   }
+}
+
+function unlinkSlotArtifacts(path: string): void {
+  for (const candidate of [path, `${path}.trailer.json`]) {
+    try {
+      unlinkSync(candidate);
+    } catch (error) {
+      if (typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === 'ENOENT') continue;
+      console.warn(`[kvstore] failed to unlink ${candidate}`);
+    }
+  }
+}
+
+function deleteReturning(storage: KvStorage, sql: string, sha: string): boolean {
+  const rows = storage.db.query(sql).all(sha) as Array<{ upstream_slot_file: string }>;
+  for (const row of rows) unlinkSlotArtifacts(row.upstream_slot_file);
+  return rows.length > 0;
 }
 
 function toQueryParams(entry: KvEntry): Record<string, number | string | null> {

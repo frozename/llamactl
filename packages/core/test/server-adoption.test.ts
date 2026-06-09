@@ -101,4 +101,17 @@ describe('tryAdoptExistingServer', () => {
     });
     expect(pid).toBeNull();
   });
+
+  test('records slotSavePath from the live process command line only', async () => {
+    const pid = await tryAdoptExistingServer({
+      ...base(),
+      deps: {
+        probeModelIds: async () => ['granite-mini-3b'],
+        findListenerPid: async () => process.pid,
+        readProcessCommand: async () => `/bin/llama-server --slot-save-path /tmp/live-slots`,
+      } as any,
+    });
+    expect(pid).toBe(process.pid);
+    expect(readServerState(KEY, resolved)?.slotSavePath).toBe('/tmp/live-slots');
+  });
 });

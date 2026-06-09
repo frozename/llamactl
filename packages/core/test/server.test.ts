@@ -8,6 +8,7 @@ import {
   filterProfileArgs,
   hasFlag,
   readServerPid,
+  readServerState,
   serverStatus,
   startServer,
   stopServer,
@@ -208,6 +209,46 @@ describe('server.startServer (error paths)', () => {
         'http://127.0.0.1:8181/health',
         expect.objectContaining({ method: 'GET' }),
       );
+    } finally {
+      spawnSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+  });
+
+  test('writes raw extraArgs and resolved slotSavePath to the sidecar', async () => {
+    const modelDir = join(temp.modelsDir, 'Demo');
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(join(modelDir, 'demo.gguf'), '');
+    const binDir = join(temp.devStorage, 'fake-bin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, 'llama-server'), '#!/bin/sh\nexit 0\n');
+    process.env.LLAMA_CPP_BIN = binDir;
+    process.env.LLAMA_CPP_HOST = '127.0.0.1';
+    process.env.LLAMA_CPP_PORT = '8081';
+
+    const spawnSpy = spyOn(childProcess, 'spawn')
+      .mockImplementation((() =>
+        ({
+          pid: process.pid,
+          unref() {},
+        }) as any));
+    let fetchCalls = 0;
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      fetchCalls += 1;
+      if (fetchCalls === 1) throw new Error('connection refused');
+      return new Response('ok', { status: 200 }) as any;
+    }) as any);
+
+    try {
+      const result = await startServer({
+        key: TEST_KEY,
+        target: 'Demo/demo.gguf',
+        extraArgs: ['--slot-save-path', 'auto'],
+      });
+      expect(result.ok).toBe(true);
+      const state = readServerState(TEST_KEY, resolveEnv());
+      expect(state?.extraArgs).toEqual(['--slot-save-path', 'auto']);
+      expect(state?.slotSavePath).toBe(join(temp.devStorage, 'ai-models', 'local-ai', 'kvstore', 'slots', 'test-wl'));
     } finally {
       spawnSpy.mockRestore();
       fetchSpy.mockRestore();

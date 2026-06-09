@@ -4,6 +4,11 @@ import { basename } from 'node:path';
 import { ENGINES } from '../../../core/src/engines/index.js';
 import { computeModelHostSpecHash, readModelHostState, removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
 import { resolveEnv } from '../../../core/src/env.js';
+import {
+  defaultReadProcessCommand,
+  parseSlotSavePathFromCommand,
+  resolveSlotSavePathArgs,
+} from '../../../core/src/kvstore/index.js';
 import { loadModelHostByName, saveModelHost } from '../workload/modelhost-store.js';
 import { ModelHostManifestSchema, type ModelHostManifest } from '../workload/modelhost-schema.js';
 import type { WorkloadKey } from '../../../core/src/workloadRuntime.js';
@@ -43,6 +48,7 @@ export interface StartModelHostOptions {
    * Injectable for tests; defaults to an `lsof`-based lookup.
    */
   findListenerPid?: (endpoint: { host: string; port: number }) => Promise<number | null>;
+  readProcessCommand?: (pid: number) => Promise<string | null> | string | null;
 }
 
 export interface StartModelHostResult {
@@ -239,6 +245,8 @@ async function tryAdoptLiveHost(
   }
   // TOCTOU: the listener may have exited between discovery and now.
   if (!isProcessAlive(livePid)) return null;
+  const readProcessCommand = opts.readProcessCommand ?? defaultReadProcessCommand;
+  const cmdline = await Promise.resolve(readProcessCommand(livePid)).catch(() => null);
   writeModelHostState(
     {
       kind: 'ModelHost',
@@ -248,6 +256,7 @@ async function tryAdoptLiveHost(
       port: endpoint.port,
       modelAliases: Array.from(aliases),
       startedAt: new Date().toISOString(),
+      slotSavePath: typeof cmdline === 'string' ? parseSlotSavePathFromCommand(cmdline) : null,
       specHash: computeModelHostSpecHash(manifest.spec),
     },
     opts.key,
@@ -335,6 +344,8 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   };
 
   const spawn = opts.spawn ?? nodeSpawn;
+  const extraArgsResolved = resolveSlotSavePathArgs(manifest.spec.extraArgs, resolved.LOCAL_AI_RUNTIME_DIR, opts.key.name);
+  spec.extraArgs = extraArgsResolved.args;
   let child: ChildProcess | null = null;
   try {
     await engine.prepareLaunch?.(spec, bootEnv);
@@ -382,6 +393,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
         port: endpoint.port,
         modelAliases,
         startedAt: new Date().toISOString(),
+        slotSavePath: extraArgsResolved.slotSavePath,
         specHash: computeModelHostSpecHash(manifest.spec),
       },
       opts.key,
