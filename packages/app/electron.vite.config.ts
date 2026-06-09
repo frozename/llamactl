@@ -25,15 +25,23 @@ const WORKSPACE_BUNDLE = ['@llamactl/core', '@llamactl/remote', '@nova/contracts
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin({ exclude: WORKSPACE_BUNDLE })],
+    // Bun builtins (imported at module scope by bundled workspace code:
+    // core's kvstore/responsecache storage via openaiProxy, eval's bench
+    // server via agents → mcp tools) must NOT be externalized: in a
+    // CJS-format bundle an external import becomes an eager top-level
+    // require("bun:sqlite"), which Electron's Node main can't resolve —
+    // the app throws during load and no window ever appears. Alias them
+    // to throwing shims instead: loading is harmless, calling throws.
+    resolve: {
+      alias: {
+        'bun:sqlite': resolve('electron/shims/bun-sqlite.ts'),
+        bun: resolve('electron/shims/bun.ts'),
+      },
+    },
     build: {
       rollupOptions: {
         input: { index: resolve('electron/main.ts') },
-        // `bun` / `bun:sqlite` are Bun runtime builtins, not bundleable npm
-        // modules — externalize them like `electron` / `node:*`. Bundled
-        // workspace code (the eval harness, core's kv/responsecache stores,
-        // the fleet-supervisor aggregator) imports them, but those paths
-        // never execute under Electron's non-Bun runtime.
-        external: ['electron', /^bun(:.*)?$/],
+        external: ['electron'],
         output: {
           format: 'cjs',
           entryFileNames: '[name].cjs',
@@ -44,15 +52,17 @@ export default defineConfig({
   },
   preload: {
     plugins: [externalizeDepsPlugin({ exclude: WORKSPACE_BUNDLE })],
+    // Same Bun-builtin shims as the main config — see the comment there.
+    resolve: {
+      alias: {
+        'bun:sqlite': resolve('electron/shims/bun-sqlite.ts'),
+        bun: resolve('electron/shims/bun.ts'),
+      },
+    },
     build: {
       rollupOptions: {
         input: { index: resolve('electron/preload.ts') },
-        // `bun` / `bun:sqlite` are Bun runtime builtins, not bundleable npm
-        // modules — externalize them like `electron` / `node:*`. Bundled
-        // workspace code (the eval harness, core's kv/responsecache stores,
-        // the fleet-supervisor aggregator) imports them, but those paths
-        // never execute under Electron's non-Bun runtime.
-        external: ['electron', /^bun(:.*)?$/],
+        external: ['electron'],
         output: {
           format: 'cjs',
           entryFileNames: '[name].cjs',
