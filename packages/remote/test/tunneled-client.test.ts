@@ -41,6 +41,7 @@ describe("proxyFromTunnel — via createNodeClient", () => {
   test("query routes through the tunnel and resolves with result", async () => {
     const sent: { id: string; method: string; params: unknown }[] = [];
     const send: TunnelSendFn = async (req) => {
+      await Promise.resolve();
       sent.push(req);
       if (req.method === "catalog.list") {
         return { id: req.id, result: [{ rel: "a" }, { rel: "b" }] };
@@ -51,8 +52,9 @@ describe("proxyFromTunnel — via createNodeClient", () => {
       nodeName: "gpu1",
       tunnelSend: send,
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
     const catalog = (client as any).catalog;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
     const result = await catalog.list.query({ classFilter: "all" });
     expect(result).toEqual([{ rel: "a" }, { rel: "b" }]);
     expect(sent).toHaveLength(1);
@@ -66,6 +68,7 @@ describe("proxyFromTunnel — via createNodeClient", () => {
   test("mutation uses type:mutation on the tunnel frame", async () => {
     const sent: { method: string; params: unknown }[] = [];
     const send: TunnelSendFn = async (req) => {
+      await Promise.resolve();
       sent.push({ method: req.method, params: req.params });
       return { id: req.id, result: { ok: true } };
     };
@@ -73,7 +76,7 @@ describe("proxyFromTunnel — via createNodeClient", () => {
       nodeName: "gpu1",
       tunnelSend: send,
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
     const result = await (client as any).catalog.promote.mutate({ rel: "foo.gguf" });
     expect(result).toEqual({ ok: true });
     expect(sent[0]!.params).toEqual({
@@ -83,21 +86,22 @@ describe("proxyFromTunnel — via createNodeClient", () => {
   });
 
   test("error frame surfaces as a thrown Error with .code", async () => {
-    const send: TunnelSendFn = async (req) => ({
-      id: req.id,
-      error: { code: "handler-threw", message: "simulated failure" },
-    });
+    const send: TunnelSendFn = (req) =>
+      Promise.resolve({
+        id: req.id,
+        error: { code: "handler-threw", message: "simulated failure" },
+      });
     const client = createNodeClient(baseConfig(), {
       nodeName: "gpu1",
       tunnelSend: send,
     });
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
       await (client as any).anything.query(null);
       throw new Error("expected throw");
     } catch (err) {
       expect((err as Error).message).toBe("simulated failure");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
       expect((err as any).code).toBe("handler-threw");
     }
   });
@@ -105,6 +109,7 @@ describe("proxyFromTunnel — via createNodeClient", () => {
   test("deep dotted paths are respected (nested.namespace.method)", async () => {
     const sent: string[] = [];
     const send: TunnelSendFn = async (req) => {
+      await Promise.resolve();
       sent.push(req.method);
       return { id: req.id, result: null };
     };
@@ -112,28 +117,30 @@ describe("proxyFromTunnel — via createNodeClient", () => {
       nodeName: "gpu1",
       tunnelSend: send,
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
     await (client as any).deeply.nested.procedure.query({ x: 1 });
     expect(sent).toEqual(["deeply.nested.procedure"]);
   });
 
   test("subscribe throws when tunnelSubscribe dispatcher is absent", async () => {
-    const send: TunnelSendFn = async () => ({ id: "x" });
+    await Promise.resolve();
+    const send: TunnelSendFn = () => Promise.resolve({ id: "x" });
     const client = createNodeClient(baseConfig(), {
       nodeName: "gpu1",
       tunnelSend: send,
     });
     expect(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
       (client as any).pullFile.subscribe(
         { repo: "r", file: "f" },
-        { onData: () => {}, onError: () => {}, onComplete: () => {} },
+        { onData: () => undefined, onError: () => undefined, onComplete: () => undefined },
       );
     }).toThrow(/requires a tunnelSubscribe dispatcher/);
   });
 
   test("subscribe forwards to tunnelSubscribe when wired (Slice B)", async () => {
-    const send: TunnelSendFn = async () => ({ id: "x" });
+    await Promise.resolve();
+    const send: TunnelSendFn = () => Promise.resolve({ id: "x" });
     const calls: { method: string; input: unknown }[] = [];
     const tunnelSubscribe = (
       method: string,
@@ -156,18 +163,21 @@ describe("proxyFromTunnel — via createNodeClient", () => {
       tunnelSend: send,
       tunnelSubscribe,
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
     const handle = (client as any).pullFile.subscribe(
       { repo: "a", file: "b" },
-      { onData: () => {}, onError: () => {}, onComplete: () => {} },
+      { onData: () => undefined, onError: () => undefined, onComplete: () => undefined },
     );
     expect(calls).toEqual([{ method: "pullFile", input: { repo: "a", file: "b" } }]);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
     expect(typeof handle.unsubscribe).toBe("function");
   });
 
   test("tunnelPreferred=false → tunnel bypassed even if send is provided", async () => {
+    await Promise.resolve();
     let calls = 0;
     const send: TunnelSendFn = async (req) => {
+      await Promise.resolve();
       calls++;
       return { id: req.id, result: null };
     };
@@ -182,6 +192,7 @@ describe("proxyFromTunnel — via createNodeClient", () => {
   });
 
   test("tunnelPreferred=true but tunnelSend omitted → falls through to HTTP proxy", async () => {
+    await Promise.resolve();
     const cfg = baseConfig({ tunnelPreferred: true });
     const client = createNodeClient(cfg, { nodeName: "gpu1" });
     expect(client).toBeDefined();

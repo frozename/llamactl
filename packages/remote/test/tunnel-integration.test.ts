@@ -42,7 +42,7 @@ function bootAgentWithTunnel(): AgentHandle {
     tunnelBearer,
     baseUrl: agent.url,
     port: agent.port,
-    wsUrl: `ws://127.0.0.1:${agent.port}/tunnel`,
+    wsUrl: `ws://127.0.0.1:${String(agent.port)}/tunnel`,
   };
 }
 
@@ -51,7 +51,7 @@ async function waitFor(check: () => boolean, timeoutMs = 2000, intervalMs = 10):
   for (;;) {
     if (check()) return;
     if (Date.now() - start > timeoutMs) {
-      throw new Error(`waitFor timed out after ${timeoutMs}ms`);
+      throw new Error(`waitFor timed out after ${String(timeoutMs)}ms`);
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
@@ -63,7 +63,7 @@ beforeEach(() => {
   handles = [];
 });
 afterEach(async () => {
-  for (const h of handles) await h.agent.stop().catch(() => {});
+  for (const h of handles) await h.agent.stop().catch(() => undefined);
   handles = [];
 });
 
@@ -100,7 +100,7 @@ describe("startAgentServer with tunnelCentral", () => {
       };
       ws.onerror = (err) => {
         clearTimeout(timer);
-        reject(err);
+        reject(err instanceof Error ? err : new Error("websocket error"));
       };
     });
     expect(ackSeen).toBe(true);
@@ -121,6 +121,7 @@ describe("startAgentServer with tunnelCentral", () => {
       bearer: h.tunnelBearer,
       nodeName: "gpu-alpha",
       handleRequest: async (req) => {
+        await Promise.resolve();
         seen.push(req);
         return "ok";
       },
@@ -220,7 +221,7 @@ describe("startAgentServer without tunnelCentral", () => {
       tunnelBearer: "",
       baseUrl: agent.url,
       port: agent.port,
-      wsUrl: `ws://127.0.0.1:${agent.port}/tunnel`,
+      wsUrl: `ws://127.0.0.1:${String(agent.port)}/tunnel`,
     });
 
     expect(agent.tunnelServer).toBeUndefined();

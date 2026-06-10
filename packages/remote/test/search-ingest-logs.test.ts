@@ -18,10 +18,11 @@ describe("logs ingest", () => {
   test("emits one record per non-empty line", async () => {
     const path = join(tmp, "a.log");
     writeFileSync(path, "line one\nline two\nline three\n", "utf8");
-    const seen: any[] = [];
+    const seen: { content: string }[] = [];
     const stop = startLogsIngest({
       files: [{ label: "a", path }],
       sink: async (records) => {
+        await Promise.resolve();
         seen.push(...records);
       },
       pollMs: 30,
@@ -34,10 +35,11 @@ describe("logs ingest", () => {
   test("tails appended content on next poll", async () => {
     const path = join(tmp, "b.log");
     writeFileSync(path, "first\n", "utf8");
-    const seen: any[] = [];
+    const seen: { content: string }[] = [];
     const stop = startLogsIngest({
       files: [{ label: "b", path }],
       sink: async (records) => {
+        await Promise.resolve();
         seen.push(...records);
       },
       pollMs: 20,

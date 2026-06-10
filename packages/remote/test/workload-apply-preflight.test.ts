@@ -46,6 +46,7 @@ function makeMockClient(
   return {
     serverStatus: {
       async query() {
+        await Promise.resolve();
         trace.serverStatusCalls.push(nodeName);
         return {
           state: "down",
@@ -61,6 +62,7 @@ function makeMockClient(
     },
     serverStop: {
       async mutate() {
+        await Promise.resolve();
         trace.serverStopCalls.push(nodeName);
         return { stopped: true };
       },
@@ -75,7 +77,11 @@ function makeMockClient(
           });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return {
+          unsubscribe() {
+            return undefined;
+          },
+        };
       },
     },
     modelHostStart: {
@@ -84,16 +90,22 @@ function makeMockClient(
           callbacks.onData({ type: "done", result: { ok: true } });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return {
+          unsubscribe() {
+            return undefined;
+          },
+        };
       },
     },
     modelHostStop: {
       async mutate() {
+        await Promise.resolve();
         return { ok: true };
       },
     },
     modelHostStatus: {
       async query() {
+        await Promise.resolve();
         return { state: "Stopped", pid: null };
       },
     },
@@ -107,17 +119,23 @@ function makeMockClient(
           });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return {
+          unsubscribe() {
+            return undefined;
+          },
+        };
       },
     },
     rpcServerStop: {
       async mutate() {
+        await Promise.resolve();
         trace.rpcServerStopCalls.push(nodeName);
         return { stopped: true };
       },
     },
     rpcServerDoctor: {
       async query() {
+        await Promise.resolve();
         trace.rpcServerDoctorCalls.push(nodeName);
         return doctorResult;
       },
@@ -321,6 +339,7 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
     const getClient = (node: string): WorkloadClient => ({
       serverStatus: {
         async query() {
+          await Promise.resolve();
           trace.serverStatusCalls.push(node);
           return {
             state: "up",
@@ -336,6 +355,7 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
       },
       serverStop: {
         async mutate() {
+          await Promise.resolve();
           trace.serverStopCalls.push(node);
           return { stopped: true };
         },
@@ -350,7 +370,11 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
             });
             callbacks.onComplete();
           });
-          return { unsubscribe() {} };
+          return {
+            unsubscribe() {
+              return undefined;
+            },
+          };
         },
       },
       modelHostStart: {
@@ -359,16 +383,22 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
             callbacks.onData({ type: "done", result: { ok: true } });
             callbacks.onComplete();
           });
-          return { unsubscribe() {} };
+          return {
+            unsubscribe() {
+              return undefined;
+            },
+          };
         },
       },
       modelHostStop: {
         async mutate() {
+          await Promise.resolve();
           return {};
         },
       },
       modelHostStatus: {
         async query() {
+          await Promise.resolve();
           return { state: "Stopped", pid: null };
         },
       },
@@ -382,17 +412,23 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
             });
             callbacks.onComplete();
           });
-          return { unsubscribe() {} };
+          return {
+            unsubscribe() {
+              return undefined;
+            },
+          };
         },
       },
       rpcServerStop: {
         async mutate() {
+          await Promise.resolve();
           trace.rpcServerStopCalls.push(node);
           return { stopped: true };
         },
       },
       rpcServerDoctor: {
         async query() {
+          await Promise.resolve();
           trace.rpcServerDoctorCalls.push(node);
           return {
             ok: true,

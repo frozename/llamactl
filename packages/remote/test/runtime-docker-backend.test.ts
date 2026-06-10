@@ -15,6 +15,20 @@ import { LABEL_KEYS, MANAGED_BY_VALUE } from "../src/runtime/labels.js";
  * `LLAMACTL_COMPOSITE_E2E=1`.
  */
 
+async function rejectionOf(promise: PromiseLike<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected rejection");
+}
+
+function expectErrorMessage(err: unknown, expected: RegExp): void {
+  expect(err).toBeInstanceOf(Error);
+  expect((err as Error).message).toMatch(expected);
+}
+
 interface Recorded {
   url: string;
   method: string;
@@ -32,12 +46,15 @@ type Responder = (req: Recorded) => MockResponse;
 
 function makeMockFetch(responder: Responder, recorded: Recorded[]): typeof fetch {
   const impl = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    await Promise.resolve();
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const body = init?.body ? String(init.body) : undefined;
+    const body =
+      typeof init?.body === "string" || init?.body instanceof URLSearchParams
+        ? init.body.toString()
+        : undefined;
     const method = init?.method ?? "GET";
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const unix = (init as any)?.unix as string | undefined;
+    const unix = (init as RequestInit & { unix?: string }).unix;
     const rec: Recorded = { url, method, body, unix };
     recorded.push(rec);
     const r = responder(rec);
@@ -45,7 +62,7 @@ function makeMockFetch(responder: Responder, recorded: Recorded[]): typeof fetch
   };
   // Bun's fetch type requires a `preconnect` method. Tests don't need
   // it — shim as a no-op so the cast typechecks cleanly.
-  (impl as unknown as { preconnect: (url: string) => void }).preconnect = () => {};
+  (impl as unknown as { preconnect: (url: string) => void }).preconnect = () => undefined;
   return impl as unknown as typeof fetch;
 }
 
@@ -109,10 +126,11 @@ describe("DockerBackend.ping", () => {
 
   test("ping surfaces backend-unreachable on transport failure", async () => {
     const rejectingFetch = (async () => {
+      await Promise.resolve();
       throw new Error("ENOENT: no such socket");
     }) as unknown as typeof fetch;
     const backend = new DockerBackend({ fetch: rejectingFetch });
-    await expect(backend.ping()).rejects.toThrow(/unreachable/);
+    expectErrorMessage(await rejectionOf(backend.ping()), /unreachable/);
   });
 
   test("ping surfaces backend-unreachable on 500", async () => {
@@ -122,7 +140,7 @@ describe("DockerBackend.ping", () => {
         [],
       ),
     });
-    await expect(backend.ping()).rejects.toThrow(/docker ping failed/);
+    expectErrorMessage(await rejectionOf(backend.ping()), /docker ping failed/);
   });
 });
 
@@ -250,9 +268,12 @@ describe("DockerBackend.ensureService — validation", () => {
     const backend = new DockerBackend({
       fetch: makeMockFetch(() => ({ status: 200, body: "{}" }), []),
     });
-    await expect(
-      backend.ensureService(sampleSpec({ image: { repository: "chromadb/chroma", tag: "" } })),
-    ).rejects.toThrow(/image\.tag is required/);
+    expectErrorMessage(
+      await rejectionOf(
+        backend.ensureService(sampleSpec({ image: { repository: "chromadb/chroma", tag: "" } })),
+      ),
+      /image\.tag is required/,
+    );
   });
 });
 
@@ -317,14 +338,17 @@ describe("DockerBackend.ensureService — secrets", () => {
       hostOs: "linux",
     });
 
-    await expect(
-      backend.ensureService({
-        ...sampleSpec(),
-        secrets: {
-          POSTGRES_PASSWORD: { ref: "env:DOCKER_BACKEND_TEST_MISSING" },
-        },
-      }),
-    ).rejects.toThrow(/DOCKER_BACKEND_TEST_MISSING/);
+    expectErrorMessage(
+      await rejectionOf(
+        backend.ensureService({
+          ...sampleSpec(),
+          secrets: {
+            POSTGRES_PASSWORD: { ref: "env:DOCKER_BACKEND_TEST_MISSING" },
+          },
+        }),
+      ),
+      /DOCKER_BACKEND_TEST_MISSING/,
+    );
   });
 });
 
@@ -350,17 +374,18 @@ describe("DockerBackend.ensureService — configMap mounts rejected", () => {
       hostOs: "linux",
     });
 
-    await expect(
-      backend.ensureService({
-        ...sampleSpec(),
-        volumes: [
-          {
-            configMap: { name: "sirius-config", data: { "a.yaml": "x" } },
-            containerPath: "/config",
-          },
-        ],
-      }),
-    ).rejects.toThrow(
+    expectErrorMessage(
+      await rejectionOf(
+        backend.ensureService({
+          ...sampleSpec(),
+          volumes: [
+            {
+              configMap: { name: "sirius-config", data: { "a.yaml": "x" } },
+              containerPath: "/config",
+            },
+          ],
+        }),
+      ),
       /volumes\[0\]: configMap mounts require runtime: kubernetes; use hostPath or name for docker/,
     );
   });
@@ -393,7 +418,8 @@ describe("DockerBackend.pullImage — NDJSON parsing", () => {
         [],
       ),
     });
-    await expect(backend.pullImage({ repository: "example/nope", tag: "bogus" })).rejects.toThrow(
+    expectErrorMessage(
+      await rejectionOf(backend.pullImage({ repository: "example/nope", tag: "bogus" })),
       /manifest unknown/,
     );
   });
@@ -405,9 +431,9 @@ describe("DockerBackend.pullImage — NDJSON parsing", () => {
         [],
       ),
     });
-    await expect(backend.pullImage({ repository: "example/nope", tag: "bogus" })).rejects.toThrow(
-      RuntimeError,
-    );
+    expect(
+      await rejectionOf(backend.pullImage({ repository: "example/nope", tag: "bogus" })),
+    ).toBeInstanceOf(RuntimeError);
   });
 });
 
@@ -431,7 +457,10 @@ describe("DockerBackend — platform-mismatch", () => {
       hostArch: "arm64",
       hostOs: "linux",
     });
-    await expect(backend.ensureService(sampleSpec())).rejects.toThrow(/linux\/amd64.*arm64/);
+    expectErrorMessage(
+      await rejectionOf(backend.ensureService(sampleSpec())),
+      /linux\/amd64.*arm64/,
+    );
   });
 });
 

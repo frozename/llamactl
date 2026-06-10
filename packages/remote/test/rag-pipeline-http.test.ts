@@ -22,6 +22,7 @@ interface FakeServer {
 }
 
 async function startFakeSite(opts: ServerOptions): Promise<FakeServer> {
+  await Promise.resolve();
   const calls: FakeServer["calls"] = [];
 
   const server = (
@@ -36,6 +37,7 @@ async function startFakeSite(opts: ServerOptions): Promise<FakeServer> {
     port: 0,
     hostname: "127.0.0.1",
     async fetch(req: Request) {
+      await Promise.resolve();
       const url = new URL(req.url);
       calls.push({
         method: req.method,
@@ -66,7 +68,7 @@ async function startFakeSite(opts: ServerOptions): Promise<FakeServer> {
     },
   });
   return {
-    origin: `http://127.0.0.1:${server.port}`,
+    origin: `http://127.0.0.1:${String(server.port)}`,
     calls,
     stop: async () => {
       await server.stop(true);

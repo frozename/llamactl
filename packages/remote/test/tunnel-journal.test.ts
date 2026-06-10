@@ -48,7 +48,7 @@ async function waitForEntries(
     if (predicate(entries)) return entries;
     if (Date.now() - start > timeoutMs) {
       throw new Error(
-        `waitForEntries timed out after ${timeoutMs}ms; saw ${JSON.stringify(entries)}`,
+        `waitForEntries timed out after ${String(timeoutMs)}ms; saw ${JSON.stringify(entries)}`,
       );
     }
     await new Promise((r) => setTimeout(r, intervalMs));
@@ -165,7 +165,7 @@ describe("appendTunnelJournal broken-path handling (unit)", () => {
     // Swap stderr.write for the scope of this test. Tests must not
     // pollute stderr in the test runner output, AND we need to count
     // writes.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
     (process.stderr as any).write = (chunk: string | Uint8Array): boolean => {
       captured.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
       return true;
@@ -197,7 +197,7 @@ describe("appendTunnelJournal broken-path handling (unit)", () => {
         expect(captured.join("")).toContain("entries dropped");
       }
     } finally {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
       (process.stderr as any).write = origWrite;
     }
   });
@@ -234,7 +234,7 @@ function bootAgentWithTunnel(journalDir: string): AgentHandle {
     tunnelBearer,
     baseUrl: agent.url,
     port: agent.port,
-    wsUrl: `ws://127.0.0.1:${agent.port}/tunnel`,
+    wsUrl: `ws://127.0.0.1:${String(agent.port)}/tunnel`,
     journalPath,
   };
 }
@@ -244,7 +244,7 @@ async function waitFor(check: () => boolean, timeoutMs = 2000, intervalMs = 10):
   for (;;) {
     if (check()) return;
     if (Date.now() - start > timeoutMs) {
-      throw new Error(`waitFor timed out after ${timeoutMs}ms`);
+      throw new Error(`waitFor timed out after ${String(timeoutMs)}ms`);
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
@@ -259,7 +259,7 @@ describe("tunnel journal — integration", () => {
     journalDir = mkdtempSync(join(tmpdir(), "tunnel-journal-int-"));
   });
   afterEach(async () => {
-    for (const h of handles) await h.agent.stop().catch(() => {});
+    for (const h of handles) await h.agent.stop().catch(() => undefined);
     handles = [];
     rmSync(journalDir, { recursive: true, force: true });
   });
@@ -272,7 +272,7 @@ describe("tunnel journal — integration", () => {
       url: h.wsUrl,
       bearer: h.tunnelBearer,
       nodeName: "gpu-alpha",
-      handleRequest: async () => "ok",
+      handleRequest: () => Promise.resolve("ok"),
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
     });
     await tunnelClient.start();
@@ -317,7 +317,7 @@ describe("tunnel journal — integration", () => {
       url: h.wsUrl,
       bearer: h.tunnelBearer,
       nodeName: "gpu-alpha",
-      handleRequest: async () => ({ secret: SECRET_RESULT_MARKER }),
+      handleRequest: () => Promise.resolve({ secret: SECRET_RESULT_MARKER }),
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
     });
     await tunnelClient.start();
@@ -436,7 +436,7 @@ describe("tunnel journal — integration", () => {
       url: h.wsUrl,
       bearer: h.tunnelBearer,
       nodeName: "gpu-dup",
-      handleRequest: async () => "a",
+      handleRequest: () => Promise.resolve("a"),
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
     });
     await clientA.start();
@@ -450,7 +450,7 @@ describe("tunnel journal — integration", () => {
       url: h.wsUrl,
       bearer: h.tunnelBearer,
       nodeName: "gpu-dup",
-      handleRequest: async () => "b",
+      handleRequest: () => Promise.resolve("b"),
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
     });
     await clientB.start();

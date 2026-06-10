@@ -11,6 +11,15 @@ import { loadWorkload } from "../src/workload/store.js";
 
 let dir: string;
 
+async function rejectionOf(promise: PromiseLike<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected rejection");
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "llamactl-serve-"));
 });
@@ -121,7 +130,7 @@ describe("startAgentServer (TLS, pinned cert)", () => {
 
   test("client without CA fails TLS (self-signed cert not trusted)", async () => {
     const client = createRemoteNodeClient({ url: server.url, token });
-    await expect(client.env.query()).rejects.toThrow();
+    expect(await rejectionOf(client.env.query())).toBeInstanceOf(Error);
   });
 
   test("valid CA + bad token → UNAUTHORIZED", async () => {
@@ -143,7 +152,7 @@ describe("startAgentServer (TLS, pinned cert)", () => {
       // "unauthorized" plain text, not a tRPC error envelope). We just
       // assert the call rejects — the 401 is validated by direct fetch
       // tests above.
-      await expect(client.env.query()).rejects.toThrow();
+      expect(await rejectionOf(client.env.query())).toBeInstanceOf(Error);
     } finally {
       await srv2.stop();
     }
@@ -179,7 +188,7 @@ describe("startAgentServer migration bootstrap", () => {
 
   afterEach(() => {
     for (const key of ["DEV_STORAGE", "LOCAL_AI_RUNTIME_DIR"]) {
-      if (originalEnv[key] === undefined) delete process.env[key];
+      if (originalEnv[key] === undefined) Reflect.deleteProperty(process.env, key);
       else process.env[key] = originalEnv[key]!;
     }
   });

@@ -115,19 +115,19 @@ describe("translateToStatefulSet — pgvector-shaped happy path", () => {
   });
 
   test('pod template carries a single container named "container" with correct image', () => {
-    const containers = statefulSet.spec?.template.spec?.containers ?? [];
+    const containers = statefulSet.spec!.template.spec!.containers;
     expect(containers).toHaveLength(1);
     expect(containers[0]?.name).toBe("container");
     expect(containers[0]?.image).toBe("pgvector/pgvector:0.8.2-pg18-trixie");
   });
 
   test("container ports mapped with protocol UPPERCASED", () => {
-    const ports = statefulSet.spec?.template.spec?.containers?.[0]?.ports ?? [];
+    const ports = statefulSet.spec!.template.spec!.containers[0]!.ports ?? [];
     expect(ports).toEqual([{ containerPort: 5432, protocol: "TCP" }]);
   });
 
   test("env: static entries first, then secretKeyRef entries", () => {
-    const env = statefulSet.spec?.template.spec?.containers?.[0]?.env ?? [];
+    const env = statefulSet.spec!.template.spec!.containers[0]!.env ?? [];
     expect(env).toEqual([
       { name: "POSTGRES_DB", value: "kb" },
       { name: "POSTGRES_USER", value: "llamactl" },
@@ -144,7 +144,7 @@ describe("translateToStatefulSet — pgvector-shaped happy path", () => {
   });
 
   test("livenessProbe translated from healthcheck (ms → seconds, test[1..])", () => {
-    const probe = statefulSet.spec?.template.spec?.containers?.[0]?.livenessProbe;
+    const probe = statefulSet.spec!.template.spec!.containers[0]!.livenessProbe;
     expect(probe).toEqual({
       exec: { command: ["pg_isready", "-U", "llamactl"] },
       periodSeconds: 10,
@@ -165,7 +165,7 @@ describe("translateToStatefulSet — pgvector-shaped happy path", () => {
   });
 
   test("container volumeMounts align with volumeClaimTemplates 1:1", () => {
-    const mounts = statefulSet.spec?.template.spec?.containers?.[0]?.volumeMounts ?? [];
+    const mounts = statefulSet.spec!.template.spec!.containers[0]!.volumeMounts ?? [];
     expect(mounts).toEqual([{ name: "data-0", mountPath: "/var/lib/postgresql/data" }]);
   });
 
@@ -234,7 +234,7 @@ describe("translateToStatefulSet — secrets variations", () => {
       resolvedSecrets: {},
     });
     expect(secret).toBeNull();
-    const env = statefulSet.spec?.template.spec?.containers?.[0]?.env ?? [];
+    const env = statefulSet.spec!.template.spec!.containers[0]!.env ?? [];
     expect(env.every((e) => e.valueFrom === undefined)).toBe(true);
   });
 
@@ -264,7 +264,7 @@ describe("translateToStatefulSet — secrets variations", () => {
       POSTGRES_PASSWORD: Buffer.from("hunter2", "utf8").toString("base64"),
       REPLICATION_TOKEN: Buffer.from("abc123", "utf8").toString("base64"),
     });
-    const env = statefulSet.spec?.template.spec?.containers?.[0]?.env ?? [];
+    const env = statefulSet.spec!.template.spec!.containers[0]!.env ?? [];
     const refs = env.filter((e) => e.valueFrom !== undefined);
     expect(refs).toHaveLength(2);
     const names = refs.map((e) => e.name).sort();
@@ -291,7 +291,7 @@ describe("translateToStatefulSet — healthcheck edge cases", () => {
     const spec = pgvectorSpec();
     delete spec.healthcheck;
     const { statefulSet } = translateToStatefulSet(spec, baseOpts);
-    expect(statefulSet.spec?.template.spec?.containers?.[0]?.livenessProbe).toBeUndefined();
+    expect(statefulSet.spec!.template.spec!.containers[0]!.livenessProbe).toBeUndefined();
   });
 
   test("healthcheck with startPeriodMs → initialDelaySeconds (ms → seconds)", () => {
@@ -304,7 +304,7 @@ describe("translateToStatefulSet — healthcheck edge cases", () => {
       }),
       baseOpts,
     );
-    const probe = statefulSet.spec?.template.spec?.containers?.[0]?.livenessProbe;
+    const probe = statefulSet.spec!.template.spec!.containers[0]!.livenessProbe;
     expect(probe?.initialDelaySeconds).toBe(15);
     expect(probe?.exec?.command).toEqual(["pg_isready"]);
   });
@@ -316,7 +316,7 @@ describe("translateToStatefulSet — healthcheck edge cases", () => {
       }),
       baseOpts,
     );
-    const probe = statefulSet.spec?.template.spec?.containers?.[0]?.livenessProbe;
+    const probe = statefulSet.spec!.template.spec!.containers[0]!.livenessProbe;
     expect(probe?.periodSeconds).toBeGreaterThanOrEqual(1);
     expect(probe?.timeoutSeconds).toBeGreaterThanOrEqual(1);
   });
@@ -328,7 +328,7 @@ describe("translateToStatefulSet — volumes variations", () => {
     delete spec.volumes;
     const { statefulSet } = translateToStatefulSet(spec, baseOpts);
     expect(statefulSet.spec?.volumeClaimTemplates).toBeUndefined();
-    expect(statefulSet.spec?.template.spec?.containers?.[0]?.volumeMounts).toBeUndefined();
+    expect(statefulSet.spec!.template.spec!.containers[0]!.volumeMounts).toBeUndefined();
   });
 
   test("named volume → template.metadata.name = v.name, mount uses same name", () => {
@@ -337,7 +337,7 @@ describe("translateToStatefulSet — volumes variations", () => {
     });
     const { statefulSet } = translateToStatefulSet(spec, baseOpts);
     const templates = statefulSet.spec?.volumeClaimTemplates ?? [];
-    const mounts = statefulSet.spec?.template.spec?.containers?.[0]?.volumeMounts ?? [];
+    const mounts = statefulSet.spec!.template.spec!.containers[0]!.volumeMounts ?? [];
     expect(templates[0]?.metadata?.name).toBe("pgdata");
     expect(mounts[0]?.name).toBe("pgdata");
     expect(mounts[0]?.mountPath).toBe("/var/lib/postgresql/data");
@@ -352,7 +352,7 @@ describe("translateToStatefulSet — volumes variations", () => {
     });
     const { statefulSet } = translateToStatefulSet(spec, baseOpts);
     const templates = statefulSet.spec?.volumeClaimTemplates ?? [];
-    const mounts = statefulSet.spec?.template.spec?.containers?.[0]?.volumeMounts ?? [];
+    const mounts = statefulSet.spec!.template.spec!.containers[0]!.volumeMounts ?? [];
     expect(templates.map((t) => t.metadata?.name)).toEqual(["pgdata", "data-1"]);
     expect(mounts.map((m) => m.name)).toEqual(["pgdata", "data-1"]);
   });
@@ -362,7 +362,7 @@ describe("translateToStatefulSet — volumes variations", () => {
       volumes: [{ name: "ro", containerPath: "/ro", readOnly: true }],
     });
     const { statefulSet } = translateToStatefulSet(spec, baseOpts);
-    const mounts = statefulSet.spec?.template.spec?.containers?.[0]?.volumeMounts ?? [];
+    const mounts = statefulSet.spec!.template.spec!.containers[0]!.volumeMounts ?? [];
     expect(mounts[0]?.readOnly).toBe(true);
   });
 
@@ -383,7 +383,7 @@ describe("translateToStatefulSet — volumes variations", () => {
     expect(podVolumes).toHaveLength(1);
     expect(podVolumes[0]?.configMap?.name).toBe("pg-config");
     // Container mounts it at the declared containerPath.
-    const mounts = statefulSet.spec?.template.spec?.containers?.[0]?.volumeMounts ?? [];
+    const mounts = statefulSet.spec!.template.spec!.containers[0]!.volumeMounts ?? [];
     expect(mounts).toHaveLength(1);
     expect(mounts[0]?.mountPath).toBe("/etc/pg");
     expect(mounts[0]?.name).toBe(podVolumes[0]?.name);
@@ -395,7 +395,7 @@ describe("translateToStatefulSet — ports variations", () => {
     const spec = pgvectorSpec();
     delete spec.ports;
     const { statefulSet, headlessService, service } = translateToStatefulSet(spec, baseOpts);
-    expect(statefulSet.spec?.template.spec?.containers?.[0]?.ports).toBeUndefined();
+    expect(statefulSet.spec!.template.spec!.containers[0]!.ports).toBeUndefined();
     expect(headlessService.spec?.ports).toBeUndefined();
     expect(service.spec?.ports).toBeUndefined();
   });

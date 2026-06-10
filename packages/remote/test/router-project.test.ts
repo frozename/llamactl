@@ -21,6 +21,15 @@ import { router } from "../src/router.js";
  * manifest that `projectIndex` auto-wires.
  */
 
+async function rejectionOf(promise: PromiseLike<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected rejection");
+}
+
 const originalEnv = { ...process.env };
 let tmp = "";
 let projectsPath = "";
@@ -39,7 +48,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
 });
 
@@ -85,9 +94,11 @@ describe("projectApply", () => {
 
   test("invalid YAML → BAD_REQUEST", async () => {
     const caller = router.createCaller({});
-    await expect(caller.projectApply({ manifestYaml: "not: [valid\n" })).rejects.toMatchObject({
-      code: "BAD_REQUEST",
-    });
+    expect(await rejectionOf(caller.projectApply({ manifestYaml: "not: [valid\n" }))).toMatchObject(
+      {
+        code: "BAD_REQUEST",
+      },
+    );
   });
 
   test("schema-invalid (missing path) → BAD_REQUEST", async () => {
@@ -98,7 +109,7 @@ describe("projectApply", () => {
       metadata: { name: "bad" },
       spec: {},
     });
-    await expect(caller.projectApply({ manifestYaml: bad })).rejects.toMatchObject({
+    expect(await rejectionOf(caller.projectApply({ manifestYaml: bad }))).toMatchObject({
       code: "BAD_REQUEST",
     });
   });
@@ -124,7 +135,9 @@ describe("projectList", () => {
 describe("projectGet", () => {
   test("NOT_FOUND when absent", async () => {
     const caller = router.createCaller({});
-    await expect(caller.projectGet({ name: "ghost" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(await rejectionOf(caller.projectGet({ name: "ghost" }))).toMatchObject({
+      code: "NOT_FOUND",
+    });
   });
 
   test("returns the full manifest when present", async () => {
@@ -166,7 +179,7 @@ describe("projectRemove", () => {
 describe("projectIndex", () => {
   test("NOT_FOUND when project is absent", async () => {
     const caller = router.createCaller({});
-    await expect(caller.projectIndex({ name: "ghost" })).rejects.toMatchObject({
+    expect(await rejectionOf(caller.projectIndex({ name: "ghost" }))).toMatchObject({
       code: "NOT_FOUND",
     });
   });
@@ -177,7 +190,7 @@ describe("projectIndex", () => {
     await caller.projectApply({
       manifestYaml: manifestYaml("norag", { rag: undefined }),
     });
-    await expect(caller.projectIndex({ name: "norag" })).rejects.toMatchObject({
+    expect(await rejectionOf(caller.projectIndex({ name: "norag" }))).toMatchObject({
       code: "BAD_REQUEST",
     });
   });
@@ -249,9 +262,9 @@ describe("projectIndex", () => {
 describe("projectResolveRouting", () => {
   test("NOT_FOUND when project is absent", async () => {
     const caller = router.createCaller({});
-    await expect(
-      caller.projectResolveRouting({ project: "ghost", taskKind: "quick_qna" }),
-    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(
+      await rejectionOf(caller.projectResolveRouting({ project: "ghost", taskKind: "quick_qna" })),
+    ).toMatchObject({ code: "NOT_FOUND" });
   });
 
   test("returns the declared target when policy matches", async () => {

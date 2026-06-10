@@ -53,7 +53,7 @@ describe("pgvectorHandler.validate", () => {
         pgvectorHandler.validate(spec({ passwordEnv: ENV_KEY }));
       }).not.toThrow();
     } finally {
-      delete process.env[ENV_KEY];
+      Reflect.deleteProperty(process.env, ENV_KEY);
     }
   });
 
@@ -61,7 +61,7 @@ describe("pgvectorHandler.validate", () => {
     // Handlers are pure. The missing-env error is surfaced by the
     // backend's unified secret resolver at apply time; covered in
     // runtime-docker-backend.test.ts.
-    delete process.env[ENV_KEY];
+    Reflect.deleteProperty(process.env, ENV_KEY);
     expect(() => {
       pgvectorHandler.validate(spec({ passwordEnv: ENV_KEY }));
     }).not.toThrow();
@@ -130,7 +130,7 @@ describe("pgvectorHandler.toDeployment", () => {
     process.env[ENV_KEY] = "secret123";
   });
   afterEach(() => {
-    delete process.env[ENV_KEY];
+    Reflect.deleteProperty(process.env, ENV_KEY);
   });
 
   test("returns null for runtime=external", () => {
@@ -187,7 +187,7 @@ describe("pgvectorHandler.toDeployment", () => {
     // time. The backend's secret resolver handles the env lookup at
     // apply time, so the missing-env error surfaces from the backend
     // layer — covered in the runtime-docker-backend tests.
-    delete process.env[ENV_KEY];
+    Reflect.deleteProperty(process.env, ENV_KEY);
     const d = pgvectorHandler.toDeployment(spec({ passwordEnv: ENV_KEY }), {
       compositeName: "demo",
     });

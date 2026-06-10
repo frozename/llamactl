@@ -16,16 +16,26 @@ import { RagError } from "../src/rag/errors.js";
  * nodes / stand up an OpenAI-compat client.
  */
 
+async function rejectionOf(promise: PromiseLike<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected rejection");
+}
+
 function stubProvider(overrides: Partial<AiProvider> = {}): AiProvider {
   const base: AiProvider = {
     name: "stub",
-    createResponse: async () => ({
-      id: "x",
-      object: "chat.completion" as const,
-      created: 0,
-      model: "stub",
-      choices: [],
-    }),
+    createResponse: () =>
+      Promise.resolve({
+        id: "x",
+        object: "chat.completion" as const,
+        created: 0,
+        model: "stub",
+        choices: [],
+      }),
   };
   return { ...base, ...overrides };
 }
@@ -47,6 +57,7 @@ describe("createEmbedderFromBinding", () => {
     const received: UnifiedEmbeddingRequest[] = [];
     const provider = stubProvider({
       createEmbeddings: async (req) => {
+        await Promise.resolve();
         received.push(req);
         const texts = Array.isArray(req.input) ? (req.input as string[]) : [req.input];
         return makeResponse(texts.map((_, i) => [i + 1, i + 2]));
@@ -55,7 +66,7 @@ describe("createEmbedderFromBinding", () => {
     const embedder = createEmbedderFromBinding({
       binding: { node: "sirius", model: "test-embedding" },
       config: freshConfig(),
-      buildProvider: async () => provider,
+      buildProvider: () => Promise.resolve(provider),
     });
     const out = await embedder(["one", "two"]);
     expect(out).toEqual([
@@ -73,6 +84,7 @@ describe("createEmbedderFromBinding", () => {
       binding: { node: "x", model: "y" },
       config: freshConfig(),
       buildProvider: async () => {
+        await Promise.resolve();
         built++;
         return stubProvider();
       },
@@ -85,21 +97,25 @@ describe("createEmbedderFromBinding", () => {
     const embedder = createEmbedderFromBinding({
       binding: { node: "n", model: "m" },
       config: freshConfig(),
-      buildProvider: async () => stubProvider(), // no createEmbeddings
+      buildProvider: () => Promise.resolve(stubProvider()), // no createEmbeddings
     });
-    await expect(embedder(["x"])).rejects.toThrow(RagError);
+    expect(await rejectionOf(embedder(["x"]))).toBeInstanceOf(RagError);
   });
 
   test("provider error → tool-error", async () => {
+    await Promise.resolve();
     const embedder = createEmbedderFromBinding({
       binding: { node: "n", model: "m" },
       config: freshConfig(),
-      buildProvider: async () =>
-        stubProvider({
+      buildProvider: async () => {
+        await Promise.resolve();
+        return stubProvider({
           createEmbeddings: async () => {
+            await Promise.resolve();
             throw new Error("upstream boom");
           },
-        }),
+        });
+      },
     });
     try {
       await embedder(["x"]);
@@ -115,12 +131,15 @@ describe("createEmbedderFromBinding", () => {
     const embedder = createEmbedderFromBinding({
       binding: { node: "n", model: "m" },
       config: freshConfig(),
-      buildProvider: async () =>
-        stubProvider({
-          createEmbeddings: async () => makeResponse([[1, 2]]), // one vector for two inputs
-        }),
+      buildProvider: async () => {
+        await Promise.resolve();
+        return stubProvider({
+          createEmbeddings: () => Promise.resolve(makeResponse([[1, 2]])), // one vector for two inputs
+        });
+      },
     });
     try {
+      await Promise.resolve();
       await embedder(["a", "b"]);
       throw new Error("expected throw");
     } catch (err) {
@@ -133,14 +152,19 @@ describe("createEmbedderFromBinding", () => {
     const embedder = createEmbedderFromBinding({
       binding: { node: "n", model: "m" },
       config: freshConfig(),
-      buildProvider: async () =>
-        stubProvider({
-          createEmbeddings: async () => ({
-            object: "list",
-            model: "m",
-            data: [{ object: "embedding" as const, index: 0, embedding: "base64-encoded-garbage" }],
-          }),
-        }),
+      buildProvider: async () => {
+        await Promise.resolve();
+        return stubProvider({
+          createEmbeddings: () =>
+            Promise.resolve({
+              object: "list",
+              model: "m",
+              data: [
+                { object: "embedding" as const, index: 0, embedding: "base64-encoded-garbage" },
+              ],
+            }),
+        });
+      },
     });
     try {
       await embedder(["x"]);
@@ -158,9 +182,11 @@ describe("createEmbedderFromBinding", () => {
       binding: { node: "n", model: "m" },
       config: freshConfig(),
       buildProvider: async () => {
+        await Promise.resolve();
         builds++;
         return stubProvider({
           createEmbeddings: async (req) => {
+            await Promise.resolve();
             const texts = Array.isArray(req.input) ? (req.input as string[]) : [req.input];
             return makeResponse(texts.map(() => [0.1]));
           },
@@ -189,12 +215,18 @@ interface EmbedRecord {
   body: string;
 }
 
+interface EmbedRequestBody {
+  input?: string | string[];
+  model?: string;
+}
+
 async function startFakeEmbedder(
   opts: {
     response?: (input: string[]) => number[][];
     status?: number;
   } = {},
 ): Promise<{ url: string; calls: EmbedRecord[]; stop: () => Promise<void> }> {
+  await Promise.resolve();
   const calls: EmbedRecord[] = [];
   const server = Bun.serve({
     port: 0,
@@ -214,10 +246,8 @@ async function startFakeEmbedder(
         });
       }
       if (url.pathname.endsWith("/embeddings") && req.method === "POST") {
-        const parsed = body ? JSON.parse(body) : {};
-        const inputs = Array.isArray(parsed.input)
-          ? (parsed.input as string[])
-          : [String(parsed.input ?? "")];
+        const parsed = body ? (JSON.parse(body) as EmbedRequestBody) : {};
+        const inputs = Array.isArray(parsed.input) ? parsed.input : [parsed.input ?? ""];
         const vectors = opts.response
           ? opts.response(inputs)
           : inputs.map((_, i) => [i + 0.1, i + 0.2]);
@@ -242,10 +272,11 @@ async function startFakeEmbedder(
     },
   });
   return {
-    url: `http://127.0.0.1:${server.port}`,
+    url: `http://127.0.0.1:${String(server.port)}`,
     calls,
     stop: async () => {
-      server.stop(true);
+      await Promise.resolve();
+      await server.stop(true);
     },
   };
 }

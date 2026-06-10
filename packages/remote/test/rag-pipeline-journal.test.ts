@@ -36,7 +36,9 @@ describe("openJournal", () => {
     await j.close();
     const raw = readFileSync(path, "utf8").trim().split("\n");
     expect(raw).toHaveLength(2);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
     expect(JSON.parse(raw[0]!).kind).toBe("run-started");
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
     expect(JSON.parse(raw[1]!).kind).toBe("doc-ingested");
   });
 

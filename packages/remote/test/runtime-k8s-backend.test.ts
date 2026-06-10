@@ -26,6 +26,20 @@ import { K8S_ANNOTATION_KEYS, K8S_LABEL_KEYS } from "../src/runtime/kubernetes/l
  * client calls the backend made and the bodies it shipped.
  */
 
+async function rejectionOf(promise: PromiseLike<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected rejection");
+}
+
+function expectErrorMessage(err: unknown, expected: RegExp): void {
+  expect(err).toBeInstanceOf(Error);
+  expect((err as Error).message).toMatch(expected);
+}
+
 interface ApiStubOptions {
   pingBehavior?: "ok" | "throw";
   /**
@@ -83,6 +97,7 @@ function stubKubeConfig(opts: ApiStubOptions = {}): ApiStubInstance {
           if (method === "getAPIResources") {
             // ping() codepath — keep the Phase 2 behaviour.
             return async () => {
+              await Promise.resolve();
               if (opts.pingBehavior === "throw") {
                 throw new Error("stub: connection refused");
               }
@@ -90,6 +105,7 @@ function stubKubeConfig(opts: ApiStubOptions = {}): ApiStubInstance {
             };
           }
           return async (params: Record<string, unknown> = {}) => {
+            await Promise.resolve();
             calls.push({ api: kind, method, params });
             const key = `${kind}.${method}`;
             const handler = handlers[key];
@@ -636,14 +652,17 @@ describe("KubernetesBackend.ensureService — validation + failure modes", () =>
             status: { readyReplicas: 0, replicas: 1 },
           };
         },
-        "apps.createNamespacedDeployment": (p) => ({
-          ...(p.body as V1Deployment),
-          metadata: {
-            ...((p.body as V1Deployment).metadata ?? {}),
-            creationTimestamp: new Date("2026-04-20T15:00:00Z"),
-          },
-          status: { readyReplicas: 0, replicas: 1 },
-        }),
+        "apps.createNamespacedDeployment": (p) => {
+          const body = p.body as V1Deployment;
+          const out = {} as V1Deployment;
+          out.apiVersion = body.apiVersion;
+          out.kind = body.kind;
+          out.metadata = body.metadata;
+          out.metadata!.creationTimestamp = new Date("2026-04-20T15:00:00Z");
+          out.spec = body.spec;
+          out.status = { readyReplicas: 0, replicas: 1 };
+          return out;
+        },
       },
     });
     const backend = new KubernetesBackend({
@@ -668,13 +687,16 @@ describe("KubernetesBackend.ensureService — validation + failure modes", () =>
     const backend = new KubernetesBackend({
       kubeConfig: stubKubeConfig({}).kubeConfig,
     });
-    await expect(
-      backend.ensureService({
-        name: "x",
-        image: { repository: "busybox", tag: "" },
-        specHash: "h",
-      }),
-    ).rejects.toThrow(/image.tag is required/);
+    expectErrorMessage(
+      await rejectionOf(
+        backend.ensureService({
+          name: "x",
+          image: { repository: "busybox", tag: "" },
+          specHash: "h",
+        }),
+      ),
+      /image.tag is required/,
+    );
   });
 });
 

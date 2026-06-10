@@ -49,7 +49,7 @@ async function startPair(script: Map<string, ScriptedSub>): Promise<RunningPair>
     websocket: srv.websocket,
   });
   const port = bun.port ?? 0;
-  const url = `ws://127.0.0.1:${port}/tunnel`;
+  const url = `ws://127.0.0.1:${String(port)}/tunnel`;
 
   // Build a subscription handler honouring the `script` map.
   const handleSubscription = (req: TunnelReq): TunnelSubscription => ({
@@ -66,14 +66,15 @@ async function startPair(script: Map<string, ScriptedSub>): Promise<RunningPair>
         };
       }
       let cancelled = false;
+      const isCancelled = (): boolean => cancelled;
       const run = async (): Promise<void> => {
         for (const ev of entry.events) {
-          if (cancelled) break;
+          if (isCancelled()) break;
           await new Promise((r) => setTimeout(r, entry.delayMs ?? 2));
-          if (cancelled) break;
+          if (isCancelled()) break;
           handlers.onEvent(ev);
         }
-        if (cancelled) {
+        if (isCancelled()) {
           receivedCancel.push(req.id);
           handlers.onComplete();
           return;
@@ -97,7 +98,7 @@ async function startPair(script: Map<string, ScriptedSub>): Promise<RunningPair>
     url,
     bearer,
     nodeName,
-    handleRequest: async () => ({ ok: true }), // not used here
+    handleRequest: () => Promise.resolve({ ok: true }), // not used here
     handleSubscription,
     initialAttemptTimeoutMs: 2000,
     heartbeat: { intervalMs: 0 },
@@ -112,7 +113,7 @@ async function startPair(script: Map<string, ScriptedSub>): Promise<RunningPair>
     receivedCancel,
     async stop() {
       client.stop();
-      bun.stop();
+      void bun.stop();
       await new Promise((r) => setTimeout(r, 20));
     },
   };
@@ -127,9 +128,10 @@ function makeReq(method: string, input: unknown = {}): Omit<TunnelReq, "type"> {
 }
 
 describe("tunnel-server: sendSubscribe", () => {
-  let pair: RunningPair;
+  let pair: RunningPair | undefined;
   afterEach(async () => {
     if (pair) await pair.stop();
+    pair = undefined;
   });
 
   test("streams three events to completion", async () => {

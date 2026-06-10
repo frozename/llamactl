@@ -4,7 +4,8 @@ import { describe, expect, test } from "bun:test";
 import { ragBridgeSearch } from "../src/search/rag-bridge.js";
 
 const mockAdapter = {
-  search: async (opts: any) => {
+  search: async (opts: { collection: string }) => {
+    await Promise.resolve();
     if (opts.collection === "sessions") {
       return {
         hits: [
@@ -43,7 +44,7 @@ const mockAdapter = {
     }
     return { hits: [] };
   },
-  close: async () => {},
+  close: () => Promise.resolve(undefined),
 };
 
 describe("ragBridgeSearch", () => {
@@ -55,7 +56,7 @@ describe("ragBridgeSearch", () => {
       adapter: mockAdapter,
     });
     expect(hits.length).toBe(1);
-    expect((hits[0] as any).sessionId).toBe("s1");
+    expect((hits[0] as { sessionId: string }).sessionId).toBe("s1");
     expect(hits[0]!.matches[0]!.snippet).toBe("session snippet");
   });
 
@@ -67,7 +68,7 @@ describe("ragBridgeSearch", () => {
       adapter: mockAdapter,
     });
     expect(hits.length).toBe(1);
-    expect((hits[0] as any).entityId).toBe("k1");
+    expect((hits[0] as { entityId: string }).entityId).toBe("k1");
   });
 
   test("normalizes logs hits", async () => {
@@ -78,7 +79,8 @@ describe("ragBridgeSearch", () => {
       adapter: mockAdapter,
     });
     expect(hits.length).toBe(1);
-    expect((hits[0] as any).fileLabel).toBe("app");
-    expect((hits[0] as any).matches[0]!.lineNumber).toBe(42);
+    const hit = hits[0] as { fileLabel: string; matches: { lineNumber: number }[] };
+    expect(hit.fileLabel).toBe("app");
+    expect(hit.matches[0]!.lineNumber).toBe(42);
   });
 });

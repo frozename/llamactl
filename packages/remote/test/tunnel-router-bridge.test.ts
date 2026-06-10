@@ -10,6 +10,24 @@ import { createTunnelRouterHandler } from "../src/tunnel/index.js";
  * router.
  */
 
+async function rejectionOf(promise: PromiseLike<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected rejection");
+}
+
+function expectErrorMessage(err: unknown, expected: RegExp | string): void {
+  expect(err).toBeInstanceOf(Error);
+  if (typeof expected === "string") {
+    expect((err as Error).message).toContain(expected);
+  } else {
+    expect((err as Error).message).toMatch(expected);
+  }
+}
+
 interface FakeCaller {
   catalog: {
     list: (input?: { classFilter?: string }) => Promise<{ rel: string }[]>;
@@ -25,20 +43,24 @@ function fakeCaller(): FakeCaller {
   return {
     catalog: {
       async list(input) {
+        await Promise.resolve();
         if (input?.classFilter === "vision") return [{ rel: "v1" }];
         return [{ rel: "a" }, { rel: "b" }];
       },
       async promote(input) {
-        if (!input?.rel) throw new Error("rel required");
+        await Promise.resolve();
+        if (!input.rel) throw new Error("rel required");
         return { ok: true };
       },
     },
     node: {
       async facts() {
+        await Promise.resolve();
         return { profile: "macbook-pro-48g" };
       },
     },
     async throws() {
+      await Promise.resolve();
       throw new Error("intentional");
     },
   };
@@ -80,32 +102,33 @@ describe("createTunnelRouterHandler", () => {
 
   test("unknown method → throws with a clear message (tunnel-client surfaces as error)", async () => {
     const handle = createTunnelRouterHandler(fakeCaller());
-    await expect(
+    const err = await rejectionOf(
       handle({
         type: "req",
         id: "r4",
         method: "catalog.nope",
         params: { type: "query" },
       }),
-    ).rejects.toThrow(/unknown procedure: catalog\.nope/);
+    );
+    expectErrorMessage(err, /unknown procedure: catalog\.nope/);
   });
 
   test("unknown top-level namespace → throws", async () => {
     const handle = createTunnelRouterHandler(fakeCaller());
-    await expect(
+    const err = await rejectionOf(
       handle({
         type: "req",
         id: "r5",
         method: "bogus.foo",
         params: {},
       }),
-    ).rejects.toThrow(/unknown procedure/);
+    );
+    expectErrorMessage(err, /unknown procedure/);
   });
 
   test("procedure that throws bubbles up to the tunnel client unchanged", async () => {
     const handle = createTunnelRouterHandler(fakeCaller());
-    await expect(handle({ type: "req", id: "r6", method: "throws", params: {} })).rejects.toThrow(
-      "intentional",
-    );
+    const err = await rejectionOf(handle({ type: "req", id: "r6", method: "throws", params: {} }));
+    expectErrorMessage(err, "intentional");
   });
 });

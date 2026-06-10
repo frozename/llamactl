@@ -2,6 +2,20 @@ import { describe, expect, test } from "bun:test";
 
 import { router } from "../src/router.js";
 
+async function rejectionOf(promise: PromiseLike<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected rejection");
+}
+
+function expectErrorMessage(err: unknown, expected: RegExp): void {
+  expect(err).toBeInstanceOf(Error);
+  expect((err as Error).message).toMatch(expected);
+}
+
 describe("router workload validation", () => {
   test("exposes ModelHost lifecycle procedures", () => {
     const caller = router.createCaller({});
@@ -65,12 +79,15 @@ spec:
     const caller = router.createCaller({});
     const stream = await caller.modelHostStart({ workload: "host-a" });
     expect(typeof stream[Symbol.asyncIterator]).toBe("function");
-    await expect(
-      caller.modelHostStart({
-        workload: "host-a",
-        manifest: { kind: "ModelHost" } as never,
-      }),
-    ).rejects.toThrow(/manifest/i);
+    expectErrorMessage(
+      await rejectionOf(
+        caller.modelHostStart({
+          workload: "host-a",
+          manifest: { kind: "ModelHost" } as never,
+        }),
+      ),
+      /manifest/i,
+    );
   });
 
   test("rejects unknown workload kinds with a clear error", async () => {

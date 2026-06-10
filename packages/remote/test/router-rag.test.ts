@@ -28,6 +28,20 @@ import { router } from "../src/router.js";
  *  - Missing node rejected.
  */
 
+async function rejectionOf(promise: PromiseLike<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected rejection");
+}
+
+function expectErrorMessage(err: unknown, expected: RegExp): void {
+  expect(err).toBeInstanceOf(Error);
+  expect((err as Error).message).toMatch(expected);
+}
+
 type CalledOp = keyof RetrievalProvider;
 
 interface FakeProviderOptions {
@@ -79,13 +93,15 @@ function makeFakeProvider(options: FakeProviderOptions): RetrievalProvider {
       return { collections: [{ name: "default" }] };
     },
     async close() {
+      await Promise.resolve();
       closeCount++;
     },
   };
 }
 
-mock.module("../src/rag/index.js", () => ({
+await mock.module("../src/rag/index.js", () => ({
   createRagAdapter: async (node: { name: string }, opts?: unknown) => {
+    await Promise.resolve();
     lastNodeName = node.name;
     lastFactoryOpts = opts;
     return makeFakeProvider(lastProviderOptions);
@@ -129,23 +145,24 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
 });
 
 describe("router RAG procedures", () => {
   test("ragSearch dispatches to adapter and forwards input", async () => {
     lastProviderOptions = {
-      search: async (req) => ({
-        collection: req.collection ?? "default",
-        results: [
-          {
-            document: { id: "doc-1", content: "hello world", metadata: { src: "test" } },
-            score: 0.92,
-            distance: 0.08,
-          },
-        ],
-      }),
+      search: (req) =>
+        Promise.resolve({
+          collection: req.collection ?? "default",
+          results: [
+            {
+              document: { id: "doc-1", content: "hello world", metadata: { src: "test" } },
+              score: 0.92,
+              distance: 0.08,
+            },
+          ],
+        }),
     };
 
     const caller = router.createCaller({});
@@ -207,12 +224,13 @@ describe("router RAG procedures", () => {
 
   test("ragListCollections dispatches to adapter", async () => {
     lastProviderOptions = {
-      listCollections: async () => ({
-        collections: [
-          { name: "docs", count: 42 },
-          { name: "logs", count: 7 },
-        ],
-      }),
+      listCollections: () =>
+        Promise.resolve({
+          collections: [
+            { name: "docs", count: 42 },
+            { name: "logs", count: 7 },
+          ],
+        }),
     };
 
     const caller = router.createCaller({});
@@ -227,14 +245,14 @@ describe("router RAG procedures", () => {
   test("adapter.close() runs even when the adapter method throws", async () => {
     lastProviderOptions = {
       search: async () => {
+        await Promise.resolve();
         throw new Error("adapter-layer failure");
       },
     };
 
     const caller = router.createCaller({});
-    await expect(caller.ragSearch({ node: "kb-chroma", query: "boom" })).rejects.toThrow(
-      /adapter-layer failure/,
-    );
+    const err = await rejectionOf(caller.ragSearch({ node: "kb-chroma", query: "boom" }));
+    expectErrorMessage(err, /adapter-layer failure/);
     expect(closeCount).toBe(1);
   });
 
@@ -242,13 +260,15 @@ describe("router RAG procedures", () => {
     // The `local` node from freshConfig() is an inproc agent — not a
     // RAG node — so every ragX procedure must refuse it.
     const caller = router.createCaller({});
-    await expect(caller.ragSearch({ node: "local", query: "x" })).rejects.toThrow(/not a RAG node/);
+    const err = await rejectionOf(caller.ragSearch({ node: "local", query: "x" }));
+    expectErrorMessage(err, /not a RAG node/);
     expect(closeCount).toBe(0);
   });
 
   test("missing node rejected", async () => {
     const caller = router.createCaller({});
-    await expect(caller.ragSearch({ node: "nope", query: "x" })).rejects.toThrow(/not found/);
+    const err = await rejectionOf(caller.ragSearch({ node: "nope", query: "x" }));
+    expectErrorMessage(err, /not found/);
     expect(closeCount).toBe(0);
   });
 });
@@ -391,22 +411,24 @@ describe("router nodeUpdateRagBinding", () => {
 
   test("unknown node rejected", async () => {
     const caller = router.createCaller({});
-    await expect(
+    const err = await rejectionOf(
       caller.nodeUpdateRagBinding({
         node: "nope",
         embedder: { node: "sirius", model: "text-embedding-3-small" },
       }),
-    ).rejects.toThrow(/not found/);
+    );
+    expectErrorMessage(err, /not found/);
   });
 
   test("non-RAG node rejected with BAD_REQUEST", async () => {
     // `local` is an inproc agent — not a RAG node.
     const caller = router.createCaller({});
-    await expect(
+    const err = await rejectionOf(
       caller.nodeUpdateRagBinding({
         node: "local",
         embedder: { node: "sirius", model: "text-embedding-3-small" },
       }),
-    ).rejects.toThrow(/not a RAG node/);
+    );
+    expectErrorMessage(err, /not a RAG node/);
   });
 });

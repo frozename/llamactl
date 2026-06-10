@@ -1,7 +1,7 @@
 import type { RetrievalProvider } from "@nova/contracts";
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -30,35 +30,50 @@ import { router } from "../src/router.js";
  * router wires input/output correctly.
  */
 
+async function rejectionOf(promise: PromiseLike<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected rejection");
+}
+
 let closeCount = 0;
 let storeCalls = 0;
 function makeFakeProvider(): RetrievalProvider {
   return {
     kind: "fake",
     async search() {
+      await Promise.resolve();
       return { collection: "default", results: [] };
     },
     async store(req) {
+      await Promise.resolve();
       storeCalls++;
       return { collection: req.collection ?? "default", ids: req.documents.map((d) => d.id) };
     },
     async delete(req) {
+      await Promise.resolve();
       return { collection: req.collection ?? "default", deleted: req.ids.length };
     },
     async listCollections() {
+      await Promise.resolve();
       return { collections: [] };
     },
     async close() {
+      await Promise.resolve();
       closeCount++;
     },
   };
 }
 
-mock.module("../src/rag/index.js", () => ({
-  createRagAdapter: async () => makeFakeProvider(),
+await mock.module("../src/rag/index.js", () => ({
+  createRagAdapter: () => Promise.resolve(makeFakeProvider()),
 }));
 
 const originalEnv = { ...process.env };
+await Promise.resolve();
 let tmp = "";
 let pipelinesRoot = "";
 let restoreFetcher: (() => void) | null = null;
@@ -68,6 +83,7 @@ function installStubFetcher(docs: { id: string; content: string }[]): () => void
   const stub: Fetcher = {
     kind: "filesystem",
     async *fetch() {
+      await Promise.resolve();
       for (const d of docs) yield { id: d.id, content: d.content, metadata: {} };
     },
   };
@@ -107,7 +123,7 @@ beforeEach(() => {
 afterEach(() => {
   if (restoreFetcher) restoreFetcher();
   rmSync(tmp, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
 });
 
@@ -145,9 +161,9 @@ describe("ragPipelineApply", () => {
   });
   test("invalid YAML → BAD_REQUEST", async () => {
     const caller = router.createCaller({});
-    await expect(
-      caller.ragPipelineApply({ manifestYaml: "not: [valid yaml\n" }),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(
+      await rejectionOf(caller.ragPipelineApply({ manifestYaml: "not: [valid yaml\n" })),
+    ).toMatchObject({ code: "BAD_REQUEST" });
   });
   test("schema-invalid (missing destination) → BAD_REQUEST", async () => {
     const caller = router.createCaller({});
@@ -157,7 +173,7 @@ describe("ragPipelineApply", () => {
       metadata: { name: "bad" },
       spec: { sources: [], transforms: [] },
     });
-    await expect(caller.ragPipelineApply({ manifestYaml: bad })).rejects.toMatchObject({
+    expect(await rejectionOf(caller.ragPipelineApply({ manifestYaml: bad }))).toMatchObject({
       code: "BAD_REQUEST",
     });
   });
@@ -166,7 +182,9 @@ describe("ragPipelineApply", () => {
 describe("ragPipelineRun", () => {
   test("NOT_FOUND when pipeline does not exist", async () => {
     const caller = router.createCaller({});
-    await expect(caller.ragPipelineRun({ name: "ghost", dryRun: false })).rejects.toMatchObject({
+    expect(
+      await rejectionOf(caller.ragPipelineRun({ name: "ghost", dryRun: false })),
+    ).toMatchObject({
       code: "NOT_FOUND",
     });
   });
@@ -225,7 +243,7 @@ describe("ragPipelineList", () => {
 describe("ragPipelineGet", () => {
   test("NOT_FOUND when missing", async () => {
     const caller = router.createCaller({});
-    await expect(caller.ragPipelineGet({ name: "missing" })).rejects.toMatchObject({
+    expect(await rejectionOf(caller.ragPipelineGet({ name: "missing" }))).toMatchObject({
       code: "NOT_FOUND",
     });
   });
@@ -301,7 +319,7 @@ describe("ragPipelineRunning", () => {
     const journalPath = join(pipelinesRoot, "orphan-me", "journal.jsonl");
     // Seed an 11-minute-old run-started with no matching run-complete.
     const oldTs = new Date(Date.now() - 11 * 60 * 1000).toISOString();
-    require("node:fs").writeFileSync(
+    writeFileSync(
       journalPath,
       `${JSON.stringify({
         kind: "run-started",
@@ -327,7 +345,7 @@ describe("ragPipelineRunning", () => {
     // Seed an orphan journal entry.
     const journalPath = join(pipelinesRoot, "both", "journal.jsonl");
     const oldTs = new Date(Date.now() - 11 * 60 * 1000).toISOString();
-    require("node:fs").writeFileSync(
+    writeFileSync(
       journalPath,
       `${JSON.stringify({
         kind: "run-started",
@@ -376,13 +394,13 @@ describe("ragPipelineLogs", () => {
           kind: "doc-ingested",
           ts: new Date().toISOString(),
           source: "tailed:0:filesystem",
-          doc_id: `d${i}`,
+          doc_id: `d${String(i)}`,
           sha: "x",
           chunks: 1,
         }),
       );
     }
-    require("node:fs").writeFileSync(journalPath, `${lines.join("\n")}\n`);
+    writeFileSync(journalPath, `${lines.join("\n")}\n`);
     const caller = router.createCaller({});
     const res = await caller.ragPipelineLogs({ name: "tailed", tail: 3 });
     expect(res.entries).toHaveLength(3);
@@ -393,7 +411,7 @@ describe("ragPipelineLogs", () => {
   test("skips malformed lines", async () => {
     applyPipeline(makeManifest("mixed"));
     const journalPath = join(pipelinesRoot, "mixed", "journal.jsonl");
-    require("node:fs").writeFileSync(
+    writeFileSync(
       journalPath,
       [
         JSON.stringify({

@@ -21,6 +21,7 @@ function buildFixtureRouter() {
     counter: t.procedure
       .input(z.object({ n: z.number().int().min(1) }))
       .subscription(async function* ({ input, signal }) {
+        await Promise.resolve();
         for (let i = 0; i < input.n; i++) {
           if (signal?.aborted) break;
           yield { idx: i };
@@ -35,11 +36,13 @@ function buildFixtureRouter() {
       }
     }),
     crashes: t.procedure.subscription(async function* () {
+      await Promise.resolve();
       yield { first: true };
       throw new Error("boom");
     }),
     notFound: t.procedure.query(() => ({ ok: true })),
     contextEcho: t.procedure.subscription(async function* ({ ctx }) {
+      await Promise.resolve();
       yield { user: (ctx as { userId?: string }).userId ?? null };
     }),
   });
@@ -86,8 +89,8 @@ describe("createTunnelSubscriptionHandler", () => {
     const events: unknown[] = [];
     makeSub(makeReq("contextEcho", undefined)).subscribe({
       onEvent: (d) => events.push(d),
-      onError: () => {},
-      onComplete: () => {},
+      onError: () => undefined,
+      onComplete: () => undefined,
     });
     await new Promise((r) => setTimeout(r, 20));
     expect(events).toEqual([{ user: "alice" }]);
@@ -164,11 +167,11 @@ describe("createTunnelSubscriptionHandler", () => {
     const makeSub = createTunnelSubscriptionHandler(router, () => ({}));
     let error: Error | null = null;
     makeSub(makeReq("missing.thing", undefined)).subscribe({
-      onEvent: () => {},
+      onEvent: () => undefined,
       onError: (e) => {
         error = e;
       },
-      onComplete: () => {},
+      onComplete: () => undefined,
     });
     await new Promise((r) => setTimeout(r, 30));
     expect(error).not.toBeNull();
@@ -179,11 +182,11 @@ describe("createTunnelSubscriptionHandler", () => {
     const makeSub = createTunnelSubscriptionHandler(router, () => ({}));
     let error: Error | null = null;
     makeSub(makeReq("notFound", undefined)).subscribe({
-      onEvent: () => {},
+      onEvent: () => undefined,
       onError: (e) => {
         error = e;
       },
-      onComplete: () => {},
+      onComplete: () => undefined,
     });
     await new Promise((r) => setTimeout(r, 30));
     expect(error).not.toBeNull();

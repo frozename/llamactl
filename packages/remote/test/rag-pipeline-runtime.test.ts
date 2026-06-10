@@ -37,6 +37,7 @@ function installStubFetcher(opts: StubFetcherOptions): () => void {
   const stub: Fetcher = {
     kind: "filesystem",
     async *fetch() {
+      await Promise.resolve();
       if (opts.throwOnce && !thrown) {
         thrown = true;
         throw new Error("fetcher init boom");
@@ -80,27 +81,31 @@ function makeMockAdapter(options: { withDelete?: boolean } = {}): {
   // adapter doesn't expose delete.
   const withDelete = options.withDelete ?? true;
   return {
-    open: async () => ({
-      async store(req) {
-        calls.push({
-          collection: req.collection,
-          ids: req.documents.map((d) => d.id),
-          count: req.documents.length,
-        });
-        return { ids: req.documents.map((d) => d.id), collection: req.collection ?? "docs" };
-      },
-      ...(withDelete
-        ? {
-            async delete(req: DeleteRequest): Promise<DeleteResponse> {
-              deletes.push({ collection: req.collection, ids: [...req.ids] });
-              return { deleted: req.ids.length, collection: req.collection ?? "docs" };
-            },
-          }
-        : {}),
-      async close() {
-        closed++;
-      },
-    }),
+    open: () =>
+      Promise.resolve({
+        async store(req) {
+          await Promise.resolve();
+          calls.push({
+            collection: req.collection,
+            ids: req.documents.map((d) => d.id),
+            count: req.documents.length,
+          });
+          return { ids: req.documents.map((d) => d.id), collection: req.collection ?? "docs" };
+        },
+        ...(withDelete
+          ? {
+              async delete(req: DeleteRequest): Promise<DeleteResponse> {
+                await Promise.resolve();
+                deletes.push({ collection: req.collection, ids: [...req.ids] });
+                return { deleted: req.ids.length, collection: req.collection ?? "docs" };
+              },
+            }
+          : {}),
+        async close() {
+          await Promise.resolve();
+          closed++;
+        },
+      }),
     calls,
     deletes,
     get closed() {
@@ -257,8 +262,8 @@ describe("runPipeline", () => {
   test("store batching caps at 20 docs per call", async () => {
     // Generate 25 chunks via many small docs (no transforms needed).
     const docs: RawDoc[] = Array.from({ length: 25 }, (_, i) => ({
-      id: `d-${i}`,
-      content: `content-${i}`,
+      id: `d-${String(i)}`,
+      content: `content-${String(i)}`,
       metadata: {},
     }));
     const restore = installStubFetcher({ docs });

@@ -63,12 +63,14 @@ function createSpikeRouter(probe: { seen: { signal: AbortSignal | null } }) {
     // client, we can defer the async-generator rewrite.
     legacyObservable: t.procedure
       .input(z.object({ count: z.number().int().positive() }))
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- this test covers the legacy observable subscription path.
       .subscription(({ input }) => {
         return observable<{ i: number }>((emit) => {
           let cancelled = false;
+          const isCancelled = (): boolean => cancelled;
           void (async () => {
             for (let i = 0; i < input.count; i++) {
-              if (cancelled) return;
+              if (isCancelled()) return;
               emit.next({ i });
               await new Promise((r) => setTimeout(r, 5));
             }
@@ -104,8 +106,10 @@ function startServer(router: SpikeRouter): { url: string; stop: () => void } {
     },
   });
   return {
-    url: `http://127.0.0.1:${server.port}/trpc`,
-    stop: () => server.stop(true),
+    url: `http://127.0.0.1:${String(server.port)}/trpc`,
+    stop: () => {
+      void server.stop(true);
+    },
   };
 }
 
@@ -191,8 +195,8 @@ describe("tRPC v11 + Bun.serve + fetchRequestHandler", () => {
     });
     probe.seen.signal = null;
     const sub = client.slow.subscribe(undefined, {
-      onData: () => {},
-      onError: () => {},
+      onData: () => undefined,
+      onError: () => undefined,
     });
     // Wait long enough for the server to attach its signal.
     await new Promise((r) => setTimeout(r, 100));

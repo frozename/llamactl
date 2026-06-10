@@ -304,7 +304,7 @@ describe("workload store", () => {
     const duplicateBPath = join(dir, "dup-b.yaml");
     writeFileSync(duplicateAPath, sampleYaml.replace("name: gemma-qa", "name: duplicate"), "utf8");
     writeFileSync(duplicateBPath, minimalYaml.replace("name: minimal", "name: duplicate"), "utf8");
-    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       const loaded = listWorkloads(dir);
       expect(loaded.map((m) => m.metadata.name)).toEqual(["duplicate", "duplicate"]);
@@ -449,7 +449,7 @@ spec:
       });
     } finally {
       for (const [key, value] of Object.entries(prior)) {
-        if (value === undefined) delete process.env[key];
+        if (value === undefined) Reflect.deleteProperty(process.env, key);
         else process.env[key] = value;
       }
     }

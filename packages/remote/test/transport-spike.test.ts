@@ -12,6 +12,15 @@ import { z } from "zod";
  * spike; this file deliberately does not exercise them.
  */
 
+async function rejectionOf(promise: PromiseLike<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected rejection");
+}
+
 interface SpikeContext {
   token: string | null;
   aborted: { flag: boolean };
@@ -93,10 +102,11 @@ function startSpikeServer(router: SpikeRouter): SpikeServer {
   });
 
   return {
-    url: `http://127.0.0.1:${server.port}/trpc`,
+    url: `http://127.0.0.1:${String(server.port)}/trpc`,
     lastAbort,
     stop: async () => {
-      server.stop(true);
+      await Promise.resolve();
+      await server.stop(true);
     },
   };
 }
@@ -143,7 +153,7 @@ describe("tRPC + Bun.serve + fetchRequestHandler (Phase A.2 spike)", () => {
     const client = createTRPCClient<SpikeRouter>({
       links: [httpBatchLink({ url: svr.url })],
     });
-    await expect(client.whoami.query()).rejects.toBeInstanceOf(TRPCClientError);
+    expect(await rejectionOf(client.whoami.query())).toBeInstanceOf(TRPCClientError);
     try {
       await client.whoami.query();
     } catch (err) {
@@ -166,7 +176,7 @@ describe("tRPC + Bun.serve + fetchRequestHandler (Phase A.2 spike)", () => {
     // Give the server a tick to register then abort.
     await new Promise((r) => setTimeout(r, 20));
     ac.abort();
-    await expect(pending).rejects.toThrow();
+    expect(await rejectionOf(pending)).toBeInstanceOf(Error);
     // Give the server's abort listener a tick to fire.
     await new Promise((r) => setTimeout(r, 20));
     expect(svr.lastAbort.flag).toBe(true);

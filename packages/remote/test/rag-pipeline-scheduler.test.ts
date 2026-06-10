@@ -98,8 +98,8 @@ beforeEach(() => {
     now: () => BASE_NOW,
     journalPathFor: (name: string) => join(tmp, `${name}.jsonl`),
     listPipelines: () => [],
-    runPipeline: async () => FIRE_SUMMARY,
-    writeLastRun: () => {},
+    runPipeline: () => Promise.resolve(FIRE_SUMMARY),
+    writeLastRun: () => undefined,
   };
 });
 
@@ -146,6 +146,7 @@ describe("startPipelineScheduler", () => {
       ...defaultOptions,
       listPipelines: () => records,
       runPipeline: async (m) => {
+        await Promise.resolve();
         runCalls.push(m.metadata.name);
         return FIRE_SUMMARY;
       },
@@ -178,6 +179,7 @@ describe("startPipelineScheduler", () => {
       ...defaultOptions,
       listPipelines: () => records,
       runPipeline: async () => {
+        await Promise.resolve();
         throw new Error("should not fire");
       },
       onTick: (r) => {

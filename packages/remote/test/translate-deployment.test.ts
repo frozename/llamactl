@@ -54,7 +54,7 @@ describe("translateToDeployment — Deployment shape", () => {
     expect(podLabels.app).toBe("chroma-main");
     expect(podLabels[K8S_LABEL_KEYS.managedBy]).toBe(MANAGED_BY_VALUE);
 
-    expect(deployment.spec?.selector?.matchLabels?.app).toBe("chroma-main");
+    expect(deployment.spec!.selector.matchLabels!.app).toBe("chroma-main");
   });
 
   test("spec-hash annotation drives drift detection", () => {

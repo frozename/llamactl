@@ -9,6 +9,7 @@ import {
 
 async function collect(inputs: RawDoc[], spec: unknown): Promise<RawDoc[]> {
   async function* source() {
+    await Promise.resolve();
     for (const d of inputs) yield d;
   }
   const out: RawDoc[] = [];
@@ -76,7 +77,7 @@ describe("markdownChunkTransform", () => {
       preserve_headings: true,
     });
     for (const [i, chunk] of chunks.entries()) {
-      expect(chunk.id).toContain(`#${i}`);
+      expect(chunk.id).toContain(`#${String(i)}`);
     }
   });
 
@@ -93,6 +94,7 @@ describe("markdownChunkTransform", () => {
   });
 
   test("chunks respect chunk_size within one paragraph-rounding window", async () => {
+    await Promise.resolve();
     const chunks = chunkMarkdown(sampleDoc, {
       chunk_size: 150,
       overlap: 30,
@@ -108,6 +110,7 @@ describe("markdownChunkTransform", () => {
   });
 
   test("overlap carries tail characters across chunks", async () => {
+    await Promise.resolve();
     const doc: RawDoc = {
       id: "overlap.md",
       content: [
@@ -133,6 +136,7 @@ describe("markdownChunkTransform", () => {
   });
 
   test("chunkMarkdown on an empty doc returns zero chunks", async () => {
+    await Promise.resolve();
     const chunks = chunkMarkdown(
       { id: "empty.md", content: "", metadata: {} },
       { chunk_size: 100, overlap: 10, preserve_headings: true },

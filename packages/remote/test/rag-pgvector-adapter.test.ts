@@ -32,7 +32,7 @@ interface MockCall {
 
 type QueueEntry =
   | { kind: "rows"; rows: unknown[]; count?: number }
-  | { kind: "error"; error: unknown };
+  | { kind: "error"; error: Error & { code?: string } };
 
 interface MockSql {
   /** The callable — passed where `postgres.Sql` is expected. */
@@ -117,7 +117,7 @@ function queueRows(mock: MockSql, rows: unknown[], count?: number): void {
   mock.queue.push({ kind: "rows", rows, count });
 }
 
-function queueError(mock: MockSql, error: unknown): void {
+function queueError(mock: MockSql, error: Error & { code?: string }): void {
   mock.queue.push({ kind: "error", error });
 }
 
@@ -266,6 +266,7 @@ describe("PgvectorRagAdapter.search", () => {
       sql: mock.fn,
       defaultCollection: "docs",
       embedder: async (texts) => {
+        await Promise.resolve();
         embedCalls.push(texts);
         return [[0.5, 0.5]];
       },
@@ -283,6 +284,7 @@ describe("PgvectorRagAdapter.search", () => {
       sql: mock.fn,
       defaultCollection: "docs",
       embedder: async () => {
+        await Promise.resolve();
         embedderCalled = true;
         return [[0.5, 0.5]];
       },
@@ -378,6 +380,7 @@ describe("PgvectorRagAdapter.store", () => {
       sql: mock.fn,
       defaultCollection: "knowledge",
       embedder: async (texts) => {
+        await Promise.resolve();
         embedCalls.push(texts);
         return texts.map((_, i) => [i + 0.1, i + 0.2]);
       },
@@ -414,11 +417,15 @@ describe("PgvectorRagAdapter.store", () => {
       sql: mock.fn,
       defaultCollection: "knowledge",
     });
-    await expect(
-      adapter.store({
+    try {
+      await adapter.store({
         documents: [{ id: "a", content: "aaa" }],
-      }),
-    ).rejects.toThrow(/configure a rag\.embedder/);
+      });
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(RagError);
+      expect((err as RagError).message).toMatch(/configure a rag\.embedder/);
+    }
   });
 
   test("embedder mismatch (wrong count) surfaces invalid-response", async () => {
@@ -426,7 +433,7 @@ describe("PgvectorRagAdapter.store", () => {
     const adapter = new PgvectorRagAdapter({
       sql: mock.fn,
       defaultCollection: "knowledge",
-      embedder: async () => [[0.1, 0.2]], // only one vector for two missing
+      embedder: () => Promise.resolve([[0.1, 0.2]]), // only one vector for two missing
     });
     try {
       await adapter.store({
@@ -595,11 +602,14 @@ describe("PgvectorRagAdapter.store — auto-schema bootstrap", () => {
       sql: mock.fn,
       defaultCollection: "kb",
     });
-    await expect(
-      adapter.store({
+    try {
+      await adapter.store({
         documents: [{ id: "a", content: "x", vector: [0.1, 0.2] }],
-      }),
-    ).rejects.toBeInstanceOf(RagError);
+      });
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(RagError);
+    }
     // Retry — no queued error this time; bootstrap runs fresh.
     await adapter.store({
       documents: [{ id: "a", content: "x", vector: [0.1, 0.2] }],

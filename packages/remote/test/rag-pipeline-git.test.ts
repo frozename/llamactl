@@ -27,7 +27,7 @@ async function run(cmd: string[], opts: { cwd?: string } = {}): Promise<void> {
   const code = await proc.exited;
   if (code !== 0) {
     const err = await new Response(proc.stderr).text();
-    throw new Error(`${cmd.join(" ")} exited ${code}: ${err}`);
+    throw new Error(`${cmd.join(" ")} exited ${String(code)}: ${err}`);
   }
 }
 
@@ -53,7 +53,7 @@ async function buildFixture(): Promise<void> {
 function makeCtx(spec: unknown): FetcherContext {
   return {
     spec,
-    log: () => {},
+    log: () => undefined,
     signal: new AbortController().signal,
     env: process.env,
   };

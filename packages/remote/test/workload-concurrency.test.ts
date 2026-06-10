@@ -37,7 +37,7 @@ spec:
     value: llama-7b.gguf
   endpoint:
     host: 0.0.0.0
-    port: ${port}
+    port: ${String(port)}
 `);
 }
 
@@ -45,6 +45,7 @@ function makeClient(): WorkloadClient {
   return {
     serverStatus: {
       async query() {
+        await Promise.resolve();
         return {
           state: "stopped",
           rel: null,
@@ -59,6 +60,7 @@ function makeClient(): WorkloadClient {
     },
     serverStop: {
       async mutate() {
+        await Promise.resolve();
         return {};
       },
     },
@@ -71,7 +73,11 @@ function makeClient(): WorkloadClient {
           });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return {
+          unsubscribe() {
+            return undefined;
+          },
+        };
       },
     },
     modelHostStart: {
@@ -80,16 +86,22 @@ function makeClient(): WorkloadClient {
           callbacks.onData({ type: "done", result: { ok: true } });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return {
+          unsubscribe() {
+            return undefined;
+          },
+        };
       },
     },
     modelHostStop: {
       async mutate() {
+        await Promise.resolve();
         return {};
       },
     },
     modelHostStatus: {
       async query() {
+        await Promise.resolve();
         return { state: "Stopped", pid: null };
       },
     },
@@ -99,16 +111,22 @@ function makeClient(): WorkloadClient {
           callbacks.onData({ type: "done", result: { ok: true, pid: 2222, endpoint: "" } });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return {
+          unsubscribe() {
+            return undefined;
+          },
+        };
       },
     },
     rpcServerStop: {
       async mutate() {
+        await Promise.resolve();
         return {};
       },
     },
     rpcServerDoctor: {
       async query() {
+        await Promise.resolve();
         return {
           ok: true,
           path: "/usr/local/bin/rpc-server",
@@ -236,7 +254,11 @@ describe("workload apply concurrency", () => {
             });
             callbacks.onComplete();
           });
-          return { unsubscribe() {} };
+          return {
+            unsubscribe() {
+              return undefined;
+            },
+          };
         },
       },
     };

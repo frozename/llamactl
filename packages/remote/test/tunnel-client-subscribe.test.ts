@@ -33,10 +33,10 @@ describe("tunnel-client: handleSubscription", () => {
       websocket: srv.websocket,
     });
     stops.push(() => {
-      bun.stop();
+      void bun.stop();
     });
     const port = bun.port ?? 0;
-    const url = `ws://127.0.0.1:${port}/tunnel`;
+    const url = `ws://127.0.0.1:${String(port)}/tunnel`;
 
     const handleSubscription = (_req: TunnelReq): TunnelSubscription => ({
       subscribe(handlers) {
@@ -58,7 +58,7 @@ describe("tunnel-client: handleSubscription", () => {
       url,
       bearer,
       nodeName: "node1",
-      handleRequest: async () => ({}),
+      handleRequest: () => Promise.resolve({}),
       handleSubscription,
       initialAttemptTimeoutMs: 2000,
       heartbeat: { intervalMs: 0 },
@@ -91,20 +91,21 @@ describe("tunnel-client: handleSubscription", () => {
       websocket: srv.websocket,
     });
     stops.push(() => {
-      bun.stop();
+      void bun.stop();
     });
     const port = bun.port ?? 0;
-    const url = `ws://127.0.0.1:${port}/tunnel`;
+    const url = `ws://127.0.0.1:${String(port)}/tunnel`;
 
     const cancelledSubs: string[] = [];
     const handleSubscription = (req: TunnelReq): TunnelSubscription => ({
       subscribe(handlers) {
         let cancelled = false;
-        (async () => {
+        const isCancelled = (): boolean => cancelled;
+        void (async () => {
           for (let i = 0; i < 50; i++) {
-            if (cancelled) break;
+            if (isCancelled()) break;
             await new Promise((r) => setTimeout(r, 10));
-            if (cancelled) break;
+            if (isCancelled()) break;
             handlers.onEvent(i);
           }
           handlers.onComplete();
@@ -121,7 +122,7 @@ describe("tunnel-client: handleSubscription", () => {
       url,
       bearer,
       nodeName: "node1",
-      handleRequest: async () => ({}),
+      handleRequest: () => Promise.resolve({}),
       handleSubscription,
       initialAttemptTimeoutMs: 2000,
       heartbeat: { intervalMs: 0 },
@@ -158,16 +159,16 @@ describe("tunnel-client: handleSubscription", () => {
       websocket: srv.websocket,
     });
     stops.push(() => {
-      bun.stop();
+      void bun.stop();
     });
     const port = bun.port ?? 0;
-    const url = `ws://127.0.0.1:${port}/tunnel`;
+    const url = `ws://127.0.0.1:${String(port)}/tunnel`;
 
     const client = createTunnelClient({
       url,
       bearer,
       nodeName: "node1",
-      handleRequest: async () => ({}),
+      handleRequest: () => Promise.resolve({}),
       // handleSubscription omitted
       initialAttemptTimeoutMs: 2000,
       heartbeat: { intervalMs: 0 },

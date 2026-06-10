@@ -6,6 +6,15 @@ import { join } from "node:path";
 import { appendJournalEvent } from "../src/ops-chat/sessions/journal";
 import { searchSessions } from "../src/search/sessions";
 
+async function rejectionOf(promise: PromiseLike<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected rejection");
+}
+
 describe("searchSessions", () => {
   let tmp: string;
   let prev: string | undefined;
@@ -53,7 +62,7 @@ describe("searchSessions", () => {
       iteration: 0,
       tier: "read",
       reasoning: "enumerate the rebellious cluster",
-      step: { tool: "t", annotation: "a" } as any,
+      step: { tool: "t", args: {}, annotation: "a" },
     });
     const out = await searchSessions({ query: "rebellious", limit: 30 });
     expect(out.length).toBe(1);
@@ -101,8 +110,8 @@ describe("searchSessions", () => {
     }
     const ctrl = new AbortController();
     ctrl.abort();
-    await expect(
-      searchSessions({ query: "fleet", limit: 30, signal: ctrl.signal }),
-    ).rejects.toThrow();
+    expect(
+      await rejectionOf(searchSessions({ query: "fleet", limit: 30, signal: ctrl.signal })),
+    ).toBeInstanceOf(Error);
   });
 });

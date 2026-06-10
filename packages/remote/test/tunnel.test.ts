@@ -44,12 +44,13 @@ function startServer(bearer: string, opts: { fixedTime?: string } = {}): Running
   const port = bun.port ?? 0;
   return {
     port,
-    url: `ws://127.0.0.1:${port}/tunnel`,
+    url: `ws://127.0.0.1:${String(port)}/tunnel`,
     server: srv,
     connects,
     disconnects,
-    stop: async () => {
-      bun.stop(true);
+    stop: () => {
+      void bun.stop(true);
+      return Promise.resolve();
     },
   };
 }
@@ -60,7 +61,7 @@ async function waitFor(check: () => boolean, timeoutMs = 2000, intervalMs = 10):
   for (;;) {
     if (check()) return;
     if (Date.now() - start > timeoutMs) {
-      throw new Error(`waitFor timed out after ${timeoutMs}ms`);
+      throw new Error(`waitFor timed out after ${String(timeoutMs)}ms`);
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
@@ -104,7 +105,7 @@ describe("tunnel handshake", () => {
       url: srv.url,
       bearer: "tok-good",
       nodeName: "gpu1",
-      handleRequest: async () => ({ ok: true }),
+      handleRequest: () => Promise.resolve({ ok: true }),
     });
     await client.start();
     expect(client.isReady()).toBe(true);
@@ -121,12 +122,18 @@ describe("tunnel handshake", () => {
       url: srv.url,
       bearer: "tok-bad",
       nodeName: "gpu1",
-      handleRequest: async () => undefined,
+      handleRequest: () => Promise.resolve(undefined),
       onClose: (code) => {
         closeCode = code;
       },
     });
-    await expect(client.start()).rejects.toThrow(/closed before hello-ack/);
+    try {
+      await client.start();
+      throw new Error("expected start to fail");
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/closed before hello-ack/);
+    }
     client.stop();
     await waitFor(() => closeCode !== 0);
     expect(closeCode).toBe(TUNNEL_CLOSE_UNAUTHORIZED);
@@ -143,6 +150,7 @@ describe("request/response correlation", () => {
       bearer: "tok",
       nodeName: "gpu1",
       handleRequest: async (req) => {
+        await Promise.resolve();
         seen.push(req);
         if (req.method === "node.facts")
           return { profile: "macbook-pro-48g", memBytes: 68719476736 };
@@ -166,6 +174,7 @@ describe("request/response correlation", () => {
       bearer: "tok",
       nodeName: "gpu1",
       handleRequest: async () => {
+        await Promise.resolve();
         throw new Error("boom");
       },
     });
@@ -206,9 +215,13 @@ describe("request/response correlation", () => {
 
   test("unknown node errors synchronously on send", async () => {
     srv = startServer("tok");
-    await expect(srv.server.send("no-such-node", { id: "r1", method: "x" })).rejects.toThrow(
-      /tunnel not connected/,
-    );
+    try {
+      await srv.server.send("no-such-node", { id: "r1", method: "x" });
+      throw new Error("expected send to fail");
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/tunnel not connected/);
+    }
   });
 });
 
@@ -219,7 +232,7 @@ describe("ping/pong", () => {
       url: srv.url,
       bearer: "tok",
       nodeName: "gpu1",
-      handleRequest: async () => undefined,
+      handleRequest: () => Promise.resolve(undefined),
     });
     await client.start();
     await client.ping("nonce-xyz");
@@ -232,6 +245,7 @@ describe("end-to-end I.3.3: router bridge + tunneled client over real ws", () =>
   const fakeCaller = {
     catalog: {
       async list(input?: { classFilter?: string }) {
+        await Promise.resolve();
         if (input?.classFilter === "vision") return [{ rel: "v1" }];
         return [{ rel: "a" }];
       },
@@ -278,10 +292,11 @@ describe("end-to-end I.3.3: router bridge + tunneled client over real ws", () =>
         ],
         users: [{ name: "me", token: "t" }],
       },
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- test uses dynamic fixture/proxy data.
       { nodeName: "gpu-routed", tunnelSend },
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
     const result = await (nodeClient as any).catalog.list.query({ classFilter: "vision" });
     expect(result).toEqual([{ rel: "v1" }]);
     client.stop();
@@ -295,7 +310,7 @@ describe("disconnect semantics", () => {
       url: srv.url,
       bearer: "tok",
       nodeName: "gpu1",
-      handleRequest: async () => undefined,
+      handleRequest: () => Promise.resolve(undefined),
     });
     await client.start();
     expect(srv.server.registry().map((e) => e.nodeName)).toEqual(["gpu1"]);
@@ -327,10 +342,17 @@ describe("disconnect semantics", () => {
     // we kick the tunnel.
     await new Promise((r) => setTimeout(r, 20));
     srv.server.disconnect("gpu1", "kicked");
-    await expect(inflight).rejects.toThrow(/tunnel-disconnected/);
+    try {
+      await inflight;
+      throw new Error("expected send to fail");
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/tunnel-disconnected/);
+    }
     // Free the dangling handler so the test's cleanup doesn't hold
     // a live promise.
-    if (release) (release as () => void)();
+    const releaseHandler = release as unknown as (() => void) | null;
+    releaseHandler?.();
     client.stop();
   });
 
@@ -340,14 +362,14 @@ describe("disconnect semantics", () => {
       url: srv.url,
       bearer: "tok",
       nodeName: "gpu1",
-      handleRequest: async () => ({ from: "first" }),
+      handleRequest: () => Promise.resolve({ from: "first" }),
     });
     await first.start();
     const second = createTunnelClient({
       url: srv.url,
       bearer: "tok",
       nodeName: "gpu1",
-      handleRequest: async () => ({ from: "second" }),
+      handleRequest: () => Promise.resolve({ from: "second" }),
       // Don't let `first` auto-reconnect after the server kicks it
       // with 4409 — this test is specifically about the replacement
       // behavior, not reconnect.
@@ -372,7 +394,7 @@ describe("reconnect + heartbeat (I.3.2)", () => {
       url: srv.url,
       bearer: "tok",
       nodeName: "gpu1",
-      handleRequest: async () => ({ ok: true }),
+      handleRequest: () => Promise.resolve({ ok: true }),
       reconnect: { minDelayMs: 20, maxDelayMs: 100, jitterFraction: 0 },
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
       onStateChange: (s) => states.push(s),
@@ -395,7 +417,10 @@ describe("reconnect + heartbeat (I.3.2)", () => {
       url: srv.url,
       bearer: "tok",
       nodeName: "gpu1",
-      handleRequest: async () => undefined,
+      handleRequest: async () => {
+        await Promise.resolve();
+        return undefined;
+      },
       reconnect: { minDelayMs: 10, maxDelayMs: 50, jitterFraction: 0 },
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
     });
@@ -413,7 +438,10 @@ describe("reconnect + heartbeat (I.3.2)", () => {
       url: srv.url,
       bearer: "tok",
       nodeName: "gpu1",
-      handleRequest: async () => undefined,
+      handleRequest: async () => {
+        await Promise.resolve();
+        return undefined;
+      },
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
     });
     await client.start();
@@ -428,13 +456,22 @@ describe("reconnect + heartbeat (I.3.2)", () => {
       url: srv.url,
       bearer: "tok-bad",
       nodeName: "gpu1",
-      handleRequest: async () => undefined,
+      handleRequest: async () => {
+        await Promise.resolve();
+        return undefined;
+      },
       reconnect: { minDelayMs: 50, maxDelayMs: 50, jitterFraction: 0 },
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
       initialAttemptTimeoutMs: 0, // background mode — start resolves immediately
     });
     await client.start();
-    await expect(client.waitUntilReady(150)).rejects.toThrow(/timeout/);
+    try {
+      await client.waitUntilReady(150);
+      throw new Error("expected waitUntilReady to fail");
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/timeout/);
+    }
     client.stop();
   });
 
@@ -444,7 +481,10 @@ describe("reconnect + heartbeat (I.3.2)", () => {
       url: srv.url,
       bearer: "tok",
       nodeName: "gpu1",
-      handleRequest: async () => undefined,
+      handleRequest: async () => {
+        await Promise.resolve();
+        return undefined;
+      },
       reconnect: { minDelayMs: 30, maxDelayMs: 500, jitterFraction: 0 },
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
     });
@@ -478,7 +518,10 @@ describe("reconnect + heartbeat (I.3.2)", () => {
       url: srv.url,
       bearer: "tok",
       nodeName: "gpu1",
-      handleRequest: async () => undefined,
+      handleRequest: async () => {
+        await Promise.resolve();
+        return undefined;
+      },
       reconnect: { minDelayMs: 30, maxDelayMs: 100, jitterFraction: 0 },
       heartbeat: { intervalMs: 30, timeoutMs: 100 },
     });
@@ -500,7 +543,7 @@ describe("reconnect + heartbeat (I.3.2)", () => {
       hostname: "127.0.0.1",
       fetch(req, server) {
         if (new URL(req.url).pathname !== "/tunnel") return new Response("nf", { status: 404 });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
         const ok = (server as any).upgrade(req, { data: { hello: false } });
         return ok ? undefined : new Response("no", { status: 400 });
       },
@@ -513,9 +556,12 @@ describe("reconnect + heartbeat (I.3.2)", () => {
           const raw = typeof data === "string" ? data : data.toString("utf8");
           const msg = parseTunnelMessage(raw);
           if (!msg) return;
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
           if (msg.type === "hello" && !ws.data.hello) {
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
             ws.data.hello = true;
             acceptedHellos++;
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
             ws.send(
               encodeTunnelMessage({ type: "hello-ack", serverTime: new Date().toISOString() }),
             );
@@ -530,10 +576,13 @@ describe("reconnect + heartbeat (I.3.2)", () => {
     });
     try {
       const client = createTunnelClient({
-        url: `ws://127.0.0.1:${bun.port}/tunnel`,
+        url: `ws://127.0.0.1:${String(bun.port)}/tunnel`,
         bearer: "tok",
         nodeName: "gpu1",
-        handleRequest: async () => undefined,
+        handleRequest: async () => {
+          await Promise.resolve();
+          return undefined;
+        },
         reconnect: { minDelayMs: 20, maxDelayMs: 60, jitterFraction: 0 },
         heartbeat: { intervalMs: 30, timeoutMs: 40 },
       });
@@ -543,7 +592,7 @@ describe("reconnect + heartbeat (I.3.2)", () => {
       await waitFor(() => acceptedHellos >= 2, 2000);
       client.stop();
     } finally {
-      bun.stop(true);
+      void bun.stop(true);
     }
   });
 });

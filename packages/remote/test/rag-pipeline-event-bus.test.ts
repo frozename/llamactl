@@ -73,6 +73,7 @@ describe("createPipelineEventBus", () => {
   });
 
   test("retention evicts after PIPELINE_RETENTION_MS", async () => {
+    await Promise.resolve();
     // We can't fast-forward real timers easily here; assert the
     // window constant is sane + the timer is scheduled (indirect:
     // currentRun still returns for a moment, then we drive a tiny

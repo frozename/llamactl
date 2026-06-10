@@ -88,14 +88,15 @@ async function startHarness(script: {
   const handleSubscription = (req: TunnelReq): TunnelSubscription => ({
     subscribe(handlers) {
       let cancelled = false;
-      (async () => {
+      const isCancelled = (): boolean => cancelled;
+      void (async () => {
         for (const ev of script.events) {
-          if (cancelled) break;
+          if (isCancelled()) break;
           await new Promise((r) => setTimeout(r, script.delayMs ?? 2));
-          if (cancelled) break;
+          if (isCancelled()) break;
           handlers.onEvent(ev);
         }
-        if (cancelled) {
+        if (isCancelled()) {
           handlers.onComplete();
           return;
         }
@@ -114,10 +115,10 @@ async function startHarness(script: {
     },
   });
   const client = createTunnelClient({
-    url: `ws://127.0.0.1:${bunPort}/tunnel`,
+    url: `ws://127.0.0.1:${String(bunPort)}/tunnel`,
     bearer: tunnelBearer,
     nodeName,
-    handleRequest: async () => ({}),
+    handleRequest: () => Promise.resolve({}),
     handleSubscription,
     initialAttemptTimeoutMs: 2000,
     heartbeat: { intervalMs: 0 },
@@ -130,35 +131,40 @@ async function startHarness(script: {
     receivedCancel,
     async stop() {
       client.stop();
-      bun.stop();
+      void bun.stop();
       await new Promise((r) => setTimeout(r, 10));
     },
   };
 }
 
 describe("tunnel-relay SSE", () => {
-  let harness: RunningHarness;
+  let harness: RunningHarness | undefined;
   afterEach(async () => {
     if (harness) await harness.stop();
+    harness = undefined;
   });
 
   test("relays three events + done frame over SSE", async () => {
     harness = await startHarness({
       events: [{ i: 0 }, { i: 1 }, { i: 2 }],
     });
-    const res = await fetch(`http://127.0.0.1:${harness.bunPort}/tunnel-relay/node1?stream=true`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${harness.bearer}`,
-        "content-type": "application/json",
+    const res = await fetch(
+      `http://127.0.0.1:${String(harness.bunPort)}/tunnel-relay/node1?stream=true`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${harness.bearer}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ method: "tick", type: "subscription", input: null }),
       },
-      body: JSON.stringify({ method: "tick", type: "subscription", input: null }),
-    });
+    );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     const frames = await readSSE(res);
     const dataFrames = frames.filter((f) => !f.event);
     const doneFrames = frames.filter((f) => f.event === "done");
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- test uses dynamic fixture/proxy data.
     expect(dataFrames.map((f) => JSON.parse(f.data))).toEqual([{ i: 0 }, { i: 1 }, { i: 2 }]);
     expect(doneFrames.length).toBe(1);
     expect(JSON.parse(doneFrames[0]!.data)).toEqual({ ok: true });
@@ -169,19 +175,25 @@ describe("tunnel-relay SSE", () => {
       events: [{ seen: 1 }],
       throwErr: Object.assign(new Error("kaboom"), { code: "E42" }),
     });
-    const res = await fetch(`http://127.0.0.1:${harness.bunPort}/tunnel-relay/node1?stream=true`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${harness.bearer}`,
-        "content-type": "application/json",
+    const res = await fetch(
+      `http://127.0.0.1:${String(harness.bunPort)}/tunnel-relay/node1?stream=true`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${harness.bearer}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ method: "boom", type: "subscription", input: null }),
       },
-      body: JSON.stringify({ method: "boom", type: "subscription", input: null }),
-    });
+    );
     const frames = await readSSE(res);
     const done = frames.find((f) => f.event === "done");
     expect(done).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- test uses dynamic fixture/proxy data.
     const parsed = JSON.parse(done!.data);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
     expect(parsed.ok).toBe(false);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
     expect(parsed.error.message).toBe("kaboom");
   });
 
@@ -191,15 +203,18 @@ describe("tunnel-relay SSE", () => {
       delayMs: 15,
     });
     const ac = new AbortController();
-    const res = await fetch(`http://127.0.0.1:${harness.bunPort}/tunnel-relay/node1?stream=true`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${harness.bearer}`,
-        "content-type": "application/json",
+    const res = await fetch(
+      `http://127.0.0.1:${String(harness.bunPort)}/tunnel-relay/node1?stream=true`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${harness.bearer}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ method: "long", type: "subscription", input: null }),
+        signal: ac.signal,
       },
-      body: JSON.stringify({ method: "long", type: "subscription", input: null }),
-      signal: ac.signal,
-    });
+    );
     expect(res.status).toBe(200);
     // Read one frame then abort.
     const reader = res.body!.getReader();
@@ -218,29 +233,37 @@ describe("tunnel-relay SSE", () => {
 
   test("SSE rejects without bearer", async () => {
     harness = await startHarness({ events: [] });
-    const res = await fetch(`http://127.0.0.1:${harness.bunPort}/tunnel-relay/node1?stream=true`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ method: "x", type: "subscription", input: null }),
-    });
+    const res = await fetch(
+      `http://127.0.0.1:${String(harness.bunPort)}/tunnel-relay/node1?stream=true`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ method: "x", type: "subscription", input: null }),
+      },
+    );
     expect(res.status).toBe(401);
   });
 
   test("SSE against disconnected node ships an error done frame", async () => {
     harness = await startHarness({ events: [] });
-    const res = await fetch(`http://127.0.0.1:${harness.bunPort}/tunnel-relay/ghost?stream=true`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${harness.bearer}`,
-        "content-type": "application/json",
+    const res = await fetch(
+      `http://127.0.0.1:${String(harness.bunPort)}/tunnel-relay/ghost?stream=true`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${harness.bearer}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ method: "x", type: "subscription", input: null }),
       },
-      body: JSON.stringify({ method: "x", type: "subscription", input: null }),
-    });
+    );
     expect(res.status).toBe(200);
     const frames = await readSSE(res);
     const done = frames.find((f) => f.event === "done");
     expect(done).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- test uses dynamic fixture/proxy data.
     const parsed = JSON.parse(done!.data);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
     expect(parsed.ok).toBe(false);
   });
 });
