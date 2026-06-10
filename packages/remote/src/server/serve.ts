@@ -590,7 +590,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
         }
       }
       if (mdns) await mdns.stop().catch(() => undefined);
-      await server.stop(true);
+      void server.stop(true);
     },
     ...(tunnelServer ? { tunnelServer } : {}),
     ...(tunnelClient ? { tunnelClient } : {}),
