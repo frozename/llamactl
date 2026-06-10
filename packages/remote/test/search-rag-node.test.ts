@@ -29,7 +29,7 @@ describe("resolveDefaultRagNode", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test("returns null when no RAG node configured", async () => {
+  test("returns null when no RAG node configured", () => {
     writeFileSync(
       join(tmp, "config"),
       [
@@ -49,11 +49,11 @@ describe("resolveDefaultRagNode", () => {
       ].join("\n"),
       "utf8",
     );
-    const out = await resolveDefaultRagNode();
+    const out = resolveDefaultRagNode();
     expect(out).toBeNull();
   });
 
-  test("returns first node with kind=rag", async () => {
+  test("returns first node with kind=rag", () => {
     writeFileSync(
       join(tmp, "config"),
       [
@@ -83,7 +83,7 @@ describe("resolveDefaultRagNode", () => {
       ].join("\n"),
       "utf8",
     );
-    const out = await resolveDefaultRagNode();
+    const out = resolveDefaultRagNode();
     expect(out).toBe("chroma-1");
   });
 });

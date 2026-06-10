@@ -121,7 +121,7 @@ describe("handleInstallScript", () => {
         ? "http://agent/install-agent.sh"
         : `http://agent/install-agent.sh?token=${encodeURIComponent(token)}`;
     const req = new Request(url, { method: "GET" });
-    const res = await handleInstallScript(req, { bootstrapTokensDir: tokensDir });
+    const res = handleInstallScript(req, { bootstrapTokensDir: tokensDir });
     return {
       status: res.status,
       body: await res.text(),
@@ -158,13 +158,13 @@ describe("handleInstallScript", () => {
     expect(body).toContain("unknown");
   });
 
-  test("POST → 405", async () => {
+  test("POST → 405", () => {
     const req = new Request("http://agent/install-agent.sh?token=x", { method: "POST" });
-    const res = await handleInstallScript(req, { bootstrapTokensDir: tokensDir });
+    const res = handleInstallScript(req, { bootstrapTokensDir: tokensDir });
     expect(res.status).toBe(405);
   });
 
-  test("cache-control: no-store on the rendered script", async () => {
+  test("cache-control: no-store on the rendered script", () => {
     const { token } = generateBootstrapToken({
       nodeName: "n",
       centralUrl: "https://c.lan",
@@ -173,7 +173,7 @@ describe("handleInstallScript", () => {
     const req = new Request(`http://agent/install-agent.sh?token=${encodeURIComponent(token)}`, {
       method: "GET",
     });
-    const res = await handleInstallScript(req, { bootstrapTokensDir: tokensDir });
+    const res = handleInstallScript(req, { bootstrapTokensDir: tokensDir });
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 

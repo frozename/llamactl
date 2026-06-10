@@ -19,6 +19,8 @@
 
 import { z } from "zod";
 
+import { nonEmpty } from "../config/env.js";
+
 export const RagBenchQuerySchema = z
   .object({
     query: z.string().min(1),
@@ -40,7 +42,7 @@ export const RagBenchQuerySchema = z
      */
     topK: z.number().int().positive().max(100).optional(),
   })
-  .refine((q) => q.expected_doc_id ?? q.expected_substring, {
+  .refine((q) => nonEmpty(q.expected_doc_id) ?? nonEmpty(q.expected_substring), {
     message: "each query must set expected_doc_id or expected_substring (or both)",
   });
 export type RagBenchQuery = z.infer<typeof RagBenchQuerySchema>;

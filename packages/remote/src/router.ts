@@ -54,6 +54,7 @@ import * as benchScheduleMod from "./bench/schedule.js";
 import * as benchScheduleLoopMod from "./bench/scheduleLoop.js";
 import { buildPinnedLinks } from "./client/links.js";
 import { decodeBootstrap } from "./config/agent-config.js";
+import { nonEmpty } from "./config/env.js";
 import * as kubecfg from "./config/kubeconfig.js";
 import * as infraInstallMod from "./infra/install.js";
 import * as infraLayoutMod from "./infra/layout.js";
@@ -2340,9 +2341,9 @@ export const router = t.router({
       // Cascade: override > DEV_STORAGE (honours hermetic audits and
       // the resolver's test-profile re-root seeded in Electron main)
       // > production default under the operator's homedir.
-      const devStorage = process.env.DEV_STORAGE?.trim();
+      const devStorage = nonEmpty(process.env.DEV_STORAGE);
       const baseDir =
-        process.env.LLAMACTL_MCP_PIPELINES_DIR?.trim() ??
+        nonEmpty(process.env.LLAMACTL_MCP_PIPELINES_DIR) ??
         (devStorage
           ? join(devStorage, "mcp", "pipelines")
           : join(homedir(), ".llamactl", "mcp", "pipelines"));
@@ -3447,7 +3448,7 @@ export const router = t.router({
     }),
 
   globalSearchRagStatus: t.procedure.query(async () => {
-    const nodeName = await resolveDefaultRagNode();
+    const nodeName = resolveDefaultRagNode();
     if (!nodeName) {
       return { sessions: false, knowledge: false, logs: false, defaultNode: null };
     }

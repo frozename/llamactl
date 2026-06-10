@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { nonEmpty } from "../config/env.js";
 import { estimateModelHostMemoryGiB } from "./admission.js";
 import { type ModelHostManifest, ModelHostManifestSchema } from "./modelhost-schema.js";
 import { type ModelRun, ModelRunSchema } from "./schema.js";
@@ -20,7 +21,7 @@ import { type ModelRun, ModelRunSchema } from "./schema.js";
 export function defaultWorkloadsDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_WORKLOADS_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() ?? join(homedir(), ".llamactl");
+  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
   return join(base, "workloads");
 }
 

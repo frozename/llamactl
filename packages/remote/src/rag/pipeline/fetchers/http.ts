@@ -62,7 +62,8 @@ export const httpFetcher: Fetcher = {
         }
       }
 
-      await rate.wait(url.hostname, ctx.signal);
+      const abortedDuringWait = await rate.wait(url.hostname, ctx.signal);
+      if (abortedDuringWait) return;
 
       let res: Response;
       try {
@@ -224,7 +225,9 @@ export function extractLinks(html: string, base: URL): string[] {
 /**
  * Per-host leaky bucket. Each `wait()` call parks the caller until
  * at least `1000 / rate` ms have elapsed since the last release on
- * the same hostname.
+ * the same hostname. Resolves `true` when `signal` aborted while
+ * (or before) waiting, so callers can bail out instead of issuing
+ * an already-aborted fetch.
  */
 class RateLimiter {
   private readonly intervalMs: number;
@@ -234,23 +237,25 @@ class RateLimiter {
     this.intervalMs = Math.max(1, Math.floor(1000 / ratePerSec));
   }
 
-  async wait(host: string, signal: AbortSignal): Promise<void> {
+  async wait(host: string, signal: AbortSignal): Promise<boolean> {
     const now = Date.now();
     const earliest = this.nextAllowed.get(host) ?? 0;
     const delay = Math.max(0, earliest - now);
     this.nextAllowed.set(host, Math.max(now, earliest) + this.intervalMs);
-    if (delay === 0) return;
-    await new Promise<void>((resolve) => {
-      const t = setTimeout(resolve, delay);
-      signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(t);
-          resolve();
-        },
-        { once: true },
-      );
-    });
+    if (delay > 0) {
+      await new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, delay);
+        signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(t);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    }
+    return signal.aborted;
   }
 }
 

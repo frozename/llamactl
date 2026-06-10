@@ -182,6 +182,30 @@ describe("GenericContainerServiceSpecSchema", () => {
       }),
     ).toThrow(/volumes\[N\]: exactly one of \{ hostPath, name, configMap \} is required/);
   });
+
+  test("volumes refine: empty-string hostPath → rejected", () => {
+    expect(() =>
+      GenericContainerServiceSpecSchema.parse({
+        kind: "container",
+        name: "nginx",
+        node: "gpu1",
+        image: { repository: "nginx", tag: "alpine" },
+        volumes: [{ hostPath: "", containerPath: "/data" }],
+      }),
+    ).toThrow(/volumes\[N\]: exactly one of \{ hostPath, name, configMap \} is required/);
+  });
+
+  test("volumes refine: empty-string name → rejected", () => {
+    expect(() =>
+      GenericContainerServiceSpecSchema.parse({
+        kind: "container",
+        name: "nginx",
+        node: "gpu1",
+        image: { repository: "nginx", tag: "alpine" },
+        volumes: [{ name: "", containerPath: "/data" }],
+      }),
+    ).toThrow(/volumes\[N\]: exactly one of \{ hostPath, name, configMap \} is required/);
+  });
 });
 
 describe("ServiceSpecSchema (discriminated union)", () => {
