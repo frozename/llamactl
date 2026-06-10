@@ -6,7 +6,8 @@
 *~
 
 # Node / Electron (future)
-node_modules/
+# no trailing slash: must also match symlinks named node_modules (worktree autocommit artifacts)
+node_modules
 dist/
 build/
 out/
