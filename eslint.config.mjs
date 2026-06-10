@@ -118,10 +118,10 @@ export default tseslint.config(
       ],
       "@typescript-eslint/explicit-module-boundary-types": "warn",
       "@typescript-eslint/consistent-type-imports": [
-        "warn",
+        "error",
         { prefer: "type-imports", fixStyle: "inline-type-imports" },
       ],
-      "@typescript-eslint/no-import-type-side-effects": "warn",
+      "@typescript-eslint/no-import-type-side-effects": "error",
       "no-warning-comments": [
         "warn",
         { terms: ["todo", "fixme", "hack", "xxx"], location: "anywhere" },
