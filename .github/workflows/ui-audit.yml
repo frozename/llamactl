@@ -81,6 +81,9 @@ jobs:
         with:
           name: ui-audit-diffs
           path: llamactl/.audit-diffs
+          # The diff dir is dot-prefixed; upload-artifact@v4 silently
+          # excludes hidden paths unless told otherwise.
+          include-hidden-files: true
           retention-days: 14
 
       - name: Upload audit report on failure
@@ -89,5 +92,16 @@ jobs:
         with:
           name: ui-audit-report
           path: /tmp/llamactl-ui-audit-v2/report.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      # The raw screenshots + trace make "what did CI actually render"
+      # answerable without rerunning anything.
+      - name: Upload audit screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-audit-screenshots
+          path: /tmp/llamactl-ui-audit-v2
           retention-days: 14
           if-no-files-found: warn

@@ -113,7 +113,7 @@ fi
 # state CI doesn't have.
 DRIVER_ARGS=(
   "--executable=$ELECTRON_BIN"
-  "--args=$APP_DIR --force-device-scale-factor=1"
+  "--args=$APP_DIR --force-device-scale-factor=1 --force-color-profile=srgb"
   "--env=LLAMACTL_TEST_PROFILE=$PROFILE"
   "--env=DEV_STORAGE=$PROFILE"
   "--env=LLAMACTL_WINDOW_SIZE=1024x640"
