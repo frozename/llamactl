@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
+
 import type { PeerNode } from "../../remote/src/config/peers.js";
 import type { LocalRoute, PeerSnapshot } from "../src/workloadRuntime.js";
+
 import { listClusterRoutes } from "../src/workloadRuntime.js";
 
 const localRoute = (model: string, workload = "local-a"): LocalRoute => ({

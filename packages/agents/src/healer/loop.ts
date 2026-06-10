@@ -1,10 +1,12 @@
+import type { RunbookToolClient } from "../types.js";
+
 import {
-  probeFleet,
-  stateTransitions,
-  type ProbeFleetOptions,
-  type ProbeReport,
-  type ProbeState,
-} from "./probe.js";
+  type CompositeSummary,
+  fetchComposites,
+  formatCompositeReason,
+  shouldRemediateComposite,
+} from "./composites.js";
+import { executePlan } from "./execute.js";
 import { probeFleetViaNova } from "./facade-probe.js";
 import {
   appendHealerJournal,
@@ -13,16 +15,15 @@ import {
   type JournalProposalEntry,
   type JournalTransitionSnapshot,
 } from "./journal.js";
-import { askPlanner, buildGoal, proposalId, type Transition } from "./remediation.js";
-import { executePlan } from "./execute.js";
-import { gatePlan, type Tier, type PlanLike } from "./severity.js";
 import {
-  fetchComposites,
-  formatCompositeReason,
-  shouldRemediateComposite,
-  type CompositeSummary,
-} from "./composites.js";
-import type { RunbookToolClient } from "../types.js";
+  probeFleet,
+  type ProbeFleetOptions,
+  type ProbeReport,
+  type ProbeState,
+  stateTransitions,
+} from "./probe.js";
+import { askPlanner, buildGoal, proposalId } from "./remediation.js";
+import { gatePlan, type PlanLike, type Tier } from "./severity.js";
 
 /**
  * Healer loop — the "observe + journal" half of autonomous ops.
@@ -166,7 +167,9 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
             source,
             mode,
             severityThreshold,
-            writeJournal: (entry) => writeJournal(entry, journalPath),
+            writeJournal: (entry) => {
+              writeJournal(entry, journalPath);
+            },
             onProposal: opts.onProposal,
           });
           // Slice D — composite remediation. Runs on the same tick as
@@ -180,7 +183,9 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
             source,
             mode,
             severityThreshold,
-            writeJournal: (entry) => writeJournal(entry, journalPath),
+            writeJournal: (entry) => {
+              writeJournal(entry, journalPath);
+            },
             onProposal: opts.onProposal,
           });
         } finally {
@@ -241,7 +246,7 @@ async function remediate(opts: RemediateOptions): Promise<void> {
       from: t.from,
       to: t.to,
     };
-    const goal = buildGoal(t as Transition);
+    const goal = buildGoal(t);
     const ask = await askPlanner(opts.toolClient, goal);
     const ts = new Date().toISOString();
     if (!ask.ok) {
@@ -270,7 +275,7 @@ async function remediate(opts: RemediateOptions): Promise<void> {
     if (opts.mode === "propose") continue;
 
     // Auto mode — planner-owned confirmation flag is absolute.
-    if (ask.plan.requiresConfirmation === true) {
+    if (ask.plan.requiresConfirmation) {
       opts.writeJournal({
         kind: "refused",
         ts: new Date().toISOString(),

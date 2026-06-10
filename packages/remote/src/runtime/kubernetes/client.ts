@@ -1,3 +1,4 @@
+import { AppsV1Api, CoreV1Api, KubeConfig } from "@kubernetes/client-node";
 /**
  * Thin wrapper around `@kubernetes/client-node`'s KubeConfig +
  * typed API clients. Every k8s-backend entrypoint flows through
@@ -21,7 +22,6 @@
  * shim is bypassed — the library's default path works there.
  */
 import { readFileSync } from "node:fs";
-import { AppsV1Api, CoreV1Api, KubeConfig } from "@kubernetes/client-node";
 
 export interface KubernetesClientOptions {
   /** Override the kubeconfig path. When unset, uses KubeConfig.loadFromDefault(). */
@@ -153,7 +153,7 @@ class BunFetchHttpLibrary {
     const signal = request.getSignal();
     const agent = request.getAgent() as { options?: Record<string, unknown> } | undefined;
     const tls = agentToTls(agent);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const init: Record<string, unknown> = {
       method,
       headers,
@@ -161,12 +161,12 @@ class BunFetchHttpLibrary {
     if (body !== undefined && body !== null) init.body = body;
     if (signal !== undefined) init.signal = signal;
     if (tls !== undefined) init.tls = tls;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const resp = await fetch(url, init as any);
+
+    const resp = await fetch(url, init);
     const headerMap: Record<string, string> = {};
-    resp.headers.forEach((value, name) => {
+    for (const [name, value] of resp.headers.entries()) {
       headerMap[name] = value;
-    });
+    }
     const respBody = {
       text: () => resp.text(),
       binary: async () => Buffer.from(await resp.arrayBuffer()),

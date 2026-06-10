@@ -1,5 +1,5 @@
-import { z } from "zod";
 import { PlanStepSchema } from "@nova/mcp";
+import { z } from "zod";
 
 export const ToolTierEnum = z.enum(["read", "mutation-dry-run-safe", "mutation-destructive"]);
 export type ToolTier = z.infer<typeof ToolTierEnum>;

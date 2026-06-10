@@ -1,7 +1,9 @@
 // packages/remote/test/gateway-catalog-derive-embersynth.test.ts
 import { describe, expect, test } from "bun:test";
-import { deriveEmbersynthEntries } from "../src/workload/gateway-catalog/embersynth-entries";
+
 import type { CompositeGatewayContext } from "../src/workload/gateway-handlers/types";
+
+import { deriveEmbersynthEntries } from "../src/workload/gateway-catalog/embersynth-entries";
 
 const ctx: CompositeGatewayContext = {
   compositeName: "mc",

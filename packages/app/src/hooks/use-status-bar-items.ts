@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { useStatusBarStore, type StatusBarItem } from "@/stores/status-bar-store";
+
+import { type StatusBarItem, useStatusBarStore } from "@/stores/status-bar-store";
 
 /**
  * Module-scoped status-bar contribution. Pass the active module id
@@ -19,7 +20,9 @@ export function useStatusBarItems(moduleId: string, items: StatusBarItem[]): voi
   const clearItems = useStatusBarStore((s) => s.clearModuleItems);
   useEffect(() => {
     setItems(moduleId, items);
-    return () => clearItems(moduleId);
+    return () => {
+      clearItems(moduleId);
+    };
     // We intentionally serialize items so downstream consumers
     // only re-run on content change, not reference identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps

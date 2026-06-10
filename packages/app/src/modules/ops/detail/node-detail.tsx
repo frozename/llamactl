@@ -1,6 +1,7 @@
 import * as React from "react";
-import { Badge, Card, StatCard, StatusDot } from "@/ui";
+
 import { trpc } from "@/lib/trpc";
+import { Badge, Card, StatCard, StatusDot } from "@/ui";
 
 interface Props {
   nodeName: string;

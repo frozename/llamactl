@@ -1,5 +1,7 @@
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+
 import type { FleetExecutionEntry, FleetJournalEntry, FleetProposalEntry } from "./types.js";
+
 import { actionTier } from "./types.js";
 
 export type { FleetExecutionEntry };

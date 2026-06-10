@@ -1,13 +1,14 @@
-import { describe, expect, test } from "bun:test";
 import type {
   AiProvider,
   UnifiedEmbeddingRequest,
   UnifiedEmbeddingResponse,
 } from "@nova/contracts";
 
+import { describe, expect, test } from "bun:test";
+
+import { freshConfig } from "../src/config/schema.js";
 import { createEmbedderFromBinding } from "../src/rag/embedding.js";
 import { RagError } from "../src/rag/errors.js";
-import { freshConfig } from "../src/config/schema.js";
 
 /**
  * Strategic 1 — delegated embedding tests for createEmbedderFromBinding.
@@ -47,7 +48,7 @@ describe("createEmbedderFromBinding", () => {
     const provider = stubProvider({
       createEmbeddings: async (req) => {
         received.push(req);
-        const texts = Array.isArray(req.input) ? (req.input as string[]) : [req.input as string];
+        const texts = Array.isArray(req.input) ? (req.input as string[]) : [req.input];
         return makeResponse(texts.map((_, i) => [i + 1, i + 2]));
       },
     });
@@ -160,9 +161,7 @@ describe("createEmbedderFromBinding", () => {
         builds++;
         return stubProvider({
           createEmbeddings: async (req) => {
-            const texts = Array.isArray(req.input)
-              ? (req.input as string[])
-              : [req.input as string];
+            const texts = Array.isArray(req.input) ? (req.input as string[]) : [req.input];
             return makeResponse(texts.map(() => [0.1]));
           },
         });
@@ -297,7 +296,7 @@ describe("createEmbedderFromBinding — baseUrl override", () => {
           apiKeyRef: "env:NOMIC_TOKEN_TEST",
         },
         config: freshConfig(),
-        env: { NOMIC_TOKEN_TEST: "sk-test-abc123" } as NodeJS.ProcessEnv,
+        env: { NOMIC_TOKEN_TEST: "sk-test-abc123" },
       });
       await embedder(["hello"]);
       expect(fake.calls).toHaveLength(1);
@@ -316,7 +315,7 @@ describe("createEmbedderFromBinding — baseUrl override", () => {
         apiKeyRef: "env:DEFINITELY_NOT_SET_ANYWHERE",
       },
       config: freshConfig(),
-      env: {} as NodeJS.ProcessEnv,
+      env: {},
     });
     try {
       await embedder(["x"]);

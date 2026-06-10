@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { advertisedEndpoint, endpoint } from "../src/server.js";
+
 import { resolveEnv } from "../src/env.js";
 import { collectNodeFacts } from "../src/nodeFacts.js";
+import { advertisedEndpoint, endpoint } from "../src/server.js";
 
 const origEnv = { ...process.env };
 

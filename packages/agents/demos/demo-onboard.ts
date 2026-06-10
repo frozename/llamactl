@@ -13,10 +13,11 @@
  * onboard-new-gpu-node both dry and wet, and prints the state
  * transition the operator would see.
  */
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+
 import { runRunbook } from "../src/index.js";
 
 /**

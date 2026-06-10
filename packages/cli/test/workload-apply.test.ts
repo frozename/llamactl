@@ -1,5 +1,7 @@
+import type { workloadSchema } from "@llamactl/remote";
+
 import { describe, expect, test } from "bun:test";
-import { workloadSchema } from "@llamactl/remote";
+
 import { stampApplyAnnotations } from "../src/commands/workload.js";
 
 function makeManifest(): workloadSchema.ModelRun {

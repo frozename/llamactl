@@ -43,7 +43,7 @@ interface RefusalRule {
  * worrying about indentation or newlines.
  */
 export function normalizeGoal(goal: string): string {
-  return goal.toLowerCase().replace(/\s+/g, " ").trim();
+  return goal.toLowerCase().replaceAll(/\s+/g, " ").trim();
 }
 
 /**
@@ -92,7 +92,7 @@ export function checkRefusal(
   const normalized = normalizeGoal(goal);
   for (const rule of rules) {
     if (!rule.pattern.test(normalized)) continue;
-    if (rule.qualifier && rule.qualifier.test(normalized)) continue;
+    if (rule.qualifier?.test(normalized)) continue;
     return { reason: rule.reason, pattern: rule.pattern.source };
   }
   return null;

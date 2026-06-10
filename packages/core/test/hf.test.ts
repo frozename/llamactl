@@ -1,15 +1,17 @@
 import { describe, expect, test } from "bun:test";
+
+import type { HFModelInfo, HFTree } from "../src/schemas.js";
+
 import {
   discoveryCacheFile,
   fileSizeFromTree,
-  humanSize,
   hfEnabled,
+  humanSize,
   mmprojFileForRepo,
   modelInfoCacheFile,
   repoTreeCacheFile,
   siblingForFile,
 } from "../src/hf.js";
-import type { HFModelInfo, HFTree } from "../src/schemas.js";
 
 describe("hf.hfEnabled", () => {
   test("default / unset -> true", () => {
@@ -34,7 +36,7 @@ describe("hf.humanSize", () => {
     [null, "0 B"],
     [undefined, "0 B"],
   ])("%p -> %s", (input, expected) => {
-    expect(humanSize(input as number | null | undefined)).toBe(expected);
+    expect(humanSize(input)).toBe(expected);
   });
   test("non-finite -> n/a", () => {
     expect(humanSize(Number.NaN)).toBe("n/a");

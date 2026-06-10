@@ -1,8 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+
 import { trpc } from "@/lib/trpc";
-import { Button, Input, EditorialHero } from "@/ui";
+import { Button, Input } from "@/ui";
 
 /**
  * Preset gallery. Joins `promotions` (preset-overrides.tsv) with
@@ -50,7 +51,9 @@ export default function Presets(): React.JSX.Element {
         queryKey: [["promotions"], { type: "query" }],
       });
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      setError(err.message);
+    },
   });
 
   const deleteMutation = trpc.promoteDelete.useMutation({
@@ -60,7 +63,9 @@ export default function Presets(): React.JSX.Element {
         queryKey: [["promotions"], { type: "query" }],
       });
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      setError(err.message);
+    },
   });
 
   // Quick lookup: rel → latest gen_tps from the current bench query.
@@ -227,7 +232,9 @@ export default function Presets(): React.JSX.Element {
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => deleteMutation.mutate({ profile, preset })}
+                              onClick={() => {
+                                deleteMutation.mutate({ profile, preset });
+                              }}
                               disabled={deleteMutation.isPending}
                               style={{ fontSize: 10, padding: "2px 4px" }}
                               title={`remove promotion for ${profile}/${preset}`}
@@ -291,7 +298,9 @@ export default function Presets(): React.JSX.Element {
                 min={0}
                 step={5}
                 value={minTps}
-                onChange={(e) => setMinTps(Math.max(0, Number.parseFloat(e.target.value) || 0))}
+                onChange={(e) => {
+                  setMinTps(Math.max(0, Number.parseFloat(e.target.value) || 0));
+                }}
                 data-testid="presets-min-tps"
                 style={{ width: 64, textAlign: "right", fontFamily: "monospace" }}
               />
@@ -307,7 +316,9 @@ export default function Presets(): React.JSX.Element {
               <input
                 type="checkbox"
                 checked={installedOnly}
-                onChange={(e) => setInstalledOnly(e.target.checked)}
+                onChange={(e) => {
+                  setInstalledOnly(e.target.checked);
+                }}
                 data-testid="presets-installed-only"
               />
               installed only
@@ -315,7 +326,9 @@ export default function Presets(): React.JSX.Element {
             <span style={{ color: "var(--color-text-secondary)" }}>class</span>
             <select
               value={classFilter}
-              onChange={(e) => setClassFilter(e.target.value as ClassFilter)}
+              onChange={(e) => {
+                setClassFilter(e.target.value as ClassFilter);
+              }}
               style={{
                 borderRadius: 4,
                 border: "1px solid var(--color-border)",
@@ -430,7 +443,9 @@ export default function Presets(): React.JSX.Element {
                         >
                           <select
                             value={pickProfile}
-                            onChange={(e) => setPickProfile(e.target.value as Profile)}
+                            onChange={(e) => {
+                              setPickProfile(e.target.value as Profile);
+                            }}
                             style={{
                               borderRadius: 4,
                               border: "1px solid var(--color-border)",
@@ -447,7 +462,9 @@ export default function Presets(): React.JSX.Element {
                           </select>
                           <select
                             value={pickPreset}
-                            onChange={(e) => setPickPreset(e.target.value as Preset)}
+                            onChange={(e) => {
+                              setPickPreset(e.target.value as Preset);
+                            }}
                             style={{
                               borderRadius: 4,
                               border: "1px solid var(--color-border)",
@@ -466,13 +483,13 @@ export default function Presets(): React.JSX.Element {
                             variant="primary"
                             size="sm"
                             disabled={promoteMutation.isPending}
-                            onClick={() =>
+                            onClick={() => {
                               promoteMutation.mutate({
                                 profile: pickProfile,
                                 preset: pickPreset,
                                 rel: row.rel,
-                              })
-                            }
+                              });
+                            }}
                             style={{ padding: "2px 8px" }}
                           >
                             {promoteMutation.isPending ? "Setting…" : "Set"}
@@ -480,7 +497,9 @@ export default function Presets(): React.JSX.Element {
                           <Button
                             variant="secondary"
                             size="sm"
-                            onClick={() => setPendingRel(null)}
+                            onClick={() => {
+                              setPendingRel(null);
+                            }}
                             style={{ padding: "2px 8px" }}
                           >
                             Cancel

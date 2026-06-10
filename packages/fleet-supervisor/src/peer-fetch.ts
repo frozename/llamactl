@@ -1,5 +1,6 @@
-import type { FleetSnapshotEntry } from "./types.js";
 import type { AggregatorPeer } from "./aggregator.js";
+import type { FleetSnapshotEntry } from "./types.js";
+
 import { resolveToken } from "../../remote/src/config/kubeconfig.js";
 
 interface PeerFetchResult {

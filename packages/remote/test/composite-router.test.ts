@@ -4,14 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
-import { router } from "../src/router.js";
 import type { Composite } from "../src/composite/schema.js";
-import { saveComposite } from "../src/composite/store.js";
-import {
-  _resetForTests as resetCompositeEvents,
-  compositeEvents,
-} from "../src/composite/event-bus.js";
 import type { CompositeApplyEvent } from "../src/composite/types.js";
+
+import {
+  compositeEvents,
+  _resetForTests as resetCompositeEvents,
+} from "../src/composite/event-bus.js";
+import { saveComposite } from "../src/composite/store.js";
+import { router } from "../src/router.js";
 
 /**
  * Phase 5 of composite-infra.md — router-level coverage for the

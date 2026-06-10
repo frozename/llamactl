@@ -1,6 +1,8 @@
-import { describe, it, expect } from "bun:test";
-import { PressureWindow, detectPressure, isPressureHot } from "../src/policy.js";
+import { describe, expect, it } from "bun:test";
+
 import type { NodeMemSnapshot, WorkloadSnapshot } from "../src/types.js";
+
+import { detectPressure, isPressureHot, PressureWindow } from "../src/policy.js";
 
 const THRESHOLDS = {
   headroomMinMb: 512,

@@ -144,7 +144,7 @@ export async function runCostGuardian(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
     case "tick":
-      return runTick(rest);
+      return await runTick(rest);
     case undefined:
     case "--help":
     case "-h":

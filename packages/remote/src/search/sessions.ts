@@ -1,10 +1,12 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
+
+import type { MatchExcerpt, SessionHit } from "./types.js";
+
 import { defaultSessionsDir } from "../ops-chat/paths.js";
 import { readJournal } from "../ops-chat/sessions/journal.js";
 import { getSessionSummary } from "../ops-chat/sessions/list.js";
 import { findTextMatches } from "./text-match.js";
-import type { SessionHit, MatchExcerpt } from "./types.js";
 
 export interface SearchSessionsOpts {
   query: string;

@@ -17,7 +17,7 @@
  * token for context + renders the script.
  */
 
-import { findBootstrapTokenByPlaintext, type BootstrapToken } from "../config/bootstrap-tokens.js";
+import { type BootstrapToken, findBootstrapTokenByPlaintext } from "../config/bootstrap-tokens.js";
 import { generateLaunchdPlist, generateSystemdUnit, LAUNCHD_LABEL } from "./service-templates.js";
 
 export interface GenerateInstallScriptOptions {

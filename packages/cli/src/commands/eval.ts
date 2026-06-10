@@ -1,6 +1,15 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { join, basename } from "node:path";
 import { Database } from "bun:sqlite";
+import { existsSync, mkdirSync } from "node:fs";
+import { basename, join } from "node:path";
+
+import type {
+  ContextRetrievalDetail,
+  JsonOutputFailure,
+  SubBenchDetail,
+  ThroughputDetail,
+  ToolCallingFailure,
+} from "../../../eval/src/report/render-card.js";
+
 import {
   composite,
   killServer,
@@ -11,17 +20,10 @@ import {
   runThroughput,
   runToolCalling,
   spawnServer,
-  waitForHealth,
   upsertRow,
+  waitForHealth,
 } from "../../../eval/src/index.js";
 import { getGlobals } from "../dispatcher.js";
-import type {
-  ContextRetrievalDetail,
-  JsonOutputFailure,
-  SubBenchDetail,
-  ToolCallingFailure,
-  ThroughputDetail,
-} from "../../../eval/src/report/render-card.js";
 
 const USAGE = `Usage: llamactl eval <subcommand>
 
@@ -68,10 +70,10 @@ function toolCallingFailures(
 ): ToolCallingFailure[] {
   return result.prompts.flatMap<ToolCallingFailure>((prompt) => {
     if (prompt.score.score === 1) return [];
-    if (prompt.score.valid_json === false) return [{ name: prompt.name, reason: "invalid JSON" }];
-    if (prompt.expected.should_call && prompt.score.correct_decision === false)
+    if (!prompt.score.valid_json) return [{ name: prompt.name, reason: "invalid JSON" }];
+    if (prompt.expected.should_call && !prompt.score.correct_decision)
       return [{ name: prompt.name, reason: "no tool_calls" }];
-    if (prompt.score.correct_tool === false) return [{ name: prompt.name, reason: "wrong tool" }];
+    if (!prompt.score.correct_tool) return [{ name: prompt.name, reason: "wrong tool" }];
     return [{ name: prompt.name, reason: "args mismatch" }];
   });
 }
@@ -141,7 +143,7 @@ async function runEvalRun(args: string[]): Promise<number> {
     }
   }
   const evalRoot = ensureEvalRoot();
-  const runTs = new Date().toISOString().replace(/[:.]/g, "-");
+  const runTs = new Date().toISOString().replaceAll(/[:.]/g, "-");
   const runDir = join(evalRoot, runTs);
   mkdirSync(runDir, { recursive: true });
   const dbPath = join(evalRoot, "leaderboard.sqlite");
@@ -159,7 +161,7 @@ async function runEvalRun(args: string[]): Promise<number> {
     return 1;
   }
   const binary = remoteUrl ? "" : join(binaryRoot, "llama-server");
-  const ubs: Array<256 | 512> = all ? [256, 512] : [ub];
+  const ubs: (256 | 512)[] = all ? [256, 512] : [ub];
   try {
     for (const currentUb of ubs) {
       const server = remoteUrl
@@ -250,7 +252,7 @@ async function runEvalRun(args: string[]): Promise<number> {
         await Bun.write(cardPath, card);
         process.stdout.write(`${cardPath}\n`);
       } finally {
-        if (server.proc) await killServer(server as Awaited<ReturnType<typeof spawnServer>>);
+        if (server.proc) await killServer(server);
       }
     }
     return 0;
@@ -313,7 +315,7 @@ async function runEvalReport(args: string[]): Promise<number> {
 
 async function runEvalLeaderboard(args: string[]): Promise<number> {
   let node = "";
-  let sortBy: string = "composite";
+  let sortBy = "composite";
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === "--node") node = args[++i] ?? "";
@@ -354,11 +356,11 @@ export async function runEval(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
     case "run":
-      return runEvalRun(rest);
+      return await runEvalRun(rest);
     case "report":
-      return runEvalReport(rest);
+      return await runEvalReport(rest);
     case "leaderboard":
-      return runEvalLeaderboard(rest);
+      return await runEvalLeaderboard(rest);
     case undefined:
     case "-h":
     case "--help":

@@ -1,3 +1,5 @@
+import type { ModelClass, schemas } from "@llamactl/core";
+
 import {
   catalog,
   catalogWriter,
@@ -8,10 +10,9 @@ import {
   quant,
   target as targetMod,
 } from "@llamactl/core";
-import type { ModelClass } from "@llamactl/core";
-import type { schemas } from "@llamactl/core";
-type CuratedModel = schemas.CuratedModel;
+
 import { fanOut, getGlobals, getNodeClient, isFanOut, isLocalDispatch } from "../dispatcher.js";
+type CuratedModel = schemas.CuratedModel;
 
 type Format = "tsv" | "json";
 type Scope = catalog.CatalogScope;
@@ -91,7 +92,7 @@ async function runList(args: string[]): Promise<number> {
     entries = catalog.listCatalog(parsed.scope);
   } else {
     try {
-      entries = (await getNodeClient().catalogList.query(parsed.scope)) as CuratedModel[];
+      entries = await getNodeClient().catalogList.query(parsed.scope);
     } catch (err) {
       process.stderr.write(
         `catalog list: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
@@ -162,12 +163,12 @@ interface StatusReport {
 }
 
 function classifyFromPattern(rel: string): ModelClass {
-  if (/^gemma-4-/.test(rel) || /^Qwen3\.6-35B-A3B-GGUF\//.test(rel)) return "multimodal";
+  if (rel.startsWith("gemma-4-") || rel.startsWith("Qwen3.6-35B-A3B-GGUF/")) return "multimodal";
   if (
-    /^Qwen3\.5-/.test(rel) ||
-    /^DeepSeek-/.test(rel) ||
-    /^deepseek-/.test(rel) ||
-    /R1/.test(rel)
+    rel.startsWith("Qwen3.5-") ||
+    rel.startsWith("DeepSeek-") ||
+    rel.startsWith("deepseek-") ||
+    rel.includes("R1")
   ) {
     return "reasoning";
   }
@@ -369,7 +370,7 @@ async function runPromotions(args: string[]): Promise<number> {
     rows = presets.readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE);
   } else {
     try {
-      rows = (await getNodeClient().promotions.query()) as typeof rows;
+      rows = await getNodeClient().promotions.query();
     } catch (err) {
       process.stderr.write(
         `promotions: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
@@ -389,15 +390,15 @@ export async function runCatalog(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
     case "list":
-      return runList(rest);
+      return await runList(rest);
     case "status":
-      return runStatus(rest);
+      return await runStatus(rest);
     case "add":
-      return runAdd(rest);
+      return await runAdd(rest);
     case "promote":
-      return runPromote(rest);
+      return await runPromote(rest);
     case "promotions":
-      return runPromotions(rest);
+      return await runPromotions(rest);
     case undefined:
     case "-h":
     case "--help":

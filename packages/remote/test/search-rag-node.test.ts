@@ -1,8 +1,9 @@
 // packages/remote/test/search-rag-node.test.ts
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { resolveDefaultRagNode } from "../src/search/rag-node.js";
 
 describe("resolveDefaultRagNode", () => {

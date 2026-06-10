@@ -1,23 +1,24 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { rmSync } from "node:fs";
+
 import {
   aggregateMetrics,
   buildJsonClassifierWorkload,
+  type CellRow,
+  type CellRowDetail,
   ensureMatrixSchema,
   insertCellRow,
   insertCellRowDetail,
-  listCellRows,
   listCellRowDetails,
-  runMatrix,
-  type CellRow,
-  type CellRowDetail,
+  listCellRows,
   type ModelSpec,
+  runMatrix,
   type WorkloadEval,
 } from "../src/index.js";
-import { parseArgs, parseCorpusOverrides } from "../src/matrix/cli.js";
 import { memoryEfficacy4wayWorkload, memoryEfficacyBinaryWorkload } from "../src/index.js";
+import { parseArgs, parseCorpusOverrides } from "../src/matrix/cli.js";
 
 function makeModel(name: string): ModelSpec {
   return {

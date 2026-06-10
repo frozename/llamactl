@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
+
 import { queryRows, upsertRow } from "../src/store/sqlite.js";
 
 const row = {

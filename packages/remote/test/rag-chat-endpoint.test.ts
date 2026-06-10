@@ -1,19 +1,19 @@
+import { TRPCError } from "@trpc/server";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TRPCError } from "@trpc/server";
 
+import { generateToken } from "../src/server/auth.js";
 import {
   buildRagSystemMessage,
+  type ChatCompleteInput,
   handleRagChatCompletions,
   lastUserMessageContent,
-  type ChatCompleteInput,
   type RagSearchInput,
   type RagSearchResponse,
 } from "../src/server/rag-chat-endpoint.js";
-import { generateToken } from "../src/server/auth.js";
-import { startAgentServer, type RunningAgent } from "../src/server/serve.js";
+import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 
 /**
  * Tests for R1.5 — the thin server-side RAG chat endpoint. Two
@@ -37,12 +37,12 @@ type RagSearchCall = RagSearchInput;
 type ChatCompleteCall = ChatCompleteInput;
 
 interface StubOpts {
-  searchResults?: Array<{
+  searchResults?: {
     id: string;
     content: string;
     score?: number;
     metadata?: Record<string, unknown>;
-  }>;
+  }[];
   searchCollection?: string;
   chatResponse?: Record<string, unknown>;
   throwOnSearch?: unknown;
@@ -185,7 +185,7 @@ describe("handleRagChatCompletions — rag injected", () => {
     expect(caller.ragCalls[0]!.topK).toBe(3);
 
     expect(caller.chatCalls).toHaveLength(1);
-    const msgs = caller.chatCalls[0]!.request.messages as Array<{ role: string; content: string }>;
+    const msgs = caller.chatCalls[0]!.request.messages as { role: string; content: string }[];
     expect(msgs).toHaveLength(2);
     expect(msgs[0]!.role).toBe("system");
     expect(msgs[0]!.content).toContain("[1] The magic number is 4823.");
@@ -245,7 +245,7 @@ describe("handleRagChatCompletions — rag injected", () => {
       }),
       { appRouter: anyRouter, caller, log: () => {} },
     );
-    const sys = (caller.chatCalls[0]!.request.messages as Array<{ content: string }>)[0]!.content;
+    const sys = (caller.chatCalls[0]!.request.messages as { content: string }[])[0]!.content;
     expect(sys.startsWith("Use only the provided snippets.")).toBe(true);
     expect(sys).toContain("Context:");
     expect(sys).toContain("[1] context body");
@@ -267,7 +267,7 @@ describe("handleRagChatCompletions — rag injected", () => {
       }),
       { appRouter: anyRouter, caller, log: () => {} },
     );
-    const msgs = caller.chatCalls[0]!.request.messages as Array<{ role: string; content: string }>;
+    const msgs = caller.chatCalls[0]!.request.messages as { role: string; content: string }[];
     expect(msgs).toHaveLength(3);
     // Our injected system message is first.
     expect(msgs[0]!.role).toBe("system");

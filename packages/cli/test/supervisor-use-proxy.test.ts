@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { resolveWorkloadTargetsAtStartup, resolveWorkloadUrl } from "../src/commands/supervisor.js";
 
 function modelRun(useProxy: boolean | undefined): any {

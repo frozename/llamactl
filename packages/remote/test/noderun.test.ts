@@ -3,20 +3,21 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
-import { NodeRunSchema, type NodeRun } from "../src/workload/noderun-schema.js";
+
+import type { InstalledInfra } from "../src/infra/layout.js";
+
+import {
+  applyNodeRun,
+  type NodeRunInfraClient,
+  planNodeRun,
+} from "../src/workload/noderun-apply.js";
+import { type NodeRun, NodeRunSchema } from "../src/workload/noderun-schema.js";
 import {
   deleteNodeRun,
   listNodeRuns,
   loadNodeRunByName,
   saveNodeRun,
 } from "../src/workload/noderun-store.js";
-import {
-  applyNodeRun,
-  planNodeRun,
-  type NodeRunInfraClient,
-} from "../src/workload/noderun-apply.js";
-import type { InstalledInfra } from "../src/infra/layout.js";
-import type { InstallResult } from "../src/infra/install.js";
 
 let dir = "";
 
@@ -171,7 +172,7 @@ describe("planNodeRun (pure diff)", () => {
     const actions = planNodeRun(spec, live);
     const install = actions.find((a) => a.type === "install");
     expect(install).toBeTruthy();
-    if (install && install.type === "install") expect(install.reason).toBe("version-mismatch");
+    if (install?.type === "install") expect(install.reason).toBe("version-mismatch");
     const uninstall = actions.find((a) => a.type === "uninstall-version");
     expect(uninstall).toBeTruthy();
   });
@@ -208,7 +209,7 @@ describe("applyNodeRun (end-to-end against a mock client)", () => {
     liveAfter?: InstalledInfra[],
   ): { client: NodeRunInfraClient; calls: string[] } {
     const calls: string[] = [];
-    let live = liveBefore;
+    const live = liveBefore;
     const after = liveAfter ?? liveBefore;
     let postApply = false;
     const client: NodeRunInfraClient = {
@@ -228,7 +229,7 @@ describe("applyNodeRun (end-to-end against a mock client)", () => {
             state: "installed",
             versionDir: `/infra/${input.pkg}/${input.version}`,
             activated: input.activate ?? true,
-          } as InstallResult;
+          };
         },
       },
       infraActivate: {
@@ -316,7 +317,7 @@ describe("applyNodeRun (end-to-end against a mock client)", () => {
             ok: false,
             reason: "fetch-failed",
             error: "DNS fail",
-          } as InstallResult;
+          };
         },
       },
     });

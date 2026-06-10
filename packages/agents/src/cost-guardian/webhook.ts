@@ -13,12 +13,10 @@ import type { GuardianDecision } from "./state.js";
  * AbortSignal.timeout().
  */
 
-export interface WebhookFetcher {
-  (
-    url: string,
-    init: { method: "POST"; headers: Record<string, string>; body: string; signal?: AbortSignal },
-  ): Promise<{ ok: boolean; status: number; text?: () => Promise<string> }>;
-}
+export type WebhookFetcher = (
+  url: string,
+  init: { method: "POST"; headers: Record<string, string>; body: string; signal?: AbortSignal },
+) => Promise<{ ok: boolean; status: number; text?: () => Promise<string> }>;
 
 export interface PostGuardianWebhookOptions {
   url: string;
@@ -56,7 +54,9 @@ export async function postGuardianWebhook(
   const fetcher = opts.fetcher ?? defaultFetcher;
   const timeoutMs = opts.timeoutMs ?? 5000;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
   try {
     const res = await fetcher(opts.url, {
       method: "POST",

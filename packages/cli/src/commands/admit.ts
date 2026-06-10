@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
-import yaml from "yaml";
 import { probeNodeMem, projectAdmissionHeadroom } from "@llamactl/fleet-supervisor";
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import yaml from "yaml";
+
 import { readMeasuredMemoryCache } from "../../../fleet-supervisor/src/measured-memory.js";
 import { runAdmitMeasure } from "./admit-measure.js";
 
@@ -43,7 +44,7 @@ EXIT CODES:
 `;
 
 export async function runAdmit(args: string[]): Promise<number> {
-  if (args[0] === "measure") return runAdmitMeasure(args.slice(1));
+  if (args[0] === "measure") return await runAdmitMeasure(args.slice(1));
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
     console.log(USAGE);
     return args.length === 0 ? 2 : 0;
@@ -102,7 +103,7 @@ export async function runAdmit(args: string[]): Promise<number> {
     spec?: {
       resources?: { expectedMemoryGiB?: number };
       target?: { value?: string };
-      hostedModels?: Array<{ rel?: string }>;
+      hostedModels?: { rel?: string }[];
     };
     metadata?: { name?: string };
   };

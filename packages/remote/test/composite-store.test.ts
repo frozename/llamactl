@@ -2,17 +2,18 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { type Composite, CompositeSchema } from "../src/composite/schema.js";
 import {
   compositePath,
   defaultCompositesDir,
   deleteComposite,
-  listComposites,
   listCompositeNames,
+  listComposites,
   loadComposite,
   parseComposite,
   saveComposite,
 } from "../src/composite/store.js";
-import { CompositeSchema, type Composite } from "../src/composite/schema.js";
 
 let tmp: string;
 

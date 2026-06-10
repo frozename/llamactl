@@ -1,7 +1,8 @@
+import type { ClusterNode } from "../config/schema.js";
+
 import { decodeBootstrap } from "../config/agent-config.js";
 import { consumeBootstrapToken, type ConsumeOptions } from "../config/bootstrap-tokens.js";
 import { currentContext, loadConfig, saveConfig, upsertNode } from "../config/kubeconfig.js";
-import type { ClusterNode } from "../config/schema.js";
 
 /**
  * HTTP handler for POST /register. Unauthenticated by design —

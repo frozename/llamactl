@@ -48,12 +48,12 @@ interface KubeconfigNode {
 
 interface KubeconfigShape {
   currentContext?: string;
-  contexts?: Array<{ name: string; cluster: string }>;
-  clusters?: Array<{ name: string; nodes?: KubeconfigNode[] }>;
+  contexts?: { name: string; cluster: string }[];
+  clusters?: { name: string; nodes?: KubeconfigNode[] }[];
 }
 
 interface SiriusProvidersShape {
-  providers?: Array<{ name: string; kind: string; baseUrl?: string }>;
+  providers?: { name: string; kind: string; baseUrl?: string }[];
 }
 
 function readYamlIfExists(path: string): unknown | null {
@@ -80,7 +80,9 @@ async function probeOne(
   now: () => number,
 ): Promise<{ state: ProbeState; status: number; latencyMs: number; error?: string }> {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  const timer = setTimeout(() => {
+    ctl.abort();
+  }, timeoutMs);
   const startedAt = now();
   try {
     const res = await fetchImpl(url, { signal: ctl.signal });
@@ -163,20 +165,20 @@ export async function probeFleet(opts: ProbeFleetOptions): Promise<ProbeReport> 
 export function stateTransitions(
   prev: ProbeReport | null,
   next: ProbeReport,
-): Array<{
+): {
   name: string;
   kind: "gateway" | "provider";
   from: ProbeState | "unknown";
   to: ProbeState;
-}> {
+}[] {
   const prevByKey = new Map<string, ProbeState>();
   for (const p of prev?.probes ?? []) prevByKey.set(`${p.kind}:${p.name}`, p.state);
-  const out: Array<{
+  const out: {
     name: string;
     kind: "gateway" | "provider";
     from: ProbeState | "unknown";
     to: ProbeState;
-  }> = [];
+  }[] = [];
   for (const p of next.probes) {
     const key = `${p.kind}:${p.name}`;
     const from = prevByKey.get(key) ?? "unknown";

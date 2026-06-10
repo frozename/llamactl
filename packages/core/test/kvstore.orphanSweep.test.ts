@@ -1,17 +1,23 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
+  type KvEntry,
   KvRegistry,
   openKvStorage,
   sweepOrphanSlotFiles,
-  type KvEntry,
 } from "../src/kvstore/index.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-kvstore-orphans-"));
-  return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return {
+    root,
+    cleanup: () => {
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
 }
 
 function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {

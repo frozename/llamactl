@@ -1,13 +1,14 @@
 // packages/remote/test/ops-chat-sessions-list.test.ts
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendJournalEvent } from "../src/ops-chat/sessions/journal";
-import { listSessions, getSessionSummary } from "../src/ops-chat/sessions/list";
+
+import { defaultSessionDir } from "../src/ops-chat/paths";
 import { deleteSession } from "../src/ops-chat/sessions/delete";
 import { sessionEventBus } from "../src/ops-chat/sessions/event-bus";
-import { defaultSessionDir } from "../src/ops-chat/paths";
+import { appendJournalEvent } from "../src/ops-chat/sessions/journal";
+import { getSessionSummary, listSessions } from "../src/ops-chat/sessions/list";
 
 describe("list + delete", () => {
   let tmp: string;

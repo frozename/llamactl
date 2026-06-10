@@ -1,5 +1,6 @@
 // packages/app/test/lib/global-search/surfaces/workloads.test.ts
 import { describe, expect, test } from "bun:test";
+
 import { matchWorkloads } from "../../../../src/lib/global-search/surfaces/workloads";
 
 describe("matchWorkloads", () => {

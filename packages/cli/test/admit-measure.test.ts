@@ -1,8 +1,8 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const BIN = join(import.meta.dir, "../src/bin.ts");
 const FAKE_SERVER = join(import.meta.dir, "fixtures", "fake-llama-server.sh");

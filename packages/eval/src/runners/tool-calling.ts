@@ -1,11 +1,11 @@
-import promptsRaw from "../fixtures/prompts-tool-calling.json" with { type: "json" };
-import toolsRaw from "../fixtures/tools-penumbra.json" with { type: "json" };
 import {
   buildCompletionRequest,
   completeChat,
   type CompletionResponse,
   type ToolDef,
 } from "../client.js";
+import promptsRaw from "../fixtures/prompts-tool-calling.json" with { type: "json" };
+import toolsRaw from "../fixtures/tools-penumbra.json" with { type: "json" };
 
 export type ArgsPredicate =
   | { kind: "string_eq"; field: string; value: string }
@@ -14,7 +14,7 @@ export type ArgsPredicate =
 
 export type ToolCallingResponse = {
   content: string | null;
-  toolCalls: Array<{ name: string; arguments: string }>;
+  toolCalls: { name: string; arguments: string }[];
 };
 
 export type ToolCallScore = {
@@ -107,14 +107,14 @@ export interface ToolCallingPromptFixture {
 }
 
 export interface ToolCallingResult {
-  prompts: Array<ToolCallingPromptFixture & { score: ToolCallScore }>;
+  prompts: (ToolCallingPromptFixture & { score: ToolCallScore })[];
   tool_call_score: number;
 }
 
 export async function runToolCalling(url: string): Promise<ToolCallingResult> {
   const tools = toolsRaw as ToolDef[];
   const prompts = promptsRaw as ToolCallingPromptFixture[];
-  const scored: Array<ToolCallingPromptFixture & { score: ToolCallScore }> = [];
+  const scored: (ToolCallingPromptFixture & { score: ToolCallScore })[] = [];
   for (const prompt of prompts) {
     const req = buildCompletionRequest({
       messages: [{ role: "user", content: prompt.prompt }],

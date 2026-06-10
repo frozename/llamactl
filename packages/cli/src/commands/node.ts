@@ -1,13 +1,14 @@
-import { readFileSync } from "node:fs";
 import {
   agentConfig as agentConfigMod,
-  config as kubecfg,
   configSchema,
   createNodeClient,
   createRemoteNodeClient,
+  config as kubecfg,
   providerForNode,
   resolveNodeKind,
 } from "@llamactl/remote";
+import { readFileSync } from "node:fs";
+
 import { getNodeClient } from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl node <subcommand>
@@ -52,15 +53,15 @@ export async function runNode(args: string[]): Promise<number> {
     case "ls":
       return runLs(rest);
     case "add":
-      return runAdd(rest);
+      return await runAdd(rest);
     case "add-rag":
       return runAddRag(rest);
     case "add-cloud":
-      return runAddCloud(rest);
+      return await runAddCloud(rest);
     case "rm":
       return runRm(rest);
     case "test":
-      return runTest(rest);
+      return await runTest(rest);
     case undefined:
     case "--help":
     case "-h":
@@ -231,7 +232,7 @@ async function runAdd(args: string[]): Promise<number> {
         ...(certificate ? { certificate } : {}),
         certificateFingerprint: fingerprint,
       });
-      probeFacts = (await probeClient.nodeFacts.query()) as ProbeFacts;
+      probeFacts = await probeClient.nodeFacts.query();
     } catch (err) {
       process.stderr.write(
         [

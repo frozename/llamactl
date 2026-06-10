@@ -1,9 +1,11 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+
+import type { BenchMode } from "../types.js";
+
 import { findByRel } from "../catalog.js";
 import { resolveEnv } from "../env.js";
 import { findLocalMmproj } from "../mmproj.js";
-import type { BenchMode } from "../types.js";
 
 /**
  * Pick the bench mode label for a rel. Used to key bench records and
@@ -25,7 +27,7 @@ import type { BenchMode } from "../types.js";
  * (2) and (3).
  */
 export function defaultModeForRel(rel: string, resolved = resolveEnv()): BenchMode {
-  if (/^Qwen3\.5-27B-GGUF\//.test(rel)) return "text";
+  if (rel.startsWith("Qwen3.5-27B-GGUF/")) return "text";
 
   const modelPath = join(resolved.LLAMA_CPP_MODELS, rel);
   if (existsSync(modelPath)) {

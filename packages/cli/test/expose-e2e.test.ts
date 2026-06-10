@@ -1,17 +1,17 @@
+import {
+  auth,
+  configSchema,
+  config as kubecfg,
+  type RunningAgent,
+  startAgentServer,
+  tls,
+} from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  auth,
-  config as kubecfg,
-  configSchema,
-  startAgentServer,
-  tls,
-  type RunningAgent,
-} from "@llamactl/remote";
 
 /**
  * End-to-end test for `llamactl expose <target>`: the one-shot

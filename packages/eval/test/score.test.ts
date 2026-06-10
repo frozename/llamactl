@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { composite } from "../src/score/compose.js";
 
 describe("composite", () => {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
 import { makeTempRuntime, runCli } from "./helpers.js";
 
 describe("llamactl bench", () => {
@@ -26,7 +27,9 @@ describe("llamactl bench", () => {
   beforeEach(() => {
     temp = makeTempRuntime();
   });
-  afterEach(() => temp.cleanup());
+  afterEach(() => {
+    temp.cleanup();
+  });
 
   test("bench show reports legacy/none without records", () => {
     const r = runCli(["bench", "show", "quality"], temp.env);

@@ -1,5 +1,6 @@
 // packages/app/test/lib/global-search/query.test.ts
 import { describe, expect, test } from "bun:test";
+
 import { parseQuery } from "../../../src/lib/global-search/query";
 
 describe("parseQuery", () => {

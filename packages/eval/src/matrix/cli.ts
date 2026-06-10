@@ -1,25 +1,27 @@
 import { Database } from "bun:sqlite";
+
+import type { ModelSpec, WorkloadEval } from "./types.js";
+
+import { renderCsvReport, renderMarkdownReport } from "./report.js";
 import { runMatrix } from "./runner.js";
 import { listCellRows } from "./store.js";
-import { memoryEfficacyBinaryWorkload } from "./workloads/memory-efficacy-binary.js";
-import { memoryEfficacy4wayWorkload } from "./workloads/memory-efficacy-4way.js";
-import { memoryEfficacy4wayBalancedWorkload } from "./workloads/memory-efficacy-4way-balanced.js";
-import { taskRefinerRubricWorkload } from "./workloads/task-refiner-rubric.js";
-import { toolCallGrammarWorkload } from "./workloads/tool-call-grammar.js";
-import { memoryRecallWorkload } from "./workloads/memory-recall.js";
-import { projectBriefGenWorkload } from "./workloads/project-brief-gen.js";
 import {
   kvWarmBenchWorkload,
   parseKvWarmBenchRunArgs,
   runKvWarmBench,
 } from "./workloads/kv-warm-bench.js";
+import { memoryEfficacy4wayBalancedWorkload } from "./workloads/memory-efficacy-4way-balanced.js";
+import { memoryEfficacy4wayWorkload } from "./workloads/memory-efficacy-4way.js";
+import { memoryEfficacyBinaryWorkload } from "./workloads/memory-efficacy-binary.js";
+import { memoryRecallWorkload } from "./workloads/memory-recall.js";
+import { projectBriefGenWorkload } from "./workloads/project-brief-gen.js";
 import {
-  reasoningMmluProWorkload,
-  reasoningGsm8kWorkload,
   reasoningArcWorkload,
+  reasoningGsm8kWorkload,
+  reasoningMmluProWorkload,
 } from "./workloads/reasoning-mc.js";
-import { renderCsvReport, renderMarkdownReport } from "./report.js";
-import type { ModelSpec, WorkloadEval } from "./types.js";
+import { taskRefinerRubricWorkload } from "./workloads/task-refiner-rubric.js";
+import { toolCallGrammarWorkload } from "./workloads/tool-call-grammar.js";
 
 export interface MatrixCliArgs {
   modelsPath: string;
@@ -102,7 +104,7 @@ function validateModelSpec(value: unknown): ModelSpec {
   const spec = value as Record<string, unknown>;
   const engine = typeof spec.engine === "string" ? spec.engine : "llamacpp";
   const modelPathField: keyof ModelSpec = engine === "omlx" ? "mlx_model_dir" : "gguf_path";
-  const required: Array<keyof ModelSpec> = [
+  const required: (keyof ModelSpec)[] = [
     "name",
     modelPathField,
     "quant",
@@ -124,9 +126,10 @@ function validateModelSpec(value: unknown): ModelSpec {
       throw new Error(`invalid ModelSpec: missing/bad field ${String(field)}`);
     }
   }
-  const optional: Array<
-    keyof Pick<ModelSpec, "binary" | "start_args" | "managed" | "structured_outputs_supported">
-  > = ["binary", "start_args", "managed", "structured_outputs_supported"];
+  const optional: (keyof Pick<
+    ModelSpec,
+    "binary" | "start_args" | "managed" | "structured_outputs_supported"
+  >)[] = ["binary", "start_args", "managed", "structured_outputs_supported"];
   for (const field of optional) {
     const fieldValue = spec[field];
     const ok =

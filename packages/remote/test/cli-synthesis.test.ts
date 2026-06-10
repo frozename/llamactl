@@ -1,13 +1,13 @@
-import { describe, expect, test } from "bun:test";
-
-import { findCliBindingForNode, synthesizeProviderNodes } from "../src/config/provider-nodes.js";
-import { CliBindingSchema, freshConfig } from "../src/config/schema.js";
-import type { CliBinding, CliPreset } from "../src/config/schema.js";
-import { loadConfig, resolveNode, saveConfig, upsertNode } from "../src/config/kubeconfig.js";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach } from "bun:test";
+
+import type { CliBinding, CliPreset } from "../src/config/schema.js";
+
+import { loadConfig, resolveNode, saveConfig, upsertNode } from "../src/config/kubeconfig.js";
+import { findCliBindingForNode, synthesizeProviderNodes } from "../src/config/provider-nodes.js";
+import { CliBindingSchema, freshConfig } from "../src/config/schema.js";
 
 let tmp = "";
 beforeEach(() => {
@@ -22,7 +22,7 @@ function makeBinding(name: string, preset: CliPreset): CliBinding {
 }
 
 function makeConfigWithAgent(
-  clis: Array<{ name: string; preset: CliPreset }>,
+  clis: { name: string; preset: CliPreset }[],
 ): ReturnType<typeof freshConfig> {
   let cfg = freshConfig();
   cfg = upsertNode(cfg, "home", {

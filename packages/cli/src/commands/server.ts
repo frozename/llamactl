@@ -1,11 +1,12 @@
 import { env as envMod, server, serverLogs as serverLogsMod } from "@llamactl/core";
-import { workloadSchema, workloadStore } from "@llamactl/remote";
+import { type workloadSchema, workloadStore } from "@llamactl/remote";
+
 import {
   getGlobals,
   getNodeClient,
   isLocalDispatch,
-  resolveEffectiveNodeName,
   matchDoneEvent,
+  resolveEffectiveNodeName,
   subscribeRemote,
 } from "../dispatcher.js";
 import { resolveWorkloadName } from "./_workload-resolve.js";
@@ -243,10 +244,10 @@ async function runStop(args: string[]): Promise<number> {
     result = await server.stopServer({ key: { name: workload }, graceSeconds });
   } else {
     try {
-      result = (await getNodeClient().serverStop.mutate({
+      result = await getNodeClient().serverStop.mutate({
         workload,
         graceSeconds,
-      })) as typeof result;
+      });
     } catch (err) {
       process.stderr.write(
         `server stop: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
@@ -303,7 +304,7 @@ async function runStatus(args: string[]): Promise<number> {
     status = await server.serverStatus({ name: workload }, envMod.resolveEnv());
   } else {
     try {
-      status = (await getNodeClient().serverStatus.query({ workload })) as typeof status;
+      status = await getNodeClient().serverStatus.query({ workload });
     } catch (err) {
       process.stderr.write(
         `server status: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
@@ -377,7 +378,9 @@ async function runLogs(args: string[]): Promise<number> {
 
   if (isLocalDispatch()) {
     const ac = new AbortController();
-    const abort = (): void => ac.abort();
+    const abort = (): void => {
+      ac.abort();
+    };
     process.once("SIGINT", abort);
     process.once("SIGTERM", abort);
     try {
@@ -440,13 +443,13 @@ export async function runServer(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
     case "start":
-      return runStart(rest);
+      return await runStart(rest);
     case "stop":
-      return runStop(rest);
+      return await runStop(rest);
     case "status":
-      return runStatus(rest);
+      return await runStatus(rest);
     case "logs":
-      return runLogs(rest);
+      return await runLogs(rest);
     case undefined:
     case "-h":
     case "--help":

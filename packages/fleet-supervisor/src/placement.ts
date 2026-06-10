@@ -1,7 +1,9 @@
 import { basename } from "node:path";
-import { projectAdmissionHeadroom } from "./policy.js";
-import type { FleetPlacementDecision, NodeScore } from "./types.js";
+
 import type { SnapshotRow } from "./aggregator-db.js";
+import type { FleetPlacementDecision, NodeScore } from "./types.js";
+
+import { projectAdmissionHeadroom } from "./policy.js";
 
 export interface PlacementInput {
   workload: string;
@@ -18,7 +20,7 @@ const DEFAULT_COMPRESSOR_WARN_MB = 2048;
 const DEFAULT_MODEL_FILE_PENALTY_MB = 4096;
 
 export function scoreNodes(
-  rows: ReadonlyArray<SnapshotRow | null | undefined>,
+  rows: readonly (SnapshotRow | null | undefined)[],
   input: PlacementInput,
 ): NodeScore[] {
   const modelFilePenaltyMb = input.modelFilePenaltyMb ?? DEFAULT_MODEL_FILE_PENALTY_MB;
@@ -81,7 +83,7 @@ export function scoreNodes(
     });
 
     const pressureState: NodeScore["pressureState"] = projected.allowed ? "NORMAL" : "HIGH";
-    if (projected.allowed === false) {
+    if (!projected.allowed) {
       return {
         node: snapshot.node,
         score: -Infinity,
@@ -125,7 +127,7 @@ export function scoreNodes(
   });
 }
 
-export function chooseBestNode(scores: ReadonlyArray<NodeScore>): string | null {
+export function chooseBestNode(scores: readonly NodeScore[]): string | null {
   const ranked = [...scores].sort((a, b) => {
     if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
     if (a.score !== b.score) return b.score - a.score;

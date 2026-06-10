@@ -1,8 +1,9 @@
-import { constants as fsConstants, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { agentConfig as agentConfigMod, auth, startAgentServer, tls } from "@llamactl/remote";
+import { existsSync, constants as fsConstants, mkdirSync, readFileSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { agentConfig as agentConfigMod, auth, startAgentServer, tls } from "@llamactl/remote";
+
 import { runHeal } from "./heal.js";
 
 const USAGE = `Usage: llamactl agent <subcommand>
@@ -74,34 +75,34 @@ export async function runAgent(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
     case "init":
-      return runInit(rest);
+      return await runInit(rest);
     case "rotate-token":
-      return runRotateToken(rest);
+      return await runRotateToken(rest);
     case "serve":
-      return runServe(rest);
+      return await runServe(rest);
     case "status":
       return runStatus(rest);
     case "heal":
-      return runHeal(rest);
+      return await runHeal(rest);
     case "install-launchd": {
       const { runAgentInstallLaunchd } = await import("./agent-install/index.js");
-      return runAgentInstallLaunchd(rest);
+      return await runAgentInstallLaunchd(rest);
     }
     case "update": {
       const { runAgentUpdate } = await import("./agent-update.js");
-      return runAgentUpdate(rest);
+      return await runAgentUpdate(rest);
     }
     case "rollback": {
       const { runAgentRollback } = await import("./agent-rollback.js");
-      return runAgentRollback(rest);
+      return await runAgentRollback(rest);
     }
     case "rpc-doctor": {
       const { runRpcDoctor } = await import("./agent-rpc-doctor.js");
-      return runRpcDoctor(rest);
+      return await runRpcDoctor(rest);
     }
     case "cli": {
       const { runAgentCli } = await import("./cli-doctor.js");
-      return runAgentCli(rest);
+      return await runAgentCli(rest);
     }
     case undefined:
     case "--help":
@@ -571,7 +572,9 @@ async function runServe(args: string[]): Promise<number> {
   );
 
   await new Promise<void>((resolve) => {
-    const handle = (): void => resolve();
+    const handle = (): void => {
+      resolve();
+    };
     process.once("SIGINT", handle);
     process.once("SIGTERM", handle);
   });

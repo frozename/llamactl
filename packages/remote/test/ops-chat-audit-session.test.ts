@@ -1,8 +1,9 @@
 // packages/remote/test/ops-chat-audit-session.test.ts
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { appendOpsChatAudit, readOpsChatAudit } from "../src/ops-chat/audit";
 
 describe("audit sessionId", () => {

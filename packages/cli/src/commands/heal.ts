@@ -2,14 +2,14 @@ import {
   appendHealerJournal,
   createDefaultToolClient,
   defaultHealerJournalPath,
-  executePlan,
-  startHealerLoop,
-  stateTransitions,
   type DefaultToolClientHandle,
+  executePlan,
   type HealerLoopOptions,
   type JournalEntry,
   type JournalProposalEntry,
   type ProbeReport,
+  startHealerLoop,
+  type stateTransitions,
   type Tier,
 } from "@llamactl/agents";
 import { readFileSync } from "node:fs";
@@ -167,7 +167,7 @@ function parseFlags(argv: string[]): HealFlags | null {
           );
           return null;
         }
-        flags.severityThreshold = parsed as Tier;
+        flags.severityThreshold = parsed;
         break;
       }
       case "execute":

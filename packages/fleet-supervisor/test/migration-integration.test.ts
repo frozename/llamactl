@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
+
 import {
   createMigrationController,
-  startSupervisorLoop,
   type FleetJournalEntry,
+  startSupervisorLoop,
 } from "../src/index.js";
 
 describe("migration supervisor integration", () => {

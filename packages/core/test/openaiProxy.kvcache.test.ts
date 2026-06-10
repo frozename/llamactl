@@ -1,22 +1,23 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+
 import { openaiProxy } from "../src/index.js";
 import {
-  isRouteKvEligible,
-  __getOpenAIProxyKvModelMismatchTotalForTests,
-} from "../src/openaiProxy.js";
-import {
   EXT_FLAG_TOOL_MAP,
+  type KvEntry,
   KvRegistry,
   openKvStorage,
   readTrailer,
   readWorkloadEpoch,
   writeTrailer,
-  type KvEntry,
 } from "../src/kvstore/index.js";
+import {
+  __getOpenAIProxyKvModelMismatchTotalForTests,
+  isRouteKvEligible,
+} from "../src/openaiProxy.js";
 
 interface TempRuntime {
   root: string;
@@ -35,7 +36,9 @@ function makeTempRuntime(): TempRuntime {
   return {
     root,
     env: { LOCAL_AI_RUNTIME_DIR: root },
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
+    cleanup: () => {
+      rmSync(root, { recursive: true, force: true });
+    },
   };
 }
 
@@ -102,7 +105,7 @@ async function startUpstream(opts: {
   restoreEpoch?: string | null;
   chatMode?: "json" | "sse";
   firstJsonToken?: string;
-  toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+  toolCalls?: { id: string; name: string; arguments: string }[];
 }): Promise<TestUpstream> {
   const events: string[] = [];
   const saveMode = opts.saveMode ?? "ok";
@@ -119,8 +122,7 @@ async function startUpstream(opts: {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method =
-      init?.method ??
-      (typeof input === "object" && "method" in input ? (input as Request).method : "GET");
+      init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
     const parsed = new URL(url);
     if (method === "POST" && parsed.pathname.startsWith("/slots/")) {
       const action = parsed.searchParams.get("action");
@@ -213,7 +215,7 @@ function shaForBody(body: string): string {
   return createHash("sha1").update(body).digest("hex");
 }
 
-function parsedConsoleDebugEvents(spy: ReturnType<typeof spyOn>): Array<Record<string, unknown>> {
+function parsedConsoleDebugEvents(spy: ReturnType<typeof spyOn>): Record<string, unknown>[] {
   return spy.mock.calls
     .map((call: unknown[]) => {
       const [message] = call;
@@ -891,7 +893,7 @@ test("proxy injects vendor fields at top-level only", async () => {
     const echoed = JSON.parse(responseJson.echoed ?? "{}") as {
       x_omlx_request_handle?: unknown;
       x_omlx_restore_epoch?: unknown;
-      messages?: Array<{ x_omlx_request_handle?: unknown; x_omlx_restore_epoch?: unknown }>;
+      messages?: { x_omlx_request_handle?: unknown; x_omlx_restore_epoch?: unknown }[];
     };
     expect(echoed.x_omlx_request_handle).toBe(sha);
     expect(echoed.x_omlx_restore_epoch).toBe("abc");

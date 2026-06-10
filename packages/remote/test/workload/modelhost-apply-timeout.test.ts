@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { applyManifest, type WorkloadClient } from "../../src/workload/apply.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { applyManifest, type WorkloadClient } from "../../src/workload/apply.js";
 
 describe("applyManifest — ModelHost timeout cleanup", () => {
   test("unsubscribes the modelHostStart subscription when apply times out", async () => {

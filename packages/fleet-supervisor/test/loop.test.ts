@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test";
-import { startSupervisorLoop } from "../src/loop.js";
+import { describe, expect, it } from "bun:test";
+
 import type {
   FleetJournalEntry,
   FleetTransitionEntry,
@@ -7,6 +7,8 @@ import type {
   WorkloadSnapshot,
 } from "../src/types.js";
 import type { WorkloadTarget } from "../src/workload-probe.js";
+
+import { startSupervisorLoop } from "../src/loop.js";
 
 const FAKE_NODE_MEM: NodeMemSnapshot = {
   free_mb: 1031,
@@ -125,7 +127,7 @@ describe("startSupervisorLoop", () => {
     await handle.done;
     const snapshot = entries.find((e) => e.kind === "fleet-snapshot");
     expect(snapshot).toBeDefined();
-    if (snapshot && snapshot.kind === "fleet-snapshot") {
+    if (snapshot?.kind === "fleet-snapshot") {
       expect(snapshot.node).toBe("mac-mini");
       expect(snapshot.node_mem.free_mb).toBe(1031);
       expect(snapshot.workloads).toHaveLength(1);
@@ -173,7 +175,7 @@ describe("startSupervisorLoop", () => {
     });
     await handle.done;
     const snapshot = entries.find((e) => e.kind === "fleet-snapshot");
-    if (snapshot && snapshot.kind === "fleet-snapshot") {
+    if (snapshot?.kind === "fleet-snapshot") {
       const good = snapshot.workloads.find((w) => w.name === "good");
       const bad = snapshot.workloads.find((w) => w.name === "bad");
       expect(good?.reachable).toBe(true);
@@ -343,7 +345,7 @@ describe("startSupervisorLoop", () => {
       NORMAL_MEM,
       NORMAL_MEM,
     ];
-    const transitionsByTick: Array<{ tick: number; transition: string }> = [];
+    const transitionsByTick: { tick: number; transition: string }[] = [];
     let tickIdx = 0;
     const handle = startSupervisorLoop({
       node: "local",
@@ -431,7 +433,7 @@ describe("startSupervisorLoop", () => {
   });
 
   it("onTick callback receives the snapshot", async () => {
-    const observed: Array<{ kind: string; node: string }> = [];
+    const observed: { kind: string; node: string }[] = [];
     const handle = startSupervisorLoop({
       node: "local",
       once: true,

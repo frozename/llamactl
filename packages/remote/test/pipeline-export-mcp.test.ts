@@ -57,7 +57,7 @@ describe("pipelineExportMcp", () => {
       title: string;
       description: string;
       inputSchema: { properties: { input: { type: string } }; required: string[] };
-      stages: Array<{ node: string; model: string }>;
+      stages: { node: string; model: string }[];
     };
     expect(contents.apiVersion).toBe("llamactl/v1");
     expect(contents.kind).toBe("PipelineTool");

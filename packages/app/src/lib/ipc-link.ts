@@ -1,7 +1,8 @@
-import { observable } from "@trpc/server/observable";
 import type { TRPCLink } from "@trpc/client";
-import { TRPCClientError } from "@trpc/client";
 import type { AnyRouter } from "@trpc/server";
+
+import { TRPCClientError } from "@trpc/client";
+import { observable } from "@trpc/server/observable";
 
 interface ElectronTRPCBridge {
   sendMessage: (msg: unknown) => void;
@@ -30,7 +31,9 @@ class IPCClient {
   private pending = new Map<number | string, Pending>();
 
   constructor() {
-    this.bridge.onMessage((msg) => this.handleResponse(msg));
+    this.bridge.onMessage((msg) => {
+      this.handleResponse(msg);
+    });
   }
 
   private handleResponse(msg: any) {
@@ -77,8 +80,8 @@ export function ipcLink<TRouter extends AnyRouter>(): TRPCLink<TRouter> {
     const client = new IPCClient();
     return ({ op }) => {
       return observable((obs) => {
-        const teardown = client.request(op as any, {
-          type: op.type as any,
+        const teardown = client.request(op, {
+          type: op.type,
           next(envelope) {
             const res = transformResponse(envelope);
             if (!res.ok) {
@@ -99,7 +102,9 @@ export function ipcLink<TRouter extends AnyRouter>(): TRPCLink<TRouter> {
             obs.complete();
           },
         });
-        return () => teardown();
+        return () => {
+          teardown();
+        };
       });
     };
   };

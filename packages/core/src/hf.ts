@@ -1,8 +1,10 @@
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+
+import type { HFDiscoveryFeed, HFModelInfo, HFModelSibling, HFTree } from "./schemas.js";
+
 import { findByRel } from "./catalog.js";
 import { resolveEnv } from "./env.js";
-import type { HFDiscoveryFeed, HFModelInfo, HFModelSibling, HFTree } from "./schemas.js";
 
 const DEFAULT_TTL_SECONDS = 43_200; // 12h
 
@@ -34,11 +36,11 @@ export function cacheTtlSeconds(env: NodeJS.ProcessEnv = process.env): number {
 }
 
 function sanitizeRepo(repo: string): string {
-  return repo.replace(/\//g, "__");
+  return repo.replaceAll("/", "__");
 }
 
 function sanitizeSearch(search: string): string {
-  return search.replace(/[^A-Za-z0-9._-]/g, "_");
+  return search.replaceAll(/[^A-Za-z0-9._-]/g, "_");
 }
 
 export function modelInfoCacheFile(runtimeDir: string, repo: string): string {

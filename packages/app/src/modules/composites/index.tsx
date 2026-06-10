@@ -1,9 +1,10 @@
+import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import * as YAML from "yaml";
+
 import { trpc } from "@/lib/trpc";
-import { Badge, Button, StatusDot, Input, Kbd } from "@/ui";
+import { Button, Input, StatusDot } from "@/ui";
 
 /**
  * Composites module (Phase 7 of composite-infra.md).
@@ -53,16 +54,16 @@ interface CompositeStatusShape {
 }
 
 interface CompositeSpecShape {
-  services: Array<{ kind: string; name: string; node: string }>;
-  workloads: Array<{ node: string; target: { value: string; kind: string } }>;
-  ragNodes: Array<{ name: string; node: string; backingService?: string }>;
-  gateways: Array<{
+  services: { kind: string; name: string; node: string }[];
+  workloads: { node: string; target: { value: string; kind: string } }[];
+  ragNodes: { name: string; node: string; backingService?: string }[];
+  gateways: {
     name: string;
     node: string;
     provider: string;
     upstreamWorkloads: string[];
-  }>;
-  dependencies: Array<{ from: ComponentRef; to: ComponentRef }>;
+  }[];
+  dependencies: { from: ComponentRef; to: ComponentRef }[];
   onFailure: "rollback" | "leave-partial";
 }
 
@@ -78,7 +79,7 @@ interface DryRunResult {
   dryRun: true;
   manifest: CompositeShape;
   order: ComponentRef[];
-  impliedEdges: Array<{ from: ComponentRef; to: ComponentRef }>;
+  impliedEdges: { from: ComponentRef; to: ComponentRef }[];
 }
 
 interface WetRunResult {
@@ -86,11 +87,11 @@ interface WetRunResult {
   ok: boolean;
   status: CompositeStatusShape;
   rolledBack: boolean;
-  componentResults: Array<{
+  componentResults: {
     ref: ComponentRef;
     state: "Ready" | "Failed";
     message?: string;
-  }>;
+  }[];
 }
 
 type ApplyResult = DryRunResult | WetRunResult;
@@ -181,7 +182,7 @@ function useCompositeParam(): [string | null, (name: string | null) => void] {
 
 function TabBar(props: { active: TabId; onChange: (id: TabId) => void }): React.JSX.Element {
   const { active, onChange } = props;
-  const tabs: Array<{ id: TabId; label: string }> = [
+  const tabs: { id: TabId; label: string }[] = [
     { id: "list", label: "List" },
     { id: "apply", label: "Apply" },
     { id: "detail", label: "Detail" },
@@ -203,7 +204,9 @@ function TabBar(props: { active: TabId; onChange: (id: TabId) => void }): React.
           <Button
             key={tab.id}
             type="button"
-            onClick={() => onChange(tab.id)}
+            onClick={() => {
+              onChange(tab.id);
+            }}
             data-testid={`composites-tab-${tab.id}`}
             style={{
               ...(isActive
@@ -402,7 +405,9 @@ function ListTab(props: {
             return (
               <tr
                 key={c.metadata.name}
-                onClick={() => onPick(c.metadata.name)}
+                onClick={() => {
+                  onPick(c.metadata.name);
+                }}
                 data-testid={`composites-row-${c.metadata.name}`}
                 style={{
                   cursor: "pointer",
@@ -818,7 +823,9 @@ function ApplyTab(props: {
               type="button"
               role="radio"
               aria-checked={mode === "edit"}
-              onClick={() => setMode("edit")}
+              onClick={() => {
+                setMode("edit");
+              }}
               data-testid="composites-mode-edit"
               style={{
                 ...(mode === "edit"
@@ -864,7 +871,12 @@ function ApplyTab(props: {
             >
               Composite
             </span>
-            <ExistingComposites selected={selectedName} onChange={(name) => onSelect(name)} />
+            <ExistingComposites
+              selected={selectedName}
+              onChange={(name) => {
+                onSelect(name);
+              }}
+            />
           </label>
         )}
         <label style={{ fontSize: 14 }}>
@@ -880,11 +892,11 @@ function ApplyTab(props: {
           </span>
           <select
             value={detectRuntimeInYaml(yamlText)}
-            onChange={(e) =>
+            onChange={(e) => {
               clearUnlockOnEdit(
                 rewriteRuntimeInYaml(yamlText, e.target.value as "auto" | "docker" | "kubernetes"),
-              )
-            }
+              );
+            }}
             data-testid="composites-runtime-picker"
             style={{
               borderRadius: "var(--r-md)",
@@ -909,7 +921,9 @@ function ApplyTab(props: {
 
       <textarea
         value={yamlText}
-        onChange={(e) => clearUnlockOnEdit(e.target.value)}
+        onChange={(e) => {
+          clearUnlockOnEdit(e.target.value);
+        }}
         data-testid="composites-yaml-editor"
         rows={20}
         spellCheck={false}
@@ -998,8 +1012,8 @@ function ApplyTab(props: {
  */
 function detectRuntimeInYaml(yaml: string): "auto" | "docker" | "kubernetes" {
   // Active (non-commented) `runtime:` line only.
-  const m = yaml.match(/^\s{2}runtime:\s*(docker|kubernetes)\s*$/m);
-  if (m && m[1]) return m[1] as "docker" | "kubernetes";
+  const m = /^\s{2}runtime:\s*(docker|kubernetes)\s*$/m.exec(yaml);
+  if (m?.[1]) return m[1] as "docker" | "kubernetes";
   return "auto";
 }
 
@@ -1065,7 +1079,9 @@ function ExistingComposites(props: {
   return (
     <select
       value={props.selected ?? ""}
-      onChange={(e) => props.onChange(e.target.value)}
+      onChange={(e) => {
+        props.onChange(e.target.value);
+      }}
       data-testid="composites-existing-select"
       style={{
         width: 256,
@@ -1130,10 +1146,10 @@ function ComponentTree(props: {
     );
   }
 
-  const sections: Array<{
+  const sections: {
     title: string;
-    rows: Array<{ ref: ComponentRef; meta: React.ReactNode }>;
-  }> = [
+    rows: { ref: ComponentRef; meta: React.ReactNode }[];
+  }[] = [
     {
       title: "Services",
       rows: spec.services.map((s) => ({
@@ -1388,7 +1404,9 @@ function DestroySection(props: { name: string; onDestroyed: () => void }): React
     return (
       <Button
         type="button"
-        onClick={() => setArmed(true)}
+        onClick={() => {
+          setArmed(true);
+        }}
         data-testid="composites-destroy-arm"
         style={{
           borderRadius: "var(--r-md)",
@@ -1428,7 +1446,9 @@ function DestroySection(props: { name: string; onDestroyed: () => void }): React
         <Input
           type="text"
           value={typed}
-          onChange={(e) => setTyped(e.target.value)}
+          onChange={(e) => {
+            setTyped(e.target.value);
+          }}
           data-testid="composites-destroy-input"
           placeholder={name}
           style={{
@@ -1448,7 +1468,9 @@ function DestroySection(props: { name: string; onDestroyed: () => void }): React
         />
         <Button
           type="button"
-          onClick={() => destroy.mutate({ name, dryRun: false })}
+          onClick={() => {
+            destroy.mutate({ name, dryRun: false });
+          }}
           disabled={!matches || destroy.isPending}
           data-testid="composites-destroy-confirm-button"
           style={{
@@ -1519,7 +1541,14 @@ function DetailTab(props: {
         }}
       >
         No composite selected. Pick one from the{" "}
-        <Button variant="secondary" size="sm" type="button" onClick={() => onPickFromList("")}>
+        <Button
+          variant="secondary"
+          size="sm"
+          type="button"
+          onClick={() => {
+            onPickFromList("");
+          }}
+        >
           List tab
         </Button>
         .
@@ -1667,7 +1696,9 @@ function DetailTab(props: {
       <div>
         <Button
           type="button"
-          onClick={() => setShowYaml((v) => !v)}
+          onClick={() => {
+            setShowYaml((v) => !v);
+          }}
           data-testid="composites-yaml-toggle"
           style={{
             borderRadius: "var(--r-md)",
@@ -1779,7 +1810,9 @@ export default function Composites(): React.JSX.Element {
               setSelected(null);
               setTab("list");
             }}
-            onPickFromList={() => setTab("list")}
+            onPickFromList={() => {
+              setTab("list");
+            }}
           />
         )}
       </div>

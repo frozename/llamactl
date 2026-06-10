@@ -1,6 +1,6 @@
+import type { EmbersynthNode } from "../../config/embersynth.js";
 // packages/remote/src/workload/gateway-catalog/embersynth-entries.ts
 import type { CompositeGatewayContext } from "../gateway-handlers/types.js";
-import type { EmbersynthNode } from "../../config/embersynth.js";
 
 export type DerivedEmbersynthEntry = EmbersynthNode;
 

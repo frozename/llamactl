@@ -133,7 +133,7 @@ export interface PlanLike {
 
 export interface GateResult {
   allowed: boolean;
-  refusedSteps: Array<{ index: number; tool: string; tier: Tier }>;
+  refusedSteps: { index: number; tool: string; tier: Tier }[];
 }
 
 /**
@@ -150,14 +150,14 @@ export interface GateResult {
  */
 export function gatePlan(plan: PlanLike, threshold: Tier): GateResult {
   const refusedSteps: GateResult["refusedSteps"] = [];
-  plan.steps.forEach((step, index) => {
+  for (const [index, step] of plan.steps.entries()) {
     const tier = stepTier(step);
     if (tier > threshold) {
       refusedSteps.push({ index, tool: step.tool, tier });
     }
-  });
+  }
   const thresholdOk = refusedSteps.length === 0;
-  const confirmationOk = plan.requiresConfirmation === false;
+  const confirmationOk = !plan.requiresConfirmation;
   return { allowed: thresholdOk && confirmationOk, refusedSteps };
 }
 

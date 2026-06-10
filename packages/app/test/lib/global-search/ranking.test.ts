@@ -1,5 +1,6 @@
 // packages/app/test/lib/global-search/ranking.test.ts
 import { describe, expect, test } from "bun:test";
+
 import { applySurfaceBias, sortGroups } from "../../../src/lib/global-search/ranking";
 
 describe("ranking", () => {

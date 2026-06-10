@@ -135,7 +135,9 @@ export async function probeWorkload(
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
   const start = Date.now();
 
   try {
@@ -166,7 +168,7 @@ export async function probeWorkload(
         signal: controller.signal,
       });
       if (modelsRes.ok) {
-        const body = (await modelsRes.json()) as { data: Array<{ id: string; created?: number }> };
+        const body = (await modelsRes.json()) as { data: { id: string; created?: number }[] };
         models = body.data.map((m) => m.id);
         // A workload serves one server; its model objects share the server's
         // `created` (start time). Take the max as the boot token — it changes on

@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import type { CompositeApplyEvent } from "../src/composite/types.js";
+
 import {
   COMPOSITE_MAX_EVENTS_PER_RUN,
   COMPOSITE_RETENTION_MS,
   createCompositeEventBus,
 } from "../src/composite/event-bus.js";
-import type { CompositeApplyEvent } from "../src/composite/types.js";
 
 /**
  * Quick Win 1 — live streaming on `compositeStatus`. The bus keeps
@@ -63,7 +64,9 @@ describe("composite event bus — buffered run state", () => {
   });
 
   test("emit before startRun is a no-op (and never throws)", () => {
-    expect(() => bus.emit("nope", ev(1))).not.toThrow();
+    expect(() => {
+      bus.emit("nope", ev(1));
+    }).not.toThrow();
     expect(bus.currentRun("nope")).toBeNull();
   });
 
@@ -116,7 +119,9 @@ describe("composite event bus — subscribe semantics", () => {
   test("subscribing before startRun returns a no-op unsubscriber", () => {
     const unsub = bus.subscribe("never-started", () => {});
     expect(typeof unsub).toBe("function");
-    expect(() => unsub()).not.toThrow();
+    expect(() => {
+      unsub();
+    }).not.toThrow();
   });
 
   test("listener exceptions do not propagate or block other listeners", () => {
@@ -126,7 +131,9 @@ describe("composite event bus — subscribe semantics", () => {
       throw new Error("boom");
     });
     bus.subscribe("stack-a", (e) => good.push(e));
-    expect(() => bus.emit("stack-a", ev(1))).not.toThrow();
+    expect(() => {
+      bus.emit("stack-a", ev(1));
+    }).not.toThrow();
     expect(good).toHaveLength(1);
   });
 });

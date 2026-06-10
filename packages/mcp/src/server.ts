@@ -1,5 +1,3 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
 import {
   bench,
   catalog,
@@ -10,25 +8,28 @@ import {
 } from "@llamactl/core";
 import {
   agentConfig,
-  config as kubecfg,
+  type ClusterNode,
   embersynth,
+  config as kubecfg,
+  modelHostStore,
   resolveNodeKind,
   router,
   workloadStore,
-  modelHostStore,
-  type ClusterNode,
 } from "@llamactl/remote";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { createOpenAICompatProvider } from "@nova/contracts";
 import {
   computeCostSnapshot,
-  runPlanner,
-  stubPlannerExecutor,
   createLlmExecutor,
   DEFAULT_ALLOWLIST,
   type PlannerExecutor,
   type PlannerToolDescriptor,
+  runPlanner,
+  stubPlannerExecutor,
 } from "@nova/mcp";
-import { createOpenAICompatProvider } from "@nova/contracts";
 import { appendAudit, toTextContent } from "@nova/mcp-shared";
+import { z } from "zod";
+
 import { registerPipelineTools } from "./pipelines.js";
 import { registerFleetTools } from "./tools/fleet.js";
 import { registerModelsLeaderboardTool } from "./tools/models-leaderboard.js";

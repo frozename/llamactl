@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { extractJsonPayload, validateJsonAgainstSchema } from "../src/runners/json-output.js";
 
 const schema = {

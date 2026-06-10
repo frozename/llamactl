@@ -1,6 +1,7 @@
-import { rpcServer as rpcServerMod } from "@llamactl/core";
-import { config as kubecfg, createNodeClient as defaultCreateNodeClient } from "@llamactl/remote";
 import type { Config } from "@llamactl/remote";
+
+import { rpcServer as rpcServerMod } from "@llamactl/core";
+import { createNodeClient as defaultCreateNodeClient, config as kubecfg } from "@llamactl/remote";
 
 /**
  * `llamactl agent rpc-doctor` — preflight check for tensor-parallel
@@ -60,7 +61,7 @@ export function defaultRpcDoctorDeps(): RpcDoctorDeps {
     createNodeClient: (cfg, opts) =>
       defaultCreateNodeClient(cfg, {
         nodeName: opts.nodeName,
-      }) as unknown as RpcDoctorRemoteClient,
+      }),
     loadConfig: kubecfg.loadConfig,
     defaultConfigPath: kubecfg.defaultConfigPath,
     stdout: (chunk: string): void => {

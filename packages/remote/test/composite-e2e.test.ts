@@ -3,13 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { applyComposite, destroyComposite } from "../src/composite/apply.js";
 import type { Composite } from "../src/composite/schema.js";
+import type { WorkloadClient } from "../src/workload/apply.js";
+
+import { applyComposite, destroyComposite } from "../src/composite/apply.js";
 import { saveConfig } from "../src/config/kubeconfig.js";
 import { freshConfig } from "../src/config/schema.js";
 import { createDockerBackend } from "../src/runtime/docker/backend.js";
 import { createKubernetesBackend } from "../src/runtime/kubernetes/backend.js";
-import type { WorkloadClient } from "../src/workload/apply.js";
 
 /**
  * Phase 8 — composite E2E smoke. Opt-in; CI skips by default.
@@ -77,15 +78,15 @@ function failingWorkloadClient(): WorkloadClient {
     throw new Error("workload client should not be called in the service-only composite E2E");
   };
   return {
-    serverStatus: { query: err as never },
-    serverStop: { mutate: err as never },
-    serverStart: { subscribe: err as never },
-    modelHostStart: { subscribe: err as never },
-    modelHostStop: { mutate: err as never },
-    modelHostStatus: { query: err as never },
-    rpcServerStart: { subscribe: err as never },
-    rpcServerStop: { mutate: err as never },
-    rpcServerDoctor: { query: err as never },
+    serverStatus: { query: err },
+    serverStop: { mutate: err },
+    serverStart: { subscribe: err },
+    modelHostStart: { subscribe: err },
+    modelHostStop: { mutate: err },
+    modelHostStatus: { query: err },
+    rpcServerStart: { subscribe: err },
+    rpcServerStop: { mutate: err },
+    rpcServerDoctor: { query: err },
   };
 }
 

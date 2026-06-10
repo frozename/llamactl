@@ -96,7 +96,7 @@ describe("file backend", () => {
 
 describe("keychain backend", () => {
   test("keychain:service/account invokes security CLI with parsed segments", () => {
-    const recorded: Array<{ service: string; account: string }> = [];
+    const recorded: { service: string; account: string }[] = [];
     const r = createSecretResolver({
       hostPlatform: "darwin",
       runSecurityCli: (service, account) => {

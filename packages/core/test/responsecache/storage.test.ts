@@ -3,16 +3,22 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   openResponseCacheStorage,
-  ResponseCacheRegistry,
   type ResponseCacheEntry,
+  ResponseCacheRegistry,
 } from "../../src/responsecache/index.js";
 import { runMigrations } from "../../src/responsecache/storage.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-responsecache-"));
-  return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return {
+    root,
+    cleanup: () => {
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
 }
 
 function baseEntry(overrides: Partial<ResponseCacheEntry> = {}): ResponseCacheEntry {
@@ -71,9 +77,9 @@ test("schema migration creates schema_version=2 and response_entries columns", (
       )
       .get() as { name: string } | null;
     expect(table?.name).toBe("response_entries");
-    const columns = storage.db.query("PRAGMA table_info('response_entries')").all() as Array<{
+    const columns = storage.db.query("PRAGMA table_info('response_entries')").all() as {
       name: string;
-    }>;
+    }[];
     expect(columns.map((column) => column.name)).toEqual([
       "sha",
       "model",
@@ -206,9 +212,9 @@ test("responsecache migrations are idempotent after a restart replays the same v
       version: number;
     } | null;
     expect(version?.version).toBe(2);
-    const columns = reopened.db.query("PRAGMA table_info('response_entries')").all() as Array<{
+    const columns = reopened.db.query("PRAGMA table_info('response_entries')").all() as {
       name: string;
-    }>;
+    }[];
     expect(columns.some((column) => column.name === "hits")).toBe(true);
     reopened.close();
   } finally {

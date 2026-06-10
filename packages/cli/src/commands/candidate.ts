@@ -1,4 +1,5 @@
-import { bench, candidateTest, pull } from "@llamactl/core";
+import { type bench, candidateTest, type pull } from "@llamactl/core";
+
 import {
   getGlobals,
   getNodeClient,
@@ -150,7 +151,7 @@ export async function runCandidate(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
     case "test":
-      return runTest(rest);
+      return await runTest(rest);
     case undefined:
     case "-h":
     case "--help":

@@ -1,10 +1,12 @@
 import { existsSync, mkdirSync, readdirSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+import type { ResolvedEnv } from "./types.js";
+
 import { findByRel } from "./catalog.js";
 import { addCurated } from "./catalogWriter.js";
 import { resolveEnv } from "./env.js";
-import type { ResolvedEnv } from "./types.js";
 
 /**
  * Candidate LM Studio installation roots, probed in order. Mirrors
@@ -234,13 +236,13 @@ export function planImport(opts: ImportOptions = {}): ImportPlan {
 
 export interface ImportResult {
   root: string | null;
-  applied: Array<{ rel: string; action: Extract<ImportAction, "link-and-add" | "add"> }>;
-  skipped: Array<{
+  applied: { rel: string; action: Extract<ImportAction, "link-and-add" | "add"> }[];
+  skipped: {
     rel: string;
     action: Exclude<ImportAction, "link-and-add" | "add">;
     reason: string;
-  }>;
-  errors: Array<{ rel: string; error: string }>;
+  }[];
+  errors: { rel: string; error: string }[];
 }
 
 /**

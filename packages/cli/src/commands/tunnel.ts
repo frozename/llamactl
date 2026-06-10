@@ -1,6 +1,6 @@
+import { type Config, config as kubecfg, tls } from "@llamactl/remote";
 import * as tlsModule from "node:tls";
 import { URL } from "node:url";
-import { config as kubecfg, tls, type Config } from "@llamactl/remote";
 
 const { computeFingerprint } = tls;
 
@@ -39,7 +39,7 @@ export async function runTunnel(argv: string[]): Promise<number> {
   const rest = argv.slice(1);
   switch (sub) {
     case "pin-central":
-      return runPinCentral(rest);
+      return await runPinCentral(rest);
     default:
       process.stderr.write(`unknown subcommand: tunnel ${sub}\n\n${USAGE}`);
       return 1;
@@ -190,8 +190,10 @@ function capturePeerCert(
     };
     socket.on("secureConnect", () => {
       const cert = socket.getPeerCertificate(true);
-      if (!cert || !cert.raw || cert.raw.length === 0) {
-        done(() => reject(new Error("no peer cert received")));
+      if (!cert?.raw || cert.raw.length === 0) {
+        done(() => {
+          reject(new Error("no peer cert received"));
+        });
         return;
       }
       const pem = derToPem(cert.raw);
@@ -199,16 +201,24 @@ function capturePeerCert(
       try {
         fingerprint = computeFingerprint(pem);
       } catch (err) {
-        done(() => reject(err as Error));
+        done(() => {
+          reject(err);
+        });
         return;
       }
-      done(() => resolve({ pem, fingerprint }));
+      done(() => {
+        resolve({ pem, fingerprint });
+      });
     });
     socket.on("error", (err) => {
-      done(() => reject(err));
+      done(() => {
+        reject(err);
+      });
     });
     socket.on("timeout", () => {
-      done(() => reject(new Error(`timeout connecting to ${host}:${port}`)));
+      done(() => {
+        reject(new Error(`timeout connecting to ${host}:${port}`));
+      });
     });
   });
 }

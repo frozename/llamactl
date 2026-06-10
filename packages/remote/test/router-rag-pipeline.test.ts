@@ -1,18 +1,19 @@
-import { afterEach, beforeEach, describe, expect, test, mock } from "bun:test";
+import type { RetrievalProvider } from "@nova/contracts";
+
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
-import type { RetrievalProvider } from "@nova/contracts";
+import type { RagPipelineManifest } from "../src/rag/pipeline/schema.js";
+import type { Fetcher } from "../src/rag/pipeline/types.js";
 
-import { router } from "../src/router.js";
 import { saveConfig, upsertNode } from "../src/config/kubeconfig.js";
 import { freshConfig } from "../src/config/schema.js";
 import { FETCHERS } from "../src/rag/pipeline/fetchers/registry.js";
 import { applyPipeline, pipelineDir } from "../src/rag/pipeline/store.js";
-import type { RagPipelineManifest } from "../src/rag/pipeline/schema.js";
-import type { Fetcher } from "../src/rag/pipeline/types.js";
+import { router } from "../src/router.js";
 
 /**
  * tRPC surfaces for `rag pipeline *`. Covers:
@@ -62,7 +63,7 @@ let tmp = "";
 let pipelinesRoot = "";
 let restoreFetcher: (() => void) | null = null;
 
-function installStubFetcher(docs: Array<{ id: string; content: string }>): () => void {
+function installStubFetcher(docs: { id: string; content: string }[]): () => void {
   const original = FETCHERS.filesystem;
   const stub: Fetcher = {
     kind: "filesystem",
@@ -70,10 +71,10 @@ function installStubFetcher(docs: Array<{ id: string; content: string }>): () =>
       for (const d of docs) yield { id: d.id, content: d.content, metadata: {} };
     },
   };
-  (FETCHERS as Record<string, Fetcher>).filesystem = stub;
+  FETCHERS.filesystem = stub;
   return () => {
-    if (original) (FETCHERS as Record<string, Fetcher>).filesystem = original;
-    else delete (FETCHERS as Record<string, Fetcher>).filesystem;
+    if (original) FETCHERS.filesystem = original;
+    else delete FETCHERS.filesystem;
   };
 }
 
@@ -122,7 +123,7 @@ function makeManifest(name = "demo"): RagPipelineManifest {
       concurrency: 2,
       on_duplicate: "skip",
     },
-  } as RagPipelineManifest;
+  };
 }
 
 describe("ragPipelineApply", () => {
@@ -200,7 +201,7 @@ describe("ragPipelineRun", () => {
     applyPipeline(makeManifest("defaulted"));
     restoreFetcher = installStubFetcher([]);
     const caller = router.createCaller({});
-    const res = await caller.ragPipelineRun({ name: "defaulted" } as { name: string });
+    const res = await caller.ragPipelineRun({ name: "defaulted" });
     expect(res.dryRun).toBe(false);
   });
 });

@@ -25,7 +25,9 @@ export function openResponseCacheStorage(dataRoot: string): ResponseCacheStorage
     response_cache_miss_total: 0,
     response_cache_evict_total: 0,
     safeWrite: (fn) => safeWrite(storage, fn),
-    close: () => db.close(),
+    close: () => {
+      db.close();
+    },
   };
   return storage;
 }

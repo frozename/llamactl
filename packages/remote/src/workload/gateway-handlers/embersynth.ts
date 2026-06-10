@@ -1,11 +1,12 @@
-import { loadEmbersynthConfig, defaultEmbersynthConfigPath } from "../../config/embersynth.js";
-import { resolveNodeKind, type ClusterNode } from "../../config/schema.js";
-import { currentContext, loadConfig, resolveToken } from "../../config/kubeconfig.js";
 import type { ApplyResult } from "../apply.js";
 import type { GatewayApplyOptions, GatewayHandler } from "./types.js";
+
+import { defaultEmbersynthConfigPath, loadEmbersynthConfig } from "../../config/embersynth.js";
+import { currentContext, loadConfig, resolveToken } from "../../config/kubeconfig.js";
+import { type ClusterNode, resolveNodeKind } from "../../config/schema.js";
 import {
-  deriveEmbersynthEntries,
   applyCompositeEntries,
+  deriveEmbersynthEntries,
   readGatewayCatalog,
   writeGatewayCatalog,
 } from "../gateway-catalog/index.js";

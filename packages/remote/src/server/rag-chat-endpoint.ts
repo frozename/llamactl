@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { getHTTPStatusCodeFromError } from "@trpc/server/http";
+
 import type { AppRouter } from "../router.js";
 
 /**
@@ -144,7 +145,7 @@ function jsonError(status: number, message: string, type: string): Response {
 export function lastUserMessageContent(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (!m || m.role !== "user") continue;
+    if (m?.role !== "user") continue;
     const c = m.content;
     if (typeof c === "string") return c;
     if (Array.isArray(c)) {
@@ -279,7 +280,7 @@ export async function handleRagChatCompletions(
         headers: req.headers,
         body: bodyText,
       });
-      return ctx.fallback(forwarded);
+      return await ctx.fallback(forwarded);
     }
     return jsonError(
       400,

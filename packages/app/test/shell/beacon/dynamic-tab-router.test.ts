@@ -1,6 +1,8 @@
-import { describe, test, expect } from "bun:test";
-import { dispatchTab } from "../../../src/shell/beacon/tab-dispatch";
+import { describe, expect, test } from "bun:test";
+
 import type { TabEntry } from "../../../src/stores/tab-store";
+
+import { dispatchTab } from "../../../src/shell/beacon/tab-dispatch";
 
 function tab(overrides: Partial<TabEntry> & Pick<TabEntry, "kind">): TabEntry {
   return {

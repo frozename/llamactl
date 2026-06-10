@@ -10,7 +10,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import { CompositeSchema, type Composite } from "./schema.js";
+
+import { type Composite, CompositeSchema } from "./schema.js";
 
 export function defaultCompositesDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_COMPOSITES_DIR?.trim();

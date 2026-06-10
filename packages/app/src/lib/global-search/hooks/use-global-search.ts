@@ -1,15 +1,17 @@
 // packages/app/src/lib/global-search/hooks/use-global-search.ts
 import * as React from "react";
-import { trpc, trpcUIClient } from "../../trpc.js";
-import { useTabStore } from "../../../stores/tab-store.js";
+
 import type { GroupedResults } from "../types";
-import { runClientPhase, mergeServerHits } from "../orchestrator";
+
+import { useTabStore } from "../../../stores/tab-store.js";
+import { trpc } from "../../trpc.js";
+import { mergeServerHits, runClientPhase } from "../orchestrator";
 import { parseQuery } from "../query";
-import { mapSessionHits } from "../surfaces/sessions";
-import { mapLogHits } from "../surfaces/logs";
-import { mapSessionRagHits } from "../surfaces/sessions-rag";
 import { mapKnowledgeRagHits } from "../surfaces/knowledge-rag";
+import { mapLogHits } from "../surfaces/logs";
 import { mapLogRagHits } from "../surfaces/logs-rag";
+import { mapSessionHits } from "../surfaces/sessions";
+import { mapSessionRagHits } from "../surfaces/sessions-rag";
 
 const TIER2_MS = 250;
 const TIER3_MS = 400;
@@ -118,7 +120,7 @@ export function useGlobalSearch(input: string): {
     tier3Timer.current = setTimeout(async () => {
       if (queryToken.current !== token) return;
       const status = ragStatus.data;
-      if (!status || !status.defaultNode) return;
+      if (!status?.defaultNode) return;
       const tasks: Promise<unknown>[] = [];
       if (allow("session") && status.sessions) {
         tasks.push(

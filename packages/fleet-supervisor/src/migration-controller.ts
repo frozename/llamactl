@@ -10,7 +10,7 @@ export interface NodeSnapshot {
   schedulerLeaseHolder?: string;
   pressureState: "NORMAL" | "HIGH";
   nodeMem: { freeMb: number };
-  workloads?: Array<{ name: string; reachable: boolean }>;
+  workloads?: { name: string; reachable: boolean }[];
 }
 
 export interface MigrationWorkload {
@@ -337,7 +337,7 @@ export class MigrationController {
     if (!isPressureRise) return null;
     if (!workload || !snapshot) return null;
 
-    return this.evaluateMove(workload, snapshot);
+    return await this.evaluateMove(workload, snapshot);
   }
 
   private async safeFetchSnapshot(node: string): Promise<NodeSnapshot | null> {

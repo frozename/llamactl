@@ -3,10 +3,12 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { parseWorkload, saveWorkload } from "../../remote/src/workload/store.js";
+
 import type { ModelRun } from "../../remote/src/workload/schema.js";
+
 import { parseModelHost } from "../../remote/src/workload/modelhost-store.js";
-import { setWorkloadEnabledWithDeps, type SetEnabledDeps } from "../src/commands/setEnabled.js";
+import { parseWorkload, saveWorkload } from "../../remote/src/workload/store.js";
+import { type SetEnabledDeps, setWorkloadEnabledWithDeps } from "../src/commands/setEnabled.js";
 
 let tmp = "";
 let workloadsDir = "";

@@ -1,8 +1,3 @@
-import { afterEach, beforeEach, describe, expect, test, mock } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import type {
   DeleteRequest,
   DeleteResponse,
@@ -14,9 +9,14 @@ import type {
   StoreResponse,
 } from "@nova/contracts";
 
-import { router } from "../src/router.js";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { saveConfig, upsertNode } from "../src/config/kubeconfig.js";
 import { freshConfig } from "../src/config/schema.js";
+import { router } from "../src/router.js";
 
 /**
  * Phase 4 — RAG router procedures. Mocks `./rag/index.js` so the test
@@ -50,19 +50,19 @@ let lastProviderOptions: FakeProviderOptions = {};
  * path (Int-A / Strategic 1 in the roadmap).
  */
 let lastFactoryOpts: unknown = undefined;
-const calls: Array<{ op: CalledOp; input: unknown }> = [];
+const calls: { op: CalledOp; input: unknown }[] = [];
 
 function makeFakeProvider(options: FakeProviderOptions): RetrievalProvider {
   return {
     kind: "fake",
     async search(req) {
       calls.push({ op: "search", input: req });
-      if (options.search) return options.search(req);
+      if (options.search) return await options.search(req);
       return { collection: req.collection ?? "default", results: [] };
     },
     async store(req) {
       calls.push({ op: "store", input: req });
-      if (options.store) return options.store(req);
+      if (options.store) return await options.store(req);
       return {
         collection: req.collection ?? "default",
         ids: req.documents.map((d) => d.id),
@@ -70,12 +70,12 @@ function makeFakeProvider(options: FakeProviderOptions): RetrievalProvider {
     },
     async delete(req) {
       calls.push({ op: "delete", input: req });
-      if (options.delete) return options.delete(req);
+      if (options.delete) return await options.delete(req);
       return { collection: req.collection ?? "default", deleted: req.ids.length };
     },
     async listCollections() {
       calls.push({ op: "listCollections", input: null });
-      if (options.listCollections) return options.listCollections();
+      if (options.listCollections) return await options.listCollections();
       return { collections: [{ name: "default" }] };
     },
     async close() {
@@ -265,7 +265,7 @@ describe("router ragX → createRagAdapter options passthrough", () => {
     // check that the `kb-chroma` node we registered is visible in
     // the passthrough.
     const cfg = opts!.config as {
-      clusters?: Array<{ nodes?: Array<{ name: string }> }>;
+      clusters?: { nodes?: { name: string }[] }[];
     };
     const nodeNames = cfg.clusters?.[0]?.nodes?.map((n) => n.name) ?? [];
     expect(nodeNames).toContain("kb-chroma");

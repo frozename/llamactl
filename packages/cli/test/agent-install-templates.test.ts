@@ -4,6 +4,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import type { BuildPlistOptions } from "../src/commands/agent-install/templates.js";
+
 import {
   buildSystemPlist,
   buildUserPlist,
@@ -14,7 +17,6 @@ import {
   renderPlist,
   xmlEscape,
 } from "../src/commands/agent-install/templates.js";
-import type { BuildPlistOptions } from "../src/commands/agent-install/templates.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, "fixtures");

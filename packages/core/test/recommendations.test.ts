@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { recommendationsForProfile } from "../src/recommendations.js";
 
 /**
@@ -51,16 +52,16 @@ function estimateRelSizeGb(rel: string): number {
   // Bits per weight by quant tag, biased high so we err toward
   // marking a recommendation as too-large rather than too-small.
   let bpw: number;
-  if (/IQ1_M/.test(fname)) bpw = 2.3;
+  if (fname.includes("IQ1_M")) bpw = 2.3;
   else if (/IQ2_(M|XS|XXS)/.test(fname)) bpw = 2.6;
-  else if (/Q2_K/.test(fname)) bpw = 2.85;
+  else if (fname.includes("Q2_K")) bpw = 2.85;
   else if (/IQ3|Q3_K_S/.test(fname)) bpw = 3.5;
-  else if (/Q3_K_M/.test(fname)) bpw = 3.85;
-  else if (/Q3_K_XL/.test(fname)) bpw = 4.0;
+  else if (fname.includes("Q3_K_M")) bpw = 3.85;
+  else if (fname.includes("Q3_K_XL")) bpw = 4.0;
   else if (/IQ4|Q4_0|Q4_K_S/.test(fname)) bpw = 4.65;
   else if (/Q4_K_M|Q4_K_XL|Q4_1/.test(fname)) bpw = 5.0;
-  else if (/Q5_K/.test(fname)) bpw = 5.85;
-  else if (/Q6_K/.test(fname)) bpw = 6.85;
+  else if (fname.includes("Q5_K")) bpw = 5.85;
+  else if (fname.includes("Q6_K")) bpw = 6.85;
   else if (/Q8_0|Q8_K_XL/.test(fname)) bpw = 8.5;
   else if (/BF16|F16/.test(fname)) bpw = 16;
   else throw new Error(`unknown quant for size estimate: ${rel}`);

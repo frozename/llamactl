@@ -71,7 +71,7 @@ export function createDockerClient(opts: DockerClientOptions = {}): DockerClient
         // so the cast is load-bearing — don't "clean it up".
         const res = await fetchImpl(url, {
           ...rest,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
           unix: socketPath,
         } as RequestInit);
         return res;
@@ -152,12 +152,12 @@ export async function drainNdjson(
   res: Response,
   errorCode: "image-pull-failed" | "create-failed",
   context: string,
-): Promise<Array<Record<string, unknown>>> {
+): Promise<Record<string, unknown>[]> {
   if (!res.ok) {
     throw await failWith(errorCode, res, context);
   }
   if (!res.body) return [];
-  const lines: Array<Record<string, unknown>> = [];
+  const lines: Record<string, unknown>[] = [];
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";

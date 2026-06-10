@@ -1,15 +1,16 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+
 import {
   addOrFocus,
-  closeTab,
-  pinTab,
-  unpinTab,
-  moveTab,
-  reopenClosed,
-  closeOthers,
   closeAll,
+  closeOthers,
+  closeTab,
+  moveTab,
+  pinTab,
+  reopenClosed,
   type TabEntry,
   type TabState,
+  unpinTab,
 } from "../../src/stores/tab-store";
 
 function emptyState(): TabState {

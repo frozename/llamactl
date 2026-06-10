@@ -1,6 +1,9 @@
 import * as React from "react";
+
 import { useThemeStore } from "@/stores/theme-store";
+import type { ThemeId } from "@/themes";
 import {
+  AtmosphericPanel,
   Badge,
   Button,
   Card,
@@ -16,9 +19,7 @@ import {
   Tabs,
   ThemeOrbs,
   TreeItem,
-  AtmosphericPanel,
 } from "@/ui";
-import type { ThemeId } from "@/themes";
 
 /**
  * Visual verification surface for the @/ui primitive library. Not
@@ -206,7 +207,12 @@ export default function UIPrimitivesSandbox(): React.JSX.Element {
           <CommandBar
             crumbs={[{ label: "beacon" }, { label: "Ops" }, { label: "wl-ghi", current: true }]}
           />
-          <ThemeOrbs activeId={themeId} onPick={(id: ThemeId) => setThemeId(id)} />
+          <ThemeOrbs
+            activeId={themeId}
+            onPick={(id: ThemeId) => {
+              setThemeId(id);
+            }}
+          />
         </Row>
       </Section>
 

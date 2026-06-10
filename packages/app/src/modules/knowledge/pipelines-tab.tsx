@@ -1,6 +1,8 @@
 import * as React from "react";
 import { useMemo, useState } from "react";
+
 import { trpc } from "@/lib/trpc";
+
 import { PipelineWizardModal } from "./pipeline-wizard";
 
 /**
@@ -27,7 +29,7 @@ interface PipelineManifest {
   metadata: { name: string };
   spec: {
     destination: { ragNode: string; collection: string };
-    sources: Array<{ kind: string } & Record<string, unknown>>;
+    sources: ({ kind: string } & Record<string, unknown>)[];
     schedule?: string;
     on_duplicate?: "skip" | "replace" | "version";
   };
@@ -59,7 +61,7 @@ interface PipelineListResponse {
 
 interface LogsResponse {
   path: string;
-  entries: Array<Record<string, unknown>>;
+  entries: Record<string, unknown>[];
 }
 
 interface RunningEntry {
@@ -91,8 +93,12 @@ function RunningBadge(props: { entry: RunningEntry }): React.JSX.Element {
   // look frozen between polls. State-only, no fetch.
   const [now, setNow] = useState<number>(() => Date.now());
   React.useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
+    const id = setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => {
+      clearInterval(id);
+    };
   }, []);
   if (entry.stale) {
     // Orphan path — the journal recorded a run-started that never
@@ -279,7 +285,9 @@ function PipelineRow(props: {
       setActionError(null);
       await utils.ragPipelineList.invalidate();
     },
-    onError: (err) => setActionError(err.message),
+    onError: (err) => {
+      setActionError(err.message);
+    },
   });
 
   const onRun = (): void => {
@@ -338,7 +346,9 @@ function PipelineRow(props: {
               <input
                 type="checkbox"
                 checked={dryRun}
-                onChange={(e) => setDryRun(e.target.checked)}
+                onChange={(e) => {
+                  setDryRun(e.target.checked);
+                }}
                 data-testid={`pipelines-dryrun-${rec.name}`}
                 disabled={isLive}
               />
@@ -436,7 +446,9 @@ function DraftPanel(props: { selectedNode: string; availableNodes: string[] }): 
       <div className="mb-3">
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={() => {
+            setOpen(true);
+          }}
           data-testid="pipelines-draft-open"
           className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
         >
@@ -459,7 +471,9 @@ function DraftPanel(props: { selectedNode: string; availableNodes: string[] }): 
         </div>
         <button
           type="button"
-          onClick={() => setOpen(false)}
+          onClick={() => {
+            setOpen(false);
+          }}
           className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
         >
           Close
@@ -472,7 +486,9 @@ function DraftPanel(props: { selectedNode: string; availableNodes: string[] }): 
           </span>
           <textarea
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={(e) => {
+              setDescription(e.target.value);
+            }}
             rows={2}
             data-testid="pipelines-draft-description"
             placeholder="e.g. crawl https://docs.example.com into kb-pg daily"
@@ -486,7 +502,9 @@ function DraftPanel(props: { selectedNode: string; availableNodes: string[] }): 
           <input
             type="text"
             value={nameOverride}
-            onChange={(e) => setNameOverride(e.target.value)}
+            onChange={(e) => {
+              setNameOverride(e.target.value);
+            }}
             data-testid="pipelines-draft-name"
             className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
           />
@@ -575,7 +593,9 @@ export function PipelinesTab(props: {
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={() => setWizardOpen(true)}
+          onClick={() => {
+            setWizardOpen(true);
+          }}
           data-testid="pipelines-new"
           className="rounded bg-[var(--color-brand)] px-3 py-1 text-xs font-medium text-[color:var(--color-surface-0)] hover:opacity-90"
         >
@@ -590,8 +610,12 @@ export function PipelinesTab(props: {
 
       <PipelineWizardModal
         open={wizardOpen}
-        onClose={() => setWizardOpen(false)}
-        onApplied={() => setWizardOpen(false)}
+        onClose={() => {
+          setWizardOpen(false);
+        }}
+        onApplied={() => {
+          setWizardOpen(false);
+        }}
         availableRagNodes={availableNodes}
         defaultRagNode={nodeName}
       />
@@ -639,7 +663,9 @@ export function PipelinesTab(props: {
                 <PipelineRow
                   key={rec.name}
                   rec={rec}
-                  onLogsToggle={() => setLogsOpen((cur) => (cur === rec.name ? null : rec.name))}
+                  onLogsToggle={() => {
+                    setLogsOpen((cur) => (cur === rec.name ? null : rec.name));
+                  }}
                   logsOpen={logsOpen === rec.name}
                   running={runningByName.get(rec.name) ?? null}
                 />

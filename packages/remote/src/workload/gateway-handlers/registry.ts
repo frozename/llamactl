@@ -1,10 +1,11 @@
 import type { ClusterNode } from "../../config/schema.js";
 import type { ApplyEvent, ApplyResult, WorkloadClient } from "../apply.js";
 import type { ModelRun } from "../schema.js";
+import type { GatewayHandler } from "./types.js";
+
 import { AGENT_GATEWAY_HANDLER_KIND, agentGatewayHandler } from "./agent-gateway.js";
 import { embersynthHandler } from "./embersynth.js";
 import { siriusHandler } from "./sirius.js";
-import type { GatewayHandler } from "./types.js";
 
 /**
  * Default set of handlers shipped with llamactl. Order is significant:
@@ -121,7 +122,7 @@ export async function dispatchGatewayApply(
     return null;
   }
 
-  return handler.apply({
+  return await handler.apply({
     manifest: opts.manifest,
     node,
     getClient: opts.getClient,

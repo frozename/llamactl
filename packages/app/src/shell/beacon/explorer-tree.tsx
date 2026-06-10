@@ -1,9 +1,11 @@
 import * as React from "react";
-import { StatusDot, TreeItem } from "@/ui";
-import { APP_MODULES } from "@/modules/registry";
+
 import { trpc } from "@/lib/trpc";
-import { useTabStore, type TabEntry } from "@/stores/tab-store";
+import { APP_MODULES } from "@/modules/registry";
 import { useExplorerCollapse } from "@/stores/explorer-collapse-store";
+import { type TabEntry, useTabStore } from "@/stores/tab-store";
+import { StatusDot, TreeItem } from "@/ui";
+
 import { buildExplorerTree, type DynamicInstance, type ExplorerLeaf } from "./registry-view";
 
 /**
@@ -16,11 +18,11 @@ export function ExplorerTree(): React.JSX.Element {
   const nodes = trpc.nodeList.useQuery(undefined, { refetchInterval: 30_000 });
 
   const wlInstances: DynamicInstance[] = React.useMemo(() => {
-    const rows = (workloads.data ?? []) as Array<{
+    const rows = (workloads.data ?? []) as {
       name?: string;
       phase?: string;
       modelRef?: string;
-    }>;
+    }[];
     return rows.map((w) => ({
       id: w.name ?? "unknown",
       title: `${w.name ?? "—"}${w.modelRef ? ` · ${w.modelRef}` : ""}`,
@@ -29,7 +31,7 @@ export function ExplorerTree(): React.JSX.Element {
   }, [workloads.data]);
 
   const nodeInstances: DynamicInstance[] = React.useMemo(() => {
-    const rows = (nodes.data?.nodes ?? []) as Array<{ name: string; effectiveKind?: string }>;
+    const rows = (nodes.data?.nodes ?? []) as { name: string; effectiveKind?: string }[];
     return rows.map((n) => ({
       id: n.name,
       title: `${n.name} · ${n.effectiveKind ?? "agent"}`,
@@ -62,7 +64,7 @@ export function ExplorerTree(): React.JSX.Element {
     const entry: TabEntry = {
       tabKey: `${kind}:${inst.id}`,
       title: inst.title,
-      kind: kind as TabEntry["kind"],
+      kind: kind,
       instanceId: inst.id,
       openedAt: Date.now(),
     };
@@ -78,7 +80,9 @@ export function ExplorerTree(): React.JSX.Element {
             <button
               type="button"
               data-testid={`explorer-group-${group.id}`}
-              onClick={() => toggleCollapse(group.id)}
+              onClick={() => {
+                toggleCollapse(group.id);
+              }}
               style={{
                 all: "unset",
                 display: "flex",
@@ -115,7 +119,9 @@ export function ExplorerTree(): React.JSX.Element {
                     <TreeItem
                       label={leaf.title}
                       active={activeTabKey === `module:${leaf.id}`}
-                      onClick={() => openLeaf(leaf)}
+                      onClick={() => {
+                        openLeaf(leaf);
+                      }}
                       collapsed={
                         leaf.kind === "dynamic-group"
                           ? (collapsed[`${group.id}/${leaf.id}`] ?? false)
@@ -140,7 +146,9 @@ export function ExplorerTree(): React.JSX.Element {
                           activeTabKey ===
                           `${leaf.id === "workloads" ? "workload" : "node"}:${inst.id}`
                         }
-                        onClick={() => openInstance(leaf, inst)}
+                        onClick={() => {
+                          openInstance(leaf, inst);
+                        }}
                       />
                     ))}
                 </React.Fragment>

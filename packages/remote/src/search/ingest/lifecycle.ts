@@ -1,10 +1,11 @@
+import type { IngestRecord } from "./sessions.js";
+
+import { createRagAdapter } from "../../rag/index.js";
+import { resolveRagNode } from "../../rag/resolve.js";
+import { resolveDefaultRagNode } from "../rag-node.js";
+import { startLogsIngest } from "./logs.js";
 // packages/remote/src/search/ingest/lifecycle.ts
 import { startSessionsIngest } from "./sessions.js";
-import { startLogsIngest } from "./logs.js";
-import { resolveDefaultRagNode } from "../rag-node.js";
-import { resolveRagNode } from "../../rag/resolve.js";
-import { createRagAdapter } from "../../rag/index.js";
-import type { IngestRecord } from "./sessions.js";
 
 let stopFns: (() => void)[] = [];
 

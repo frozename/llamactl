@@ -1,14 +1,15 @@
+import type { DeleteRequest, DeleteResponse, StoreRequest, StoreResponse } from "@nova/contracts";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { DeleteRequest, DeleteResponse, StoreRequest, StoreResponse } from "@nova/contracts";
-
-import { runPipeline } from "../src/rag/pipeline/runtime.js";
-import { FETCHERS } from "../src/rag/pipeline/fetchers/registry.js";
 import type { RagPipelineManifest } from "../src/rag/pipeline/schema.js";
 import type { Fetcher, RawDoc } from "../src/rag/pipeline/types.js";
+
+import { FETCHERS } from "../src/rag/pipeline/fetchers/registry.js";
+import { runPipeline } from "../src/rag/pipeline/runtime.js";
 
 let tmp = "";
 
@@ -43,10 +44,10 @@ function installStubFetcher(opts: StubFetcherOptions): () => void {
       for (const d of opts.docs) yield d;
     },
   };
-  (FETCHERS as Record<string, Fetcher>).filesystem = stub;
+  FETCHERS.filesystem = stub;
   return () => {
-    if (original) (FETCHERS as Record<string, Fetcher>).filesystem = original;
-    else delete (FETCHERS as Record<string, Fetcher>).filesystem;
+    if (original) FETCHERS.filesystem = original;
+    else delete FETCHERS.filesystem;
   };
 }
 
@@ -108,7 +109,7 @@ function makeMockAdapter(options: { withDelete?: boolean } = {}): {
   };
 }
 
-function readJournalLines(path: string): Array<Record<string, unknown>> {
+function readJournalLines(path: string): Record<string, unknown>[] {
   const raw = readFileSync(path, "utf8").trim();
   if (!raw) return [];
   return raw.split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
@@ -127,7 +128,7 @@ function baseManifest(overrides: Partial<RagPipelineManifest["spec"]> = {}): Rag
       on_duplicate: "skip",
       ...overrides,
     },
-  } as RagPipelineManifest;
+  };
 }
 
 describe("runPipeline", () => {
@@ -244,9 +245,7 @@ describe("runPipeline", () => {
       expect(summary.total_docs).toBe(1);
       expect(summary.total_chunks).toBeGreaterThan(1);
 
-      const ingested = readJournalLines(journalPath).find((l) => l.kind === "doc-ingested") as
-        | Record<string, unknown>
-        | undefined;
+      const ingested = readJournalLines(journalPath).find((l) => l.kind === "doc-ingested");
       expect(ingested).toBeDefined();
       expect(typeof ingested!.chunks).toBe("number");
       expect((ingested!.chunks as number) > 1).toBe(true);
@@ -607,7 +606,7 @@ describe("runPipeline", () => {
     // Temporarily delete the registered filesystem fetcher to prove
     // the runtime doesn't crash when the registry lookup misses.
     const original = FETCHERS.filesystem;
-    delete (FETCHERS as Record<string, Fetcher>).filesystem;
+    delete FETCHERS.filesystem;
     try {
       const journalPath = join(tmp, "journal.jsonl");
       const mock = makeMockAdapter();
@@ -621,7 +620,7 @@ describe("runPipeline", () => {
       expect(lines.some((l) => l.kind === "error")).toBe(true);
     } finally {
       if (original) {
-        (FETCHERS as Record<string, Fetcher>).filesystem = original;
+        FETCHERS.filesystem = original;
       }
     }
   });

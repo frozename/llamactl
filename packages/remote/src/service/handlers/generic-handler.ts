@@ -12,11 +12,12 @@
  * or resolve via `listServices` / inspect directly.
  */
 import type { ServiceDeployment, ServiceInstance, VolumeMount } from "../../runtime/backend.js";
+import type { GenericContainerServiceSpec } from "../schema.js";
+import type { HandlerTranslateOptions, ResolvedServiceEndpoint, ServiceHandler } from "./types.js";
+
 import { LABEL_KEYS, MANAGED_BY_VALUE } from "../../runtime/labels.js";
 import { ServiceError } from "../errors.js";
-import type { GenericContainerServiceSpec } from "../schema.js";
 import { sha256Hex } from "./hash.js";
-import type { ResolvedServiceEndpoint, ServiceHandler, HandlerTranslateOptions } from "./types.js";
 
 function hashMaterial(spec: GenericContainerServiceSpec): Record<string, unknown> {
   return {
@@ -137,7 +138,7 @@ export const genericContainerHandler: ServiceHandler<GenericContainerServiceSpec
         `container service '${spec.name}': spec declares no ports — nothing to resolve`,
       );
     }
-    if (!instance || !instance.endpoint) {
+    if (!instance?.endpoint) {
       // Fall back to the first declared port's `hostPort` (or
       // container port if no hostPort was pinned) so callers that
       // resolve pre-apply in a dryRun still get something usable.

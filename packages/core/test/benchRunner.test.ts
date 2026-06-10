@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
 import {
   benchPreset,
   benchVision,
@@ -8,9 +9,9 @@ import {
   parseBenchJsonlStats,
   parseMtmdCliStats,
   resolveReferenceImage,
+  type RunCli,
   writeBenchProfile,
   writeBenchVision,
-  type RunCli,
 } from "../src/bench/runner.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 

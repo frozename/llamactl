@@ -1,16 +1,18 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
-import {
-  generateEmbersynthConfig,
-  loadEmbersynthConfig,
-  listSyntheticModelIds,
-  saveEmbersynthConfig,
-  DEFAULT_EMBERSYNTH_PROFILES,
-} from "../src/config/embersynth.js";
+
 import type { Config } from "../src/config/schema.js";
+
+import {
+  DEFAULT_EMBERSYNTH_PROFILES,
+  generateEmbersynthConfig,
+  listSyntheticModelIds,
+  loadEmbersynthConfig,
+  saveEmbersynthConfig,
+} from "../src/config/embersynth.js";
 
 /**
  * Covers the llamactl → embersynth config bridge:

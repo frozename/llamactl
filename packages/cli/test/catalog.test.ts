@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
 import { makeTempRuntime, runCli } from "./helpers.js";
 
 describe("llamactl catalog", () => {
@@ -6,7 +7,9 @@ describe("llamactl catalog", () => {
   beforeEach(() => {
     temp = makeTempRuntime();
   });
-  afterEach(() => temp.cleanup());
+  afterEach(() => {
+    temp.cleanup();
+  });
 
   test("catalog list (no custom file) returns just builtin", () => {
     const r = runCli(["catalog", "list"], temp.env);

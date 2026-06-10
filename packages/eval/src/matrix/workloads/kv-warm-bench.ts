@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import { dirname, join } from "node:path";
+
 import type { WorkloadEval } from "../types.js";
 
 export const KV_WARM_BENCH_FRONTIERS = [2048, 4096, 8192, 16384, 32768] as const;
@@ -105,7 +106,11 @@ export async function createTokenizeClient(args: {
   onWarn?: (message: string) => void;
 }): Promise<KvWarmBenchTokenize | null> {
   const endpoint = `${args.proxyBaseUrl}/v1/tokenize`;
-  const warn = args.onWarn ?? ((message: string) => console.warn(message));
+  const warn =
+    args.onWarn ??
+    ((message: string) => {
+      console.warn(message);
+    });
   const probe = await fetch(endpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -184,7 +189,7 @@ export async function buildFrontierPrompt(args: {
 }
 
 function normalizeArgs(args: KvWarmBenchArgs): NormalizedKvWarmBenchArgs {
-  if (!args.model || !args.model.trim()) {
+  if (!args.model?.trim()) {
     throw new Error("kv-warm-bench: model is required");
   }
   const warmRuns = args.warmRuns ?? 3;

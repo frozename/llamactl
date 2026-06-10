@@ -1,23 +1,26 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, mkdtempSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import {
-  workloadRuntimeDir,
-  listLocalWorkloads,
-  listLocalRoutes,
-  listWorkloadDirs,
-  ensureWorkloadRuntimeDir,
-  migrateLegacySingletonRuntime,
-} from "../src/workloadRuntime.js";
+import { join } from "node:path";
+
 import { writeModelHostState } from "../src/engines/state.js";
+import {
+  ensureWorkloadRuntimeDir,
+  listLocalRoutes,
+  listLocalWorkloads,
+  listWorkloadDirs,
+  migrateLegacySingletonRuntime,
+  workloadRuntimeDir,
+} from "../src/workloadRuntime.js";
 
 const tempEnv = () => {
   const dir = mkdtempSync(join(tmpdir(), "workloadrt-"));
   return {
     runtimeDir: dir,
     resolved: { LOCAL_AI_RUNTIME_DIR: dir } as any,
-    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+    cleanup: () => {
+      rmSync(dir, { recursive: true, force: true });
+    },
   };
 };
 

@@ -1,9 +1,10 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import * as modelhostStore from "../../src/workload/modelhost-store.js";
+import { join } from "node:path";
+
 import { ModelHostManifestSchema } from "../../src/workload/modelhost-schema.js";
+import * as modelhostStore from "../../src/workload/modelhost-store.js";
 import {
   deleteModelHost,
   loadModelHostByName,

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { startPeerSnapshotPoller } from "../src/server/peer-snapshot-poller.js";
-import type { PeerNode } from "../src/config/peers.js";
+
 import type { PeerSnapshot } from "../../core/src/workloadRuntime.js";
+import type { PeerNode } from "../src/config/peers.js";
+
+import { startPeerSnapshotPoller } from "../src/server/peer-snapshot-poller.js";
 
 function peer(id: string): PeerNode {
   return { id, endpoint: `https://${id}.local:7843`, token: "tok" };

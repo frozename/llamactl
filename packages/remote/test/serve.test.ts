@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { createRemoteNodeClient } from "../src/client/node-client.js";
 import { generateToken } from "../src/server/auth.js";
-import { startAgentServer, runStartupMigration, type RunningAgent } from "../src/server/serve.js";
+import { type RunningAgent, runStartupMigration, startAgentServer } from "../src/server/serve.js";
 import { generateSelfSignedCert } from "../src/server/tls.js";
 import { loadWorkload } from "../src/workload/store.js";
 

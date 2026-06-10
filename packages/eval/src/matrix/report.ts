@@ -43,12 +43,12 @@ function fmtTps(value: number): string {
 }
 
 function mdField(value: string): string {
-  return value.replace(/\|/g, "\\|");
+  return value.replaceAll("|", "\\|");
 }
 
 function csvField(value: string): string {
   if (/[,\"\n\r]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
+    return `"${value.replaceAll('"', '""')}"`;
   }
   return value;
 }
@@ -174,7 +174,7 @@ export function renderMarkdownReport(cells: CellRow[], opts: ReportOpts = {}): s
 export function renderCsvReport(cells: CellRow[], opts: ReportOpts = {}): string {
   const filtered = filteredCells(cells, opts);
   const { models, workloads, lookup } = buildGrid(filtered);
-  const sections: Array<[Section, (cell?: CellRow) => string]> = [
+  const sections: [Section, (cell?: CellRow) => string][] = [
     ["primary_metric", (cell) => (cell ? fmtMetric(cell.primary_metric_value) : "")],
     ["latency_p50_ms", (cell) => (cell ? fmtMs(cell.latency_p50_ms) : "")],
     ["latency_p95_ms", (cell) => (cell ? fmtMs(cell.latency_p95_ms) : "")],

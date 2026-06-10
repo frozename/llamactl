@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
+  deleteModelHost,
   listModelHosts,
+  loadModelHostByName,
   parseModelHost,
   saveModelHost,
-  loadModelHostByName,
-  deleteModelHost,
 } from "../../src/workload/modelhost-store.js";
 
 const manifest = parseModelHost(`

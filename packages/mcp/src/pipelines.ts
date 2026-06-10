@@ -1,11 +1,11 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-
-import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
 import { router } from "@llamactl/remote";
 import { toTextContent } from "@nova/mcp-shared";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { z } from "zod";
 
 /**
  * M.1 — pipeline-tool pickup. Operators author pipelines in the
@@ -104,10 +104,10 @@ interface ChatMessage {
 async function runPipeline(
   tool: PipelineTool,
   input: string,
-): Promise<{ stages: Array<{ stage: number; output: string }>; finalOutput: string }> {
+): Promise<{ stages: { stage: number; output: string }[]; finalOutput: string }> {
   const caller = router.createCaller({});
   let pending = input;
-  const stages: Array<{ stage: number; output: string }> = [];
+  const stages: { stage: number; output: string }[] = [];
 
   for (let i = 0; i < tool.stages.length; i++) {
     const stage = tool.stages[i];
@@ -133,7 +133,7 @@ async function runPipeline(
       node: stage.node,
       request,
     })) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: { message?: { content?: string } }[];
     };
     const finalContent = response.choices?.[0]?.message?.content ?? "";
     stages.push({ stage: i, output: finalContent });

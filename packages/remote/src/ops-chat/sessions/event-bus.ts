@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+
 import type { JournalEvent } from "./journal-schema.js";
 
 const channels = new Map<string, EventEmitter>();

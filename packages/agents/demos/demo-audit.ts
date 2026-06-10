@@ -15,6 +15,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+
 import { runRunbook } from "../src/index.js";
 
 const NARRATIVE = `\
@@ -156,7 +157,7 @@ async function main(): Promise<void> {
     banner("Aggregated fleet snapshot");
     const summary = result.summary as {
       cluster: string | null;
-      nodes: Array<{ name: string; kind: string; endpoint?: string }>;
+      nodes: { name: string; kind: string; endpoint?: string }[];
       promotions: unknown[];
       workloads: unknown[];
       installedAndBenched: unknown[];

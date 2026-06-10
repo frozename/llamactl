@@ -2,9 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import type { PeerNode } from "../../remote/src/config/peers.js";
-import { createPeerFetch } from "../src/peer-fetch.js";
+
 import { generateSelfSignedCert } from "../../remote/src/server/tls.js";
+import { createPeerFetch } from "../src/peer-fetch.js";
 
 function makeSnapshot(node: string) {
   return JSON.stringify({

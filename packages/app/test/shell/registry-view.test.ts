@@ -1,10 +1,8 @@
-import { describe, test, expect } from "bun:test";
-import {
-  buildExplorerTree,
-  type ExplorerLeaf,
-  type DynamicInstance,
-} from "../../src/shell/beacon/registry-view";
+import { describe, expect, test } from "bun:test";
+
 import type { AppModule } from "../../src/modules/registry";
+
+import { buildExplorerTree } from "../../src/shell/beacon/registry-view";
 
 // A minimal stand-in for AppModule without the lazy Component.
 function m(

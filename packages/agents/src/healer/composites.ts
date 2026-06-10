@@ -44,32 +44,32 @@ export interface CompositeSummary {
 
 interface McpCallResult {
   isError?: boolean;
-  content?: Array<{ type: string; text?: string }>;
+  content?: { type: string; text?: string }[];
 }
 
 function firstTextBlock(result: McpCallResult): string | undefined {
   const content = result.content;
   if (!Array.isArray(content) || content.length === 0) return undefined;
   const first = content[0];
-  if (!first || first.type !== "text" || typeof first.text !== "string") return undefined;
+  if (first?.type !== "text" || typeof first.text !== "string") return undefined;
   return first.text;
 }
 
 interface CompositeListEnvelope {
   count?: number;
-  composites?: Array<{
+  composites?: {
     apiVersion?: string;
     kind?: string;
     metadata?: { name?: string };
     status?: {
       phase?: string;
-      components?: Array<{
+      components?: {
         ref?: { kind?: string; name?: string };
         state?: string;
         message?: string;
-      }>;
+      }[];
     };
-  }>;
+  }[];
 }
 
 function parseEnvelope(result: McpCallResult): CompositeListEnvelope {
@@ -86,7 +86,7 @@ function parseEnvelope(result: McpCallResult): CompositeListEnvelope {
   if (!parsed || typeof parsed !== "object") {
     throw new Error("llamactl.composite.list: envelope is not an object");
   }
-  return parsed as CompositeListEnvelope;
+  return parsed;
 }
 
 /**

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import {
   defaultOmlxMemoryGiBForProfile,
   normalizeProfile,
@@ -48,14 +49,10 @@ describe("profile.profileFromMemory", () => {
 
 describe("profile.resolveProfile", () => {
   test("explicit override wins over detection", () => {
-    expect(resolveProfile({ LLAMA_CPP_MACHINE_PROFILE: "mac-mini-16g" } as NodeJS.ProcessEnv)).toBe(
-      "mac-mini-16g",
-    );
+    expect(resolveProfile({ LLAMA_CPP_MACHINE_PROFILE: "mac-mini-16g" })).toBe("mac-mini-16g");
   });
   test("alias in env is normalised", () => {
-    expect(resolveProfile({ LLAMA_CPP_MACHINE_PROFILE: "mini" } as NodeJS.ProcessEnv)).toBe(
-      "mac-mini-16g",
-    );
+    expect(resolveProfile({ LLAMA_CPP_MACHINE_PROFILE: "mini" })).toBe("mac-mini-16g");
   });
 });
 

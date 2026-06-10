@@ -1,5 +1,6 @@
 // packages/remote/test/gateway-catalog-hash.test.ts
 import { describe, expect, test } from "bun:test";
+
 import { entrySpecHash } from "../src/workload/gateway-catalog/hash";
 
 describe("entrySpecHash — sirius shape", () => {

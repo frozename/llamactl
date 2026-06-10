@@ -32,8 +32,8 @@ import { dirname, join } from "node:path";
 import {
   defaultProjectsPath,
   loadProjects,
-  resolveProjectRouting,
   type Project,
+  resolveProjectRouting,
 } from "./projects.js";
 
 export interface ProjectRoutingDecision {

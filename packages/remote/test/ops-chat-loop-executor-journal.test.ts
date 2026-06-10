@@ -1,10 +1,11 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { runLoopExecutor } from "../src/ops-chat/loop-executor";
-import { readJournal } from "../src/ops-chat/sessions/journal";
 import { sessionEventBus } from "../src/ops-chat/sessions/event-bus";
+import { readJournal } from "../src/ops-chat/sessions/journal";
 
 describe("loop-executor → journal + bus", () => {
   let tmp: string;

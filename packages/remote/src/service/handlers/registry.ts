@@ -1,3 +1,6 @@
+import type { ServiceSpec } from "../schema.js";
+import type { ServiceHandler } from "./types.js";
+
 /**
  * Default handler set + dispatch. Mirrors
  * `workload/gateway-handlers/registry.ts`: a static array, first-match
@@ -11,16 +14,14 @@
  * contract each new handler must satisfy.
  */
 import { ServiceError } from "../errors.js";
-import type { ServiceSpec } from "../schema.js";
 import { chromaHandler } from "./chroma-handler.js";
 import { genericContainerHandler } from "./generic-handler.js";
 import { pgvectorHandler } from "./pgvector-handler.js";
-import type { ServiceHandler } from "./types.js";
 
 export const DEFAULT_SERVICE_HANDLERS: readonly ServiceHandler[] = [
-  chromaHandler as unknown as ServiceHandler,
-  pgvectorHandler as unknown as ServiceHandler,
-  genericContainerHandler as unknown as ServiceHandler,
+  chromaHandler,
+  pgvectorHandler,
+  genericContainerHandler,
 ];
 
 /**

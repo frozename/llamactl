@@ -1,6 +1,8 @@
 import * as React from "react";
+
+import { type TabEntry, useTabStore } from "@/stores/tab-store";
 import { TreeItem } from "@/ui";
-import { useTabStore, type TabEntry } from "@/stores/tab-store";
+
 import { bucketTabsByAge } from "./session-buckets";
 
 /**
@@ -83,7 +85,9 @@ function Group({
               {t.kind}
             </span>
           }
-          onClick={() => onOpen({ ...t, openedAt: Date.now() })}
+          onClick={() => {
+            onOpen({ ...t, openedAt: Date.now() });
+          }}
         />
       ))}
     </div>

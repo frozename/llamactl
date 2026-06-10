@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { ndcgAtK, memoryRecallWorkload } from "../src/matrix/workloads/memory-recall.js";
+
+import { memoryRecallWorkload, ndcgAtK } from "../src/matrix/workloads/memory-recall.js";
 
 describe("ndcgAtK", () => {
   test("returns 1.0 when top-K matches all gold in order", () => {

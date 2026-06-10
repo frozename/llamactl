@@ -1,24 +1,8 @@
-import { probeNodeMem as defaultProbeNodeMem } from "./node-probe.js";
-import {
-  probeWorkload as defaultProbeWorkload,
-  redactEndpoint,
-  type WorkloadTarget,
-} from "./workload-probe.js";
-import { appendFleetJournal, defaultFleetJournalPath } from "./journal.js";
-import {
+import type {
   MigrationController,
-  type MigrationWorkload,
-  type NodeSnapshot,
+  MigrationWorkload,
+  NodeSnapshot,
 } from "./migration-controller.js";
-import {
-  PressureWindow,
-  detectPressure,
-  detectDegradation,
-  isPressureHot,
-  type PressureThresholds,
-  type DegradationThresholds,
-  type WorkloadHealthState,
-} from "./policy.js";
 import type {
   FleetHeartbeatEntry,
   FleetJournalEntry,
@@ -28,6 +12,23 @@ import type {
   NodeMemSnapshot,
   WorkloadSnapshot,
 } from "./types.js";
+
+import { appendFleetJournal, defaultFleetJournalPath } from "./journal.js";
+import { probeNodeMem as defaultProbeNodeMem } from "./node-probe.js";
+import {
+  type DegradationThresholds,
+  detectDegradation,
+  detectPressure,
+  isPressureHot,
+  type PressureThresholds,
+  PressureWindow,
+  type WorkloadHealthState,
+} from "./policy.js";
+import {
+  probeWorkload as defaultProbeWorkload,
+  redactEndpoint,
+  type WorkloadTarget,
+} from "./workload-probe.js";
 
 export const DEFAULT_PRESSURE_THRESHOLDS: PressureThresholds = {
   headroomMinMb: 512,
@@ -83,7 +84,10 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const probeNodeMem = opts.probeNodeMem ?? defaultProbeNodeMem;
   const journalPath = opts.journalPath ?? defaultFleetJournalPath();
   const writeJournal =
-    opts.writeJournal ?? ((entry: FleetJournalEntry) => appendFleetJournal(entry, journalPath));
+    opts.writeJournal ??
+    ((entry: FleetJournalEntry) => {
+      appendFleetJournal(entry, journalPath);
+    });
   const consecutiveErrors = new Map<string, number>();
   const pressureThresholds = opts.pressureThresholds ?? DEFAULT_PRESSURE_THRESHOLDS;
   const pressureWindow = new PressureWindow(pressureThresholds.consecutiveTicks);

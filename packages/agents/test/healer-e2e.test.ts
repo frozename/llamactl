@@ -3,13 +3,14 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+
 import {
   createDefaultToolClient,
-  startHealerLoop,
   type JournalEntry,
   type JournalPlanFailedEntry,
   type JournalTickEntry,
   type JournalTransitionEntry,
+  startHealerLoop,
 } from "../src/index.js";
 
 /**

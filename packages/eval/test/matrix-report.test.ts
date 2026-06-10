@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { renderCsvReport, renderMarkdownReport, type CellRow } from "../src/index.js";
+
+import { type CellRow, renderCsvReport, renderMarkdownReport } from "../src/index.js";
 
 function makeCell(
   row: Partial<CellRow> &

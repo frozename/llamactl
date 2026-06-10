@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { resolve, sep, join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+
+import { type ModelHostManifest, ModelHostManifestSchema } from "./modelhost-schema.js";
 import { defaultWorkloadsDir } from "./store.js";
-import { ModelHostManifestSchema, type ModelHostManifest } from "./modelhost-schema.js";
 
 export function defaultModelHostDir(env: NodeJS.ProcessEnv = process.env): string {
   return defaultWorkloadsDir(env);
@@ -10,7 +11,7 @@ export function defaultModelHostDir(env: NodeJS.ProcessEnv = process.env): strin
 
 export function parseModelHost(raw: string): ModelHostManifest {
   const parsed = parseYaml(raw) as { apiVersion?: string } | null;
-  if (parsed && parsed.apiVersion === "llamactl.io/v1") {
+  if (parsed?.apiVersion === "llamactl.io/v1") {
     parsed.apiVersion = "llamactl/v1";
   }
   return ModelHostManifestSchema.parse(parsed);

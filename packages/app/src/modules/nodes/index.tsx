@@ -1,8 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+
 import { trpc } from "@/lib/trpc";
-import { Button, Input, StatusDot, Badge, EditorialHero } from "@/ui";
+import { Badge, Button, EditorialHero, Input, StatusDot } from "@/ui";
 
 /**
  * Nodes module. Shows every node in the current kubeconfig context,
@@ -120,12 +121,16 @@ function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
           type="text"
           placeholder="node name (e.g. openai-prod)"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value);
+          }}
           style={{ width: 192 }}
         />
         <select
           value={provider}
-          onChange={(e) => setProvider(e.target.value as CloudProvider)}
+          onChange={(e) => {
+            setProvider(e.target.value as CloudProvider);
+          }}
           style={{
             borderRadius: 4,
             border: "1px solid var(--color-border)",
@@ -147,7 +152,9 @@ function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
           type="text"
           placeholder="baseUrl (blank to use provider default)"
           value={baseUrl}
-          onChange={(e) => setBaseUrl(e.target.value)}
+          onChange={(e) => {
+            setBaseUrl(e.target.value);
+          }}
           style={{ flex: 1, fontFamily: "monospace" }}
         />
       </div>
@@ -156,14 +163,18 @@ function RegisterCloudPanel(props: { onDone: () => void }): React.JSX.Element {
           type="text"
           placeholder="apiKeyRef ($ENV_VAR or file path)"
           value={apiKeyRef}
-          onChange={(e) => setApiKeyRef(e.target.value)}
+          onChange={(e) => {
+            setApiKeyRef(e.target.value);
+          }}
           style={{ width: 288, fontFamily: "monospace" }}
         />
         <Input
           type="text"
           placeholder="display name (optional)"
           value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
+          onChange={(e) => {
+            setDisplayName(e.target.value);
+          }}
           style={{ flex: 1 }}
         />
       </div>
@@ -245,7 +256,9 @@ function RegisterPanel(props: { onDone: () => void }): React.JSX.Element {
           type="text"
           placeholder="node name (e.g., mac-mini)"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value);
+          }}
           style={{ width: 192 }}
         />
         <label
@@ -257,14 +270,22 @@ function RegisterPanel(props: { onDone: () => void }): React.JSX.Element {
             color: "var(--color-text-secondary)",
           }}
         >
-          <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={force}
+            onChange={(e) => {
+              setForce(e.target.checked);
+            }}
+          />
           skip reachability check
         </label>
       </div>
       <textarea
         placeholder="Paste the `llamactl node add <name> --bootstrap …` line or just the blob"
         value={blob}
-        onChange={(e) => setBlob(e.target.value)}
+        onChange={(e) => {
+          setBlob(e.target.value);
+        }}
         style={{
           height: 112,
           width: "100%",
@@ -365,7 +386,7 @@ function OpenAIConfigPanel(props: { node: string }): React.JSX.Element {
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  void copy(cfg.data!.baseUrl);
+                  void copy(cfg.data.baseUrl);
                 }}
                 style={{ fontSize: 9, padding: "2px 6px" }}
               >
@@ -383,7 +404,7 @@ function OpenAIConfigPanel(props: { node: string }): React.JSX.Element {
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  void copy(cfg.data!.apiKey);
+                  void copy(cfg.data.apiKey);
                 }}
                 style={{ fontSize: 9, padding: "2px 6px" }}
               >
@@ -407,7 +428,7 @@ function OpenAIConfigPanel(props: { node: string }): React.JSX.Element {
                   variant="ghost"
                   size="sm"
                   onClick={() => {
-                    void copy(cfg.data!.caCertPem ?? "");
+                    void copy(cfg.data.caCertPem ?? "");
                   }}
                   style={{ fontSize: 9, padding: "2px 6px" }}
                 >
@@ -536,7 +557,7 @@ function NodeRow(props: {
     setTestResult(null);
     const r = await test.refetch();
     if (r.data) {
-      if (r.data.ok) setTestResult(r.data.facts as NodeFactsLite);
+      if (r.data.ok) setTestResult(r.data.facts);
       else setTestResult(r.data.error);
     } else if (r.error) {
       setTestResult(r.error.message);
@@ -595,16 +616,30 @@ function NodeRow(props: {
                   <Button
                     variant="destructive"
                     size="sm"
-                    onClick={() => remove.mutate({ name: props.name })}
+                    onClick={() => {
+                      remove.mutate({ name: props.name });
+                    }}
                   >
                     Confirm remove
                   </Button>
-                  <Button variant="secondary" size="sm" onClick={() => setConfirmRm(false)}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setConfirmRm(false);
+                    }}
+                  >
                     Cancel
                   </Button>
                 </>
               ) : (
-                <Button variant="ghost" size="sm" onClick={() => setConfirmRm(true)}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setConfirmRm(true);
+                  }}
+                >
                   Remove
                 </Button>
               )}
@@ -821,20 +856,50 @@ export default function Nodes(): React.JSX.Element {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <Button variant="secondary" size="sm" onClick={() => setShowDiscover((v) => !v)}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setShowDiscover((v) => !v);
+            }}
+          >
             {showDiscover ? "Hide discover" : "Discover"}
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => setShowCloud((v) => !v)}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setShowCloud((v) => !v);
+            }}
+          >
             {showCloud ? "Cancel cloud" : "Register cloud"}
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => setShowRegister((v) => !v)}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setShowRegister((v) => !v);
+            }}
+          >
             {showRegister ? "Cancel" : "Register agent"}
           </Button>
         </div>
       </div>
       {showDiscover && <DiscoverPanel />}
-      {showCloud && <RegisterCloudPanel onDone={() => setShowCloud(false)} />}
-      {showRegister && <RegisterPanel onDone={() => setShowRegister(false)} />}
+      {showCloud && (
+        <RegisterCloudPanel
+          onDone={() => {
+            setShowCloud(false);
+          }}
+        />
+      )}
+      {showRegister && (
+        <RegisterPanel
+          onDone={() => {
+            setShowRegister(false);
+          }}
+        />
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {data.nodes.length === 0 && (
           <EditorialHero

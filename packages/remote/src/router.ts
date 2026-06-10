@@ -1,63 +1,84 @@
-import { searchSessions } from "./search/sessions.js";
-import { searchKnowledge } from "./search/knowledge.js";
-import { searchLogs } from "./search/logs.js";
-import { resolveDefaultRagNode } from "./search/rag-node.js";
-import { createRagAdapter } from "./rag/index.js";
-import { resolveRagNode } from "./rag/resolve.js";
-import { initTRPC, TRPCError } from "@trpc/server";
-import { createTRPCClient } from "@trpc/client";
-import { z } from "zod";
-import * as kubecfg from "./config/kubeconfig.js";
-import { decodeBootstrap } from "./config/agent-config.js";
-import * as infraLayoutMod from "./infra/layout.js";
-import * as infraInstallMod from "./infra/install.js";
-import * as infraServicesMod from "./infra/services.js";
-import type { ClusterNode, Config } from "./config/schema.js";
-import * as workloadStoreMod from "./workload/store.js";
-import * as workloadApplyMod from "./workload/apply.js";
-import { defaultNodeBudgetGiB, estimateModelHostMemoryGiB } from "./workload/admission.js";
-import * as nodeRunStoreMod from "./workload/noderun-store.js";
-import * as modelHostStoreMod from "./workload/modelhost-store.js";
-import * as reconcileLoopMod from "./workload/reconcileLoop.js";
-import * as benchScheduleMod from "./bench/schedule.js";
-import * as benchScheduleLoopMod from "./bench/scheduleLoop.js";
-import { ModelRunSchema, ModelRunSpecSchema, type ModelRun } from "./workload/schema.js";
-import { ModelHostManifestSchema } from "./workload/modelhost-schema.js";
-import { startModelHost, statusModelHost, stopModelHost } from "./server/modelhost.js";
-import { buildPinnedLinks } from "./client/links.js";
 import {
-  createLlmExecutor,
-  runPlanner,
-  stubPlannerExecutor,
-  DEFAULT_ALLOWLIST,
-  computeCostSnapshot,
-  type PlannerExecutor,
-  type PlannerToolDescriptor,
-} from "@nova/mcp";
-import { createOpenAICompatProvider, type AiProvider } from "@nova/contracts";
-import { CompositeOwnershipSchema } from "./workload/gateway-catalog/schema.js";
-import {
+  type CostJournalEntry,
   decideGuardianAction,
-  emptyCostGuardianConfig,
-  loadCostGuardianConfig,
   defaultCostGuardianConfigPath,
   defaultCostJournalPath,
-  type CostJournalEntry,
+  emptyCostGuardianConfig,
+  loadCostGuardianConfig,
 } from "@llamactl/agents";
+import {
+  autotune as autotuneMod,
+  bench,
+  candidateTest as candidateMod,
+  catalog,
+  discovery,
+  env as envMod,
+  keepAlive as keepAliveMod,
+  lmstudio as lmstudioMod,
+  type MachineProfile,
+  nodeFacts as nodeFactsMod,
+  presets,
+  pull,
+  recommendations,
+  rpcServer as rpcServerMod,
+  serverLogs as serverLogsMod,
+  server as serverMod,
+  target as targetMod,
+  uninstall as uninstallMod,
+} from "@llamactl/core";
+import { type AiProvider, createOpenAICompatProvider } from "@nova/contracts";
+import {
+  computeCostSnapshot,
+  createLlmExecutor,
+  DEFAULT_ALLOWLIST,
+  type PlannerExecutor,
+  type PlannerToolDescriptor,
+  runPlanner,
+  stubPlannerExecutor,
+} from "@nova/mcp";
+import { createTRPCClient } from "@trpc/client";
+import { initTRPC, TRPCError } from "@trpc/server";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { z } from "zod";
+
+import type { ClusterNode, Config } from "./config/schema.js";
+
+import * as benchScheduleMod from "./bench/schedule.js";
+import * as benchScheduleLoopMod from "./bench/scheduleLoop.js";
+import { buildPinnedLinks } from "./client/links.js";
+import { decodeBootstrap } from "./config/agent-config.js";
+import * as kubecfg from "./config/kubeconfig.js";
+import * as infraInstallMod from "./infra/install.js";
+import * as infraLayoutMod from "./infra/layout.js";
+import * as infraServicesMod from "./infra/services.js";
+import { readOpsChatAudit } from "./ops-chat/audit.js";
 import {
-  KNOWN_OPS_CHAT_TOOLS,
-  dispatchOpsChatTool,
   auditOpsChatToolRun,
+  dispatchOpsChatTool,
+  KNOWN_OPS_CHAT_TOOLS,
 } from "./ops-chat/dispatch.js";
-import { readOpsChatAudit, type OpsChatAuditEntry } from "./ops-chat/audit.js";
-import { listSessions, getSessionSummary } from "./ops-chat/sessions/list.js";
 import { deleteSession } from "./ops-chat/sessions/delete.js";
-import { readJournal } from "./ops-chat/sessions/journal.js";
 import { sessionEventBus } from "./ops-chat/sessions/event-bus.js";
 import { isTerminal } from "./ops-chat/sessions/journal-schema.js";
+import { readJournal } from "./ops-chat/sessions/journal.js";
+import { getSessionSummary, listSessions } from "./ops-chat/sessions/list.js";
+import { createRagAdapter } from "./rag/index.js";
+import { resolveRagNode } from "./rag/resolve.js";
+import { searchLogs } from "./search/logs.js";
+import { resolveDefaultRagNode } from "./search/rag-node.js";
+import { searchSessions } from "./search/sessions.js";
+import { startModelHost, statusModelHost, stopModelHost } from "./server/modelhost.js";
+import { defaultNodeBudgetGiB, estimateModelHostMemoryGiB } from "./workload/admission.js";
+import * as workloadApplyMod from "./workload/apply.js";
+import { CompositeOwnershipSchema } from "./workload/gateway-catalog/schema.js";
+import { ModelHostManifestSchema } from "./workload/modelhost-schema.js";
+import * as modelHostStoreMod from "./workload/modelhost-store.js";
+import * as nodeRunStoreMod from "./workload/noderun-store.js";
+import * as reconcileLoopMod from "./workload/reconcileLoop.js";
+import { type ModelRun, ModelRunSchema, ModelRunSpecSchema } from "./workload/schema.js";
+import * as workloadStoreMod from "./workload/store.js";
 
 /**
  * Router↔client circular-type escape hatch — the `AppRouter → NodeClient
@@ -121,7 +142,9 @@ async function* bridgeEventStream<T>(
   runner: (emit: (evt: T) => void, signal: AbortSignal) => Promise<void>,
 ): AsyncGenerator<T, void, unknown> {
   const controller = new AbortController();
-  const onClientAbort = (): void => controller.abort();
+  const onClientAbort = (): void => {
+    controller.abort();
+  };
   clientSignal.addEventListener("abort", onClientAbort);
 
   const queue: T[] = [];
@@ -317,26 +340,6 @@ export function mergePlannerTools(
   }
   return out;
 }
-import {
-  autotune as autotuneMod,
-  bench,
-  candidateTest as candidateMod,
-  catalog,
-  discovery,
-  env as envMod,
-  keepAlive as keepAliveMod,
-  lmstudio as lmstudioMod,
-  nodeFacts as nodeFactsMod,
-  presets,
-  pull,
-  recommendations,
-  rpcServer as rpcServerMod,
-  server as serverMod,
-  serverLogs as serverLogsMod,
-  target as targetMod,
-  uninstall as uninstallMod,
-  type MachineProfile,
-} from "@llamactl/core";
 
 type PullStreamEvent =
   | pull.PullEvent
@@ -401,7 +404,7 @@ async function probeNodeFacts(opts: {
       method: "GET",
       headers: { authorization: `Bearer ${opts.token}` },
       ...(ca ? ({ tls: { ca } } as Record<string, unknown>) : {}),
-    } as RequestInit,
+    },
   );
   if (!res.ok) {
     throw new Error(
@@ -790,13 +793,13 @@ export const router = t.router({
             message: `local chat ${res.status}`,
           });
         }
-        return res.json();
+        return await res.json();
       }
       const { providerForNode } = await import("./providers/factory.js");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       const provider = providerForNode({ node: resolved.node, user: resolved.user, cfg });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return provider.createResponse(input.request as any);
+      return await provider.createResponse(input.request as any);
     }),
 
   /**
@@ -859,7 +862,7 @@ export const router = t.router({
         }
         return;
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       const provider = providerForNode({ node: resolved.node, user: resolved.user, cfg });
       const stream = provider.streamResponse?.(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -949,7 +952,7 @@ export const router = t.router({
       });
     }
     const body = (await r.json()) as { data?: unknown[] };
-    return { node: input.name, kind, models: (body.data ?? []) as unknown[] };
+    return { node: input.name, kind, models: body.data ?? [] };
   }),
 
   /**
@@ -1071,11 +1074,7 @@ export const router = t.router({
         kind: "ModelHost" as const,
         node: manifest.spec.node,
         rel: manifest.spec.hostedModels[0]!.rel,
-        phase: (status.state === "Running" ? "Running" : "Stopped") as
-          | "Running"
-          | "Stopped"
-          | "Mismatch"
-          | "Unreachable",
+        phase: status.state === "Running" ? "Running" : "Stopped",
         endpoint: ep ? `http://${ep.host ?? "127.0.0.1"}:${ep.port}` : null,
         status: null,
         workerCount: 0,
@@ -1111,12 +1110,12 @@ export const router = t.router({
       .map((manifest) => ({
         name: manifest.metadata.name,
         kind: "ModelRun" as const,
-        enabled: manifest.spec.enabled !== false,
+        enabled: manifest.spec.enabled,
         expectedMemoryGiB: manifest.spec.resources?.expectedMemoryGiB ?? null,
         endpoint: manifest.spec.endpoint
           ? `${manifest.spec.endpoint.host ?? "127.0.0.1"}:${manifest.spec.endpoint.port ?? "?"}`
           : null,
-        phase: (manifest.status?.phase ?? "Pending") as string,
+        phase: manifest.status?.phase ?? "Pending",
       }));
     // ModelHosts are charged against the same node budget by admission
     // (listAnyWorkloadsForAdmission), but were omitted here — so
@@ -1129,12 +1128,12 @@ export const router = t.router({
       .map((manifest) => ({
         name: manifest.metadata.name,
         kind: "ModelHost" as const,
-        enabled: manifest.spec.enabled !== false,
+        enabled: manifest.spec.enabled,
         expectedMemoryGiB: estimateModelHostMemoryGiB(manifest, resolved),
         endpoint: manifest.spec.endpoint
           ? `${manifest.spec.endpoint.host ?? "127.0.0.1"}:${manifest.spec.endpoint.port ?? "?"}`
           : null,
-        phase: statusModelHost({ key: { name: manifest.metadata.name } }).state as string,
+        phase: statusModelHost({ key: { name: manifest.metadata.name } }).state,
       }));
     const workloads = [...runRows, ...hostRows].sort((a, b) => a.name.localeCompare(b.name));
     const reserved = workloads
@@ -1215,11 +1214,12 @@ export const router = t.router({
     .input(modelHostStatusInput)
     .query(async ({ input }) => statusModelHost({ key: { name: input.workload } })),
 
-  modelHostStop: t.procedure.input(modelHostStopInput).mutation(async ({ input }) =>
-    stopModelHost({
-      key: { name: input.workload },
-      graceSeconds: input.graceSeconds,
-    }),
+  modelHostStop: t.procedure.input(modelHostStopInput).mutation(
+    async ({ input }) =>
+      await stopModelHost({
+        key: { name: input.workload },
+        graceSeconds: input.graceSeconds,
+      }),
   ),
 
   modelHostStart: t.procedure.input(modelHostStartInput).subscription(async function* ({
@@ -1496,7 +1496,7 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      return infraInstallMod.installInfraPackage({
+      return await infraInstallMod.installInfraPackage({
         pkg: input.pkg,
         version: input.version,
         tarballUrl: input.tarballUrl,
@@ -1643,10 +1643,10 @@ export const router = t.router({
 
   recommendations: t.procedure.input(z.string().default("current")).query(async ({ input }) => {
     const profiles = recommendations.expandRequestedProfile(input);
-    const out = [] as Array<{
+    const out = [] as {
       profile: MachineProfile;
       rows: recommendations.RecommendationRow[];
-    }>;
+    }[];
     for (const profile of profiles) {
       const rows = await recommendations.recommendationsWithHf(profile);
       out.push({ profile, rows });
@@ -1688,7 +1688,7 @@ export const router = t.router({
 
   serverStatus: t.procedure
     .input(z.object({ workload: z.string().min(1) }))
-    .query(async ({ input }) => serverMod.serverStatus({ name: input.workload })),
+    .query(async ({ input }) => await serverMod.serverStatus({ name: input.workload })),
 
   serverLogs: t.procedure
     .input(
@@ -1699,7 +1699,7 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<serverLogsMod.LogLineEvent>(signal as AbortSignal, (emit, sig) =>
+      yield* bridgeEventStream<serverLogsMod.LogLineEvent>(signal!, (emit, sig) =>
         serverLogsMod.tailServerLog({
           key: { name: input.workload },
           lines: input.lines,
@@ -1717,11 +1717,12 @@ export const router = t.router({
         graceSeconds: z.number().int().positive().max(60).optional(),
       }),
     )
-    .mutation(async ({ input }) =>
-      serverMod.stopServer({
-        key: { name: input.workload },
-        graceSeconds: input.graceSeconds,
-      }),
+    .mutation(
+      async ({ input }) =>
+        await serverMod.stopServer({
+          key: { name: input.workload },
+          graceSeconds: input.graceSeconds,
+        }),
     ),
 
   serverStart: t.procedure
@@ -1743,7 +1744,7 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<ServerStartEvent>(signal as AbortSignal, async (emit, sig) => {
+      yield* bridgeEventStream<ServerStartEvent>(signal!, async (emit, sig) => {
         const result = await serverMod.startServer({
           key: { name: input.workload },
           target: input.target,
@@ -1797,7 +1798,7 @@ export const router = t.router({
 
   keepAliveStatus: t.procedure.query(() => keepAliveMod.keepAliveStatus()),
 
-  rpcServerStatus: t.procedure.query(async () => rpcServerMod.rpcServerStatus()),
+  rpcServerStatus: t.procedure.query(async () => await rpcServerMod.rpcServerStatus()),
 
   /**
    * Preflight check for tensor-parallel apply. Fires before any
@@ -1813,8 +1814,8 @@ export const router = t.router({
 
   rpcServerStop: t.procedure
     .input(z.object({ graceSeconds: z.number().int().positive().max(60).optional() }).optional())
-    .mutation(async ({ input }) =>
-      rpcServerMod.stopRpcServer({ graceSeconds: input?.graceSeconds }),
+    .mutation(
+      async ({ input }) => await rpcServerMod.stopRpcServer({ graceSeconds: input?.graceSeconds }),
     ),
 
   rpcServerStart: t.procedure
@@ -1831,7 +1832,7 @@ export const router = t.router({
       type RpcEvent =
         | rpcServerMod.RpcServerEvent
         | { type: "done"; result: rpcServerMod.StartRpcServerResult };
-      yield* bridgeEventStream<RpcEvent>(signal as AbortSignal, async (emit, sig) => {
+      yield* bridgeEventStream<RpcEvent>(signal!, async (emit, sig) => {
         const result = await rpcServerMod.startRpcServer({
           ...input,
           signal: sig,
@@ -1848,11 +1849,12 @@ export const router = t.router({
         graceSeconds: z.number().int().positive().max(60).optional(),
       }),
     )
-    .mutation(async ({ input }) =>
-      keepAliveMod.stopKeepAlive({
-        key: { name: input.workload },
-        graceSeconds: input.graceSeconds,
-      }),
+    .mutation(
+      async ({ input }) =>
+        await keepAliveMod.stopKeepAlive({
+          key: { name: input.workload },
+          graceSeconds: input.graceSeconds,
+        }),
     ),
 
   keepAliveStart: t.procedure
@@ -1904,7 +1906,7 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<CandidateStreamEvent>(signal as AbortSignal, async (emit, sig) => {
+      yield* bridgeEventStream<CandidateStreamEvent>(signal!, async (emit, sig) => {
         const result = await candidateMod.candidateTest({
           repo: input.repo,
           file: input.file,
@@ -1942,7 +1944,7 @@ export const router = t.router({
       type TuneEvent =
         | bench.BenchEvent
         | { type: "done-tune"; result: autotuneMod.MaybeTuneAfterPullResult };
-      yield* bridgeEventStream<TuneEvent>(signal as AbortSignal, async (emit, sig) => {
+      yield* bridgeEventStream<TuneEvent>(signal!, async (emit, sig) => {
         const result = await autotuneMod.maybeTuneAfterPull({
           rel: input.rel,
           wasMissing: input.wasMissing,
@@ -1961,7 +1963,7 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<PullStreamEvent>(signal as AbortSignal, async (emit, sig) => {
+      yield* bridgeEventStream<PullStreamEvent>(signal!, async (emit, sig) => {
         const result = await pull.pullRepoFile({
           repo: input.repo,
           file: input.file,
@@ -2032,7 +2034,7 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<BenchStreamEvent>(signal as AbortSignal, async (emit, sig) => {
+      yield* bridgeEventStream<BenchStreamEvent>(signal!, async (emit, sig) => {
         const result = await bench.benchPreset({
           target: input.target,
           mode: input.mode,
@@ -2047,7 +2049,7 @@ export const router = t.router({
   benchVisionRun: t.procedure
     .input(z.object({ target: z.string().min(1) }))
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<BenchStreamEvent>(signal as AbortSignal, async (emit, sig) => {
+      yield* bridgeEventStream<BenchStreamEvent>(signal!, async (emit, sig) => {
         const result = await bench.benchVision({
           target: input.target,
           signal: sig,
@@ -2067,7 +2069,7 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<PullStreamEvent>(signal as AbortSignal, async (emit, sig) => {
+      yield* bridgeEventStream<PullStreamEvent>(signal!, async (emit, sig) => {
         const result = await pull.pullCandidate({
           repo: input.repo,
           file: input.file,
@@ -2090,12 +2092,13 @@ export const router = t.router({
         })
         .optional(),
     )
-    .query(async ({ input }) =>
-      discovery.discover({
-        filter: input?.filter,
-        requestedProfile: input?.profile,
-        limit: input?.limit,
-      }),
+    .query(
+      async ({ input }) =>
+        await discovery.discover({
+          filter: input?.filter,
+          requestedProfile: input?.profile,
+          limit: input?.limit,
+        }),
     ),
 
   resolveTarget: t.procedure.input(z.string()).query(({ input }) => targetMod.resolveTarget(input)),
@@ -2320,8 +2323,8 @@ export const router = t.router({
         input.name
           .trim()
           .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-+|-+$/g, "") || `pipeline-${Date.now().toString(36)}`;
+          .replaceAll(/[^a-z0-9]+/g, "-")
+          .replaceAll(/^-+|-+$/g, "") || `pipeline-${Date.now().toString(36)}`;
       // Cascade: override > DEV_STORAGE (honours hermetic audits and
       // the resolver's test-profile re-root seeded in Electron main)
       // > production default under the operator's homedir.
@@ -2944,7 +2947,7 @@ export const router = t.router({
       const { existsSync, readFileSync } = await import("node:fs");
       const path = journalPathFor(input.name);
       if (!existsSync(path)) {
-        return { ok: true as const, path, entries: [] as Array<Record<string, unknown>> };
+        return { ok: true as const, path, entries: [] as Record<string, unknown>[] };
       }
       // Lines are ~hundreds of bytes each; for N=200 (default) we load
       // the full file, split, tail. If journals grow to millions of
@@ -2955,7 +2958,7 @@ export const router = t.router({
         .map((l) => l.trim())
         .filter((l) => l.length > 0);
       const tail = all.slice(Math.max(0, all.length - input.tail));
-      const entries: Array<Record<string, unknown>> = [];
+      const entries: Record<string, unknown>[] = [];
       for (const line of tail) {
         try {
           const parsed = JSON.parse(line) as unknown;
@@ -3200,14 +3203,14 @@ export const router = t.router({
       const { existsSync, readFileSync } = await import("node:fs");
       const path = defaultProjectRoutingJournalPath();
       if (!existsSync(path)) {
-        return { ok: true as const, path, entries: [] as Array<Record<string, unknown>> };
+        return { ok: true as const, path, entries: [] as Record<string, unknown>[] };
       }
       const raw = readFileSync(path, "utf8");
       const all = raw
         .split("\n")
         .map((l) => l.trim())
         .filter((l) => l.length > 0);
-      const entries: Array<Record<string, unknown>> = [];
+      const entries: Record<string, unknown>[] = [];
       for (const line of all) {
         try {
           const parsed = JSON.parse(line) as unknown;
@@ -3275,9 +3278,10 @@ export const router = t.router({
         const result = await applyComposite({
           manifest,
           backend,
-          getWorkloadClient: (nodeName) =>
-            clientForNode(kubecfg.loadConfig(), nodeName) as workloadApplyMod.WorkloadClient,
-          onEvent: (e) => compositeEvents.emit(name, e),
+          getWorkloadClient: (nodeName) => clientForNode(kubecfg.loadConfig(), nodeName),
+          onEvent: (e) => {
+            compositeEvents.emit(name, e);
+          },
         });
         return { dryRun: false as const, ...result };
       } finally {
@@ -3320,8 +3324,7 @@ export const router = t.router({
       const result = await destroyComposite({
         manifest,
         backend,
-        getWorkloadClient: (nodeName) =>
-          clientForNode(kubecfg.loadConfig(), nodeName) as workloadApplyMod.WorkloadClient,
+        getWorkloadClient: (nodeName) => clientForNode(kubecfg.loadConfig(), nodeName),
         purgeVolumes: input.purgeVolumes,
       });
       // Best-effort cleanup of the on-disk YAML. Destroy is the only
@@ -3370,7 +3373,7 @@ export const router = t.router({
             // Live path — replay the buffer + attach for future events.
             // The returned Promise resolves on the terminal `done` event
             // or when the client disconnects, whichever lands first.
-            return new Promise<void>((resolve) => {
+            await new Promise<void>((resolve) => {
               let settled = false;
               const finish = (): void => {
                 if (settled) return;
@@ -3386,6 +3389,7 @@ export const router = t.router({
               });
               clientSignal.addEventListener("abort", finish);
             });
+            return;
           }
           // Fall back to the persisted-status synthesis path.
           const { loadComposite } = await import("./composite/store.js");

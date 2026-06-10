@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { router } from "../src/router.js";
+import { parseModelHost, saveModelHost } from "../src/workload/modelhost-store.js";
 import { saveNodeRun } from "../src/workload/noderun-store.js";
 import { parseWorkload, saveWorkload } from "../src/workload/store.js";
-import { parseModelHost, saveModelHost } from "../src/workload/modelhost-store.js";
 
 const originalEnv = { ...process.env };
 let tmp = "";

@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
-import { runComposite, formatStatusEvent } from "../src/commands/composite.js";
-import { resetGlobals, setGlobals, EMPTY_GLOBALS } from "../src/dispatcher.js";
+import { formatStatusEvent, runComposite } from "../src/commands/composite.js";
+import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
 
 /**
  * CLI coverage for `llamactl composite {apply,destroy,list,get,status}`.

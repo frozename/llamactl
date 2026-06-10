@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { generateToken, hashToken } from "../src/server/auth.js";
-import { startAgentServer, type RunningAgent } from "../src/server/serve.js";
+
 import type { TunnelState } from "../src/tunnel/index.js";
+
+import { generateToken, hashToken } from "../src/server/auth.js";
+import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 
 /**
  * Phase I.3.2 — agent-side DIAL-OUT (tunnelDial) integration.

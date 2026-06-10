@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
 import { makeTempRuntime, runCli } from "./helpers.js";
 
 describe("llamactl uninstall", () => {
@@ -21,7 +22,9 @@ describe("llamactl uninstall", () => {
   beforeEach(() => {
     temp = makeTempRuntime();
   });
-  afterEach(() => temp.cleanup());
+  afterEach(() => {
+    temp.cleanup();
+  });
 
   test("candidate uninstall removes the model and prunes catalog", () => {
     primeFs();

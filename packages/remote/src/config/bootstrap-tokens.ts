@@ -1,16 +1,17 @@
+import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
+
 import { defaultAgentDir } from "./agent-config.js";
 
 /**
@@ -117,12 +118,12 @@ export function loadBootstrapToken(path: string): BootstrapToken {
   return BootstrapTokenSchema.parse(parseYaml(raw));
 }
 
-export function listBootstrapTokens(dir: string = defaultBootstrapTokensDir()): Array<{
+export function listBootstrapTokens(dir: string = defaultBootstrapTokensDir()): {
   path: string;
   record: BootstrapToken;
-}> {
+}[] {
   if (!existsSync(dir)) return [];
-  const out: Array<{ path: string; record: BootstrapToken }> = [];
+  const out: { path: string; record: BootstrapToken }[] = [];
   for (const entry of readdirSync(dir)) {
     if (!entry.endsWith(".yaml")) continue;
     const path = join(dir, entry);

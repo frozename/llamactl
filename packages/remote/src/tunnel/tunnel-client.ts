@@ -137,11 +137,11 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   const pendingPings = new Map<string, { resolve: () => void; reject: (err: Error) => void }>();
-  const readyWaiters: Array<{
+  const readyWaiters: {
     resolve: () => void;
     reject: (err: Error) => void;
     timer: ReturnType<typeof setTimeout> | null;
-  }> = [];
+  }[] = [];
   let firstAttemptResolver: { resolve: () => void; reject: (err: Error) => void } | null = null;
   // Active subscription teardowns keyed by req.id. On stream-cancel
   // from central (or any disconnect path), we call cancel() and
@@ -231,7 +231,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       if (stopped) return;
-      void doConnect();
+      doConnect();
     }, delay);
   }
 
@@ -555,7 +555,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
     async ping(nonce, timeoutMs = 3000) {
       if (state !== "ready" || !ws) throw new Error("tunnel not ready");
       const actualNonce = nonce ?? Math.random().toString(36).slice(2);
-      return new Promise<void>((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           pendingPings.delete(actualNonce);
           reject(new Error("ping timeout"));
@@ -575,14 +575,14 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         } catch (err) {
           pendingPings.delete(actualNonce);
           clearTimeout(timer);
-          reject(err as Error);
+          reject(err);
         }
       });
     },
     async waitUntilReady(timeoutMs = 10000) {
       if (state === "ready") return;
       if (state === "stopped") throw new Error("tunnel client stopped");
-      return new Promise<void>((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           const i = readyWaiters.findIndex((w) => w.timer === timer);
           if (i >= 0) readyWaiters.splice(i, 1);

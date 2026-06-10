@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useMemo, useState } from "react";
 import { stringify as stringifyYaml } from "yaml";
+
 import { trpc } from "@/lib/trpc";
 
 /**
@@ -77,7 +78,7 @@ interface FormState {
 
 type Step = "destination" | "sources" | "transforms" | "review";
 
-const STEPS: Array<{ id: Step; label: string }> = [
+const STEPS: { id: Step; label: string }[] = [
   { id: "destination", label: "Destination" },
   { id: "sources", label: "Sources" },
   { id: "transforms", label: "Transforms" },
@@ -333,7 +334,9 @@ export function PipelineWizardModal(props: {
               <button
                 key={s.id}
                 type="button"
-                onClick={() => setStep(s.id)}
+                onClick={() => {
+                  setStep(s.id);
+                }}
                 data-testid={`pipeline-wizard-step-${s.id}`}
                 className={
                   active
@@ -364,11 +367,17 @@ export function PipelineWizardModal(props: {
           {step === "transforms" && (
             <TransformsStep
               transform={form.transform}
-              onChange={(t) => setForm((f) => ({ ...f, transform: t }))}
+              onChange={(t) => {
+                setForm((f) => ({ ...f, transform: t }));
+              }}
               schedule={form.schedule}
-              onScheduleChange={(v) => setForm((f) => ({ ...f, schedule: v }))}
+              onScheduleChange={(v) => {
+                setForm((f) => ({ ...f, schedule: v }));
+              }}
               onDuplicate={form.on_duplicate}
-              onOnDuplicateChange={(v) => setForm((f) => ({ ...f, on_duplicate: v }))}
+              onOnDuplicateChange={(v) => {
+                setForm((f) => ({ ...f, on_duplicate: v }));
+              }}
             />
           )}
           {step === "review" && <ReviewStep yaml={yaml} errors={errors} applyError={applyError} />}
@@ -441,7 +450,9 @@ function DestinationStep(props: {
         <input
           type="text"
           value={form.name}
-          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          onChange={(e) => {
+            setForm((f) => ({ ...f, name: e.target.value }));
+          }}
           placeholder="e.g. llamactl-docs"
           data-testid="pipeline-wizard-name"
           className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
@@ -453,7 +464,9 @@ function DestinationStep(props: {
         </span>
         <select
           value={form.ragNode}
-          onChange={(e) => setForm((f) => ({ ...f, ragNode: e.target.value }))}
+          onChange={(e) => {
+            setForm((f) => ({ ...f, ragNode: e.target.value }));
+          }}
           data-testid="pipeline-wizard-ragnode"
           className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
         >
@@ -472,7 +485,9 @@ function DestinationStep(props: {
         <input
           type="text"
           value={form.collection}
-          onChange={(e) => setForm((f) => ({ ...f, collection: e.target.value }))}
+          onChange={(e) => {
+            setForm((f) => ({ ...f, collection: e.target.value }));
+          }}
           placeholder="e.g. llamactl_docs"
           data-testid="pipeline-wizard-collection"
           className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-[color:var(--color-text)]"
@@ -499,9 +514,9 @@ function SourceEditor(props: {
           <span className="text-xs text-[color:var(--color-text-secondary)]">Kind</span>
           <select
             value={source.kind}
-            onChange={(e) =>
-              onUpdate({ kind: e.target.value as SourceKind } as Partial<SourceState>)
-            }
+            onChange={(e) => {
+              onUpdate({ kind: e.target.value as SourceKind });
+            }}
             data-testid={`pipeline-wizard-source-kind-${idx}`}
             className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 mono text-xs text-[color:var(--color-text)]"
           >
@@ -528,7 +543,9 @@ function SourceEditor(props: {
             <input
               type="text"
               value={source.root}
-              onChange={(e) => onUpdate({ root: e.target.value })}
+              onChange={(e) => {
+                onUpdate({ root: e.target.value });
+              }}
               placeholder="/path/to/docs"
               data-testid={`pipeline-wizard-source-root-${idx}`}
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
@@ -541,7 +558,9 @@ function SourceEditor(props: {
             <input
               type="text"
               value={source.glob}
-              onChange={(e) => onUpdate({ glob: e.target.value })}
+              onChange={(e) => {
+                onUpdate({ glob: e.target.value });
+              }}
               data-testid={`pipeline-wizard-source-glob-${idx}`}
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
@@ -555,7 +574,9 @@ function SourceEditor(props: {
             <input
               type="text"
               value={source.url}
-              onChange={(e) => onUpdate({ url: e.target.value })}
+              onChange={(e) => {
+                onUpdate({ url: e.target.value });
+              }}
               placeholder="https://docs.example.com"
               data-testid={`pipeline-wizard-source-url-${idx}`}
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
@@ -570,9 +591,9 @@ function SourceEditor(props: {
               min={0}
               max={5}
               value={source.max_depth}
-              onChange={(e) =>
-                onUpdate({ max_depth: Math.max(0, Math.min(5, Number(e.target.value) || 0)) })
-              }
+              onChange={(e) => {
+                onUpdate({ max_depth: Math.max(0, Math.min(5, Number(e.target.value) || 0)) });
+              }}
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
@@ -585,11 +606,11 @@ function SourceEditor(props: {
               min={1}
               max={20}
               value={source.rate_limit_per_sec}
-              onChange={(e) =>
+              onChange={(e) => {
                 onUpdate({
                   rate_limit_per_sec: Math.max(1, Number(e.target.value) || 2),
-                })
-              }
+                });
+              }}
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
@@ -597,7 +618,9 @@ function SourceEditor(props: {
             <input
               type="checkbox"
               checked={source.same_origin}
-              onChange={(e) => onUpdate({ same_origin: e.target.checked })}
+              onChange={(e) => {
+                onUpdate({ same_origin: e.target.checked });
+              }}
             />
             Same-origin only
           </label>
@@ -605,7 +628,9 @@ function SourceEditor(props: {
             <input
               type="checkbox"
               checked={source.ignore_robots}
-              onChange={(e) => onUpdate({ ignore_robots: e.target.checked })}
+              onChange={(e) => {
+                onUpdate({ ignore_robots: e.target.checked });
+              }}
             />
             Ignore robots.txt (use only if you own the site)
           </label>
@@ -620,7 +645,9 @@ function SourceEditor(props: {
             <input
               type="text"
               value={source.repo}
-              onChange={(e) => onUpdate({ repo: e.target.value })}
+              onChange={(e) => {
+                onUpdate({ repo: e.target.value });
+              }}
               placeholder="https://github.com/acme/docs.git"
               data-testid={`pipeline-wizard-source-repo-${idx}`}
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
@@ -633,7 +660,9 @@ function SourceEditor(props: {
             <input
               type="text"
               value={source.ref ?? ""}
-              onChange={(e) => onUpdate({ ref: e.target.value })}
+              onChange={(e) => {
+                onUpdate({ ref: e.target.value });
+              }}
               placeholder="main"
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
@@ -645,7 +674,9 @@ function SourceEditor(props: {
             <input
               type="text"
               value={source.subpath ?? ""}
-              onChange={(e) => onUpdate({ subpath: e.target.value })}
+              onChange={(e) => {
+                onUpdate({ subpath: e.target.value });
+              }}
               placeholder="docs"
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
@@ -657,7 +688,9 @@ function SourceEditor(props: {
             <input
               type="text"
               value={source.glob}
-              onChange={(e) => onUpdate({ glob: e.target.value })}
+              onChange={(e) => {
+                onUpdate({ glob: e.target.value });
+              }}
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
@@ -681,8 +714,12 @@ function SourcesStep(props: {
           key={i}
           idx={i}
           source={s}
-          onUpdate={(patch) => onUpdate(i, patch)}
-          onRemove={() => onRemove(i)}
+          onUpdate={(patch) => {
+            onUpdate(i, patch);
+          }}
+          onRemove={() => {
+            onRemove(i);
+          }}
         />
       ))}
       <div className="flex gap-2">
@@ -690,7 +727,9 @@ function SourcesStep(props: {
           <button
             key={k}
             type="button"
-            onClick={() => onAdd(k)}
+            onClick={() => {
+              onAdd(k);
+            }}
             data-testid={`pipeline-wizard-source-add-${k}`}
             className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
           >
@@ -728,9 +767,12 @@ function TransformsStep(props: {
               min={100}
               max={8000}
               value={transform.chunk_size}
-              onChange={(e) =>
-                onChange({ ...transform, chunk_size: Math.max(100, Number(e.target.value) || 800) })
-              }
+              onChange={(e) => {
+                onChange({
+                  ...transform,
+                  chunk_size: Math.max(100, Number(e.target.value) || 800),
+                });
+              }}
               data-testid="pipeline-wizard-chunk-size"
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
@@ -744,9 +786,9 @@ function TransformsStep(props: {
               min={0}
               max={2000}
               value={transform.overlap}
-              onChange={(e) =>
-                onChange({ ...transform, overlap: Math.max(0, Number(e.target.value) || 0) })
-              }
+              onChange={(e) => {
+                onChange({ ...transform, overlap: Math.max(0, Number(e.target.value) || 0) });
+              }}
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
@@ -754,7 +796,9 @@ function TransformsStep(props: {
             <input
               type="checkbox"
               checked={transform.preserve_headings}
-              onChange={(e) => onChange({ ...transform, preserve_headings: e.target.checked })}
+              onChange={(e) => {
+                onChange({ ...transform, preserve_headings: e.target.checked });
+              }}
             />
             Preserve heading context
           </label>
@@ -772,7 +816,9 @@ function TransformsStep(props: {
             <input
               type="text"
               value={schedule}
-              onChange={(e) => onScheduleChange(e.target.value)}
+              onChange={(e) => {
+                onScheduleChange(e.target.value);
+              }}
               placeholder="@daily / @hourly / @every 15m"
               data-testid="pipeline-wizard-schedule"
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
@@ -784,9 +830,9 @@ function TransformsStep(props: {
             </span>
             <select
               value={onDuplicate}
-              onChange={(e) =>
-                onOnDuplicateChange(e.target.value as "skip" | "replace" | "version")
-              }
+              onChange={(e) => {
+                onOnDuplicateChange(e.target.value as "skip" | "replace" | "version");
+              }}
               data-testid="pipeline-wizard-on-duplicate"
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             >

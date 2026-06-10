@@ -1,15 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
+
 import {
-  DEFAULT_PRESSURE_THRESHOLDS,
-  FleetAggregator,
   createPeerFetch,
+  DEFAULT_PRESSURE_THRESHOLDS,
   defaultAggregatorDbPath,
   defaultFleetJournalPath,
+  FleetAggregator,
+  type FleetSnapshotEntry,
   openAggregatorDb,
   readLatestFleetSnapshotFromJournal,
   writeSnapshot,
-  type AggregatorPeer,
-  type FleetSnapshotEntry,
 } from "../../../fleet-supervisor/src/index.js";
 import { listPeers, type PeerNode } from "../../../remote/src/config/peers.js";
 
@@ -93,10 +93,10 @@ function printStatusRows(rows: SnapshotRow[]): void {
 
 function readJournalEntries(
   path: string,
-): Array<{ ts?: string; kind?: string; node?: string; raw: string }> {
+): { ts?: string; kind?: string; node?: string; raw: string }[] {
   if (!existsSync(path)) return [];
   const raw = readFileSync(path, "utf8");
-  const entries: Array<{ ts?: string; kind?: string; node?: string; raw: string }> = [];
+  const entries: { ts?: string; kind?: string; node?: string; raw: string }[] = [];
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -118,8 +118,8 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
   const fetchPeerSnapshot =
     deps.fetchPeerSnapshot ??
     (async (peer: PeerNode) => {
-      const fetcher = createPeerFetch(peer as AggregatorPeer);
-      return fetcher();
+      const fetcher = createPeerFetch(peer);
+      return await fetcher();
     });
   const fullDeps: Required<FleetDeps> = {
     readLocalSnapshot,
@@ -180,7 +180,7 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
       peers,
       fetchSnapshot: async (peer) => {
         const fetcher = createPeerFetch(peer);
-        return fetcher();
+        return await fetcher();
       },
     });
 
@@ -199,7 +199,9 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
     }
 
     const running = aggregator.start();
-    const interval = setInterval(() => persist(), 30_000);
+    const interval = setInterval(() => {
+      persist();
+    }, 30_000);
     const stop = () => {
       clearInterval(interval);
       running.stop();

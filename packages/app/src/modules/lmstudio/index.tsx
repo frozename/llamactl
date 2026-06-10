@@ -1,8 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+
 import { trpc } from "@/lib/trpc";
-import { Button, Input, EditorialHero } from "@/ui";
+import { Button, EditorialHero, Input } from "@/ui";
 
 function formatBytes(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return "—";
@@ -80,7 +81,9 @@ export default function LMStudio(): React.JSX.Element {
       </h1>
 
       <form
-        onSubmit={(e) => e.preventDefault()}
+        onSubmit={(e) => {
+          e.preventDefault();
+        }}
         style={{
           marginBottom: 16,
           borderRadius: 6,
@@ -105,7 +108,9 @@ export default function LMStudio(): React.JSX.Element {
             </span>
             <Input
               value={rootOverride}
-              onChange={(e) => setRootOverride(e.target.value)}
+              onChange={(e) => {
+                setRootOverride(e.target.value);
+              }}
               placeholder={root ?? defaultRoot ?? ""}
               disabled={busy}
               style={{ width: "100%", fontFamily: "monospace" }}
@@ -126,7 +131,9 @@ export default function LMStudio(): React.JSX.Element {
               <input
                 type="checkbox"
                 checked={link}
-                onChange={(e) => setLink(e.target.checked)}
+                onChange={(e) => {
+                  setLink(e.target.checked);
+                }}
                 disabled={busy}
               />
               <span>symlink into $LLAMA_CPP_MODELS</span>
@@ -135,12 +142,12 @@ export default function LMStudio(): React.JSX.Element {
           <div style={{ gridColumn: "span 3 / span 3", display: "flex", alignItems: "flex-end" }}>
             <Button
               variant="primary"
-              onClick={() =>
+              onClick={() => {
                 importMutation.mutate({
                   root: input?.root,
                   link,
-                })
-              }
+                });
+              }}
               disabled={busy || actionableCount === 0}
               data-testid="lmstudio-import"
               style={{ width: "100%" }}

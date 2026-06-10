@@ -1,17 +1,20 @@
 import * as React from "react";
 import { Suspense, useEffect, useRef, useState } from "react";
+
 import { APP_MODULES } from "@/modules/registry";
-import { useTabStore } from "@/stores/tab-store";
 import { CommandPaletteMount } from "@/shell/command-palette";
-import { TitleBar } from "./title-bar";
+import { useTabStore } from "@/stores/tab-store";
+
+import type { RailViewId } from "./rail-views";
+
 import { ActivityRail } from "./activity-rail";
-import { ExplorerPanel } from "./explorer-panel";
-import { TabBar } from "./tab-bar";
-import { StatusBar } from "./status-bar";
-import { FirstRunTip } from "./first-run-tip";
 import { DynamicTabRouter } from "./dynamic-tab-router";
 import { ModuleErrorBoundary } from "./error-boundary";
-import type { RailViewId } from "./rail-views";
+import { ExplorerPanel } from "./explorer-panel";
+import { FirstRunTip } from "./first-run-tip";
+import { StatusBar } from "./status-bar";
+import { TabBar } from "./tab-bar";
+import { TitleBar } from "./title-bar";
 
 const RAIL_KEY = "beacon.rail.view";
 
@@ -75,7 +78,9 @@ export function BeaconLayout(): React.JSX.Element {
       }
     };
     window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
+    return () => {
+      window.removeEventListener("keydown", h);
+    };
   }, [tabs, activeKey, close, reopen, setActive]);
 
   const visitedRef = useRef(new Set<string>());

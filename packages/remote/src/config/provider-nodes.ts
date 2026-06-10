@@ -1,6 +1,6 @@
+import { listSyntheticModelIds, loadEmbersynthConfig } from "./embersynth.js";
+import { type ClusterNode, type Config, resolveNodeKind } from "./schema.js";
 import { loadSiriusProviders, type SiriusProvider } from "./sirius-providers.js";
-import { loadEmbersynthConfig, listSyntheticModelIds } from "./embersynth.js";
-import { resolveNodeKind, type ClusterNode, type Config } from "./schema.js";
 
 /**
  * Synthesizes `kind: 'provider'` virtual nodes from gateway-specific
@@ -154,7 +154,7 @@ export function findCliBindingForNode(
   const agent = cluster.nodes.find(
     (n) => n.name === parsed.gateway && resolveNodeKind(n) === "agent",
   );
-  if (!agent || !agent.cli) return null;
+  if (!agent?.cli) return null;
   const binding = agent.cli.find((b) => b.name === parsed.providerName);
   if (!binding) return null;
   return { agentName: agent.name, binding };

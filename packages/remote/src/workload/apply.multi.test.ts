@@ -2,11 +2,13 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import type { ModelHostManifest } from "./modelhost-schema.js";
+import type { ModelRun } from "./schema.js";
+
 import { readModelHostState, writeModelHostState } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
 import { applyOne, applyOneModelHost, type WorkloadClient } from "./apply.js";
-import type { ModelHostManifest } from "./modelhost-schema.js";
-import type { ModelRun } from "./schema.js";
 import { saveWorkload } from "./store.js";
 
 function makeClient(
@@ -135,8 +137,8 @@ function makeModelHostClient(): WorkloadClient {
         binary: null,
         endpoint: "",
       }),
-    } as any,
-    serverStop: { mutate: async () => ({ stopped: true }) } as any,
+    },
+    serverStop: { mutate: async () => ({ stopped: true }) },
     serverStart: { subscribe: async () => ({ unsubscribe() {} }) } as any,
     modelHostStart: {
       subscribe: async (
@@ -154,12 +156,12 @@ function makeModelHostClient(): WorkloadClient {
         return { unsubscribe() {} };
       },
     } as any,
-    modelHostStop: { mutate: async () => ({ stopped: true }) } as any,
-    modelHostStatus: { query: async () => ({ state: "Running", pid: 12345 }) } as any,
+    modelHostStop: { mutate: async () => ({ stopped: true }) },
+    modelHostStatus: { query: async () => ({ state: "Running", pid: 12345 }) },
     rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) } as any,
-    rpcServerStop: { mutate: async () => ({ stopped: true }) } as any,
-    rpcServerDoctor: { query: async () => ({ ok: true, path: "", llamaCppBin: "" }) } as any,
-  } as any;
+    rpcServerStop: { mutate: async () => ({ stopped: true }) },
+    rpcServerDoctor: { query: async () => ({ ok: true, path: "", llamaCppBin: "" }) },
+  };
 }
 
 function seedModelDir(modelsDir: string, rel: string, sizeBytes: number): void {

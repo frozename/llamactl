@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  CompositeSpecSchema,
-  type CompositeSpec,
-  type ComponentRef,
-} from "../src/composite/schema.js";
+
 import {
   allEdges,
   impliedEdges,
@@ -11,6 +7,11 @@ import {
   reverseOrder,
   topologicalOrder,
 } from "../src/composite/dag.js";
+import {
+  type ComponentRef,
+  type CompositeSpec,
+  CompositeSpecSchema,
+} from "../src/composite/schema.js";
 
 // Accept raw input shape (pre-defaults) and lean on Zod to fill in
 // `.default()` fields. Tests stay terse without re-declaring

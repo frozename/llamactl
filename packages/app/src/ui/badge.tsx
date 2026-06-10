@@ -1,4 +1,5 @@
 import * as React from "react";
+
 import { cx } from "./classes";
 
 export type BadgeVariant = "default" | "brand" | "ok" | "warn" | "err";

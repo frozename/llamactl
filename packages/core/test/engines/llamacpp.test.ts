@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+
+import type { ModelHostSpecForEngine } from "../../src/engines/types.js";
+
 import { ENGINES } from "../../src/engines/index.js";
 import { formatHostForUrl, gracefulShutdown } from "../../src/engines/lifecycle.js";
-import type { ModelHostSpecForEngine } from "../../src/engines/types.js";
 
 const baseSpec: ModelHostSpecForEngine = {
   engine: "llamacpp",
@@ -43,7 +45,7 @@ describe("llamacpp engine adapter", () => {
   test("buildBootCommand includes --port and the hosted model rel", () => {
     const built = ENGINES.llamacpp.buildBootCommand(baseSpec, {
       LLAMA_CPP_MODELS: "/tmp/models",
-    } as any);
+    });
     expect(built.binary).toBe("/some/path/llama-server");
     expect(built.args).toContain("--port");
     expect(built.args).toContain("8090");
@@ -54,7 +56,7 @@ describe("llamacpp engine adapter", () => {
   test("buildBootCommand appends extraArgs verbatim after engine defaults", () => {
     const built = ENGINES.llamacpp.buildBootCommand(baseSpec, {
       LLAMA_CPP_MODELS: "/tmp/models",
-    } as any);
+    });
     expect(built.args).toContain("--jinja");
     const portIdx = built.args.indexOf("--port");
     const jinjaIdx = built.args.indexOf("--jinja");
@@ -91,8 +93,10 @@ describe("llamacpp engine adapter", () => {
   test("probeReady returns ready:false without overrunning timeout", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (_input: Request | URL | string, init?: RequestInit) =>
-      new Promise((_, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      await new Promise((_, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new Error("aborted"));
+        });
       })) as typeof fetch;
     const started = Date.now();
     const result = await ENGINES.llamacpp.probeReady({ host: "127.0.0.1", port: 12345 }, 300);
@@ -105,7 +109,7 @@ describe("llamacpp engine adapter", () => {
   test("teardown returns quickly when the process exits on its own", async () => {
     const proc = Bun.spawn(["sh", "-lc", "sleep 0.2"], { stderr: "pipe", stdout: "pipe" });
     const started = Date.now();
-    await ENGINES.llamacpp.teardown(proc.pid!);
+    await ENGINES.llamacpp.teardown(proc.pid);
     const elapsed = Date.now() - started;
     expect(elapsed).toBeLessThan(1000);
   });
@@ -120,9 +124,9 @@ describe("llamacpp engine adapter", () => {
       { stderr: "pipe", stdout: "pipe" },
     );
     const started = Date.now();
-    await gracefulShutdown(proc.pid!, 250);
+    await gracefulShutdown(proc.pid, 250);
     const elapsed = Date.now() - started;
     expect(elapsed).toBeLessThan(2000);
-    expect(() => process.kill(proc.pid!, 0)).toThrow();
+    expect(() => process.kill(proc.pid, 0)).toThrow();
   });
 });

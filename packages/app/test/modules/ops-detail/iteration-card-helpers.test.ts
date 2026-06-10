@@ -1,10 +1,11 @@
-import { describe, expect, test, mock } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
+
+import type { IterationView } from "../../../src/lib/use-ops-session";
+
+import { fmtMs, statusGlyph } from "../../../src/modules/ops/detail/iteration-card";
 
 mock.module("@/themes", () => ({}));
 mock.module("@/ui", () => ({ Badge: () => null }));
-
-import { statusGlyph, fmtMs } from "../../../src/modules/ops/detail/iteration-card";
-import type { IterationView } from "../../../src/lib/use-ops-session";
 
 const base: IterationView = {
   iteration: 0,

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { runPlan } from "../src/commands/plan.js";
 
 /**
@@ -85,7 +86,7 @@ describe("llamactl plan", () => {
         executor: string;
         toolsAvailable: string[];
         plan: {
-          steps: Array<{ tool: string; annotation: string }>;
+          steps: { tool: string; annotation: string }[];
           reasoning: string;
         };
       };

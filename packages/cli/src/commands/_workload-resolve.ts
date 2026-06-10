@@ -1,4 +1,4 @@
-import { workloadRuntime, type ResolvedEnv } from "@llamactl/core";
+import { type ResolvedEnv, workloadRuntime } from "@llamactl/core";
 
 export function resolveWorkloadName(
   explicit: string | undefined,

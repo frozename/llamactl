@@ -1,5 +1,6 @@
 // packages/remote/test/search-knowledge.test.ts
 import { describe, expect, test } from "bun:test";
+
 import { searchKnowledge } from "../src/search/knowledge.js";
 
 const entities = [

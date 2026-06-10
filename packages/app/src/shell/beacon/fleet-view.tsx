@@ -1,7 +1,8 @@
 import * as React from "react";
-import { StatusDot, TreeItem } from "@/ui";
+
 import { trpc } from "@/lib/trpc";
 import { useTabStore } from "@/stores/tab-store";
+import { StatusDot, TreeItem } from "@/ui";
 
 /**
  * Compact node list for quick context switching. Click a node to
@@ -12,11 +13,11 @@ import { useTabStore } from "@/stores/tab-store";
 export function FleetView(): React.JSX.Element {
   const list = trpc.nodeList.useQuery(undefined, { refetchInterval: 15_000 });
   const open = useTabStore((s) => s.open);
-  const nodes = (list.data?.nodes ?? []) as Array<{
+  const nodes = (list.data?.nodes ?? []) as {
     name: string;
     effectiveKind?: string;
     phase?: string;
-  }>;
+  }[];
 
   if (nodes.length === 0) {
     return (
@@ -52,15 +53,15 @@ export function FleetView(): React.JSX.Element {
             key={n.name}
             label={n.name}
             trailing={<StatusDot tone={tone} />}
-            onClick={() =>
+            onClick={() => {
               open({
                 tabKey: `node:${n.name}`,
                 title: `Node · ${n.name}`,
                 kind: "node",
                 instanceId: n.name,
                 openedAt: Date.now(),
-              })
-            }
+              });
+            }}
           />
         );
       })}

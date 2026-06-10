@@ -1,25 +1,26 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
-import { parse as parseYaml } from "yaml";
 import {
   config as kubecfg,
   noderunApply,
-  noderunSchema,
+  type noderunSchema,
   noderunStore,
   workloadApply,
   workloadGatewayHandlers,
-  workloadSchema,
+  type workloadSchema,
   workloadStore,
 } from "@llamactl/remote";
-import { listModelHosts, saveModelHost } from "../../../remote/src/workload/modelhost-store.js";
-import {
-  ModelHostManifestSchema,
-  type ModelHostManifest,
-} from "../../../remote/src/workload/modelhost-schema.js";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+import { parse as parseYaml } from "yaml";
+
 import { readModelHostState } from "../../../core/src/engines/state.js";
-import { formatEndpoint, probeHealthEndpoint } from "../../../core/src/probe.js";
 import { resolveEnv } from "../../../core/src/env.js";
+import { formatEndpoint, probeHealthEndpoint } from "../../../core/src/probe.js";
 import { workloadRuntimeDir } from "../../../core/src/workloadRuntime.js";
+import {
+  type ModelHostManifest,
+  ModelHostManifestSchema,
+} from "../../../remote/src/workload/modelhost-schema.js";
+import { listModelHosts, saveModelHost } from "../../../remote/src/workload/modelhost-store.js";
 import { getNodeClientByName } from "../dispatcher.js";
 import { makeSpecArtifactResolver } from "./noderun-helpers.js";
 
@@ -61,12 +62,12 @@ remove the manifest file from the workloads directory.
 export interface NodeBudgetView {
   budget: number;
   reserved: number;
-  workloads: Array<{
+  workloads: {
     name: string;
     endpoint: string | null;
     phase: string;
     expectedMemoryGiB: number | null;
-  }>;
+  }[];
 }
 
 interface WorkloadTestSeams {
@@ -200,12 +201,12 @@ export async function runApply(args: string[]): Promise<number> {
     return 1;
   }
   if (kind === "NodeRun") {
-    return applyNodeRunFromRaw(raw, parsed.json);
+    return await applyNodeRunFromRaw(raw, parsed.json);
   }
   if (kind === "ModelHost") {
-    return applyModelHostFromRaw(raw, parsed.json);
+    return await applyModelHostFromRaw(raw, parsed.json);
   }
-  return applyModelRunFromRaw(raw, parsed.json, parsed);
+  return await applyModelRunFromRaw(raw, parsed.json, parsed);
 }
 
 async function applyModelRunFromRaw(
@@ -490,7 +491,7 @@ export async function runGet(args: string[]): Promise<number> {
     }
   }
   if (sub === "noderuns" || sub === "noderun") {
-    return runGetNodeRuns(json);
+    return await runGetNodeRuns(json);
   }
   if (sub !== "workloads" && sub !== "workload") {
     process.stderr.write(GET_USAGE);
@@ -508,7 +509,7 @@ export async function runGet(args: string[]): Promise<number> {
       modelHosts.map(async (manifest) => {
         const state = readModelHostState({ name: manifest.metadata.name });
         const endpoint = state ? formatEndpoint(state.host, state.port) : null;
-        let phase: string = "unknown";
+        let phase = "unknown";
         if (state) {
           const probe = await probeHealthEndpoint(state.host, state.port).catch(() => ({
             reachable: false,
@@ -565,10 +566,10 @@ export async function runDescribe(args: string[]): Promise<number> {
     }
   }
   if ((kind === "noderun" || kind === "noderuns") && name) {
-    return runDescribeNodeRun(name, json);
+    return await runDescribeNodeRun(name, json);
   }
   if (kind === "node" && name) {
-    return runDescribeNode(name, json);
+    return await runDescribeNode(name, json);
   }
   if (kind !== "workload" && kind !== "workloads") {
     process.stderr.write(DESCRIBE_USAGE);
@@ -607,7 +608,7 @@ export async function runDescribe(args: string[]): Promise<number> {
     );
   }
   process.stdout.write(
-    `LiveStatus: ${JSON.stringify(liveStatus, null, 2).replace(/\n/g, "\n            ")}\n`,
+    `LiveStatus: ${JSON.stringify(liveStatus, null, 2).replaceAll("\n", "\n            ")}\n`,
   );
   return 0;
 }
@@ -804,7 +805,7 @@ async function runDescribeNodeRun(name: string, json: boolean): Promise<number> 
     );
   }
   process.stdout.write(
-    `LiveInfra:  ${JSON.stringify(liveInfra, null, 2).replace(/\n/g, "\n            ")}\n`,
+    `LiveInfra:  ${JSON.stringify(liveInfra, null, 2).replaceAll("\n", "\n            ")}\n`,
   );
   return 0;
 }

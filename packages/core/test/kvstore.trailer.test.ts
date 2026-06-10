@@ -3,18 +3,24 @@ import * as fs from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   EXT_FLAG_SESSION_TITLE,
   EXT_FLAG_TOOL_MAP,
+  type KvTrailer,
   readTrailer,
   writeTrailer,
-  type KvTrailer,
 } from "../src/kvstore/index.js";
 import { openKvStorage } from "../src/kvstore/storage.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-kvstore-trailer-"));
-  return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return {
+    root,
+    cleanup: () => {
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
 }
 
 test("writeTrailer/readTrailer round-trip", () => {

@@ -4,10 +4,12 @@
 // relative import would publish to a productionPeerSnapshots the proxy never
 // reads (routes silently never appear).
 import { openaiProxy } from "@llamactl/core";
+
 import type { PeerSnapshot } from "../../../core/src/workloadRuntime.js";
-import { listPeers, type PeerNode } from "../config/peers.js";
-import { makePinnedFetch } from "../client/links.js";
 import type { ClusterNode } from "../config/schema.js";
+
+import { makePinnedFetch } from "../client/links.js";
+import { listPeers, type PeerNode } from "../config/peers.js";
 
 /**
  * Production peer-snapshot poller. Periodically fetches each cluster peer's
@@ -21,12 +23,12 @@ import type { ClusterNode } from "../config/schema.js";
 
 interface RawFleetSnapshot {
   node_mem?: { free_mb?: number; inactive_mb?: number };
-  workloads?: Array<{
+  workloads?: {
     models?: string[];
     endpoint?: string;
     reachable?: boolean;
     revision?: string | null;
-  }>;
+  }[];
 }
 
 // Treat a peer as HIGH pressure (routes dropped by listClusterRoutes) only when
@@ -56,7 +58,7 @@ async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSna
   if (!snap?.workloads?.length) return null;
 
   const seen = new Set<string>();
-  const workloads: Array<{ modelId: string; port: number; revision?: string | null }> = [];
+  const workloads: { modelId: string; port: number; revision?: string | null }[] = [];
   for (const w of snap.workloads) {
     if (w.reachable === false) continue;
     let port = 0;

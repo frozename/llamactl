@@ -1,5 +1,6 @@
 // packages/app/test/lib/global-search/surfaces/sessions-rag.test.ts
 import { describe, expect, test } from "bun:test";
+
 import {
   mapSessionRagHits,
   type SessionRagServerHit,

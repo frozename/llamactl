@@ -1,6 +1,10 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+
+import type { ResolvedEnv } from "./types.js";
+import type { WorkloadKey } from "./workloadRuntime.js";
+
 import {
   benchProfileFile,
   defaultModeForRel,
@@ -18,8 +22,6 @@ import {
   resolveSlotSavePathArgs,
 } from "./kvstore/index.js";
 import { resolveTarget } from "./target.js";
-import type { ResolvedEnv } from "./types.js";
-import type { WorkloadKey } from "./workloadRuntime.js";
 import { ensureWorkloadRuntimeDir, workloadRuntimeDir } from "./workloadRuntime.js";
 
 /**
@@ -295,7 +297,7 @@ export async function serverStatus(
   // Only trust the sidecar when its PID matches the live one; if the
   // PIDs diverge, the state file is from a previous launch that
   // exited uncleanly. Clean up in that case.
-  const validSidecar = sidecar && sidecar.pid === pid;
+  const validSidecar = sidecar?.pid === pid;
   const endpointOverride = validSidecar ? { host: sidecar.host, port: sidecar.port } : undefined;
   const healthUrl = `${endpoint(resolved, endpointOverride)}/health`;
   let httpCode: number | null = null;
@@ -434,7 +436,9 @@ function lsofListenerPid(filter: string): Promise<number | null> {
       } catch {}
       resolve(value);
     };
-    const timer = setTimeout(() => finish(null), FIND_LISTENER_TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      finish(null);
+    }, FIND_LISTENER_TIMEOUT_MS);
     try {
       child = spawn(resolveLsofPath(), ["-nP", filter, "-sTCP:LISTEN", "-t"], {
         stdio: ["ignore", "pipe", "ignore"],
@@ -443,7 +447,9 @@ function lsofListenerPid(filter: string): Promise<number | null> {
       child.stdout?.on("data", (chunk) => {
         out += String(chunk);
       });
-      child.on("error", () => finish(null));
+      child.on("error", () => {
+        finish(null);
+      });
       child.on("close", () => {
         const pid = out
           .split(/\s+/)
@@ -467,7 +473,7 @@ async function findListenerPid(host: string, port: number): Promise<number | nul
   // port-only fallback is safe.
   const exact = await lsofListenerPid(`-iTCP@${host}:${port}`);
   if (exact !== null) return exact;
-  return lsofListenerPid(`-iTCP:${port}`);
+  return await lsofListenerPid(`-iTCP:${port}`);
 }
 
 async function probeServerModelIds(endpointUrl: string, timeoutMs: number): Promise<string[]> {
@@ -477,7 +483,7 @@ async function probeServerModelIds(endpointUrl: string, timeoutMs: number): Prom
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return [];
-    const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
+    const body = (await res.json()) as { data?: { id?: unknown }[] };
     return (body.data ?? [])
       .map((m) => (typeof m?.id === "string" ? m.id : ""))
       .filter((id): id is string => id.length > 0);

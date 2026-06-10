@@ -2,9 +2,10 @@ import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { saveConfig, upsertCluster, upsertNode } from "../../src/config/kubeconfig.js";
-import { LOCAL_NODE_NAME, freshConfig } from "../../src/config/schema.js";
 import { listPeers } from "../../src/config/peers.js";
+import { freshConfig, LOCAL_NODE_NAME } from "../../src/config/schema.js";
 
 let tmp: string;
 let prevConfigEnv: string | undefined;

@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
-import { applyOne, type WorkloadClient } from "../src/workload/apply.js";
-import { dispatchGatewayApply } from "../src/workload/gateway-handlers/index.js";
 import type { ClusterNode } from "../src/config/schema.js";
 import type { ModelRun } from "../src/workload/schema.js";
+
+import { applyOne, type WorkloadClient } from "../src/workload/apply.js";
+import { dispatchGatewayApply } from "../src/workload/gateway-handlers/index.js";
 
 /**
  * K.7.5 — full integration. Drives `applyOne` with a real gateway
@@ -21,15 +22,15 @@ async function startFakeGateway(
   status = 200,
 ): Promise<{
   url: string;
-  calls: Array<{ method: string; url: string; auth: string | null; body: string }>;
+  calls: { method: string; url: string; auth: string | null; body: string }[];
   stop: () => Promise<void>;
 }> {
-  const calls: Array<{
+  const calls: {
     method: string;
     url: string;
     auth: string | null;
     body: string;
-  }> = [];
+  }[] = [];
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",

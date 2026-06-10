@@ -1,5 +1,6 @@
 // packages/app/src/shell/match-snippet.tsx
 import * as React from "react";
+
 import type { MatchExcerpt } from "../lib/global-search/types";
 
 interface Props {

@@ -1,5 +1,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+
+import type { BenchCompareRow } from "./bench/compare.js";
+import type { MachineProfile, ResolvedEnv } from "./types.js";
+
+import { autoVisionBenchEnabled } from "./autotune.js";
 import {
   benchCompare,
   benchHistoryFile,
@@ -13,10 +18,10 @@ import {
   readBenchVision,
 } from "./bench/index.js";
 import {
-  benchPreset,
-  benchVision,
   type BenchEvent,
+  benchPreset,
   type BenchPresetResult,
+  benchVision,
   type BenchVisionResult,
   type RunCli,
 } from "./bench/runner.js";
@@ -26,16 +31,13 @@ import { addCurated } from "./catalogWriter.js";
 import { ctxForModel } from "./ctx.js";
 import { resolveEnv } from "./env.js";
 import { findLocalMmprojForRel } from "./mmproj.js";
-import { autoVisionBenchEnabled } from "./autotune.js";
-import type { BenchCompareRow } from "./bench/compare.js";
 import {
   pickCandidateFile,
-  pullRepoFile,
   type PullEvent,
   type PullFileResult,
+  pullRepoFile,
   type RunHf,
 } from "./pull.js";
-import type { MachineProfile, ResolvedEnv } from "./types.js";
 
 export type CandidateTestEvent = PullEvent | BenchEvent;
 

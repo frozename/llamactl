@@ -1,10 +1,12 @@
-import { describe, expect, test } from "bun:test";
 import type { rpcServer as rpcServerMod } from "@llamactl/core";
+
+import { describe, expect, test } from "bun:test";
+
 import {
   parseRpcDoctorFlags,
-  runRpcDoctor,
   type RpcDoctorDeps,
   type RpcDoctorRemoteClient,
+  runRpcDoctor,
 } from "../src/commands/agent-rpc-doctor.js";
 
 /**

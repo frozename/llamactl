@@ -1,48 +1,51 @@
 import type { ModelInfo, ModelListResponse } from "@nova/contracts";
+
 import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+
+import type { AnthropicMessagesRequest } from "./anthropic/types.js";
+import type { ResolvedEnv } from "./types.js";
+import type { WorkloadKey } from "./workloadRuntime.js";
+
+import { listPeers, type PeerNode } from "../../remote/src/config/peers.js";
 import {
   AnthropicTranslationError,
   translateAnthropicRequest,
 } from "./anthropic/translateRequest.js";
 import { translateOpenAIResponse } from "./anthropic/translateResponse.js";
 import { translateOpenAIStreamToAnthropic } from "./anthropic/translateStream.js";
-import type { AnthropicMessagesRequest } from "./anthropic/types.js";
-import { resolveEnv } from "./env.js";
-import { ctxForModel } from "./ctx.js";
-import { endpoint as llamaEndpoint, readServerState, readServerPid } from "./server.js";
-import { readModelHostState } from "./engines/state.js";
-import type { ResolvedEnv } from "./types.js";
-import * as workloadRuntime from "./workloadRuntime.js";
-import type { WorkloadKey } from "./workloadRuntime.js";
-import { type PeerNode, listPeers } from "../../remote/src/config/peers.js";
 import { boundaryNaiveBytePrefixSha, canonicalRequestSha } from "./cache-identity/canonical.js";
+import { ctxForModel } from "./ctx.js";
+import { readModelHostState } from "./engines/state.js";
+import { resolveEnv } from "./env.js";
 import {
   EXT_FLAG_SESSION_TITLE,
   EXT_FLAG_TOOL_MAP,
   KvRegistry,
-  SlotAllocator,
-  UpstreamSlotClient,
-  parseAbsoluteSlotSavePath,
+  type KvStorage,
+  type KvTrailer,
   longestPrefixLookup,
   openKvStorage,
+  parseAbsoluteSlotSavePath,
   readTrailer,
   readWorkloadEpoch,
   runEvictionIfOverBudget,
+  SlotAllocator,
   sweepOrphanSlotFiles,
+  UpstreamSlotClient,
   writeTrailer,
-  type KvTrailer,
-  type KvStorage,
 } from "./kvstore/index.js";
 import {
   isDeterministic,
   openResponseCacheStorage,
-  ResponseCacheRegistry,
-  runResponseCacheEvictionIfOverBudget,
   type ResponseCacheEntry,
+  ResponseCacheRegistry,
   type ResponseCacheStorage,
+  runResponseCacheEvictionIfOverBudget,
 } from "./responsecache/index.js";
+import { endpoint as llamaEndpoint, readServerPid, readServerState } from "./server.js";
+import * as workloadRuntime from "./workloadRuntime.js";
 
 const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
 
@@ -185,7 +188,7 @@ let modelsResponseCache: { sig: string; response: ModelListResponse } | null = n
 function getCachedModelsResponse(resolved: ResolvedEnv): ModelListResponse {
   try {
     const sig = workloadRuntimeCacheSignature(resolved);
-    if (modelsResponseCache && modelsResponseCache.sig === sig) return modelsResponseCache.response;
+    if (modelsResponseCache?.sig === sig) return modelsResponseCache.response;
     const response = buildListOpenAIModels(resolved);
     modelsResponseCache = { sig, response };
     return response;
@@ -320,7 +323,7 @@ let clusterRoutingOverrideForTests: {
 // Production peer-snapshot store, refreshed by the peer-snapshot poller running
 // in the proxy process (startAgentServer). Empty until the poller publishes —
 // so a node with no peers (or before the first poll) routes only local models.
-let productionPeerSnapshots: Map<string, workloadRuntime.PeerSnapshot> = new Map();
+let productionPeerSnapshots = new Map<string, workloadRuntime.PeerSnapshot>();
 
 /**
  * Publish the latest peer fleet snapshots so cross-node (peer) models become
@@ -380,7 +383,7 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
 function getRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
   try {
     const sig = workloadRuntimeCacheSignature(resolved);
-    if (routeMapCache && routeMapCache.sig === sig) return routeMapCache.map;
+    if (routeMapCache?.sig === sig) return routeMapCache.map;
     const map = buildRouteMap(resolved);
     routeMapCache = { sig, map };
     return map;
@@ -592,7 +595,7 @@ function slotClientFor(
 ): UpstreamSlotClient {
   const endpoint = `http://${host}:${port}`;
   const cached = runtime.slotClients.get(workload);
-  if (cached && cached.endpoint === endpoint) return cached.client;
+  if (cached?.endpoint === endpoint) return cached.client;
   const client = new UpstreamSlotClient(
     endpoint,
     engine === "omlx" ? { engine: "omlx" } : undefined,
@@ -646,7 +649,7 @@ function resolveRouteKvMetadata(context: ProxyContext): {
 } | null {
   const route = context.route;
   if (!route) return null;
-  if ("isPeer" in route && route.isPeer === true) return null;
+  if ("isPeer" in route && route.isPeer) return null;
   if (!isRouteKvEligible(route)) return null;
 
   const key = { name: route.workload };
@@ -791,7 +794,7 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
   //    restart-invalidation).
   const route = context.route;
   if (!route || !isRouteKvEligible(route)) return context;
-  const isPeer = "isPeer" in route && route.isPeer === true;
+  const isPeer = "isPeer" in route && route.isPeer;
   const peerRevision = isPeer && "revision" in route && route.revision ? `:${route.revision}` : "";
   const workloadEpoch = isPeer
     ? `peer:${route.targetNodeId ?? route.workload}:${route.model}${peerRevision}`

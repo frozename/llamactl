@@ -1,5 +1,6 @@
 // packages/remote/test/search-rag-bridge.test.ts
 import { describe, expect, test } from "bun:test";
+
 import { ragBridgeSearch } from "../src/search/rag-bridge.js";
 
 const mockAdapter = {

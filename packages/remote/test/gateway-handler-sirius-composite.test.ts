@@ -1,11 +1,11 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
-import { siriusHandler } from "../src/workload/gateway-handlers/sirius.js";
+
 import { readGatewayCatalog } from "../src/workload/gateway-catalog/io.js";
-import type { ApplyResult } from "../src/workload/apply.js";
+import { siriusHandler } from "../src/workload/gateway-handlers/sirius.js";
 
 const node = {
   name: "sirius-1",
@@ -92,12 +92,12 @@ describe("siriusHandler with composite context", () => {
       "apiVersion: llamactl/v1\nkind: SiriusProviderList\nproviders:\n  - name: mc-llama\n    kind: openai\n    apiKeyRef: $K\n",
       "utf8",
     );
-    const r = (await siriusHandler.apply({
+    const r = await siriusHandler.apply({
       manifest,
       node,
       getClient: (() => null) as any,
       composite,
-    })) as ApplyResult;
+    });
     expect(r.action).toBe("pending");
     expect(r.statusSection.conditions[0]!.reason).toBe("SiriusUpstreamNameCollision");
   });

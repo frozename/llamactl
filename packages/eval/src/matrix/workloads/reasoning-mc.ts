@@ -50,7 +50,7 @@ function lastAnswerLine(text: string): string | null {
 
 function normalizeNumber(raw: string): string | null {
   // keep the first signed decimal number in the fragment
-  const m = raw.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+  const m = /-?\d+(?:\.\d+)?/.exec(raw.replaceAll(",", ""));
   if (!m) return null;
   let n = m[0];
   if (n.includes(".")) n = n.replace(/0+$/, "").replace(/\.$/, ""); // 18.0 -> 18
@@ -63,7 +63,7 @@ function extractMc(completion: string, nOptions: number): string {
   const valid = new RegExp(`[A-${LETTERS[max - 1]}]`);
   const ans = lastAnswerLine(completion);
   if (ans) {
-    const letter = ans.match(/[A-Za-z]/);
+    const letter = /[A-Za-z]/.exec(ans);
     if (letter && valid.test(letter[0].toUpperCase())) return letter[0].toUpperCase();
   }
   // fallback: last standalone "(B)" / "B)" / "option B" / bare "B" in the tail
@@ -85,7 +85,7 @@ function extractNumeric(completion: string): string {
     if (n !== null) return n;
   }
   // fallback: last number anywhere
-  const all = completion.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/g);
+  const all = completion.replaceAll(",", "").match(/-?\d+(?:\.\d+)?/g);
   if (all && all.length) return normalizeNumber(all[all.length - 1]!) ?? "__no_answer__";
   return "__no_answer__";
 }

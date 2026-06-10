@@ -6,6 +6,7 @@
 // the tRPC inference at the useSubscription call site will surface
 // the mismatch.
 import * as React from "react";
+
 import { trpc } from "../lib/trpc";
 
 export type ToolTier = "read" | "mutation-dry-run-safe" | "mutation-destructive";
@@ -162,7 +163,9 @@ export function useOpsSession(sessionId: string): {
         setView((v) => mergeEventIntoView(v, event));
         setLoading(false);
       },
-      onError: (err) => setError(err instanceof Error ? err : new Error(String(err))),
+      onError: (err) => {
+        setError(err instanceof Error ? err : new Error(String(err)));
+      },
     },
   );
 

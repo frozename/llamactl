@@ -170,7 +170,7 @@ export class UpstreamSlotClient implements SlotClient {
     url.searchParams.set("action", action);
     const payload: Record<string, unknown> = { filename };
     if (opts?.model !== undefined) payload.model = opts.model;
-    return this.fetchWithTimeout(url, "POST", JSON.stringify(payload));
+    return await this.fetchWithTimeout(url, "POST", JSON.stringify(payload));
   }
 
   private async probeSupportsSlots(): Promise<boolean> {
@@ -229,7 +229,9 @@ export class UpstreamSlotClient implements SlotClient {
     body?: string,
   ): Promise<FetchResult> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), SLOT_REQUEST_TIMEOUT_MS);
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, SLOT_REQUEST_TIMEOUT_MS);
     try {
       const init: RequestInit = { method, signal: controller.signal };
       if (body !== undefined) {

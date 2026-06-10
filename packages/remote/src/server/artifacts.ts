@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
 /**
  * Artifact server for the Sprint I-α bootstrap flow. Serves
@@ -86,12 +86,12 @@ export function handleArtifact(
   });
 }
 
-export function listArtifacts(artifactsDir = defaultArtifactsDir()): Array<{
+export function listArtifacts(artifactsDir = defaultArtifactsDir()): {
   platform: string;
   path: string;
   sizeBytes: number;
-}> {
-  const out: Array<{ platform: string; path: string; sizeBytes: number }> = [];
+}[] {
+  const out: { platform: string; path: string; sizeBytes: number }[] = [];
   for (const platform of ALLOWED_PLATFORMS) {
     const path = agentBinaryPath(platform, artifactsDir);
     if (!existsSync(path)) continue;

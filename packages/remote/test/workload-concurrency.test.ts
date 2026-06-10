@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import type { ModelRun } from "../src/workload/schema.js";
+
 import { applyOne, type WorkloadClient } from "../src/workload/apply.js";
 import { reconcileOnce } from "../src/workload/reconciler.js";
 import {
@@ -10,7 +13,6 @@ import {
   saveWorkload,
   withWorkloadsMutex,
 } from "../src/workload/store.js";
-import type { ModelRun } from "../src/workload/schema.js";
 
 let dir: string;
 
@@ -126,7 +128,7 @@ async function applyAndPersist(
   workloadsDir: string,
   resolveNodeIdentity?: (n: string) => string | null,
 ) {
-  return withWorkloadsMutex(workloadsDir, async () => {
+  return await withWorkloadsMutex(workloadsDir, async () => {
     const client = makeClient();
     const result = await applyOne(manifest, () => client, undefined, undefined, {
       workloadsDir,

@@ -17,9 +17,9 @@ import type {
   UnifiedEmbeddingResponse,
 } from "@nova/contracts";
 
+import type { Config, EmbedderBinding } from "../config/schema.js";
+
 import { RagError } from "./errors.js";
-import type { Config } from "../config/schema.js";
-import type { EmbedderBinding } from "../config/schema.js";
 
 export type Embedder = (texts: string[]) => Promise<number[][]>;
 
@@ -69,7 +69,7 @@ export function createEmbedderFromBinding(opts: EmbedderFactoryOptions): Embedde
         err,
       );
     }
-    if (!response.data || response.data.length !== texts.length) {
+    if (response.data?.length !== texts.length) {
       throw new RagError(
         "invalid-response",
         `embedder '${binding.node}' returned ${response.data?.length ?? 0} vectors for ${texts.length} inputs`,
@@ -85,7 +85,7 @@ export function createEmbedderFromBinding(opts: EmbedderFactoryOptions): Embedde
           `embedder '${binding.node}' returned non-array embedding at index ${i} (encoding_format='base64'? request float)`,
         );
       }
-      return row.embedding as number[];
+      return row.embedding;
     });
   };
 }

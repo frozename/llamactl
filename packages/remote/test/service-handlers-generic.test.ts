@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
+
 import type { ServiceInstance } from "../src/runtime/backend.js";
+
 import { LABEL_KEYS, MANAGED_BY_VALUE } from "../src/runtime/labels.js";
 import { ServiceError } from "../src/service/errors.js";
 import { genericContainerHandler } from "../src/service/handlers/generic-handler.js";
 import { DEFAULT_SERVICE_HANDLERS, findServiceHandler } from "../src/service/handlers/registry.js";
 import {
-  GenericContainerServiceSpecSchema,
   type GenericContainerServiceSpec,
+  GenericContainerServiceSpecSchema,
 } from "../src/service/schema.js";
 
 function spec(overrides: Partial<GenericContainerServiceSpec> = {}): GenericContainerServiceSpec {
@@ -41,7 +43,9 @@ describe("genericContainerHandler registry", () => {
 
 describe("genericContainerHandler.validate", () => {
   test("accepts minimal spec", () => {
-    expect(() => genericContainerHandler.validate(spec())).not.toThrow();
+    expect(() => {
+      genericContainerHandler.validate(spec());
+    }).not.toThrow();
   });
 
   test("rejects volume with both hostPath and name at schema parse", () => {
@@ -71,14 +75,18 @@ describe("genericContainerHandler.validate", () => {
     const s = spec({
       volumes: [{ hostPath: "/var/data", containerPath: "/data", readOnly: false }],
     });
-    expect(() => genericContainerHandler.validate(s)).not.toThrow();
+    expect(() => {
+      genericContainerHandler.validate(s);
+    }).not.toThrow();
   });
 
   test("accepts volume with only name", () => {
     const s = spec({
       volumes: [{ name: "mydata", containerPath: "/data", readOnly: false }],
     });
-    expect(() => genericContainerHandler.validate(s)).not.toThrow();
+    expect(() => {
+      genericContainerHandler.validate(s);
+    }).not.toThrow();
   });
 });
 

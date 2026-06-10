@@ -1,19 +1,21 @@
 import { spawn } from "node:child_process";
 import {
   accessSync,
+  closeSync,
   constants,
   existsSync,
   mkdirSync,
   openSync,
-  closeSync,
   readFileSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { connect } from "node:net";
 import { join } from "node:path";
-import { resolveEnv } from "./env.js";
+
 import type { ResolvedEnv } from "./types.js";
+
+import { resolveEnv } from "./env.js";
 
 /**
  * Distinct failure modes `checkRpcServerAvailable()` can surface. Each
@@ -373,8 +375,14 @@ function tcpProbe(host: string, port: number, timeoutMs: number): Promise<boolea
       } catch {}
       resolve(ok);
     };
-    socket.once("connect", () => done(true));
-    socket.once("error", () => done(false));
-    socket.once("timeout", () => done(false));
+    socket.once("connect", () => {
+      done(true);
+    });
+    socket.once("error", () => {
+      done(false);
+    });
+    socket.once("timeout", () => {
+      done(false);
+    });
   });
 }

@@ -10,11 +10,11 @@
  *     any binding is unhealthy — quality-gate semantics for CI.
  */
 import {
-  config as kubecfg,
-  createCliSubprocessProvider,
-  resolveNodeKind,
   type ClusterNode,
   type Config,
+  createCliSubprocessProvider,
+  config as kubecfg,
+  resolveNodeKind,
 } from "@llamactl/remote";
 
 const USAGE = `Usage: llamactl agent cli <subcommand>
@@ -30,7 +30,7 @@ export async function runAgentCli(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
     case "doctor":
-      return runDoctor(rest);
+      return await runDoctor(rest);
     case undefined:
     case "--help":
     case "-h":

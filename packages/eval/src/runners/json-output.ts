@@ -1,5 +1,5 @@
-import promptsRaw from "../fixtures/prompts-json-output.json" with { type: "json" };
 import { buildCompletionRequest, completeChat } from "../client.js";
+import promptsRaw from "../fixtures/prompts-json-output.json" with { type: "json" };
 
 type JsonSchema =
   | {
@@ -15,7 +15,7 @@ type JsonSchema =
   | { enum: readonly string[]; required?: never; properties?: never; items?: never; type?: never };
 
 export function extractJsonPayload(text: string): unknown | null {
-  const fenced = text.match(/```json\s*([\s\S]*?)\s*```/i) ?? text.match(/```\s*([\s\S]*?)\s*```/);
+  const fenced = /```json\s*([\s\S]*?)\s*```/i.exec(text) ?? /```\s*([\s\S]*?)\s*```/.exec(text);
   const candidates = fenced ? [fenced[1] ?? ""] : [text, ...(text.match(/\{[\s\S]*\}/g) ?? [])];
   for (const candidate of candidates) {
     try {
@@ -56,15 +56,14 @@ export interface JsonOutputFixture {
 }
 
 export interface JsonOutputResult {
-  prompts: Array<JsonOutputFixture & { valid: boolean; text: string; parsed: unknown | null }>;
+  prompts: (JsonOutputFixture & { valid: boolean; text: string; parsed: unknown | null })[];
   json_score: number;
 }
 
 export async function runJsonOutput(url: string): Promise<JsonOutputResult> {
   const prompts = promptsRaw as unknown as JsonOutputFixture[];
-  const scored: Array<
-    JsonOutputFixture & { valid: boolean; text: string; parsed: unknown | null }
-  > = [];
+  const scored: (JsonOutputFixture & { valid: boolean; text: string; parsed: unknown | null })[] =
+    [];
   for (const prompt of prompts) {
     const req = buildCompletionRequest({
       messages: [{ role: "user", content: prompt.prompt }],

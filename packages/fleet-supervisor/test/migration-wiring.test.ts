@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+
 import { createEnabledMigrationController } from "../src/index.js";
 
 describe("migration controller wiring gate", () => {

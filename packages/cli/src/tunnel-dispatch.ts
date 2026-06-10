@@ -1,4 +1,5 @@
 import type { TunnelSendFn, TunnelSubscribeFn } from "@llamactl/remote";
+
 import { tls } from "@llamactl/remote";
 
 const { computeFingerprint, fingerprintsEqual } = tls;
@@ -169,7 +170,7 @@ function buildRelayFetchInit(
 }
 
 export async function callViaTunnelRelay(opts: TunnelRelayCallOptions): Promise<unknown> {
-  const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as FetchLike);
+  const fetchImpl: FetchLike = opts.fetchImpl ?? fetch;
   const built = buildRelayFetchInit(opts.centralUrl, opts.nodeName, {
     method: opts.method,
     type: opts.type ?? "query",
@@ -281,7 +282,7 @@ export function buildTunnelSubscribe(opts: {
   expectedFingerprint?: string;
   insecure?: boolean;
 }): TunnelSubscribeFn {
-  const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as FetchLike);
+  const fetchImpl: FetchLike = opts.fetchImpl ?? fetch;
   return (method, input, handlers) => {
     const abort = new AbortController();
     let settled = false;

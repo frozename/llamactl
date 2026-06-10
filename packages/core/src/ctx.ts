@@ -8,7 +8,7 @@ import { resolveEnv } from "./env.js";
  * shell library.
  */
 export function ctxForModel(rel: string, resolved = resolveEnv()): string {
-  if (/^Qwen3\.6-35B-A3B-GGUF\//.test(rel) || /^Qwen3\.5-27B-GGUF\//.test(rel)) {
+  if (rel.startsWith("Qwen3.6-35B-A3B-GGUF/") || rel.startsWith("Qwen3.5-27B-GGUF/")) {
     return resolved.LLAMA_CPP_QWEN_CTX_SIZE;
   }
   return resolved.LLAMA_CPP_GEMMA_CTX_SIZE;

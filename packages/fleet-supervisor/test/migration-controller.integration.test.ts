@@ -1,9 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import {
-  createMigrationController,
-  type FleetJournalEntry,
-  type MoveProposal,
-} from "../src/index.js";
+
+import { createMigrationController, type FleetJournalEntry } from "../src/index.js";
 
 describe("MigrationController integration", () => {
   it("creates and executes a move flow without env gating", async () => {
@@ -65,9 +62,7 @@ describe("MigrationController integration", () => {
 
     expect(proposal).not.toBeNull();
 
-    const result = await controller?.executeMove(proposal as MoveProposal, (entry) =>
-      journal.push(entry),
-    );
+    const result = await controller?.executeMove(proposal!, (entry) => journal.push(entry));
     expect(result).toBe("executed");
     expect(
       journal.some((entry) => entry.kind === "fleet-proposal" && entry.action.type === "move"),

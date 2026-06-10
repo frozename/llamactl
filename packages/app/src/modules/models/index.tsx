@@ -1,8 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+
 import { trpc } from "@/lib/trpc";
 import { Button, EditorialHero } from "@/ui";
 
@@ -46,7 +47,9 @@ function ScopeTabs(): React.JSX.Element {
             aria-selected={isActive}
             data-testid={`models-scope-${tab.id}`}
             data-active={isActive ? "true" : "false"}
-            onClick={() => setScope(tab.id)}
+            onClick={() => {
+              setScope(tab.id);
+            }}
             style={{
               borderRadius: 4,
               border: isActive ? "1px solid var(--color-brand)" : "1px solid transparent",
@@ -240,7 +243,9 @@ export default function Models(): React.JSX.Element {
                                 <input
                                   type="checkbox"
                                   checked={force}
-                                  onChange={(e) => setForce(e.target.checked)}
+                                  onChange={(e) => {
+                                    setForce(e.target.checked);
+                                  }}
                                 />
                                 force
                               </label>
@@ -249,7 +254,9 @@ export default function Models(): React.JSX.Element {
                               variant="destructive"
                               size="sm"
                               disabled={uninstallMutation.isPending}
-                              onClick={() => uninstallMutation.mutate({ rel: row.rel, force })}
+                              onClick={() => {
+                                uninstallMutation.mutate({ rel: row.rel, force });
+                              }}
                             >
                               {uninstallMutation.isPending ? "Removing…" : "Confirm"}
                             </Button>

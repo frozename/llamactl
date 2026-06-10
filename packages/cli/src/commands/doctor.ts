@@ -447,7 +447,11 @@ async function withBudget(
   try {
     await Promise.race([
       fn(),
-      new Promise<void>((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs)),
+      new Promise<void>((_, reject) =>
+        setTimeout(() => {
+          reject(new Error("timeout"));
+        }, timeoutMs),
+      ),
     ]);
   } catch (err) {
     onErr((err as Error).message);

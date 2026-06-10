@@ -1,7 +1,9 @@
-import { createTRPCReact } from "@trpc/react-query";
 import { createTRPCClient } from "@trpc/client";
-import { ipcLink } from "./ipc-link";
+import { createTRPCReact } from "@trpc/react-query";
+
 import type { AppRouter, UIRouter } from "../../electron/trpc/router";
+
+import { ipcLink } from "./ipc-link";
 
 export const trpc: ReturnType<typeof createTRPCReact<AppRouter>> = createTRPCReact<AppRouter>();
 

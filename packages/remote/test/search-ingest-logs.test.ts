@@ -1,8 +1,9 @@
 // packages/remote/test/search-ingest-logs.test.ts
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { startLogsIngest } from "../src/search/ingest/logs.js";
 
 describe("logs ingest", () => {

@@ -1,18 +1,20 @@
+import { openAggregatorDb, writeSnapshot } from "@llamactl/fleet-supervisor";
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openAggregatorDb, writeSnapshot } from "@llamactl/fleet-supervisor";
-import { applyManifest, applyOneModelHost, type WorkloadClient } from "../../src/workload/apply.js";
-import { reconcileOnce } from "../../src/workload/reconciler.js";
-import { listModelHosts, saveModelHost } from "../../src/workload/modelhost-store.js";
+
 import type { ModelHostManifest } from "../../src/workload/modelhost-schema.js";
 import type { ModelRun } from "../../src/workload/schema.js";
+
 import { setWorkloadEnabledWithDeps } from "../../../cli/src/commands/setEnabled.js";
 import * as modelHostState from "../../../core/src/engines/state.js";
 import { readModelHostState, removeModelHostState } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
+import { applyManifest, applyOneModelHost, type WorkloadClient } from "../../src/workload/apply.js";
+import { listModelHosts, saveModelHost } from "../../src/workload/modelhost-store.js";
+import { reconcileOnce } from "../../src/workload/reconciler.js";
 
 function makeModelRunClient(): WorkloadClient {
   return {
@@ -112,7 +114,7 @@ function writeClusterSnapshot(
   node: string,
   ts: string,
   freeMb: number,
-  workloads: Array<{ name: string; models?: string[] }> = [],
+  workloads: { name: string; models?: string[] }[] = [],
 ): void {
   const db = openAggregatorDb(dbPath);
   try {
@@ -574,7 +576,7 @@ describe("applyManifest — kind dispatch", () => {
     const result = await applyManifest({
       manifest,
       getClient: () => makeModelRunClient(),
-      spawn: fakeSpawn as any,
+      spawn: fakeSpawn,
     });
     if (!result.ok) console.log("ERROR:", result);
     expect(result.ok).toBe(true);

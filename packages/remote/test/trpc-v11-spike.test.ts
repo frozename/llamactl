@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { initTRPC, tracked, TRPCError } from "@trpc/server";
-import { observable } from "@trpc/server/observable";
-import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { createTRPCClient, httpBatchLink, httpSubscriptionLink, splitLink } from "@trpc/client";
+import { initTRPC, tracked, TRPCError } from "@trpc/server";
+import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
+import { observable } from "@trpc/server/observable";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { EventSource } from "eventsource";
 import { z } from "zod";
 
@@ -157,7 +157,7 @@ describe("tRPC v11 + Bun.serve + fetchRequestHandler", () => {
         }),
       ],
     });
-    const received: Array<{ i: number }> = [];
+    const received: { i: number }[] = [];
     await new Promise<void>((resolve, reject) => {
       const sub = client.counter.subscribe(
         { count: 5 },
@@ -172,7 +172,9 @@ describe("tRPC v11 + Bun.serve + fetchRequestHandler", () => {
           onError: reject,
         },
       );
-      setTimeout(() => reject(new Error("subscription timeout")), 2000);
+      setTimeout(() => {
+        reject(new Error("subscription timeout"));
+      }, 2000);
     });
     expect(received.map((r) => r.i)).toEqual([0, 1, 2, 3, 4]);
   });
@@ -240,7 +242,9 @@ describe("tRPC v11 + Bun.serve + fetchRequestHandler", () => {
           onError: reject,
         },
       );
-      setTimeout(() => reject(new Error("legacy subscription timeout")), 2000);
+      setTimeout(() => {
+        reject(new Error("legacy subscription timeout"));
+      }, 2000);
     });
     expect(received).toEqual([0, 1, 2, 3]);
   });

@@ -1,13 +1,15 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolveEnv } from "../env.js";
+
 import type { ResolvedEnv } from "../types.js";
+import type { EngineName } from "./index.js";
+
+import { resolveEnv } from "../env.js";
 import {
   ensureWorkloadRuntimeDir,
-  workloadRuntimeDir,
   type WorkloadKey,
+  workloadRuntimeDir,
 } from "../workloadRuntime.js";
-import type { EngineName } from "./index.js";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost", "0.0.0.0"]);
 
@@ -41,7 +43,7 @@ export function computeModelHostSpecHash(spec: {
   engine: EngineName;
   binary: string;
   endpoint: { host: string; port: number };
-  hostedModels: ReadonlyArray<unknown>;
+  hostedModels: readonly unknown[];
   extraArgs: readonly string[];
   resources?: { expectedMemoryGiB?: number } | undefined;
   restartPolicy: string;

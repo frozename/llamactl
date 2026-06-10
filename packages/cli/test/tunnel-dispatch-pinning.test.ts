@@ -1,8 +1,9 @@
+import { tls } from "@llamactl/remote";
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tls } from "@llamactl/remote";
+
 import {
   __resetInsecureTunnelWarning,
   callViaTunnelRelay,
@@ -40,9 +41,9 @@ beforeEach(() => {
 
 function envelopeFetch(): {
   fetchImpl: FetchLike;
-  captured: Array<{ url: string; init: RequestInit | undefined }>;
+  captured: { url: string; init: RequestInit | undefined }[];
 } {
-  const captured: Array<{ url: string; init: RequestInit | undefined }> = [];
+  const captured: { url: string; init: RequestInit | undefined }[] = [];
   const fetchImpl: FetchLike = async (url, init) => {
     captured.push({ url: String(url), init });
     return new Response(

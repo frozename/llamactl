@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import type { RawDoc } from "../src/rag/pipeline/types.js";
+
 import {
   extractLinks,
   extractReadableText,
   httpFetcher,
   parseRobots,
 } from "../src/rag/pipeline/fetchers/http.js";
-import type { RawDoc } from "../src/rag/pipeline/types.js";
 
 interface ServerOptions {
   robots?: string | null;
@@ -16,13 +17,13 @@ interface ServerOptions {
 
 interface FakeServer {
   origin: string;
-  calls: Array<{ method: string; path: string; auth: string | null }>;
+  calls: { method: string; path: string; auth: string | null }[];
   stop: () => Promise<void>;
 }
 
 async function startFakeSite(opts: ServerOptions): Promise<FakeServer> {
   const calls: FakeServer["calls"] = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const server = (
     Bun as unknown as {
       serve: (o: unknown) => {
@@ -76,8 +77,8 @@ async function startFakeSite(opts: ServerOptions): Promise<FakeServer> {
 async function run(
   spec: unknown,
   env: NodeJS.ProcessEnv = process.env,
-): Promise<{ docs: RawDoc[]; logs: Array<{ level: string; msg: string }> }> {
-  const logs: Array<{ level: string; msg: string }> = [];
+): Promise<{ docs: RawDoc[]; logs: { level: string; msg: string }[] }> {
+  const logs: { level: string; msg: string }[] = [];
   const ctx = {
     spec,
     log: (e: { level: "info" | "warn" | "error"; msg: string }) =>

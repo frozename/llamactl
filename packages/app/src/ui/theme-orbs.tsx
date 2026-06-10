@@ -1,6 +1,7 @@
 import * as React from "react";
+
+import { type ThemeId, THEMES } from "../themes";
 import { cx } from "./classes";
-import { THEMES, type ThemeId } from "../themes";
 
 export interface ThemeOrbsProps extends React.HTMLAttributes<HTMLDivElement> {
   activeId: ThemeId;
@@ -39,7 +40,9 @@ export function ThemeOrbs({
           role="tab"
           aria-selected={t.id === activeId}
           data-testid={`theme-orb-${t.id}`}
-          onClick={() => onPick(t.id)}
+          onClick={() => {
+            onPick(t.id);
+          }}
           title={`${t.label} — ${t.tagline}`}
           style={{
             all: "unset",

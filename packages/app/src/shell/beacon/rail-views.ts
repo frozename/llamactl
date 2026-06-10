@@ -1,4 +1,4 @@
-import { Compass, Folder, Layers3, Search, type LucideIcon } from "lucide-react";
+import { Compass, Folder, Layers3, type LucideIcon, Search } from "lucide-react";
 
 export type RailViewId = "explorer" | "search" | "sessions" | "fleet";
 

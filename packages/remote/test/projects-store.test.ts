@@ -6,10 +6,10 @@ import { join } from "node:path";
 import {
   defaultProjectsPath,
   loadProjects,
+  type Project,
   removeProject,
   saveProjects,
   upsertProject,
-  type Project,
 } from "../src/config/projects.js";
 
 /**
@@ -140,7 +140,7 @@ describe("upsertProject", () => {
 
   test("does not mutate the input array", () => {
     const existing = Object.freeze([makeProject("a")]);
-    upsertProject(existing as readonly Project[], makeProject("b"));
+    upsertProject(existing, makeProject("b"));
     expect(existing.length).toBe(1);
   });
 });

@@ -3,9 +3,11 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+
+import type { ModelRun } from "../src/workload/schema.js";
+
 import { applyOne, type WorkloadClient } from "../src/workload/apply.js";
 import { parseWorkload } from "../src/workload/store.js";
-import type { ModelRun } from "../src/workload/schema.js";
 
 /**
  * Slice E.1 preflight: before any `rpcServerStart` spawn, apply asks
@@ -227,7 +229,7 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
         trace,
       );
     };
-    const events: Array<{ type: string; message: string }> = [];
+    const events: { type: string; message: string }[] = [];
     const result = await applyOne(manifest(), getClient, (e) => events.push(e));
     expect(result.error).toBeDefined();
     expect(result.statusSection.phase).toBe("Failed");

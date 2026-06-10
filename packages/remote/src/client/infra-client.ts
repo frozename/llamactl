@@ -1,10 +1,12 @@
 import { createTRPCClient } from "@trpc/client";
-import type { AppRouter } from "../router.js";
+
 import type { PeerNode } from "../config/peers.js";
-import { resolveToken, loadConfig } from "../config/kubeconfig.js";
+import type { AppRouter } from "../router.js";
+
+import { loadConfig, resolveToken } from "../config/kubeconfig.js";
+import { type ClusterNode, LOCAL_NODE_ENDPOINT } from "../config/schema.js";
 import { buildPinnedLinks, makePinnedFetch } from "./links.js";
 import { createNodeClient } from "./node-client.js";
-import { LOCAL_NODE_ENDPOINT, type ClusterNode } from "../config/schema.js";
 
 export interface InfraClient {
   install(args: {
@@ -38,7 +40,7 @@ function remoteClient(peer: PeerNode) {
         endpoint: peer.endpoint,
         certificate: peer.certificate,
         certificateFingerprint: peer.fingerprint,
-      } as ClusterNode,
+      },
       token ?? "",
       makePinnedFetch,
     ),
@@ -81,7 +83,7 @@ function snapshotFetch(
     );
     if (res.status === 204) return "timeout";
     if (!res.ok) throw new Error(`peer ${peer.id} returned ${res.status}`);
-    const snapshot = (await res.json()) as { workloads: Array<{ reachable: boolean }> } | null;
+    const snapshot = (await res.json()) as { workloads: { reachable: boolean }[] } | null;
     if (
       snapshot &&
       snapshot.workloads.length > 0 &&

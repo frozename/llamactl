@@ -1,6 +1,7 @@
-import { reconcileOnce, type ReconcileOptions, type ReconcileResult } from "./reconciler.js";
 import type { ApplyEvent } from "./apply.js";
 import type { ModelRun } from "./schema.js";
+
+import { reconcileOnce, type ReconcileOptions, type ReconcileResult } from "./reconciler.js";
 
 export interface ReconcileLoopStatus {
   running: boolean;
@@ -16,7 +17,7 @@ interface LoopState {
   intervalMs: number;
   lastPassAt: number | null;
   lastResult: ReconcileResult | null;
-  lastEvents: Array<ApplyEvent & { name: string; ts: string }>;
+  lastEvents: (ApplyEvent & { name: string; ts: string })[];
   inflight: boolean;
 }
 
@@ -52,7 +53,7 @@ function scheduleNext(opts: ReconcileLoopOpts): void {
 async function tick(opts: ReconcileLoopOpts): Promise<void> {
   if (state.inflight) return;
   state.inflight = true;
-  const events: Array<ApplyEvent & { name: string; ts: string }> = [];
+  const events: (ApplyEvent & { name: string; ts: string })[] = [];
   try {
     const result = await reconcileOnce({
       // Skip manifests whose restartPolicy is Never — the whole
@@ -124,6 +125,6 @@ export function reconcileLoopStatus(): ReconcileLoopStatus {
   };
 }
 
-export function reconcileLoopEvents(): Array<ApplyEvent & { name: string; ts: string }> {
+export function reconcileLoopEvents(): (ApplyEvent & { name: string; ts: string })[] {
   return state.lastEvents.slice();
 }

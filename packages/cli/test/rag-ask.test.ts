@@ -1,11 +1,11 @@
+import { configSchema, config as kubecfg } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runRag, __setRagTestSeams, __resetRagTestSeams } from "../src/commands/rag.js";
-import { resetGlobals, setGlobals, EMPTY_GLOBALS } from "../src/dispatcher.js";
-import { config as kubecfg, configSchema } from "@llamactl/remote";
+import { __resetRagTestSeams, __setRagTestSeams, runRag } from "../src/commands/rag.js";
+import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
 
 /**
  * `llamactl rag ask` chains ragSearch + chatComplete. The tests stub
@@ -66,8 +66,8 @@ async function capture(fn: () => Promise<number>): Promise<{
 }
 
 interface StubCalls {
-  ragSearch: Array<{ node: string; query: string; topK: number; collection?: string }>;
-  chatComplete: Array<{ node: string; request: Record<string, unknown> }>;
+  ragSearch: { node: string; query: string; topK: number; collection?: string }[];
+  chatComplete: { node: string; request: Record<string, unknown> }[];
 }
 
 /**
@@ -77,12 +77,12 @@ interface StubCalls {
  * for the command's consumption.
  */
 function installStubClient(opts: {
-  searchResults?: Array<{
+  searchResults?: {
     id: string;
     content: string;
     score: number;
     metadata?: Record<string, unknown>;
-  }>;
+  }[];
   searchCollection?: string;
   answer?: string;
   throwOnSearch?: Error;

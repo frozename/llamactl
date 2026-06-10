@@ -1,7 +1,9 @@
 // packages/app/test/lib/global-search/orchestrator.test.ts
 import { describe, expect, test } from "bun:test";
-import { runClientPhase, mergeServerHits } from "../../../src/lib/global-search/orchestrator";
+
 import type { Hit } from "../../../src/lib/global-search/types";
+
+import { mergeServerHits, runClientPhase } from "../../../src/lib/global-search/orchestrator";
 
 describe("runClientPhase", () => {
   test("returns GroupedResults sorted by topScore", () => {
@@ -140,7 +142,7 @@ test("originNode flows through mergeServerHits unchanged", () => {
           openedAt: 0,
         },
       },
-    } as Hit,
+    },
   ];
   const merged = mergeServerHits(initial, "session", hits, { append: true });
   const sess = merged.find((g) => g.surface === "session")!;

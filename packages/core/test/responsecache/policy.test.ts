@@ -1,18 +1,24 @@
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
-  ResponseCacheRegistry,
   openResponseCacheStorage,
+  type ResponseCacheEntry,
+  ResponseCacheRegistry,
   responseEvictionScore,
   runResponseCacheEvictionIfOverBudget,
-  type ResponseCacheEntry,
 } from "../../src/responsecache/index.js";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-responsecache-policy-"));
-  return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return {
+    root,
+    cleanup: () => {
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
 }
 
 function baseEntry(overrides: Partial<ResponseCacheEntry> = {}): ResponseCacheEntry {

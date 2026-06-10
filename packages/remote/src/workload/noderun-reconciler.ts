@@ -1,3 +1,5 @@
+import type { NodeRun } from "./noderun-schema.js";
+
 import {
   applyNodeRun,
   type ArtifactResolver,
@@ -5,7 +7,6 @@ import {
   type NodeRunInfraClient,
 } from "./noderun-apply.js";
 import { defaultNodeRunsDir, listNodeRuns, saveNodeRun } from "./noderun-store.js";
-import type { NodeRun } from "./noderun-schema.js";
 
 /**
  * Single-pass NodeRun reconciliation. Iterates every persisted

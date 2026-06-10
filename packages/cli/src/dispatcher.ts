@@ -1,12 +1,13 @@
 import {
-  config as kubecfg,
+  type Config,
   createNodeClient,
+  config as kubecfg,
   LOCAL_NODE_ENDPOINT,
   type NodeClient,
   type TunnelSendFn,
   type TunnelSubscribeFn,
-  type Config,
 } from "@llamactl/remote";
+
 import { buildTunnelSend, buildTunnelSubscribe, type FetchLike } from "./tunnel-dispatch.js";
 
 /**
@@ -391,7 +392,7 @@ export async function fanOut<T>(
   const settled = await Promise.allSettled(
     names.map(async (n) => {
       const client = getNodeClientByName(n, globals, env);
-      return perNode(client, n);
+      return await perNode(client, n);
     }),
   );
   return names.map((name, i) => {

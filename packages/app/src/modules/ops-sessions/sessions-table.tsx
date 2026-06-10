@@ -1,6 +1,8 @@
 import * as React from "react";
-import { Button, Badge, type BadgeVariant } from "../../ui";
+
 import type { SessionStatus } from "../../lib/use-ops-session";
+
+import { Badge, type BadgeVariant, Button } from "../../ui";
 
 // Local mirror of the server SessionSummary — keeps app free of a
 // direct import from @llamactl/remote.
@@ -79,8 +81,19 @@ export function SessionsTable({ sessions, onOpen, onDelete }: Props): React.JSX.
               {new Date(s.startedAt).toLocaleString()}
             </td>
             <td style={{ padding: "10px 12px", display: "flex", gap: 6 }}>
-              <Button onClick={() => onOpen(s.sessionId)}>Open</Button>
-              <Button variant="ghost" onClick={() => onDelete(s.sessionId)}>
+              <Button
+                onClick={() => {
+                  onOpen(s.sessionId);
+                }}
+              >
+                Open
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  onDelete(s.sessionId);
+                }}
+              >
                 Delete
               </Button>
             </td>

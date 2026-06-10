@@ -1,11 +1,13 @@
 import type { RetrievalProvider } from "@nova/contracts";
+
 import type { Config, RagBinding } from "../../config/schema.js";
-import { RagError } from "../errors.js";
 import type { Embedder } from "../embedding.js";
+
+import { RagError } from "../errors.js";
 import { PgvectorRagAdapter } from "./adapter.js";
 import { connectPgvector, redactPostgresUrl } from "./client.js";
 
-export { PgvectorRagAdapter, extractQueryVector } from "./adapter.js";
+export { extractQueryVector, PgvectorRagAdapter } from "./adapter.js";
 export { connectPgvector, redactPostgresUrl } from "./client.js";
 export type { PgvectorClient } from "./client.js";
 

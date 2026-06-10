@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { listWorkloads } from "../../src/workload/store.js";
+import { join } from "node:path";
+
 import { listModelHosts } from "../../src/workload/modelhost-store.js";
 import { listNodeRuns } from "../../src/workload/noderun-store.js";
+import { listWorkloads } from "../../src/workload/store.js";
 
 describe("kind-aware workload listing", () => {
   test("shared directory can mix ModelRun, ModelHost, and NodeRun files", () => {

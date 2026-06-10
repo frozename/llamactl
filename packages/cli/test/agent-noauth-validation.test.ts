@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { CLI_ENTRY, makeTempRuntime, runCli } from "./helpers.js";
+
 import { parseServeFlags } from "../src/commands/agent.js";
+import { CLI_ENTRY, makeTempRuntime, runCli } from "./helpers.js";
 
 function augment(env: NodeJS.ProcessEnv, devStorage: string): NodeJS.ProcessEnv {
   return {

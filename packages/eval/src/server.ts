@@ -1,6 +1,7 @@
+import type { WriteStream } from "node:fs";
+
 import { spawn, type Subprocess } from "bun";
 import { createWriteStream } from "node:fs";
-import type { WriteStream } from "node:fs";
 
 export interface ServerOptions {
   modelPath: string;

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { SlotAllocator } from "../src/kvstore/index.js";
 
 test("single-slot mode acquires slot 0 and blocks until release", () => {

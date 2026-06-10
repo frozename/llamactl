@@ -1,3 +1,6 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, platform } from "node:os";
+import { dirname, join, resolve } from "node:path";
 /**
  * `llamactl init` — first-run onboarding.
  *
@@ -29,9 +32,6 @@
  *      surface. On failure, surface the component that broke.
  */
 import { createInterface, type Interface as ReadlineInterface } from "node:readline/promises";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, platform } from "node:os";
-import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 type RuntimeKind = "docker" | "kubernetes";
@@ -186,9 +186,9 @@ async function pickTemplate(args: InitArgs, rl: ReadlineInterface | null): Promi
   if (!rl) return "chroma-only";
 
   process.stdout.write("\nAvailable quickstart templates:\n");
-  TEMPLATE_ORDER.forEach((key, i) => {
+  for (const [i, key] of TEMPLATE_ORDER.entries()) {
     process.stdout.write(`  ${i + 1}) ${key}${templateBlurb(key)}\n`);
-  });
+  }
   const ans = await rl.question("Pick a template [1]: ");
   const n = Number.parseInt(ans.trim(), 10);
   if (Number.isFinite(n) && n >= 1 && n <= TEMPLATE_ORDER.length) {
@@ -254,7 +254,7 @@ async function applyComposite(yamlPath: string): Promise<{ ok: boolean; message?
       manifestYaml: yaml,
       dryRun: false,
     });
-    if (!result || result.dryRun !== false) {
+    if (result?.dryRun) {
       return { ok: false, message: "expected a wet-run result" };
     }
     if (!result.ok) {

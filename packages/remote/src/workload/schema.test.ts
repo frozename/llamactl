@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { ModelRunSchema } from "./schema.js";
+
 import { ModelHostManifestSchema } from "./modelhost-schema.js";
 import { NodeRunSchema } from "./noderun-schema.js";
+import { ModelRunSchema } from "./schema.js";
 
 test("ModelRun parses spec.enabled defaulting to true", () => {
   const m = ModelRunSchema.parse({

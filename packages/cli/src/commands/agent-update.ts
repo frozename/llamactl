@@ -1,6 +1,7 @@
+import { config as cfgMod, makePinnedFetch } from "@llamactl/remote";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { config as cfgMod, makePinnedFetch } from "@llamactl/remote";
+
 import { getGlobals, isLocalDispatch } from "../dispatcher.js";
 
 /**
@@ -152,7 +153,7 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
   let binaryPath = parsed.binary;
   if (parsed.fromRelease) {
     const { infraArtifactsFetch } = await import("@llamactl/remote");
-    const target = (node.facts?.platform as string | undefined) ?? "darwin-arm64";
+    const target = node.facts?.platform ?? "darwin-arm64";
     process.stderr.write(
       `agent update: fetching ${parsed.repo} ${parsed.fromRelease} for ${target}…\n`,
     );

@@ -1,4 +1,23 @@
-import { spawn as nodeSpawn } from "node:child_process";
+import type { spawn as nodeSpawn } from "node:child_process";
+
+import {
+  appendFleetJournal,
+  chooseBestNode,
+  defaultAggregatorDbPath,
+  defaultFleetJournalPath,
+  type FleetPlacementEntry,
+  type FleetTransitionEntry,
+  getLatestPerNode,
+  makePlacementDecision,
+  openAggregatorDb,
+  projectAdmissionHeadroom,
+  scoreNodes,
+} from "@llamactl/fleet-supervisor";
+import { basename } from "node:path";
+
+import type { GatewayDispatch } from "./gateway-handlers/types.js";
+import type { ModelRun, ModelRunStatus, ModelRunWorker } from "./schema.js";
+
 import { ENGINES } from "../../../core/src/engines/index.js";
 import {
   computeModelHostSpecHash,
@@ -8,34 +27,18 @@ import {
 } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
 import {
-  appendFleetJournal,
-  makePlacementDecision,
-  chooseBestNode,
-  defaultAggregatorDbPath,
-  defaultFleetJournalPath,
-  type FleetTransitionEntry,
-  getLatestPerNode,
-  openAggregatorDb,
-  projectAdmissionHeadroom,
-  scoreNodes,
-  type FleetPlacementEntry,
-} from "@llamactl/fleet-supervisor";
-import type { ModelRun, ModelRunStatus, ModelRunWorker } from "./schema.js";
-import { ModelRunSchema } from "./schema.js";
-import {
-  LOCAL_NODE_ID,
-  ModelHostManifestSchema,
-  type ModelHostManifest,
-} from "./modelhost-schema.js";
-import type { GatewayDispatch } from "./gateway-handlers/types.js";
-import {
   computeNodeBudget,
   defaultNodeBudgetGiB,
   estimateModelHostMemoryGiB,
 } from "./admission.js";
-import { defaultWorkloadsDir, listAnyWorkloadsForAdmission, listWorkloads } from "./store.js";
+import {
+  LOCAL_NODE_ID,
+  type ModelHostManifest,
+  ModelHostManifestSchema,
+} from "./modelhost-schema.js";
 import { withNodeLock } from "./node-mutex.js";
-import { basename } from "node:path";
+import { ModelRunSchema } from "./schema.js";
+import { defaultWorkloadsDir, listAnyWorkloadsForAdmission, listWorkloads } from "./store.js";
 
 /**
  * Structural subset of `NodeClient` that `applyOne` actually touches.
@@ -45,7 +48,7 @@ import { basename } from "node:path";
  * satisfy this narrower shape, which eliminates an unsafe `as any`
  * cast at the router boundary.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 type SubscribeCallbacks = {
   onData: (e: any) => void;
   onError: (err: any) => void;
@@ -342,7 +345,7 @@ async function applyModelHostManifest(
     return { ok: false, error: `missing modelHostStart on node ${manifest.spec.node}` };
   }
 
-  if (manifest.spec.enabled === false) {
+  if (!manifest.spec.enabled) {
     if (client.modelHostStop) {
       try {
         await client.modelHostStop.mutate({ workload: manifest.metadata.name });
@@ -368,7 +371,7 @@ async function applyModelHostManifest(
   const livingManifests = listAnyWorkloadsForAdmission(workloadsDir, resolved)
     .filter((m) => m.metadata.name !== manifest.metadata.name)
     .filter((m) => m.spec.node === manifest.spec.node)
-    .filter((m) => m.spec.enabled !== false);
+    .filter((m) => m.spec.enabled);
   const expectedMemoryGiB = estimateModelHostMemoryGiB(manifest, resolved);
   const admit = computeNodeBudget({
     nodeName: manifest.spec.node,
@@ -406,7 +409,9 @@ async function applyModelHostManifest(
       | { ok: true; error?: string; pid?: number | null; state?: string | null }
       | { ok: false; error: string };
     const startResult = await new Promise<StartResult | null>((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error("modelHostStart timed out")), timeoutMs);
+      timer = setTimeout(() => {
+        reject(new Error("modelHostStart timed out"));
+      }, timeoutMs);
       let done: StartResult | null = null;
       sub = client.modelHostStart.subscribe(
         {
@@ -421,7 +426,7 @@ async function applyModelHostManifest(
           },
           onError: (err: unknown) => {
             if (timer) clearTimeout(timer);
-            reject(err as Error);
+            reject(err);
           },
           onComplete: () => {
             if (timer) clearTimeout(timer);
@@ -471,8 +476,7 @@ async function applyModelHostManifest(
         port: manifest.spec.endpoint.port,
         modelAliases,
         startedAt: new Date().toISOString(),
-        slotSavePath:
-          existing && existing.pid === status.pid ? (existing.slotSavePath ?? null) : null,
+        slotSavePath: existing?.pid === status.pid ? (existing.slotSavePath ?? null) : null,
         specHash: computeModelHostSpecHash(manifest.spec),
       },
       { name: manifest.metadata.name },
@@ -504,7 +508,7 @@ export async function applyOneModelHost(
     };
   },
 ): Promise<ApplyManifestOutcome> {
-  return applyModelHostManifest(manifest, {
+  return await applyModelHostManifest(manifest, {
     getClient,
     onEvent,
     env: opts?.env,
@@ -557,11 +561,7 @@ async function preflightWorkers(
         const r = await wc.rpcServerDoctor.query({});
         return {
           node: w.node,
-          result: r as {
-            ok: boolean;
-            reason?: string;
-            hint?: string;
-          },
+          result: r,
         };
       } catch (err) {
         // Treat dispatcher / network failures as a preflight failure
@@ -621,7 +621,9 @@ async function startWorkers(
     const started = await new Promise<{ ok: boolean; endpoint: string; error?: string } | null>(
       (resolve, reject) => {
         const timer = setTimeout(
-          () => reject(new Error(`rpc-server start timeout on ${worker.node}`)),
+          () => {
+            reject(new Error(`rpc-server start timeout on ${worker.node}`));
+          },
           (worker.timeoutSeconds + 5) * 1000,
         );
         let done: { ok: boolean; endpoint: string; error?: string } | null = null;
@@ -639,7 +641,7 @@ async function startWorkers(
             },
             onError: (err: unknown) => {
               clearTimeout(timer);
-              reject(err as Error);
+              reject(err);
             },
             onComplete: () => {
               clearTimeout(timer);
@@ -650,7 +652,7 @@ async function startWorkers(
         void sub;
       },
     );
-    if (!started || !started.ok) {
+    if (!started?.ok) {
       return {
         rpcList: "",
         error: `worker ${worker.node}: ${started?.error ?? "rpc-server failed to start"}`,
@@ -745,7 +747,7 @@ export async function applyOne(
     }
   }
   const client = getClient(manifest.spec.node);
-  if (manifest.spec.enabled === false) {
+  if (!manifest.spec.enabled) {
     const now = new Date().toISOString();
     const status = await client.serverStatus.query({ workload: manifest.metadata.name });
     if (status.state === "up") {
@@ -784,7 +786,7 @@ export async function applyOne(
     const others = listWorkloads(workloadsDir)
       .filter((m) => m.metadata.name !== manifest.metadata.name)
       .filter((m) => sameNode(m.spec.node))
-      .filter((m) => m.spec.enabled !== false);
+      .filter((m) => m.spec.enabled);
     for (const other of others) {
       if (
         other.status?.phase === "Failed" &&
@@ -886,7 +888,7 @@ export async function applyOne(
       (m) =>
         m.metadata.name !== manifest.metadata.name &&
         m.spec.node === manifest.spec.node &&
-        m.spec.enabled !== false &&
+        m.spec.enabled &&
         !evictTargets.includes(m.metadata.name),
     );
     const budget = opts?.getNodeBudgetGiB?.(manifest.spec.node) ?? Number.POSITIVE_INFINITY;
@@ -977,7 +979,9 @@ export async function applyOne(
     onEvent?.({ type: "start", message: `${manifest.metadata.name}: starting ${desiredRel}` });
     const startResult = await new Promise<StartDone | null>((resolve, reject) => {
       const timer = setTimeout(
-        () => reject(new Error("serverStart timed out")),
+        () => {
+          reject(new Error("serverStart timed out"));
+        },
         (manifest.spec.timeoutSeconds + 5) * 1000,
       );
       let done: StartDone | null = null;
@@ -998,7 +1002,7 @@ export async function applyOne(
           },
           onError: (err: unknown) => {
             clearTimeout(timer);
-            reject(err as Error);
+            reject(err);
           },
           onComplete: () => {
             clearTimeout(timer);
@@ -1009,7 +1013,7 @@ export async function applyOne(
       void sub;
     });
 
-    if (!startResult || !startResult.ok) {
+    if (!startResult?.ok) {
       const err = startResult?.error ?? "serverStart failed";
       if (workers.length > 0) await stopWorkers(workers, getClient);
       return {

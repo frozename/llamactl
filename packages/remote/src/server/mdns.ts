@@ -31,7 +31,7 @@ export interface PublishedAgent {
  */
 export function publishAgentMdns(opts: PublishAgentOptions): PublishedAgent {
   const bonjour = new Bonjour();
-  const synthHost = `${(opts.serviceName ?? opts.nodeName).replace(/[^A-Za-z0-9-]/g, "-")}-llamactl`;
+  const synthHost = `${(opts.serviceName ?? opts.nodeName).replaceAll(/[^A-Za-z0-9-]/g, "-")}-llamactl`;
   const service = bonjour.publish({
     name: opts.serviceName ?? opts.nodeName,
     host: synthHost,
@@ -49,7 +49,7 @@ export function publishAgentMdns(opts: PublishAgentOptions): PublishedAgent {
   // agent under launchd (where stdio is redirected) — even though the
   // HTTP server is already listening on its TCP port. Treat the
   // collision as best-effort: log + carry on.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const eventEmitter = service as unknown as {
     on?: (evt: string, cb: (err: unknown) => void) => void;
   };
@@ -63,7 +63,9 @@ export function publishAgentMdns(opts: PublishAgentOptions): PublishedAgent {
     stop: async () => {
       await new Promise<void>((resolve) => {
         if (typeof service.stop === "function") {
-          service.stop(() => resolve());
+          service.stop(() => {
+            resolve();
+          });
         } else {
           resolve();
         }
@@ -91,7 +93,7 @@ export interface DiscoveredAgent {
 export async function discoverAgents(timeoutMs = 2500): Promise<DiscoveredAgent[]> {
   const bonjour = new Bonjour();
   const seen = new Map<string, DiscoveredAgent>();
-  return new Promise<DiscoveredAgent[]>((resolve) => {
+  return await new Promise<DiscoveredAgent[]>((resolve) => {
     const browser = bonjour.find({ type: LLAMACTL_SERVICE_TYPE }, (svc: Service) => {
       const host = svc.host ?? svc.referer?.address ?? "";
       const port = svc.port ?? 0;

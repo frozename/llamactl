@@ -1,14 +1,15 @@
+import { configSchema, config as kubecfg } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   EMPTY_GLOBALS,
   extractGlobalFlags,
   isLocalDispatch,
   resolveEffectiveNodeName,
 } from "../src/dispatcher.js";
-import { config as kubecfg, configSchema } from "@llamactl/remote";
 
 describe("extractGlobalFlags", () => {
   test("no global flags leaves argv untouched", () => {

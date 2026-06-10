@@ -1,4 +1,5 @@
 import * as React from "react";
+
 import { useActiveWorkload } from "@/hooks/useActiveWorkload";
 
 export function WorkloadPicker(): React.JSX.Element | null {
@@ -27,7 +28,9 @@ export function WorkloadPicker(): React.JSX.Element | null {
       data-testid="beacon-workload-picker"
       aria-label="Active workload"
       value={workload ?? ""}
-      onChange={(e) => setWorkload(e.target.value || null)}
+      onChange={(e) => {
+        setWorkload(e.target.value || null);
+      }}
       style={{
         appearance: "none",
         border: "1px solid var(--color-border)",

@@ -2,14 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
+  type CostGuardianConfig,
   CostGuardianConfigSchema,
   decideGuardianAction,
   emptyCostGuardianConfig,
   loadCostGuardianConfig,
-  runCostGuardianTick,
-  type CostGuardianConfig,
   type RunbookToolClient,
+  runCostGuardianTick,
   type ToolCallInput,
 } from "../src/index.js";
 
@@ -229,9 +230,9 @@ describe("decideGuardianAction", () => {
 
 function makeClient(responses: Record<string, unknown>): {
   client: RunbookToolClient;
-  calls: Array<{ name: string; args: unknown }>;
+  calls: { name: string; args: unknown }[];
 } {
-  const calls: Array<{ name: string; args: unknown }> = [];
+  const calls: { name: string; args: unknown }[] = [];
   const client: RunbookToolClient = {
     async callTool(input: ToolCallInput) {
       calls.push({ name: input.name, args: input.arguments });

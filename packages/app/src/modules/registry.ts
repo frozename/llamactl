@@ -1,18 +1,18 @@
-import { lazy, type ComponentType, type LazyExoticComponent } from "react";
 import {
   Brain,
   Coins,
   Database,
   FolderKanban,
-  LayoutDashboard,
   Layers,
+  LayoutDashboard,
+  type LucideIcon,
   MessageSquare,
   Network,
   ScrollText,
   Settings,
   Terminal,
-  type LucideIcon,
 } from "lucide-react";
+import { type ComponentType, lazy, type LazyExoticComponent } from "react";
 
 /**
  * Activity-bar module descriptor. To add a new module:

@@ -2,11 +2,17 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { KvRegistry, openKvStorage, type KvEntry } from "../src/kvstore/index.js";
+
+import { type KvEntry, KvRegistry, openKvStorage } from "../src/kvstore/index.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-kvstore-race-"));
-  return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return {
+    root,
+    cleanup: () => {
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
 }
 
 function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {

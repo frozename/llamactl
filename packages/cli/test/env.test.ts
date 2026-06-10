@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
 import { makeTempRuntime, runCli } from "./helpers.js";
 
 describe("llamactl env", () => {
@@ -6,7 +7,9 @@ describe("llamactl env", () => {
   beforeEach(() => {
     temp = makeTempRuntime();
   });
-  afterEach(() => temp.cleanup());
+  afterEach(() => {
+    temp.cleanup();
+  });
 
   test("env --eval emits export lines for every expected var", () => {
     const r = runCli(["env", "--eval"], temp.env);

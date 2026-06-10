@@ -1,10 +1,10 @@
 import {
+  type BenchSchedule,
   defaultScheduleFilePath,
   isDue,
   loadSchedules,
   saveSchedules,
   updateSchedule,
-  type BenchSchedule,
 } from "./schedule.js";
 
 /**
@@ -17,7 +17,6 @@ import {
  * from a cron of their own.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SubscribeCallbacks = {
   onData: (e: any) => void;
   onError: (err: any) => void;
@@ -42,14 +41,14 @@ export interface BenchLoopStatus {
    *  are skipped until it returns. */
   inflight: boolean;
   /** Short log of the most recent activity (bounded to 200 entries). */
-  recent: Array<{
+  recent: {
     ts: string;
     id: string;
     rel: string;
     node: string;
     ok: boolean;
     message?: string;
-  }>;
+  }[];
 }
 
 interface LoopState {
@@ -78,9 +77,11 @@ function schedule(getClient: (nodeName: string) => BenchClient): void {
 }
 
 async function runOne(schedule: BenchSchedule, client: BenchClient): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     // 15-minute hard cap so a hung bench doesn't wedge the loop.
-    const timer = setTimeout(() => reject(new Error("bench run timed out after 15m")), 15 * 60_000);
+    const timer = setTimeout(() => {
+      reject(new Error("bench run timed out after 15m"));
+    }, 15 * 60_000);
     let errored = false;
     const sub = client.benchPresetRun.subscribe(
       { target: schedule.rel, mode: schedule.mode },

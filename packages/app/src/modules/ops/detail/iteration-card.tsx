@@ -1,6 +1,8 @@
 import * as React from "react";
-import { Badge } from "../../../ui";
+
 import type { IterationView, OutcomeView } from "../../../lib/use-ops-session";
+
+import { Badge } from "../../../ui";
 import { ResultViewer } from "./result-viewer";
 
 interface Props {

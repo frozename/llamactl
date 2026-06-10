@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+
 import { runSirius } from "../src/commands/sirius.js";
 
 /**
@@ -16,7 +17,7 @@ let tmp = "";
 const originalEnv = { ...process.env };
 
 function writeConfig(
-  nodes: Array<Record<string, unknown>>,
+  nodes: Record<string, unknown>[],
   user: { name: string; token?: string },
 ): string {
   const cfg = {
@@ -68,7 +69,7 @@ describe("llamactl sirius export", () => {
     );
     const code = await runSirius(["export"]);
     expect(code).toBe(0);
-    const parsed = JSON.parse(captured) as Array<{ name: string; baseUrl: string; apiKey: string }>;
+    const parsed = JSON.parse(captured) as { name: string; baseUrl: string; apiKey: string }[];
     expect(parsed).toHaveLength(1);
     expect(parsed[0]!.name).toBe("gpu1");
     expect(parsed[0]!.baseUrl).toBe("https://gpu1.lan:7843/v1");
@@ -82,7 +83,7 @@ describe("llamactl sirius export", () => {
     );
     const code = await runSirius(["export", "--token-inline"]);
     expect(code).toBe(0);
-    const parsed = JSON.parse(captured) as Array<{ apiKey: string }>;
+    const parsed = JSON.parse(captured) as { apiKey: string }[];
     expect(parsed[0]!.apiKey).toBe("super-secret");
   });
 
@@ -119,7 +120,7 @@ describe("llamactl sirius export", () => {
     captured = "";
     const listCode = await runSirius(["list-providers"]);
     expect(listCode).toBe(0);
-    const parsed = JSON.parse(captured) as Array<{ name: string; kind: string; baseUrl: string }>;
+    const parsed = JSON.parse(captured) as { name: string; kind: string; baseUrl: string }[];
     expect(parsed).toHaveLength(1);
     expect(parsed[0]!.name).toBe("openai");
     expect(parsed[0]!.kind).toBe("openai");
@@ -182,7 +183,7 @@ describe("llamactl sirius export", () => {
     );
     const code = await runSirius(["export"]);
     expect(code).toBe(0);
-    const parsed = JSON.parse(captured) as Array<{ name: string }>;
+    const parsed = JSON.parse(captured) as { name: string }[];
     expect(parsed.map((p) => p.name)).toEqual(["gpu1"]);
   });
 });

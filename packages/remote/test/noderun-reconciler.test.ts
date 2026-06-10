@@ -3,12 +3,14 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { reconcileNodeRunsOnce } from "../src/workload/noderun-reconciler.js";
-import { NodeRunSchema, type NodeRun } from "../src/workload/noderun-schema.js";
-import { saveNodeRun } from "../src/workload/noderun-store.js";
-import type { NodeRunInfraClient } from "../src/workload/noderun-apply.js";
-import type { InstalledInfra } from "../src/infra/layout.js";
+
 import type { InstallResult } from "../src/infra/install.js";
+import type { InstalledInfra } from "../src/infra/layout.js";
+import type { NodeRunInfraClient } from "../src/workload/noderun-apply.js";
+
+import { reconcileNodeRunsOnce } from "../src/workload/noderun-reconciler.js";
+import { type NodeRun, NodeRunSchema } from "../src/workload/noderun-schema.js";
+import { saveNodeRun } from "../src/workload/noderun-store.js";
 
 let dir = "";
 

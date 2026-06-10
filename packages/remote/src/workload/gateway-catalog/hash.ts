@@ -18,7 +18,7 @@ function stripOwnership(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripOwnership);
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
-    for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+    for (const k of Object.keys(value).sort()) {
       if (k === "ownership") continue;
       out[k] = stripOwnership((value as Record<string, unknown>)[k]);
     }

@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as readline from "node:readline";
+
 import { defaultFleetAuditPath } from "./journal.js";
 
 export interface AuditEntry {

@@ -1,7 +1,8 @@
+import { agentConfig as agentConfigMod } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { agentConfig as agentConfigMod } from "@llamactl/remote";
+
 import { makeTempRuntime, runCli } from "./helpers.js";
 
 function augment(env: NodeJS.ProcessEnv, devStorage: string): NodeJS.ProcessEnv {
@@ -17,7 +18,9 @@ describe("llamactl ctx", () => {
   beforeEach(() => {
     temp = makeTempRuntime();
   });
-  afterEach(() => temp.cleanup());
+  afterEach(() => {
+    temp.cleanup();
+  });
 
   test('ctx current on fresh config → "default"', () => {
     const r = runCli(["ctx", "current"], augment(temp.env, temp.devStorage));
@@ -49,7 +52,9 @@ describe("llamactl node", () => {
   beforeEach(() => {
     temp = makeTempRuntime();
   });
-  afterEach(() => temp.cleanup());
+  afterEach(() => {
+    temp.cleanup();
+  });
 
   test("node ls on fresh config shows local (default)", () => {
     const r = runCli(["node", "ls"], augment(temp.env, temp.devStorage));
@@ -155,7 +160,9 @@ describe("llamactl agent", () => {
   beforeEach(() => {
     temp = makeTempRuntime();
   });
-  afterEach(() => temp.cleanup());
+  afterEach(() => {
+    temp.cleanup();
+  });
 
   test("agent init emits files + bootstrap line", () => {
     const env = augment(temp.env, temp.devStorage);

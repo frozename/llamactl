@@ -11,11 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { applyComposite, destroyComposite } from "../src/composite/apply.js";
 import type { Composite } from "../src/composite/schema.js";
-import { saveConfig } from "../src/config/kubeconfig.js";
-import { freshConfig } from "../src/config/schema.js";
-import { loadPipeline } from "../src/rag/pipeline/store.js";
 import type {
   ImageRef,
   RemoveServiceOptions,
@@ -26,6 +22,11 @@ import type {
   ServiceRef,
 } from "../src/runtime/backend.js";
 import type { WorkloadClient } from "../src/workload/apply.js";
+
+import { applyComposite, destroyComposite } from "../src/composite/apply.js";
+import { saveConfig } from "../src/config/kubeconfig.js";
+import { freshConfig } from "../src/config/schema.js";
+import { loadPipeline } from "../src/rag/pipeline/store.js";
 
 let tmp = "";
 let configPath = "";
@@ -95,7 +96,9 @@ const stubClient: WorkloadClient = {
   },
   serverStart: {
     subscribe(_input, callbacks) {
-      queueMicrotask(() => callbacks.onComplete?.());
+      queueMicrotask(() => {
+        callbacks.onComplete?.();
+      });
       return { unsubscribe: () => {} };
     },
   },

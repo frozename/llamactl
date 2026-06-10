@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useEffect, useMemo } from "react";
+
 import { trpc } from "@/lib/trpc";
 import { useOpsExecutorStore } from "@/stores/ops-executor-store";
 
@@ -31,7 +32,7 @@ export function OpsExecutorPicker(): React.JSX.Element {
   );
   const models = useMemo(
     () =>
-      (modelList.data?.models as Array<{ id?: string }> | undefined)
+      (modelList.data?.models as { id?: string }[] | undefined)
         ?.map((m) => m.id)
         .filter((id): id is string => typeof id === "string") ?? [],
     [modelList.data],
@@ -70,7 +71,9 @@ export function OpsExecutorPicker(): React.JSX.Element {
     <div className="flex items-center gap-2 text-xs">
       <select
         value={nodeId ?? ""}
-        onChange={(e) => setNode(e.target.value || null)}
+        onChange={(e) => {
+          setNode(e.target.value || null);
+        }}
         data-testid="ops-executor-node"
         aria-label="Executor node"
         className="rounded border border-[color:var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-[color:var(--color-text)]"
@@ -84,7 +87,9 @@ export function OpsExecutorPicker(): React.JSX.Element {
       </select>
       <select
         value={model ?? ""}
-        onChange={(e) => setModel(e.target.value || null)}
+        onChange={(e) => {
+          setModel(e.target.value || null);
+        }}
         disabled={!nodeId || models.length === 0}
         data-testid="ops-executor-model"
         aria-label="Executor model"

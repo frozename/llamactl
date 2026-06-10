@@ -1,4 +1,5 @@
 import { recommendations } from "@llamactl/core";
+
 import { getNodeClient, isLocalDispatch } from "../dispatcher.js";
 
 function padRight(value: string, width: number): string {
@@ -53,8 +54,7 @@ export async function runRecommendations(args: string[]): Promise<number> {
 
   const profiles = recommendations.expandRequestedProfile(requested);
 
-  for (let i = 0; i < profiles.length; i += 1) {
-    const profile = profiles[i];
+  for (const profile of profiles) {
     if (!profile) continue;
     const rows = await recommendations.recommendationsWithHf(profile);
     process.stdout.write(`profile=${profile}\n`);

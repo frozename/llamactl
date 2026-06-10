@@ -1,17 +1,21 @@
-import { describe, it, expect, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import type { FleetSnapshotEntry } from "../src/types.js";
+
 import {
   appendFleetJournal,
   readCurrentLeaseHolder,
   readRecentMovesFromJournal,
 } from "../src/journal.js";
-import type { FleetSnapshotEntry } from "../src/types.js";
 
 describe("appendFleetJournal", () => {
   let dir: string;
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it("fleet-snapshot written to disk and parses back correctly", () => {
     dir = mkdtempSync(join(tmpdir(), "fleet-journal-test-"));

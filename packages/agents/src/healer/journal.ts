@@ -1,9 +1,10 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+
+import type { StepOutcome } from "./execute.js";
 import type { ProbeReport } from "./probe.js";
 import type { PlanLike } from "./severity.js";
-import type { StepOutcome } from "./execute.js";
 
 /**
  * Append-only JSONL journal for the healer loop. One record per tick
@@ -79,7 +80,7 @@ export interface JournalExecutedEntry {
   kind: "executed";
   ts: string;
   proposalId: string;
-  steps: Array<{ index: number; tool: string; outcome: StepOutcome }>;
+  steps: { index: number; tool: string; outcome: StepOutcome }[];
   stoppedAt?: number;
 }
 
@@ -94,7 +95,7 @@ export interface JournalRefusedEntry {
   proposalId: string;
   reason: RefusedReason;
   /** Only set when the refusal was triggered by the severity gate. */
-  refusedSteps?: Array<{ index: number; tool: string; tier: 1 | 2 | 3 }>;
+  refusedSteps?: { index: number; tool: string; tier: 1 | 2 | 3 }[];
 }
 
 export interface JournalPlanFailedEntry {

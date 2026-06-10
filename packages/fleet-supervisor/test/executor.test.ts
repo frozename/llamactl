@@ -1,6 +1,8 @@
-import { describe, it, expect } from "bun:test";
-import { actionTier, runExecutor, type ExecutorOptions } from "../src/executor.js";
+import { describe, expect, it } from "bun:test";
+
 import type { FleetExecutionEntry, FleetJournalEntry, FleetProposalEntry } from "../src/types.js";
+
+import { actionTier, type ExecutorOptions, runExecutor } from "../src/executor.js";
 
 const TS = "2026-05-22T10:00:00.000Z";
 const NODE = "test-node";

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
+
 import { addCurated } from "../src/catalogWriter.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 

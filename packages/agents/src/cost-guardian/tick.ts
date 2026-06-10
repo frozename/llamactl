@@ -1,11 +1,12 @@
-import { parseToolJson, type RunbookToolClient } from "../types.js";
 import type { CostGuardianConfig } from "./config.js";
+
+import { parseToolJson, type RunbookToolClient } from "../types.js";
 import {
   appendCostJournal,
   type CostJournalActionEntry,
   type CostJournalTickEntry,
 } from "./journal.js";
-import { decideGuardianAction, type CostSnapshotSubset, type GuardianDecision } from "./state.js";
+import { type CostSnapshotSubset, decideGuardianAction, type GuardianDecision } from "./state.js";
 import { postGuardianWebhook, type WebhookFetcher } from "./webhook.js";
 
 /**
@@ -63,7 +64,7 @@ export interface GuardianSnapshotPayload {
   totalEstimatedCostUsd?: number;
   windowSince: string;
   windowUntil: string;
-  byProvider?: Array<{ key: string; estimatedCostUsd?: number }>;
+  byProvider?: { key: string; estimatedCostUsd?: number }[];
 }
 
 function toSubset(payload: GuardianSnapshotPayload): CostSnapshotSubset {
@@ -155,7 +156,7 @@ export async function runCostGuardianTick(
   // follows and is journaled separately as `force-private-wet`.
   if (!opts.skipJournal && (decision.tier === "force_private" || decision.tier === "deregister")) {
     let detail: Record<string, unknown> = {
-      autoForcePrivateEnabled: opts.config.auto_force_private === true,
+      autoForcePrivateEnabled: opts.config.auto_force_private,
       targetProfile: "private-first",
       syntheticModel: "fusion-auto",
     };
@@ -217,7 +218,7 @@ export async function runCostGuardianTick(
     appendCostJournal(entry, opts.journalPath);
     // Tier-2 wet-run escalation: only when the dry-run succeeded and
     // the operator opted in via `auto_force_private`.
-    if (ok && opts.config.auto_force_private === true) {
+    if (ok && opts.config.auto_force_private) {
       let wetDetail: Record<string, unknown> = {
         autoForcePrivateEnabled: true,
         targetProfile: "private-first",
@@ -290,7 +291,7 @@ export async function runCostGuardianTick(
     const provider = decision.deregisterTarget;
     let detail: Record<string, unknown> = {
       provider,
-      autoDeregisterEnabled: opts.config.auto_deregister === true,
+      autoDeregisterEnabled: opts.config.auto_deregister,
     };
     let ok = true;
     let error: string | undefined;
@@ -341,7 +342,7 @@ export async function runCostGuardianTick(
     // Tier-3 wet-run escalation — gated by auto flag, dry-run
     // success, and the tier-2 wet-run outcome. The protectedProviders
     // denylist runs before the wet-run and overrides the auto flag.
-    if (ok && opts.config.auto_deregister === true && !tier2WetRunFailed) {
+    if (ok && opts.config.auto_deregister && !tier2WetRunFailed) {
       const protectedProviders = opts.config.protectedProviders ?? [];
       if (protectedProviders.includes(provider)) {
         const refused: CostJournalActionEntry = {

@@ -1,7 +1,9 @@
+import type { NodeClient } from "@llamactl/remote";
+
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
-import type { NodeClient } from "@llamactl/remote";
+
 import { getNodeClient } from "../dispatcher.js";
 
 /**
@@ -82,21 +84,21 @@ export async function runProject(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
     case "add":
-      return runAdd(rest);
+      return await runAdd(rest);
     case "apply":
-      return runApply(rest);
+      return await runApply(rest);
     case "list":
     case "ls":
-      return runList(rest);
+      return await runList(rest);
     case "get":
-      return runGet(rest);
+      return await runGet(rest);
     case "rm":
     case "remove":
-      return runRemove(rest);
+      return await runRemove(rest);
     case "index":
-      return runIndex(rest);
+      return await runIndex(rest);
     case "route":
-      return runRoute(rest);
+      return await runRoute(rest);
     case undefined:
     case "--help":
     case "-h":
@@ -377,8 +379,8 @@ async function runList(args: string[]): Promise<number> {
 async function runGet(args: string[]): Promise<number> {
   let name = "";
   let json = false;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+  for (const arg_ of args) {
+    const arg = arg_;
     if (arg === "--json") json = true;
     else if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);

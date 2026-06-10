@@ -1,10 +1,11 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { router } from "../src/router";
-import { appendJournalEvent } from "../src/ops-chat/sessions/journal";
+
 import { sessionEventBus } from "../src/ops-chat/sessions/event-bus";
+import { appendJournalEvent } from "../src/ops-chat/sessions/journal";
+import { router } from "../src/router";
 
 describe("ops-session router", () => {
   let tmp: string;
@@ -15,7 +16,7 @@ describe("ops-session router", () => {
     tmp = mkdtempSync(join(tmpdir(), "ops-router-"));
     prev = process.env.DEV_STORAGE;
     process.env.DEV_STORAGE = tmp;
-    caller = router.createCaller({} as any);
+    caller = router.createCaller({});
   });
 
   afterEach(() => {

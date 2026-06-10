@@ -1,5 +1,7 @@
 import { z } from "zod";
+
 import type { Runbook, RunbookStep } from "../types.js";
+
 import { parseToolJson } from "../types.js";
 
 /**
@@ -36,7 +38,7 @@ type Params = z.infer<typeof ParamsSchema>;
 interface NodesLsPayload {
   context: string | null;
   cluster: string | null;
-  nodes: Array<{ name: string; kind: string }>;
+  nodes: { name: string; kind: string }[];
 }
 
 export const onboardNewGpuNode: Runbook<Params> = {

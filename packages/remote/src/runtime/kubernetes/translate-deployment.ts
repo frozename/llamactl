@@ -25,19 +25,21 @@
  * next apply and leaves the resource alone when hashes match.
  */
 import type {
-  V1Deployment,
-  V1Service,
-  V1PersistentVolumeClaim,
-  V1Secret,
-  V1EnvVar,
-  V1VolumeMount,
-  V1Volume,
   V1Container,
   V1ContainerPort,
-  V1ServicePort,
+  V1Deployment,
+  V1EnvVar,
+  V1PersistentVolumeClaim,
   V1Probe,
+  V1Secret,
+  V1Service,
+  V1ServicePort,
+  V1Volume,
+  V1VolumeMount,
 } from "@kubernetes/client-node";
+
 import type { ServiceDeployment } from "../backend.js";
+
 import { K8S_ANNOTATION_KEYS, K8S_LABEL_KEYS, MANAGED_BY_VALUE } from "./labels.js";
 
 export interface TranslateDeploymentOptions {

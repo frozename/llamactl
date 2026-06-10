@@ -7,11 +7,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import type { ResolvedEnv } from "./types.js";
-import { resolveEnv } from "./env.js";
-import { readModelHostState, modelhostPidFile } from "./engines/state.js";
-import { readServerState } from "./server.js";
+
 import type { EngineName } from "./engines/index.js";
+import type { ResolvedEnv } from "./types.js";
+
+import { modelhostPidFile, readModelHostState } from "./engines/state.js";
+import { resolveEnv } from "./env.js";
+import { readServerState } from "./server.js";
 
 export interface WorkloadKey {
   name: string;
@@ -37,7 +39,7 @@ export interface PeerSnapshot {
   /** revision = the peer server's boot token (its /v1/models `created`), used to
    *  invalidate cross-node response caches on a peer restart/swap. Optional for
    *  back-compat with peers that don't advertise it. */
-  workloads: Array<{ modelId: string; port: number; revision?: string | null }>;
+  workloads: { modelId: string; port: number; revision?: string | null }[];
   pressure: "NORMAL" | "HIGH";
   fetchedAt: number;
 }
@@ -193,7 +195,7 @@ export function listLocalRoutes(resolved: ResolvedEnv = resolveEnv()): LocalRout
     const hostPid = readPidFile(modelhostPidFile(resolved, key));
     if (hostPid !== null && isProcessAlive(hostPid)) {
       const state = readModelHostState(key, resolved);
-      if (state && state.pid === hostPid) {
+      if (state?.pid === hostPid) {
         for (const alias of state.modelAliases) {
           out.push({
             workload: dirent.name,

@@ -2,12 +2,14 @@ import { spawn } from "node:child_process";
 import fs, { existsSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import { delimiter, join } from "node:path";
+
+import type { MachineProfile, ResolvedEnv } from "./types.js";
+
 import { relFromRepoAndFile } from "./catalog.js";
 import { eligibleGgufSiblings, pickFile } from "./discovery.js";
 import { resolveEnv } from "./env.js";
 import { fetchModelInfo, mmprojFileForRepo } from "./hf.js";
 import { normalizeProfile, resolveProfile } from "./profile.js";
-import type { MachineProfile, ResolvedEnv } from "./types.js";
 
 /**
  * Resolve which HuggingFace CLI binary to invoke. Probe order:

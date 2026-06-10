@@ -1,6 +1,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
 import type { RagBinding } from "../../config/schema.js";
+
 import { RagError } from "../errors.js";
 
 /**
@@ -24,7 +26,7 @@ const CLIENT_NAME = "llamactl-rag-chroma";
 const CLIENT_VERSION = "0.1.0";
 
 export interface ChromaToolResult {
-  content: Array<{ type: string; text?: string; [key: string]: unknown }>;
+  content: { type: string; text?: string; [key: string]: unknown }[];
   isError?: boolean;
   [key: string]: unknown;
 }

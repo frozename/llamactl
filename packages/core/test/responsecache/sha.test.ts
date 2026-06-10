@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+
 import { canonicalRequestSha } from "../../src/responsecache/index.js";
 
 test("canonical sha is stable across JSON key reorder", () => {

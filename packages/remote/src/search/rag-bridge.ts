@@ -1,7 +1,8 @@
 // packages/remote/src/search/rag-bridge.ts
-import type { SessionHit, KnowledgeHit, LogHit } from "./types.js";
-import { resolveRagNode } from "../rag/resolve.js";
+import type { KnowledgeHit, LogHit, SessionHit } from "./types.js";
+
 import { createRagAdapter } from "../rag/index.js";
+import { resolveRagNode } from "../rag/resolve.js";
 
 export type RagCollection = "sessions" | "knowledge" | "logs";
 
@@ -17,7 +18,7 @@ export interface RagBridgeOpts {
 
 export async function ragBridgeSearch(
   opts: RagBridgeOpts,
-): Promise<Array<SessionHit | KnowledgeHit | LogHit>> {
+): Promise<(SessionHit | KnowledgeHit | LogHit)[]> {
   if (opts.signal?.aborted) throw new Error("aborted");
   let adapter = opts.adapter;
   if (!adapter) {
@@ -41,8 +42,8 @@ export async function ragBridgeSearch(
 function normalizeHits(
   collection: RagCollection,
   res: unknown,
-): Array<SessionHit | KnowledgeHit | LogHit> {
-  const hits = (res as { hits?: Array<any> }).hits ?? [];
+): (SessionHit | KnowledgeHit | LogHit)[] {
+  const hits = (res as { hits?: any[] }).hits ?? [];
   if (collection === "sessions") {
     return hits.map((h) => ({
       sessionId: h.metadata?.sessionId ?? h.id,

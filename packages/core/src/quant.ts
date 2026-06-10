@@ -6,17 +6,17 @@
  * the explicit order here makes future additions easier to review.
  */
 export function quantFromRel(rel: string): string {
-  if (/Q8_0\.gguf$/.test(rel)) return "q8";
-  if (/UD-Q6_K_XL\.gguf$/.test(rel)) return "q6";
-  if (/UD-Q5_K_XL\.gguf$/.test(rel)) return "q5";
-  if (/UD-Q4_K_M\.gguf$/.test(rel)) return "q4m";
-  if (/UD-Q4_K_XL\.gguf$/.test(rel)) return "q4";
-  if (/UD-Q3_K_S\.gguf$/.test(rel)) return "q3s";
-  if (/UD-Q3_K_M\.gguf$/.test(rel)) return "q3m";
-  if (/UD-Q3_K_XL\.gguf$/.test(rel)) return "q3xl";
-  if (/UD-Q2_K_XL\.gguf$/.test(rel)) return "q2";
-  if (/MXFP4_MOE\.gguf$/.test(rel)) return "mxfp4";
-  if (/Q4_K_M\.gguf$/.test(rel)) return "q4km";
-  if (/Q5_K_M\.gguf$/.test(rel)) return "q5km";
+  if (rel.endsWith("Q8_0.gguf")) return "q8";
+  if (rel.endsWith("UD-Q6_K_XL.gguf")) return "q6";
+  if (rel.endsWith("UD-Q5_K_XL.gguf")) return "q5";
+  if (rel.endsWith("UD-Q4_K_M.gguf")) return "q4m";
+  if (rel.endsWith("UD-Q4_K_XL.gguf")) return "q4";
+  if (rel.endsWith("UD-Q3_K_S.gguf")) return "q3s";
+  if (rel.endsWith("UD-Q3_K_M.gguf")) return "q3m";
+  if (rel.endsWith("UD-Q3_K_XL.gguf")) return "q3xl";
+  if (rel.endsWith("UD-Q2_K_XL.gguf")) return "q2";
+  if (rel.endsWith("MXFP4_MOE.gguf")) return "mxfp4";
+  if (rel.endsWith("Q4_K_M.gguf")) return "q4km";
+  if (rel.endsWith("Q5_K_M.gguf")) return "q5km";
   return "custom";
 }

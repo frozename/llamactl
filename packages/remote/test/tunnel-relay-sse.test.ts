@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
+
+import { hashToken } from "../src/server/auth.js";
+import { handleTunnelRelay } from "../src/server/tunnel-relay.js";
 import {
   createTunnelClient,
   createTunnelServer,
   type TunnelReq,
   type TunnelSubscription,
 } from "../src/tunnel/index.js";
-import { hashToken } from "../src/server/auth.js";
-import { handleTunnelRelay } from "../src/server/tunnel-relay.js";
 
 /**
  * B.4 coverage — end-to-end SSE relay. Boots a central agent with
@@ -77,7 +78,7 @@ async function startHarness(script: {
         return tunnelSrv.handleUpgrade(req, server) ?? new Response("no", { status: 400 });
       }
       if (url.pathname.startsWith("/tunnel-relay/")) {
-        return handleTunnelRelay(req, url, tunnelSrv, bearerHash);
+        return await handleTunnelRelay(req, url, tunnelSrv, bearerHash);
       }
       return new Response("404", { status: 404 });
     },

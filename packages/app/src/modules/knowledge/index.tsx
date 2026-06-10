@@ -1,7 +1,9 @@
 import * as React from "react";
 import { useMemo, useState } from "react";
+
 import { trpc } from "@/lib/trpc";
-import { Badge, Button, StatusDot, Input, Kbd } from "@/ui";
+import { Badge, Button, Input } from "@/ui";
+
 import { PipelinesTab } from "./pipelines-tab";
 import { QualityTab } from "./quality-tab";
 
@@ -282,9 +284,7 @@ function CollectionHeader(props: {
       "no embedder bound on this pgvector node — queries will fail. Bind one in the panel above.",
     );
   }
-  const metaEntries = targeted.metadata
-    ? Object.entries(targeted.metadata as Record<string, unknown>)
-    : [];
+  const metaEntries = targeted.metadata ? Object.entries(targeted.metadata) : [];
   return (
     <div
       style={{
@@ -447,7 +447,7 @@ function QueryTab(props: {
     setIsSearching(true);
     try {
       const response = await utils.ragSearch.fetch(input);
-      setLastResponse(response as SearchResponse);
+      setLastResponse(response);
     } catch (err) {
       setLastResponse(null);
       setSubmitError((err as Error).message);
@@ -494,7 +494,9 @@ function QueryTab(props: {
           </span>
           <textarea
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+            }}
             placeholder="Ask the knowledge base…"
             rows={3}
             style={{
@@ -531,7 +533,9 @@ function QueryTab(props: {
               min={1}
               max={100}
               value={topK}
-              onChange={(e) => setTopK(Math.max(1, Number(e.target.value) || 10))}
+              onChange={(e) => {
+                setTopK(Math.max(1, Number(e.target.value) || 10));
+              }}
               style={{ width: "100%" }}
             />
           </label>
@@ -549,7 +553,9 @@ function QueryTab(props: {
             <Input
               type="text"
               value={collection}
-              onChange={(e) => onCollectionChange(e.target.value)}
+              onChange={(e) => {
+                onCollectionChange(e.target.value);
+              }}
               placeholder="defaults to node's collection"
               style={{
                 width: "100%",
@@ -735,7 +741,9 @@ function QueryTab(props: {
                 {hasMeta && (
                   <Button
                     type="button"
-                    onClick={() => setOpenResult(isOpen ? null : key)}
+                    onClick={() => {
+                      setOpenResult(isOpen ? null : key);
+                    }}
                     style={{
                       borderRadius: "var(--r-md)",
                       border: "1px solid var(--color-border)",
@@ -989,7 +997,9 @@ function CollectionsTab(props: {
               >
                 <Button
                   type="button"
-                  onClick={() => onPick(c.name)}
+                  onClick={() => {
+                    onPick(c.name);
+                  }}
                   style={{
                     borderRadius: "var(--r-md)",
                     border: "1px solid var(--color-border)",
@@ -1029,7 +1039,7 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
 
   const store = trpc.ragStore.useMutation({
     onSuccess: (data) => {
-      setLastResult(data as StoreResponse);
+      setLastResult(data);
       setSubmitError(null);
       setText("");
     },
@@ -1146,7 +1156,9 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
             <Input
               type="text"
               value={collection}
-              onChange={(e) => setCollection(e.target.value)}
+              onChange={(e) => {
+                setCollection(e.target.value);
+              }}
               placeholder="defaults to node's collection"
               style={{
                 width: "100%",
@@ -1468,7 +1480,9 @@ function EmbedderPanel(props: {
             </span>
             <select
               value={draftNode}
-              onChange={(e) => setDraftNode(e.target.value)}
+              onChange={(e) => {
+                setDraftNode(e.target.value);
+              }}
               data-testid="knowledge-embedder-node-select"
               style={{
                 width: "100%",
@@ -1509,7 +1523,9 @@ function EmbedderPanel(props: {
             <Input
               type="text"
               value={draftModel}
-              onChange={(e) => setDraftModel(e.target.value)}
+              onChange={(e) => {
+                setDraftModel(e.target.value);
+              }}
               placeholder="e.g. nomic-embed-text-v1.5"
               data-testid="knowledge-embedder-model-input"
               style={{
@@ -1566,7 +1582,7 @@ export default function Knowledge(): React.JSX.Element {
         const embedder = n.rag?.embedder;
         return {
           name: n.name,
-          provider: (n.rag?.provider as RagProviderKind | undefined) ?? null,
+          provider: n.rag?.provider ?? null,
           kind: "rag" as const,
           embedder:
             embedder && typeof embedder === "object"
@@ -1741,7 +1757,9 @@ export default function Knowledge(): React.JSX.Element {
               </span>
               <select
                 value={selected.name}
-                onChange={(e) => setSelectedNode(e.target.value)}
+                onChange={(e) => {
+                  setSelectedNode(e.target.value);
+                }}
                 data-testid="knowledge-node-select"
                 style={{
                   width: "100%",
@@ -1818,7 +1836,9 @@ export default function Knowledge(): React.JSX.Element {
                 <Button
                   key={tab.id}
                   type="button"
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                  }}
                   data-testid={`knowledge-tab-${tab.id}`}
                   style={{
                     ...(active

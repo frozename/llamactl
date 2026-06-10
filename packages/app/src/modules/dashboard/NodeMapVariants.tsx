@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useMemo, useState } from "react";
+
 import { trpc } from "@/lib/trpc";
 
 /**
@@ -35,7 +36,7 @@ export function useMockNodes(): N[] {
     const out: N[] = raw.map((n) => ({
       name: n.name,
       endpoint: n.endpoint,
-      effectiveKind: (n.effectiveKind ?? "agent") as NodeKind,
+      effectiveKind: n.effectiveKind ?? "agent",
       isLocal: n.name === "local",
     }));
     if (!out.some((n) => n.name === "local")) {
@@ -337,7 +338,9 @@ export function NodeMapPreviews(): React.JSX.Element {
           <button
             key={p}
             type="button"
-            onClick={() => setPick(p)}
+            onClick={() => {
+              setPick(p);
+            }}
             className="rounded border px-2 py-1"
             style={{
               borderColor: pick === p ? "var(--color-ok)" : "var(--color-border)",

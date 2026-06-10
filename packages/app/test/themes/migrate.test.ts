@@ -1,9 +1,6 @@
-import { describe, test, expect } from "bun:test";
-import {
-  migrateLegacyThemeId,
-  type LegacyThemeId,
-  type BeaconThemeId,
-} from "../../src/themes/migrate";
+import { describe, expect, test } from "bun:test";
+
+import { type BeaconThemeId, migrateLegacyThemeId } from "../../src/themes/migrate";
 
 describe("migrateLegacyThemeId", () => {
   test("glass → sirius", () => {
@@ -22,7 +19,7 @@ describe("migrateLegacyThemeId", () => {
   });
 
   test("unknown legacy id → sirius default", () => {
-    expect(migrateLegacyThemeId("unknown" as LegacyThemeId)).toEqual({
+    expect(migrateLegacyThemeId("unknown")).toEqual({
       themeId: "sirius",
       extras: {},
     });

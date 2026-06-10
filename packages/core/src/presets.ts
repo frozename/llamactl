@@ -1,9 +1,11 @@
 import { readFileSync, unlinkSync } from "node:fs";
+
+import type { MachineProfile } from "./types.js";
+
 import { resolveEnv } from "./env.js";
 import { atomicWriteFile } from "./fsAtomic.js";
 import { normalizeProfile } from "./profile.js";
 import { PresetOverride, presetOverrideFields, splitTsvRow } from "./schemas.js";
-import type { MachineProfile } from "./types.js";
 
 export type PresetName = "best" | "vision" | "balanced" | "fast";
 
@@ -41,7 +43,7 @@ const BUILTIN_PRESETS: Record<MachineProfile, Record<PresetName, string>> = {
  * `mac-mini-16g + best` becomes `LOCAL_AI_PRESET_MAC_MINI_16G_BEST_MODEL`.
  */
 function envVarName(profile: MachineProfile, preset: PresetName): string {
-  const profileKey = profile.replace(/-/g, "_").toUpperCase();
+  const profileKey = profile.replaceAll("-", "_").toUpperCase();
   const presetKey = preset.toUpperCase();
   return `LOCAL_AI_PRESET_${profileKey}_${presetKey}_MODEL`;
 }
@@ -73,8 +75,7 @@ export function readPresetOverrides(file: string): PresetOverride[] {
     const cols = splitTsvRow(line);
     if (cols.length < presetOverrideFields.length) continue;
     const record: Record<string, string> = {};
-    for (let i = 0; i < presetOverrideFields.length; i += 1) {
-      const field = presetOverrideFields[i];
+    for (const [i, field] of presetOverrideFields.entries()) {
       if (field === undefined) continue;
       record[field] = cols[i] ?? "";
     }

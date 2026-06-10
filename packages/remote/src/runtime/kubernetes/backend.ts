@@ -41,8 +41,9 @@ import type {
   ServiceInstance,
   ServiceRef,
 } from "../backend.js";
-import { RuntimeError } from "../errors.js";
+
 import { resolveSecret } from "../../config/secret.js";
+import { RuntimeError } from "../errors.js";
 import {
   createKubernetesClient,
   type KubernetesClient,
@@ -144,10 +145,10 @@ export class KubernetesBackend implements RuntimeBackend {
 
     const kind = spec.controllerKind ?? "deployment";
     if (kind === "deployment") {
-      return this.ensureDeployment(spec, namespace, compositeName, resolvedSecrets);
+      return await this.ensureDeployment(spec, namespace, compositeName, resolvedSecrets);
     }
     if (kind === "statefulset") {
-      return this.ensureStatefulSet(spec);
+      return await this.ensureStatefulSet(spec);
     }
     throw new RuntimeError("spec-invalid", `unknown controllerKind: ${kind satisfies never}`);
   }
@@ -1223,7 +1224,7 @@ export class KubernetesBackend implements RuntimeBackend {
           ? createdAtRaw
           : new Date(0).toISOString();
     let endpoint: ServiceInstance["endpoint"] = null;
-    if (service && service.metadata?.name) {
+    if (service?.metadata?.name) {
       const port = service.spec?.ports?.[0]?.port;
       if (typeof port === "number") {
         endpoint = {

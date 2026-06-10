@@ -1,9 +1,12 @@
+import type { schemas } from "@llamactl/core";
+
+import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import type { schemas } from "@llamactl/core";
+
 import { trpc } from "@/lib/trpc";
 import { Button, Input } from "@/ui";
+
 import { useSettingsStore } from "./project-scan-roots";
 
 type PresetOverride = schemas.PresetOverride;
@@ -91,14 +94,18 @@ function PromotionsEditor(): React.JSX.Element {
       setError(null);
       await invalidate();
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      setError(err.message);
+    },
   });
   const deleteMutation = trpc.promoteDelete.useMutation({
     onSuccess: async () => {
       setPendingDelete(null);
       await invalidate();
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      setError(err.message);
+    },
   });
 
   const rels = useMemo(() => (catalog.data ?? []).map((row) => row.rel), [catalog.data]);
@@ -229,12 +236,12 @@ function PromotionsEditor(): React.JSX.Element {
                             variant="destructive"
                             size="sm"
                             disabled={busy}
-                            onClick={() =>
+                            onClick={() => {
                               deleteMutation.mutate({
-                                profile: p.profile as Profile,
-                                preset: p.preset as Preset,
-                              })
-                            }
+                                profile: p.profile,
+                                preset: p.preset,
+                              });
+                            }}
                           >
                             Confirm
                           </Button>
@@ -242,7 +249,9 @@ function PromotionsEditor(): React.JSX.Element {
                             variant="outline"
                             size="sm"
                             disabled={busy}
-                            onClick={() => setPendingDelete(null)}
+                            onClick={() => {
+                              setPendingDelete(null);
+                            }}
                           >
                             Cancel
                           </Button>
@@ -252,7 +261,9 @@ function PromotionsEditor(): React.JSX.Element {
                           variant="ghost"
                           size="sm"
                           disabled={busy}
-                          onClick={() => setPendingDelete(key)}
+                          onClick={() => {
+                            setPendingDelete(key);
+                          }}
                           aria-label={`Remove promotion ${key}`}
                         >
                           Remove
@@ -306,7 +317,9 @@ function PromotionsEditor(): React.JSX.Element {
             </span>
             <select
               value={profile}
-              onChange={(e) => setProfile(e.target.value as Profile)}
+              onChange={(e) => {
+                setProfile(e.target.value as Profile);
+              }}
               disabled={busy}
               style={{
                 width: "100%",
@@ -337,7 +350,9 @@ function PromotionsEditor(): React.JSX.Element {
             </span>
             <select
               value={preset}
-              onChange={(e) => setPreset(e.target.value as Preset)}
+              onChange={(e) => {
+                setPreset(e.target.value as Preset);
+              }}
               disabled={busy}
               style={{
                 width: "100%",
@@ -369,7 +384,9 @@ function PromotionsEditor(): React.JSX.Element {
             <Input
               list="rel-suggestions"
               value={rel}
-              onChange={(e) => setRel(e.target.value)}
+              onChange={(e) => {
+                setRel(e.target.value);
+              }}
               disabled={busy}
               placeholder="e.g. gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
               style={{ fontFamily: "var(--font-mono)" }}
@@ -463,7 +480,9 @@ export default function Settings(): React.JSX.Element {
               </span>
               <textarea
                 value={projectScanRootsText}
-                onChange={(e) => setProjectScanRootsText(e.target.value)}
+                onChange={(e) => {
+                  setProjectScanRootsText(e.target.value);
+                }}
                 rows={7}
                 spellCheck={false}
                 placeholder="~/DevStorage/repos/personal&#10;~/DevStorage/repos/work"

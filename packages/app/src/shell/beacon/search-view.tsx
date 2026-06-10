@@ -1,11 +1,13 @@
-import * as React from "react";
-import { Input, Kbd } from "@/ui";
 import { Search as SearchIcon } from "lucide-react";
-import { useTabStore } from "@/stores/tab-store";
+import * as React from "react";
+
 import { useGlobalSearch } from "@/lib/global-search/hooks/use-global-search";
-import { SearchResultsTree } from "./search-results-tree";
 import type { Hit } from "@/lib/global-search/types";
 import { trpcUIClient } from "@/lib/trpc";
+import { useTabStore } from "@/stores/tab-store";
+import { Input, Kbd } from "@/ui";
+
+import { SearchResultsTree } from "./search-results-tree";
 
 export function SearchView(): React.JSX.Element {
   const [q, setQ] = React.useState("");
@@ -15,7 +17,9 @@ export function SearchView(): React.JSX.Element {
   React.useEffect(() => {
     trpcUIClient.uiGetActiveNode
       .query()
-      .then((res) => setConnectedNode(res.name || undefined))
+      .then((res) => {
+        setConnectedNode(res.name || undefined);
+      })
       .catch(() => {});
   }, []);
 
@@ -40,7 +44,9 @@ export function SearchView(): React.JSX.Element {
           leadingSlot={<SearchIcon size={12} />}
           placeholder="Search everything…"
           value={q}
-          onChange={(e) => setQ(e.currentTarget.value)}
+          onChange={(e) => {
+            setQ(e.currentTarget.value);
+          }}
           autoFocus
         />
       </div>

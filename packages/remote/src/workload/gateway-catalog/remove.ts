@@ -37,7 +37,7 @@ export function removeCompositeEntries<T extends AnyEntry>(opts: RemoveOpts<T>):
       removedNames.push(String((e as any)[key]));
       continue;
     }
-    next.push({ ...e, ownership: { ...e.ownership, compositeNames: remaining } } as T);
+    next.push({ ...e, ownership: { ...e.ownership, compositeNames: remaining } });
   }
 
   return { next, changed, removedNames };

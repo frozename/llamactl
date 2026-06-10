@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   ensureDirs,
   formatEvalScript,
@@ -14,7 +15,7 @@ describe("env.resolveEnv", () => {
     const resolved = resolveEnv({
       DEV_STORAGE: "/tmp/ds",
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
-    } as NodeJS.ProcessEnv);
+    });
 
     expect(resolved.HF_HOME).toBe("/tmp/ds/cache/huggingface");
     expect(resolved.HUGGINGFACE_HUB_CACHE).toBe("/tmp/ds/cache/huggingface/hub");
@@ -31,7 +32,7 @@ describe("env.resolveEnv", () => {
     const resolved = resolveEnv({
       DEV_STORAGE: "/tmp/ds",
       LLAMA_CPP_MACHINE_PROFILE: "mac-mini-16g",
-    } as NodeJS.ProcessEnv);
+    });
     expect(resolved.LLAMA_CPP_GEMMA_CTX_SIZE).toBe("16384");
     expect(resolved.LLAMA_CPP_QWEN_CTX_SIZE).toBe("16384");
   });
@@ -42,7 +43,7 @@ describe("env.resolveEnv", () => {
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
       LOCAL_AI_PROVIDER: "lmstudio",
       LM_API_TOKEN: "secret",
-    } as NodeJS.ProcessEnv);
+    });
     expect(resolved.LOCAL_AI_PROVIDER).toBe("lmstudio");
     expect(resolved.LOCAL_AI_PROVIDER_URL).toBe("http://127.0.0.1:1234/v1");
     expect(resolved.LOCAL_AI_API_KEY).toBe("secret");
@@ -54,21 +55,21 @@ describe("env.resolveEnv", () => {
       DEV_STORAGE: "/tmp/ds",
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
       LOCAL_AI_MODEL: "custom-id",
-    } as NodeJS.ProcessEnv);
+    });
     expect(resolved.LOCAL_AI_MODEL).toBe("custom-id");
   });
 });
 
 describe("env.resolveInternalProxyEndpoint", () => {
   test("falls back to loopback default when unset", () => {
-    expect(resolveInternalProxyEndpoint({} as NodeJS.ProcessEnv)).toBe("http://127.0.0.1:7944");
+    expect(resolveInternalProxyEndpoint({})).toBe("http://127.0.0.1:7944");
   });
 
   test("respects LLAMACTL_INTERNAL_PROXY_URL override", () => {
     expect(
       resolveInternalProxyEndpoint({
         LLAMACTL_INTERNAL_PROXY_URL: "http://127.0.0.1:9001",
-      } as NodeJS.ProcessEnv),
+      }),
     ).toBe("http://127.0.0.1:9001");
   });
 });
@@ -78,7 +79,7 @@ describe("env.resolveEnv — LLAMACTL_TEST_PROFILE", () => {
     const resolved = resolveEnv({
       LLAMACTL_TEST_PROFILE: "/tmp/hermetic",
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
-    } as NodeJS.ProcessEnv);
+    });
 
     expect(resolved.DEV_STORAGE).toBe("/tmp/hermetic");
     expect(resolved.LOCAL_AI_RUNTIME_DIR).toBe("/tmp/hermetic/ai-models/local-ai");
@@ -96,7 +97,7 @@ describe("env.resolveEnv — LLAMACTL_TEST_PROFILE", () => {
     const resolved = resolveEnv({
       LLAMACTL_TEST_PROFILE: "/tmp/hermetic",
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
-    } as NodeJS.ProcessEnv);
+    });
 
     expect(resolved.LLAMA_CPP_HOST).toBe("127.0.0.1");
     expect(resolved.LLAMA_CPP_PORT).toBe("65534");
@@ -112,7 +113,7 @@ describe("env.resolveEnv — LLAMACTL_TEST_PROFILE", () => {
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
       LLAMA_CPP_BIN: "/my/real/bin",
       LLAMA_CPP_PORT: "8081",
-    } as NodeJS.ProcessEnv);
+    });
 
     expect(resolved.LLAMA_CPP_BIN).toBe("/my/real/bin");
     expect(resolved.LLAMA_CPP_PORT).toBe("8081");
@@ -127,7 +128,7 @@ describe("env.resolveEnv — LLAMACTL_TEST_PROFILE", () => {
       LLAMACTL_TEST_PROFILE: "",
       DEV_STORAGE: "/tmp/ds",
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
-    } as NodeJS.ProcessEnv);
+    });
 
     // Production cascade still drives derivation — $DEV_STORAGE wins.
     expect(resolved.DEV_STORAGE).toBe("/tmp/ds");
@@ -141,7 +142,7 @@ describe("env.resolveEnv — LLAMACTL_TEST_PROFILE", () => {
     const resolved = resolveEnv({
       DEV_STORAGE: "/tmp/ds",
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
-    } as NodeJS.ProcessEnv);
+    });
 
     expect(resolved.DEV_STORAGE).toBe("/tmp/ds");
     expect(resolved.LLAMA_CPP_ROOT).toBe("/tmp/ds/ai-models/llama.cpp");
@@ -168,7 +169,7 @@ describe("env.formatEvalScript", () => {
     const resolved = resolveEnv({
       DEV_STORAGE: "/tmp/ds",
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
-    } as NodeJS.ProcessEnv);
+    });
     const script = formatEvalScript(resolved);
 
     expect(script).toContain("export DEV_STORAGE=/tmp/ds");
@@ -185,7 +186,7 @@ describe("env.formatEvalScript", () => {
       DEV_STORAGE: "/tmp/ds",
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
       LLAMA_CPP_SERVER_ALIAS: "name with 'quotes'",
-    } as NodeJS.ProcessEnv);
+    });
     const script = formatEvalScript(resolved);
     expect(script).toContain(`export LLAMA_CPP_SERVER_ALIAS='name with '\\''quotes'\\'''`);
   });
@@ -209,7 +210,7 @@ describe("env.resolveEnv — process.env seed shape", () => {
     const resolved = resolveEnv({
       LLAMACTL_TEST_PROFILE: "/tmp/profile-for-seed",
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
-    } as NodeJS.ProcessEnv);
+    });
     for (const [key, value] of Object.entries(resolved)) {
       expect(typeof value).toBe("string");
       // LOCAL_AI_BENCH_IMAGE is intentionally empty-string when unset;
@@ -250,7 +251,7 @@ describe("env.resolveEnv — process.env seed shape", () => {
     // value is already string-typed so the seed loop is safe.
     const resolved = resolveEnv({
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
-    } as NodeJS.ProcessEnv);
+    });
     for (const value of Object.values(resolved)) {
       expect(value).not.toBe(undefined);
       expect(value).not.toBe("undefined");

@@ -1,4 +1,4 @@
-import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom-client";
+import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from "prom-client";
 
 /**
  * Prometheus metrics for the agent. Registered on a dedicated

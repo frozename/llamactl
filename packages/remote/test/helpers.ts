@@ -1,15 +1,16 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   auth,
-  config as kubecfg,
   configSchema,
   createNodeClient,
-  startAgentServer,
-  tls,
+  config as kubecfg,
   type NodeClient,
   type RunningAgent,
+  startAgentServer,
+  tls,
 } from "../src/index.js";
 
 export interface ClusterNodeHandle {
@@ -37,7 +38,7 @@ export interface Cluster {
 
 export interface MakeClusterOptions {
   /** Number of nodes or an array of per-node hints. */
-  nodes: number | Array<{ name?: string }>;
+  nodes: number | { name?: string }[];
 }
 
 /**
@@ -48,7 +49,7 @@ export interface MakeClusterOptions {
  * additional agent-server + TLS cert plumbing.
  */
 export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
-  const specs: Array<{ name?: string }> = Array.isArray(opts.nodes)
+  const specs: { name?: string }[] = Array.isArray(opts.nodes)
     ? opts.nodes
     : Array.from({ length: opts.nodes }, () => ({}));
 
@@ -56,8 +57,8 @@ export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
   let cfg = configSchema.freshConfig();
 
   try {
-    for (let i = 0; i < specs.length; i++) {
-      const spec = specs[i]!;
+    for (const [i, spec_] of specs.entries()) {
+      const spec = spec_;
       const name = spec.name ?? `node${i + 1}`;
       const devStorage = mkdtempSync(join(tmpdir(), `llamactl-cluster-${name}-`));
       const runtimeDir = join(devStorage, "ai-models", "local-ai");

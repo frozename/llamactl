@@ -4,18 +4,18 @@
  * individual files — keeps the refactor surface tight.
  */
 export {
+  type CliProviderOptions,
   createCliSubprocessProvider,
   messagesToPrompt,
-  type CliProviderOptions,
   type SpawnFn,
   type SpawnResult,
   type SpawnStreamFn,
   type SpawnStreamResult,
 } from "./adapter.js";
-export { CLI_PRESETS, resolvePreset, expandArgs, type ResolvedCliInvocation } from "./presets.js";
 export {
   appendCliJournal,
+  type CliJournalEntry,
   cliJournalPathFor,
   defaultCliJournalDir,
-  type CliJournalEntry,
 } from "./journal.js";
+export { CLI_PRESETS, expandArgs, type ResolvedCliInvocation, resolvePreset } from "./presets.js";

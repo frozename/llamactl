@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createNodeClient, type TunnelSendFn } from "../src/client/node-client.js";
+
 import type { Config } from "../src/config/schema.js";
+
+import { createNodeClient, type TunnelSendFn } from "../src/client/node-client.js";
 
 /**
  * I.3.3 — createNodeClient routes through a tunnel when the target
@@ -37,7 +39,7 @@ function baseConfig(overrides: Partial<Config["clusters"][number]["nodes"][numbe
 
 describe("proxyFromTunnel — via createNodeClient", () => {
   test("query routes through the tunnel and resolves with result", async () => {
-    const sent: Array<{ id: string; method: string; params: unknown }> = [];
+    const sent: { id: string; method: string; params: unknown }[] = [];
     const send: TunnelSendFn = async (req) => {
       sent.push(req);
       if (req.method === "catalog.list") {
@@ -62,7 +64,7 @@ describe("proxyFromTunnel — via createNodeClient", () => {
   });
 
   test("mutation uses type:mutation on the tunnel frame", async () => {
-    const sent: Array<{ method: string; params: unknown }> = [];
+    const sent: { method: string; params: unknown }[] = [];
     const send: TunnelSendFn = async (req) => {
       sent.push({ method: req.method, params: req.params });
       return { id: req.id, result: { ok: true } };
@@ -132,7 +134,7 @@ describe("proxyFromTunnel — via createNodeClient", () => {
 
   test("subscribe forwards to tunnelSubscribe when wired (Slice B)", async () => {
     const send: TunnelSendFn = async () => ({ id: "x" });
-    const calls: Array<{ method: string; input: unknown }> = [];
+    const calls: { method: string; input: unknown }[] = [];
     const tunnelSubscribe = (
       method: string,
       input: unknown,

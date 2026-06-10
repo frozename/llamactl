@@ -3,19 +3,20 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+
 import {
   appendHealerJournal,
   buildGoal,
   executePlan,
   gatePlan,
-  proposalId,
-  startHealerLoop,
-  stepTier,
-  tierOf,
   type JournalEntry,
   type JournalProposalEntry,
   type PlanLike,
+  proposalId,
   type RunbookToolClient,
+  startHealerLoop,
+  stepTier,
+  tierOf,
   type ToolCallInput,
 } from "../src/index.js";
 
@@ -40,8 +41,8 @@ afterEach(() => {
 });
 
 function seedYamls(overrides?: {
-  gateways?: Array<{ name: string; provider: string; baseUrl: string }>;
-  providers?: Array<{ name: string; kind: string; baseUrl: string }>;
+  gateways?: { name: string; provider: string; baseUrl: string }[];
+  providers?: { name: string; kind: string; baseUrl: string }[];
 }): { kubeconfigPath: string; siriusProvidersPath: string } {
   const gateways = overrides?.gateways ?? [
     { name: "sirius-primary", provider: "sirius", baseUrl: "http://g1/v1" },
@@ -77,7 +78,7 @@ function seedYamls(overrides?: {
   return { kubeconfigPath, siriusProvidersPath };
 }
 
-function envelope(payload: unknown): { content: Array<{ type: "text"; text: string }> } {
+function envelope(payload: unknown): { content: { type: "text"; text: string }[] } {
   return { content: [{ type: "text", text: JSON.stringify(payload) }] };
 }
 
@@ -96,7 +97,7 @@ function makeMockClient(handler: (input: ToolCallInput) => Promise<unknown>): {
     client: {
       async callTool(input: ToolCallInput) {
         calls.push({ name: input.name, arguments: input.arguments });
-        return handler(input);
+        return await handler(input);
       },
     },
   };
@@ -118,7 +119,7 @@ const UNHEALTHY_HEALTHCHECK = envelope({
 });
 
 /** Plan matching the healer's envelope shape (see nova/packages/mcp/src/server.ts:344-349). */
-function plannerResponse(plan: PlanLike): { content: Array<{ type: "text"; text: string }> } {
+function plannerResponse(plan: PlanLike): { content: { type: "text"; text: string }[] } {
   return envelope({
     ok: true,
     executor: "stub",
@@ -277,7 +278,7 @@ describe("startHealerLoop remediation — propose mode (default)", () => {
     expect(kinds).not.toContain("executed");
     expect(kinds).not.toContain("refused");
 
-    const proposal = journaled.find((e) => e.kind === "proposal") as JournalProposalEntry;
+    const proposal = journaled.find((e) => e.kind === "proposal")!;
     expect(proposal.plan.steps).toHaveLength(1);
     expect(proposal.proposalId).toHaveLength(12);
     expect(proposal.source).toBe("nova");
@@ -320,9 +321,9 @@ describe("startHealerLoop remediation — auto mode", () => {
 
     const executed = journaled.find((e) => e.kind === "executed");
     expect(executed).toBeTruthy();
-    if (executed && executed.kind === "executed") {
+    if (executed?.kind === "executed") {
       expect(executed.steps).toHaveLength(2);
-      expect(executed.steps.every((s) => s.outcome.ok === true)).toBe(true);
+      expect(executed.steps.every((s) => s.outcome.ok)).toBe(true);
       expect(executed.stoppedAt).toBeUndefined();
     }
 
@@ -358,7 +359,7 @@ describe("startHealerLoop remediation — auto mode", () => {
 
     const refused = journaled.find((e) => e.kind === "refused");
     expect(refused).toBeTruthy();
-    if (refused && refused.kind === "refused") {
+    if (refused?.kind === "refused") {
       expect(refused.reason).toBe("destructive-requires-manual-approval");
       expect(refused.refusedSteps?.[0]?.tool).toBe("llamactl.node.remove");
       expect(refused.refusedSteps?.[0]?.tier).toBe(3);
@@ -393,7 +394,7 @@ describe("startHealerLoop remediation — auto mode", () => {
     await handle.done;
 
     const refused = journaled.find((e) => e.kind === "refused");
-    expect(refused && refused.kind === "refused" ? refused.reason : null).toBe(
+    expect(refused?.kind === "refused" ? refused.reason : null).toBe(
       "planner-requires-confirmation",
     );
     expect(journaled.find((e) => e.kind === "executed")).toBeUndefined();
@@ -427,7 +428,7 @@ describe("startHealerLoop remediation — auto mode", () => {
 
     const failed = journaled.find((e) => e.kind === "plan-failed");
     expect(failed).toBeTruthy();
-    if (failed && failed.kind === "plan-failed") {
+    if (failed?.kind === "plan-failed") {
       expect(failed.reason).toBe("no-executor");
       expect(failed.message).toContain("LLM executor");
     }
@@ -449,7 +450,7 @@ describe("executePlan (--execute <proposal-id> primitive)", () => {
     const { client, calls } = makeMockClient(async () => envelope({ ok: true }));
     const result = await executePlan(plan, { toolClient: client, dryRun: false });
     expect(result.steps).toHaveLength(2);
-    expect(result.steps.every((s) => s.outcome.ok === true)).toBe(true);
+    expect(result.steps.every((s) => s.outcome.ok)).toBe(true);
     expect(result.stoppedAt).toBeUndefined();
     expect(calls.map((c) => c.name)).toEqual([
       "llamactl.catalog.promote",

@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
+import type { RawDoc } from "../src/rag/pipeline/types.js";
+
 import {
   chunkMarkdown,
   markdownChunkTransform,
 } from "../src/rag/pipeline/transforms/markdown-chunk.js";
-import type { RawDoc } from "../src/rag/pipeline/types.js";
 
 async function collect(inputs: RawDoc[], spec: unknown): Promise<RawDoc[]> {
   async function* source() {
@@ -74,8 +75,8 @@ describe("markdownChunkTransform", () => {
       overlap: 40,
       preserve_headings: true,
     });
-    for (let i = 0; i < chunks.length; i++) {
-      expect(chunks[i]!.id).toContain(`#${i}`);
+    for (const [i, chunk] of chunks.entries()) {
+      expect(chunk.id).toContain(`#${i}`);
     }
   });
 

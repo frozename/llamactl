@@ -1,6 +1,8 @@
-import { describe, it, expect } from "bun:test";
-import { detectDegradation } from "../src/policy.js";
+import { describe, expect, it } from "bun:test";
+
 import type { WorkloadSnapshot } from "../src/types.js";
+
+import { detectDegradation } from "../src/policy.js";
 
 const THRESHOLDS = { consecutiveErrorsForDegraded: 3, p95DegradedMs: 5000 };
 
@@ -24,7 +26,7 @@ describe("detectDegradation", () => {
     expect(result).not.toBeNull();
     expect(result!.to).toBe("degraded");
     expect(result!.proposal).toBeDefined();
-    if (result!.proposal && result!.proposal.action.type === "restart") {
+    if (result!.proposal?.action.type === "restart") {
       expect(result!.proposal.action.workload).toBe("granite-mini-3b");
     }
   });

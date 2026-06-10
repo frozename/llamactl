@@ -3,14 +3,15 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  nextRunAt,
-  startPipelineScheduler,
-  type PipelineSchedulerOptions,
-} from "../src/rag/pipeline/scheduler.js";
 import type { RunSummary } from "../src/rag/pipeline/runtime.js";
 import type { RagPipelineManifest } from "../src/rag/pipeline/schema.js";
 import type { PipelineRecord } from "../src/rag/pipeline/store.js";
+
+import {
+  nextRunAt,
+  type PipelineSchedulerOptions,
+  startPipelineScheduler,
+} from "../src/rag/pipeline/scheduler.js";
 
 /**
  * nextRunAt has its own pure test block — no loop, no I/O — so the
@@ -38,7 +39,7 @@ function baseManifest(
       on_duplicate: "skip",
       ...spec,
     },
-  } as RagPipelineManifest;
+  };
 }
 
 describe("nextRunAt", () => {
@@ -106,7 +107,7 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-function readLines(path: string): Array<Record<string, unknown>> {
+function readLines(path: string): Record<string, unknown>[] {
   let raw = "";
   try {
     raw = readFileSync(path, "utf8").trim();
@@ -139,7 +140,7 @@ describe("startPipelineScheduler", () => {
       { name: "p1", manifest: baseManifest("p1", { schedule: "@every 5m" }) },
     ];
     const runCalls: string[] = [];
-    const writeCalls: Array<{ name: string; summary: RunSummary }> = [];
+    const writeCalls: { name: string; summary: RunSummary }[] = [];
     let report: unknown;
     const h = startPipelineScheduler({
       ...defaultOptions,
@@ -215,9 +216,11 @@ describe("startPipelineScheduler", () => {
     ];
     let resolveRun: (() => void) | null = null;
     const runPromise = new Promise<RunSummary>((resolve) => {
-      resolveRun = () => resolve(FIRE_SUMMARY);
+      resolveRun = () => {
+        resolve(FIRE_SUMMARY);
+      };
     });
-    const tickReports: Array<{ fired: string[]; skippedInFlight: string[] }> = [];
+    const tickReports: { fired: string[]; skippedInFlight: string[] }[] = [];
     const h = startPipelineScheduler({
       ...defaultOptions,
       once: false,
@@ -258,7 +261,7 @@ describe("startPipelineScheduler", () => {
       ...baseManifest("bogus"),
       spec: {
         ...baseManifest("bogus").spec,
-        schedule: "@monthly" as unknown as string,
+        schedule: "@monthly",
       },
     };
     const records: PipelineRecord[] = [{ name: "bogus", manifest: bogus }];

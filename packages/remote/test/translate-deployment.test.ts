@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-import { translateToDeployment } from "../src/runtime/kubernetes/translate-deployment.js";
 import type { ServiceDeployment } from "../src/runtime/backend.js";
+
 import {
   K8S_ANNOTATION_KEYS,
   K8S_LABEL_KEYS,
   MANAGED_BY_VALUE,
 } from "../src/runtime/kubernetes/labels.js";
+import { translateToDeployment } from "../src/runtime/kubernetes/translate-deployment.js";
 
 /**
  * Pure-translator tests. No kubeconfig, no mocks — the translator is

@@ -1,5 +1,7 @@
-import { bench, build, ctx, env as envMod, target as targetMod } from "@llamactl/core";
 import type { ModelClass } from "@llamactl/core";
+
+import { bench, build, ctx, env as envMod, target as targetMod } from "@llamactl/core";
+
 import {
   getGlobals,
   getNodeClient,
@@ -214,7 +216,7 @@ async function runCompare(args: string[]): Promise<number> {
   process.stdout.write(`class=${classFilter} scope=${scopeFilter}\n`);
 
   type Tuned = NonNullable<bench.BenchCompareRow["tuned"]>;
-  const sortable: Array<{ row: bench.BenchCompareRow; tuned: Tuned }> = [];
+  const sortable: { row: bench.BenchCompareRow; tuned: Tuned }[] = [];
   const missing: bench.BenchCompareRow[] = [];
   for (const row of rows) {
     if (row.tuned) sortable.push({ row, tuned: row.tuned });
@@ -414,15 +416,15 @@ export async function runBench(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
     case "show":
-      return runShow(rest);
+      return await runShow(rest);
     case "history":
-      return runHistory(rest);
+      return await runHistory(rest);
     case "compare":
-      return runCompare(rest);
+      return await runCompare(rest);
     case "preset":
-      return runPreset(rest);
+      return await runPreset(rest);
     case "vision":
-      return runVision(rest);
+      return await runVision(rest);
     case undefined:
     case "-h":
     case "--help":

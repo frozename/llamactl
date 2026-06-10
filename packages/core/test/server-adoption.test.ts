@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
+import type { ResolvedEnv } from "../src/types.js";
+
 import { resolveEnv } from "../src/env.js";
 import {
   aliasesFromArgs,
@@ -6,7 +9,6 @@ import {
   readServerState,
   tryAdoptExistingServer,
 } from "../src/server.js";
-import type { ResolvedEnv } from "../src/types.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 
 const KEY = { name: "granite-judge" };
@@ -29,7 +31,9 @@ describe("tryAdoptExistingServer", () => {
     temp = makeTempRuntime();
     resolved = resolveEnv(envForTemp(temp));
   });
-  afterEach(() => temp.cleanup());
+  afterEach(() => {
+    temp.cleanup();
+  });
 
   const base = () => ({
     resolved,
@@ -118,7 +122,7 @@ describe("tryAdoptExistingServer", () => {
         probeModelIds: async () => ["granite-mini-3b"],
         findListenerPid: async () => process.pid,
         readProcessCommand: async () => `/bin/llama-server --slot-save-path /tmp/live-slots`,
-      } as any,
+      },
     });
     expect(pid).toBe(process.pid);
     expect(readServerState(KEY, resolved)?.slotSavePath).toBe("/tmp/live-slots");

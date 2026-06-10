@@ -1,4 +1,5 @@
-import { callTRPCProcedure, type AnyTRPCRouter } from "@trpc/server";
+import { type AnyTRPCRouter, callTRPCProcedure } from "@trpc/server";
+
 import type { TunnelReq } from "./messages.js";
 
 /**
@@ -70,7 +71,7 @@ export function createTunnelRouterHandler(caller: AnyCaller): (req: TunnelReq) =
  * access into procedures still works. Restricting to 'object' would
  * fail on the very first segment for any real caller.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 function walkCaller(
   caller: any,
   method: string,
@@ -89,7 +90,7 @@ function walkCaller(
   // intercepts EVERY property access (including `.bind`) and treats
   // it as another procedure-path segment, so cursor.bind would walk
   // into the proxy and 404. Use the prototype method directly.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   return Function.prototype.bind.call(cursor, caller) as (input: unknown) => Promise<unknown>;
 }
 
@@ -290,9 +291,11 @@ function observableToAsyncIterable(
 ): AsyncIterable<unknown> {
   return {
     [Symbol.asyncIterator](): AsyncIterator<unknown> {
-      const buffer: Array<
-        { kind: "v"; value: unknown } | { kind: "e"; err: unknown } | { kind: "c" }
-      > = [];
+      const buffer: (
+        | { kind: "v"; value: unknown }
+        | { kind: "e"; err: unknown }
+        | { kind: "c" }
+      )[] = [];
       let pending: {
         resolve: (v: IteratorResult<unknown>) => void;
         reject: (e: unknown) => void;
@@ -338,7 +341,7 @@ function observableToAsyncIterable(
           teardownHandle &&
           typeof (teardownHandle as { unsubscribe?: unknown }).unsubscribe === "function"
         ) {
-          (teardownHandle as { unsubscribe: () => void }).unsubscribe();
+          teardownHandle.unsubscribe();
         }
       };
       const onAbort = (): void => {
@@ -368,7 +371,7 @@ function observableToAsyncIterable(
             throw head.err;
           }
           if (done) return { value: undefined, done: true };
-          return new Promise<IteratorResult<unknown>>((resolve, reject) => {
+          return await new Promise<IteratorResult<unknown>>((resolve, reject) => {
             pending = { resolve, reject };
           });
         },

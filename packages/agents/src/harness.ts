@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildNovaMcpServer, type PlannerToolDescriptor } from "@nova/mcp";
+
 import type {
   Runbook,
   RunbookContext,
@@ -8,6 +9,7 @@ import type {
   RunbookToolClient,
   ToolCallInput,
 } from "./types.js";
+
 import { RUNBOOKS } from "./runbooks/index.js";
 
 export interface HarnessToolDescriptor {
@@ -99,7 +101,7 @@ function inferTier(name: string): PlannerToolDescriptor["tier"] {
  * full runbook.
  */
 export async function createDefaultToolClient(): Promise<DefaultToolClientHandle> {
-  return defaultToolClient();
+  return await defaultToolClient();
 }
 
 async function defaultToolClient(): Promise<DefaultToolClientHandle> {
@@ -121,7 +123,7 @@ async function defaultToolClient(): Promise<DefaultToolClientHandle> {
   const client: RunbookToolClient = {
     async callTool(input: ToolCallInput) {
       const target = input.name.startsWith("nova.") ? nova.client : llamactl.client;
-      return target.callTool({ name: input.name, arguments: input.arguments });
+      return await target.callTool({ name: input.name, arguments: input.arguments });
     },
   };
   async function listTools(): Promise<HarnessToolDescriptor[]> {
@@ -131,7 +133,7 @@ async function defaultToolClient(): Promise<DefaultToolClientHandle> {
     ]);
     const out: HarnessToolDescriptor[] = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const t of (lTools as { tools: Array<any> }).tools) {
+    for (const t of (lTools as { tools: any[] }).tools) {
       out.push({
         name: t.name,
         description: t.description ?? "",
@@ -139,7 +141,7 @@ async function defaultToolClient(): Promise<DefaultToolClientHandle> {
       });
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const t of (nTools as { tools: Array<any> }).tools) {
+    for (const t of (nTools as { tools: any[] }).tools) {
       out.push({
         name: t.name,
         description: t.description ?? "",
@@ -178,7 +180,7 @@ export async function runRunbook<Params>(
     if (!parsed.success) {
       throw new Error(`runbook ${name}: invalid params — ${parsed.error.message}`);
     }
-    params = parsed.data as Params;
+    params = parsed.data;
   }
 
   const log = opts.log ?? (() => {});
@@ -189,7 +191,9 @@ export async function runRunbook<Params>(
   if (!client) {
     const built = await defaultToolClient();
     client = built.client;
-    dispose = async () => built.dispose();
+    dispose = async () => {
+      await built.dispose();
+    };
   }
 
   const ctx: RunbookContext = { tools: client, dryRun, log };

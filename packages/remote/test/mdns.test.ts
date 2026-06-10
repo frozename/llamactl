@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { generateToken } from "../src/server/auth.js";
 import { generateSelfSignedCert } from "../src/server/tls.js";
 
@@ -70,7 +71,7 @@ vi.mock("bonjour-service", () => {
 const SKIP = process.env.LLAMACTL_SKIP_MDNS_TESTS === "1";
 
 let tmp = "";
-let agents: Array<{ stop: () => Promise<void> }> = [];
+const agents: { stop: () => Promise<void> }[] = [];
 
 beforeAll(async () => {
   if (SKIP) return;

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stringify as stringifyYaml, parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { router } from "../src/router.js";
 
@@ -209,8 +209,8 @@ describe("projectIndex", () => {
       metadata: { name: string };
       spec: {
         destination: { ragNode: string; collection: string };
-        sources: Array<{ kind: string; root: string; glob: string; tag: Record<string, string> }>;
-        transforms: Array<{ kind: string; chunk_size?: number }>;
+        sources: { kind: string; root: string; glob: string; tag: Record<string, string> }[];
+        transforms: { kind: string; chunk_size?: number }[];
         on_duplicate: string;
       };
     };

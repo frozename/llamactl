@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { healthGate } from "@llamactl/fleet-supervisor";
+import { expect, test } from "bun:test";
 
 test('T1: healthGate resolves "healthy" when all workloads reachable=true before timeout', async () => {
   let calls = 0;

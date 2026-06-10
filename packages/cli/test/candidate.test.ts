@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
 import { makeTempRuntime, runCli } from "./helpers.js";
 
 describe("llamactl candidate (usage + error paths)", () => {
@@ -7,7 +8,9 @@ describe("llamactl candidate (usage + error paths)", () => {
   beforeEach(() => {
     temp = makeTempRuntime();
   });
-  afterEach(() => temp.cleanup());
+  afterEach(() => {
+    temp.cleanup();
+  });
 
   test("no args prints USAGE and exits non-zero", () => {
     const r = runCli(["candidate"], temp.env);

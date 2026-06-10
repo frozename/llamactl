@@ -1,13 +1,14 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildMcpServer, type WorkloadDeleteDryRunResult } from "../src/server.js";
-import { saveNodeRun } from "../../remote/src/workload/noderun-store.js";
+
 import { saveModelHost } from "../../remote/src/workload/modelhost-store.js";
+import { saveNodeRun } from "../../remote/src/workload/noderun-store.js";
 import { saveWorkload } from "../../remote/src/workload/store.js";
+import { buildMcpServer, type WorkloadDeleteDryRunResult } from "../src/server.js";
 
 /**
  * Smoke tests for the llamactl MCP surface. Every mutation has a
@@ -139,14 +140,14 @@ async function connected() {
 }
 
 function textOf(result: unknown): string {
-  const content = (result as { content?: Array<{ type: string; text: string }> }).content ?? [];
+  const content = (result as { content?: { type: string; text: string }[] }).content ?? [];
   return content[0]?.text ?? "";
 }
 
-function auditLines(server: string): Array<Record<string, unknown>> {
+function auditLines(server: string): Record<string, unknown>[] {
   if (!existsSync(auditDir)) return [];
   const files = readdirSync(auditDir).filter((f) => f.startsWith(`${server}-`));
-  const out: Array<Record<string, unknown>> = [];
+  const out: Record<string, unknown>[] = [];
   for (const f of files) {
     const body = readFileSync(join(auditDir, f), "utf8");
     for (const line of body.trim().split("\n")) {
@@ -366,12 +367,12 @@ describe("@llamactl/mcp read surface", () => {
     const parsed = JSON.parse(textOf(result)) as {
       budget: number;
       reserved: number;
-      workloads: Array<{
+      workloads: {
         name: string;
         endpoint: string | null;
         phase: string;
         expectedMemoryGiB: number | null;
-      }>;
+      }[];
     };
     expect(parsed.budget).toBeGreaterThan(0);
     expect(parsed.reserved).toBe(18);

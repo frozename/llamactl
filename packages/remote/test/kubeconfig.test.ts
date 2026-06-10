@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   currentContext,
   defaultConfigPath,
@@ -53,7 +54,9 @@ describe("kubeconfig", () => {
   test("saveConfig refuses to persist invalid config", () => {
     const path = join(tmp, "config");
     const bad = { ...freshConfig(), apiVersion: "wrong/v0" };
-    expect(() => saveConfig(bad as never, path)).toThrow();
+    expect(() => {
+      saveConfig(bad as never, path);
+    }).toThrow();
   });
 
   test("loadConfig rejects malformed YAML", () => {

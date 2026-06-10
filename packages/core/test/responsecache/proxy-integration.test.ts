@@ -1,17 +1,19 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openaiProxy } from "../../src/index.js";
+
+import type { PeerNode } from "../../../remote/src/config/peers.js";
+import type { PeerSnapshot } from "../../src/workloadRuntime.js";
+
 import { translateAnthropicRequest } from "../../src/anthropic/translateRequest.js";
+import { openaiProxy } from "../../src/index.js";
 import { readWorkloadEpoch } from "../../src/kvstore/index.js";
 import {
-  ResponseCacheRegistry,
   canonicalRequestSha,
   openResponseCacheStorage,
+  ResponseCacheRegistry,
 } from "../../src/responsecache/index.js";
-import type { PeerSnapshot } from "../../src/workloadRuntime.js";
-import type { PeerNode } from "../../../remote/src/config/peers.js";
 
 interface TempRuntime {
   root: string;
@@ -30,7 +32,9 @@ function makeTempRuntime(): TempRuntime {
   return {
     root,
     env: { LOCAL_AI_RUNTIME_DIR: root },
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
+    cleanup: () => {
+      rmSync(root, { recursive: true, force: true });
+    },
   };
 }
 
@@ -89,8 +93,7 @@ async function startUpstream(
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method =
-      init?.method ??
-      (typeof input === "object" && "method" in input ? (input as Request).method : "GET");
+      init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
     const parsed = new URL(url);
     if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
       calls += 1;

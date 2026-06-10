@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useEffect, useState } from "react";
+
 import { Button, Kbd } from "@/ui";
 
 const FIRST_RUN_KEY = "beacon.tip.shown";
@@ -102,7 +103,12 @@ export function FirstRunTip(): React.JSX.Element | null {
             Skip
           </Button>
           {!isLast && (
-            <Button variant="primary" onClick={() => setStep(step + 1)}>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setStep(step + 1);
+              }}
+            >
               Next
             </Button>
           )}

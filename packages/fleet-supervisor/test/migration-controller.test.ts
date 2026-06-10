@@ -1,18 +1,20 @@
 import { beforeEach, describe, expect, it } from "bun:test";
+
+import type { FleetExecutionEntry, FleetJournalEntry, MoveProposal } from "../src/types.js";
+
 import {
   MIGRATION_POLICY_DEFAULTS,
   MigrationController,
   type NodeSnapshot,
 } from "../src/migration-controller.js";
-import type { FleetExecutionEntry, FleetJournalEntry, MoveProposal } from "../src/types.js";
 
 describe("MigrationController", () => {
   let nowMs = 1_700_000_000_000;
   let tick = 100;
   let snapshots: Record<string, NodeSnapshot>;
   let journal: FleetJournalEntry[];
-  let applyCalls: Array<{ workload: string; toNode: string }>;
-  let deleteCalls: Array<{ workload: string; fromNode: string }>;
+  let applyCalls: { workload: string; toNode: string }[];
+  let deleteCalls: { workload: string; fromNode: string }[];
   let controller: MigrationController;
 
   beforeEach(() => {
@@ -381,15 +383,13 @@ describe("MigrationController", () => {
       peers,
       fetchSnapshot: async (node) => {
         started.push(node);
-        return (
-          deferred.get(node)?.promise ??
+        return await (deferred.get(node)?.promise ??
           Promise.resolve({
             node,
             pressureState: "NORMAL",
             nodeMem: { freeMb: 4096 },
             workloads: [],
-          })
-        );
+          }));
       },
       deployWorkload: async () => undefined,
       removeWorkload: async () => undefined,

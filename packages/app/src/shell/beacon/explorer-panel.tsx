@@ -1,11 +1,13 @@
-import * as React from "react";
-import { Input } from "@/ui";
 import { Search } from "lucide-react";
+import * as React from "react";
+
+import { Input } from "@/ui";
+
 import { ExplorerTree } from "./explorer-tree";
-import { SearchView } from "./search-view";
-import { SessionsView } from "./sessions-view";
 import { FleetView } from "./fleet-view";
 import { getRailView, type RailViewId } from "./rail-views";
+import { SearchView } from "./search-view";
+import { SessionsView } from "./sessions-view";
 
 interface ExplorerPanelProps {
   activeView: RailViewId;

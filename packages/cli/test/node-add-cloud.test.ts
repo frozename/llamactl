@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runNode } from "../src/commands/node.js";
-import { resetGlobals, setGlobals, EMPTY_GLOBALS } from "../src/dispatcher.js";
+import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
 
 /**
  * `llamactl node add-cloud` registers a gateway/cloud-kind node via

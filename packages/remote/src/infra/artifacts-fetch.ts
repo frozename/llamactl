@@ -4,8 +4,8 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   readlinkSync,
   rmSync,
   statSync,
@@ -14,6 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+
 import { agentBinaryPath, defaultArtifactsDir } from "../server/artifacts.js";
 
 /**
@@ -201,7 +202,7 @@ export function agentAssetCertUrl(repo: string, tag: string, target: string): st
  * a trailing `vX.Y.Z` tag match.
  */
 export function cosignIdentityRegex(repo: string): string {
-  const escaped = repo.replace(/[.\\+*?^$()[\]{}|]/g, "\\$&");
+  const escaped = repo.replaceAll(/[.\\+*?^$()[\]{}|]/g, "\\$&");
   return `^https://github\\.com/${escaped}/\\.github/workflows/release-agent\\.yml@refs/tags/v.+$`;
 }
 
@@ -379,7 +380,7 @@ export function agentVersionsRoot(platform: string, artifactsDir: string): strin
  *  path-traversal in the version string is impossible — only
  *  `[A-Za-z0-9._+-]` is kept; everything else becomes `_`. */
 export function agentVersionDir(platform: string, tag: string, artifactsDir: string): string {
-  const safe = tag.replace(/[^A-Za-z0-9._+-]/g, "_");
+  const safe = tag.replaceAll(/[^A-Za-z0-9._+-]/g, "_");
   return join(agentVersionsRoot(platform, artifactsDir), safe);
 }
 

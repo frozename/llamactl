@@ -1,13 +1,13 @@
 import {
+  type EmbersynthNode,
+  loadEmbersynthConfig,
+  saveEmbersynthConfig,
+} from "../../config/embersynth.js";
+import {
   loadSiriusProviders,
   saveSiriusProviders,
   type SiriusProvider,
 } from "../../config/sirius-providers.js";
-import {
-  loadEmbersynthConfig,
-  saveEmbersynthConfig,
-  type EmbersynthNode,
-} from "../../config/embersynth.js";
 
 export type GatewayKind = "sirius" | "embersynth";
 

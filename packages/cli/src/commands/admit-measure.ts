@@ -1,12 +1,15 @@
-import { readFileSync } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
-import { createServer } from "node:net";
 import type { ChildProcess } from "node:child_process";
+
+import { spawn, spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { createServer } from "node:net";
 import yaml from "yaml";
+
+import type { MeasuredMemoryEntry } from "../../../fleet-supervisor/src/measured-memory.js";
+
 // Relative import so the worktree's measured-memory module is used directly,
 // bypassing the node_modules symlink that points at the main checkout.
 import { writeMeasuredMemoryCache } from "../../../fleet-supervisor/src/measured-memory.js";
-import type { MeasuredMemoryEntry } from "../../../fleet-supervisor/src/measured-memory.js";
 
 const MEASURE_USAGE = `llamactl admit measure — probe real RSS of a workload under load
 
@@ -41,8 +44,14 @@ function findFreePort(start: number): Promise<number> {
         return;
       }
       const srv = createServer();
-      srv.once("error", () => tryPort(p + 1));
-      srv.listen(p, "127.0.0.1", () => srv.close(() => resolve(p)));
+      srv.once("error", () => {
+        tryPort(p + 1);
+      });
+      srv.listen(p, "127.0.0.1", () =>
+        srv.close(() => {
+          resolve(p);
+        }),
+      );
     }
     tryPort(start);
   });
@@ -171,7 +180,7 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
       console.error("admit measure: ModelHost spec.binary is required");
       return 2;
     }
-    const hostedModels = (spec["hostedModels"] as Array<Record<string, unknown>> | undefined) ?? [];
+    const hostedModels = (spec["hostedModels"] as Record<string, unknown>[] | undefined) ?? [];
     const modelRel = (hostedModels[0]?.["rel"] as string | undefined) ?? "";
     modelKey = `${modelRel}::`;
     const extraArgs = stripPortHost((spec["extraArgs"] as string[] | undefined) ?? []);

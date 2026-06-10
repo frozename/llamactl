@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { renderNodeBudget } from "../src/commands/workload.js";
 
 describe("renderNodeBudget", () => {

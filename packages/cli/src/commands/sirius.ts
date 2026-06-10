@@ -85,7 +85,7 @@ function collectAgentNodes(tokenInline: boolean): NodeEntry[] {
     const apiKey =
       tokenInline && user
         ? tryResolveToken(user)
-        : `\${LLAMACTL_TOKEN_${node.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}}`;
+        : `\${LLAMACTL_TOKEN_${node.name.toUpperCase().replaceAll(/[^A-Z0-9]/g, "_")}}`;
     entries.push({
       name: node.name,
       baseUrl: `${node.endpoint.replace(/\/$/, "")}/v1`,
@@ -114,7 +114,7 @@ function renderYaml(entries: NodeEntry[]): string {
 function renderEnv(entries: NodeEntry[]): string {
   const compact = JSON.stringify(entries);
   // Escape single quotes for shell safety.
-  return `export LLAMACTL_NODES='${compact.replace(/'/g, "'\\''")}'`;
+  return `export LLAMACTL_NODES='${compact.replaceAll("'", "'\\''")}'`;
 }
 
 async function runConnect(argv: string[]): Promise<number> {
@@ -176,7 +176,7 @@ async function runAddProvider(argv: string[]): Promise<number> {
     process.stderr.write(`sirius add-provider: kind is required\n\n${USAGE}`);
     return 1;
   }
-  const validKinds: ReadonlyArray<string> = [
+  const validKinds: readonly string[] = [
     "openai",
     "anthropic",
     "together",
@@ -288,10 +288,10 @@ export async function runSirius(argv: string[]): Promise<number> {
     process.stdout.write(USAGE);
     return 0;
   }
-  if (sub === "connect") return runConnect(argv.slice(1));
-  if (sub === "add-provider") return runAddProvider(argv.slice(1));
-  if (sub === "list-providers") return runListProviders(argv.slice(1));
-  if (sub === "remove-provider") return runRemoveProvider(argv.slice(1));
+  if (sub === "connect") return await runConnect(argv.slice(1));
+  if (sub === "add-provider") return await runAddProvider(argv.slice(1));
+  if (sub === "list-providers") return await runListProviders(argv.slice(1));
+  if (sub === "remove-provider") return await runRemoveProvider(argv.slice(1));
   if (sub !== "export") {
     process.stderr.write(`unknown sirius subcommand: ${sub}\n\n${USAGE}`);
     return 1;

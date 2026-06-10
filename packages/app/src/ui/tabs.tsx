@@ -1,4 +1,5 @@
 import * as React from "react";
+
 import { cx } from "./classes";
 
 export interface TabsProps extends React.HTMLAttributes<HTMLDivElement> {

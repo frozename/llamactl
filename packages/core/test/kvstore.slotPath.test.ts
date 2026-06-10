@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
+
 import {
-  SLOT_SAVE_PATH_AUTO,
   canonicalSlotDir,
   parseAbsoluteSlotSavePath,
   parseSlotSavePathFromCommand,
   resolveSlotSavePathArgs,
+  SLOT_SAVE_PATH_AUTO,
 } from "../src/kvstore/index.js";
 
 describe("kvstore.slotPath", () => {

@@ -1,16 +1,17 @@
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+
+import type { BenchMode, ResolvedEnv } from "../types.js";
+
 import { resolveBuildId } from "../build.js";
 import { ctxForModel } from "../ctx.js";
 import { resolveEnv } from "../env.js";
 import { findLocalMmproj } from "../mmproj.js";
 import { resolveTarget } from "../target.js";
-import type { ResolvedEnv } from "../types.js";
-import { defaultModeForRel, machineLabel } from "./mode.js";
 import { benchProfileArgs, serverProfileArgs } from "./launchArgs.js";
+import { defaultModeForRel, machineLabel } from "./mode.js";
 import { benchHistoryFile, benchProfileFile, benchVisionFile } from "./store.js";
-import type { BenchMode } from "../types.js";
 
 const DEFAULT_PROFILES = ["default", "throughput", "conservative"] as const;
 const DEFAULT_PROMPT = "Describe the image in one sentence.";
@@ -191,19 +192,19 @@ export function parseMtmdCliStats(stderr: string): {
   let prompt: string | null = null;
   let gen: string | null = null;
   for (const raw of stderr.split("\n")) {
-    if (load === null && /load time =/.test(raw)) {
+    if (load === null && raw.includes("load time =")) {
       const m = /([0-9]+(?:\.[0-9]+)?)\s+ms/.exec(raw);
       if (m?.[1]) load = m[1];
     }
-    if (encode === null && /image slice encoded in/.test(raw)) {
+    if (encode === null && raw.includes("image slice encoded in")) {
       const m = /([0-9]+(?:\.[0-9]+)?)\s+ms/.exec(raw);
       if (m?.[1]) encode = m[1];
     }
-    if (prompt === null && /prompt eval time =/.test(raw)) {
+    if (prompt === null && raw.includes("prompt eval time =")) {
       const m = /([0-9]+(?:\.[0-9]+)?)\s+tokens per second/.exec(raw);
       if (m?.[1]) prompt = m[1];
     }
-    if (gen === null && !/prompt/.test(raw) && /eval time =/.test(raw)) {
+    if (gen === null && !raw.includes("prompt") && raw.includes("eval time =")) {
       const m = /([0-9]+(?:\.[0-9]+)?)\s+tokens per second/.exec(raw);
       if (m?.[1]) gen = m[1];
     }

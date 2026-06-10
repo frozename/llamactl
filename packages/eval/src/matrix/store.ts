@@ -1,4 +1,5 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
+
 import type { CellRow, CellRowDetail } from "./types.js";
 
 /** Idempotent and safe to call on every operation; v1 may memoize per-Database instance. */

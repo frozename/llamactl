@@ -1,9 +1,10 @@
 import * as React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+
 import { trpc } from "@/lib/trpc";
-import { useTabStore } from "@/stores/tab-store";
-import { useOpsExecutorStore } from "@/stores/ops-executor-store";
 import { OpsExecutorPicker } from "@/modules/ops/ops-executor-picker";
+import { useOpsExecutorStore } from "@/stores/ops-executor-store";
+import { useTabStore } from "@/stores/tab-store";
 
 /**
  * N.4 — Operator Console.
@@ -77,7 +78,7 @@ type TranscriptMessage =
  * sense of what this module can do. Kept intentionally short; the
  * chip strip has to stay one-line on a 1280px window.
  */
-const CANNED_PROMPTS: Array<{ label: string; prompt: string }> = [
+const CANNED_PROMPTS: { label: string; prompt: string }[] = [
   {
     label: "Audit fleet health",
     prompt:
@@ -98,11 +99,11 @@ const CANNED_PROMPTS: Array<{ label: string; prompt: string }> = [
   },
 ];
 
-const DEFAULT_CATALOG: Array<{
+const DEFAULT_CATALOG: {
   name: string;
   description: string;
   tier: "read" | "mutation-dry-run-safe" | "mutation-destructive";
-}> = [
+}[] = [
   {
     name: "llamactl.catalog.list",
     description: "List curated models on the control plane.",
@@ -256,7 +257,9 @@ function ProposalBubble({
             <input
               type="text"
               value={confirmText}
-              onChange={(e) => onConfirmText(e.target.value)}
+              onChange={(e) => {
+                onConfirmText(e.target.value);
+              }}
               data-testid={`ops-chat-step-${iteration}-confirm`}
               style={{
                 width: 192,
@@ -278,7 +281,9 @@ function ProposalBubble({
             {tier !== "read" && (
               <button
                 type="button"
-                onClick={() => onApprove(true)}
+                onClick={() => {
+                  onApprove(true);
+                }}
                 disabled={running || state === "preview-ready"}
                 data-testid={`ops-chat-step-${iteration}-preview`}
                 style={{
@@ -300,7 +305,9 @@ function ProposalBubble({
             )}
             <button
               type="button"
-              onClick={() => onApprove(false)}
+              onClick={() => {
+                onApprove(false);
+              }}
               disabled={running || (tier === "mutation-destructive" && !destructiveReady)}
               data-testid={`ops-chat-step-${iteration}-run`}
               className={
@@ -554,11 +561,11 @@ export default function OpsChat(): React.JSX.Element {
   ): Promise<void> {
     patchProposal(msg.id, { state: dryRun ? "previewing" : "running-wet" });
     try {
-      const outcome = (await runTool.mutateAsync({
+      const outcome = await runTool.mutateAsync({
         name: msg.step.tool,
-        arguments: (msg.step.args ?? {}) as Record<string, unknown>,
+        arguments: msg.step.args ?? {},
         dryRun,
-      })) as ToolCallOutcome;
+      });
       refreshAudit();
       if (dryRun) {
         patchProposal(msg.id, { state: "preview-ready", previewOutcome: outcome });
@@ -789,7 +796,9 @@ export default function OpsChat(): React.JSX.Element {
               message={msg}
               onApprove={(dryRun) => void onApprove(msg, dryRun)}
               onReject={() => void onReject(msg)}
-              onConfirmText={(v) => onConfirmText(msg.id, v)}
+              onConfirmText={(v) => {
+                onConfirmText(msg.id, v);
+              }}
             />
           );
         })}
@@ -918,7 +927,9 @@ export default function OpsChat(): React.JSX.Element {
             <button
               key={cp.label}
               type="button"
-              onClick={() => setDraft(cp.prompt)}
+              onClick={() => {
+                setDraft(cp.prompt);
+              }}
               disabled={streaming}
               data-testid={`ops-chat-canned-${i}`}
               style={{
@@ -941,7 +952,9 @@ export default function OpsChat(): React.JSX.Element {
         </div>
         <textarea
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+          }}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
               e.preventDefault();

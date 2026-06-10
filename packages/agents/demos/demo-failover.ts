@@ -10,12 +10,13 @@
  *
  * Teardown restores env + removes the tempdir.
  */
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
-import { probeFleet, stateTransitions, type ProbeReport } from "../src/healer/probe.js";
+
 import { appendHealerJournal } from "../src/healer/journal.js";
+import { probeFleet, type ProbeReport, stateTransitions } from "../src/healer/probe.js";
 
 const NARRATIVE = `\
 N.5 golden-path demo — failover (healer observation)
@@ -96,11 +97,7 @@ function seedTempFleet(): {
 function fakeFetchFactory(downHosts: Set<string>): typeof globalThis.fetch {
   const impl = async (input: RequestInfo | URL): Promise<Response> => {
     const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : (input as Request).url;
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const hostname = new URL(url).hostname;
     if (downHosts.has(hostname)) {
       return new Response("internal error", { status: 500 });
@@ -112,7 +109,7 @@ function fakeFetchFactory(downHosts: Set<string>): typeof globalThis.fetch {
   return impl as unknown as typeof globalThis.fetch;
 }
 
-function readJournal(path: string): Array<{ kind: string; ts: string; [k: string]: unknown }> {
+function readJournal(path: string): { kind: string; ts: string; [k: string]: unknown }[] {
   if (!existsSync(path)) return [];
   const raw = readFileSync(path, "utf8");
   return raw
@@ -203,7 +200,7 @@ async function main(): Promise<void> {
     const entries = readJournal(seeded.journalPath);
     for (const e of entries) {
       if (e.kind === "tick") {
-        const r = e.report as { probes: Array<{ name: string; state: string }> };
+        const r = e.report as { probes: { name: string; state: string }[] };
         const summary = r.probes
           .map((p) => `${p.name}=${p.state === "healthy" ? "✓" : "✗"}`)
           .join(" ");

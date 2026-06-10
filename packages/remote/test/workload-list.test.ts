@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { router } from "../src/router.js";
-import { parseWorkload, saveWorkload } from "../src/workload/store.js";
 import { parseModelHost, saveModelHost } from "../src/workload/modelhost-store.js";
+import { parseWorkload, saveWorkload } from "../src/workload/store.js";
 
 /**
  * E.4 — `workloadList` returns a per-row summary of each declared

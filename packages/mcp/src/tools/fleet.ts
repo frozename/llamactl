@@ -1,22 +1,24 @@
-import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-import { spawn } from "node:child_process";
-import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { toTextContent } from "@nova/mcp-shared";
+
 import {
   appendFleetJournal,
   defaultFleetJournalPath,
-  readSupervisorStatus,
+  type FleetExecutionEntry,
   type FleetJournalEntry,
   type FleetProposalEntry,
   type FleetSnapshotEntry,
-  type FleetExecutionEntry,
   readAuditEntries,
+  readSupervisorStatus,
 } from "@llamactl/fleet-supervisor";
-import { defaultFleetAuditPath } from "../../../fleet-supervisor/src/journal.js";
+import { toTextContent } from "@nova/mcp-shared";
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { z } from "zod";
+
 import { FleetAggregator } from "../../../fleet-supervisor/src/aggregator.js";
+import { defaultFleetAuditPath } from "../../../fleet-supervisor/src/journal.js";
 import { createPeerFetch } from "../../../fleet-supervisor/src/peer-fetch.js";
 import { listPeers } from "../../../remote/src/config/peers.js";
 
@@ -233,7 +235,7 @@ async function handleFleetPressureStatus({
 }): Promise<{ content: { type: "text"; text: string }[] }> {
   const path = journalPath ?? defaultFleetJournalPath();
   const report = await readSupervisorStatus({ journalPath: path, node, limit });
-  return toTextContent(report as any);
+  return toTextContent(report);
 }
 
 const auditInputSchema = {
@@ -258,7 +260,7 @@ async function handleFleetAudit({
   limit?: number;
 }): Promise<{ content: { type: "text"; text: string }[] }> {
   const result = await readAuditEntries({ auditPath, tool, outcome, since, limit });
-  return toTextContent(result as any);
+  return toTextContent(result);
 }
 
 export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): void {
@@ -283,7 +285,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         const peers = listPeers();
         const aggregator = new FleetAggregator({
           peers,
-          fetchSnapshot: async (peer) => createPeerFetch(peer)(),
+          fetchSnapshot: async (peer) => await createPeerFetch(peer)(),
         });
         await aggregator.pollNow();
         return toTextContent({ snapshots: aggregator.getAll() });
@@ -333,7 +335,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         const t = latestTransition.get(nodeName);
         return {
           name: nodeName,
-          state: (t?.state === "HIGH" ? "HIGH" : "NORMAL") as "NORMAL" | "HIGH",
+          state: t?.state === "HIGH" ? "HIGH" : "NORMAL",
           lastTransitionAt: t?.ts ?? null,
         };
       });
@@ -363,7 +365,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     },
     async (input) => {
       warnDeprecatedToolAlias("llamactl_fleet_supervisor_audit", "llamactl_fleet_audit");
-      return handleFleetAudit(input);
+      return await handleFleetAudit(input);
     },
   );
 
@@ -388,7 +390,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     },
     async (input) => {
       warnDeprecatedToolAlias("llamactl_fleet_supervisor_status", "llamactl_fleet_pressure_status");
-      return handleFleetPressureStatus(input);
+      return await handleFleetPressureStatus(input);
     },
   );
 
@@ -524,12 +526,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
           appendAudit("llamactl_admit_measure", input, "error", outcome);
           return toTextContent(error);
         }
-        appendAudit(
-          "llamactl_admit_measure",
-          input,
-          "success",
-          result as unknown as Record<string, unknown>,
-        );
+        appendAudit("llamactl_admit_measure", input, "success", result);
         return toTextContent(result);
       } finally {
         admitMeasureInFlight.delete(key);
@@ -612,12 +609,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         });
       }
 
-      appendAudit(
-        "llamactl_supervisor_execute",
-        preview,
-        "success",
-        result as unknown as Record<string, unknown>,
-      );
+      appendAudit("llamactl_supervisor_execute", preview, "success", result);
       return toTextContent({ ...result, preview });
     },
   );

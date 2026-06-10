@@ -1,6 +1,7 @@
-import { resolveNodeKind, type ClusterNode } from "../../config/schema.js";
 import type { ApplyResult } from "../apply.js";
 import type { GatewayApplyOptions, GatewayHandler } from "./types.js";
+
+import { type ClusterNode, resolveNodeKind } from "../../config/schema.js";
 
 /**
  * Sentinel handler: when `spec.gateway: true` is pointed at a plain

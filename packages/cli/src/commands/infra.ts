@@ -1,6 +1,7 @@
-import { getGlobals, getNodeClient } from "../dispatcher.js";
-import { infraSpec, listPeers, makeInfraClient, type PeerNode } from "@llamactl/remote";
 import { planRollout, runRollback, runRollout } from "@llamactl/fleet-supervisor";
+import { infraSpec, listPeers, makeInfraClient, type PeerNode } from "@llamactl/remote";
+
+import { getGlobals, getNodeClient } from "../dispatcher.js";
 
 type InfraPlatformKind = infraSpec.InfraPlatformKind;
 const ALLOWED_PLATFORMS: InfraPlatformKind[] = [
@@ -298,7 +299,7 @@ export async function executeRollout(
     skipIfPresent: boolean;
   },
 ) {
-  return runRollout(groups, clientFactory, opts);
+  return await runRollout(groups, clientFactory, opts);
 }
 
 export async function executeRollback(
@@ -306,7 +307,7 @@ export async function executeRollback(
   clientFactory: (peer: PeerNode) => any,
   opts: { pkg: string; previousVersion: string },
 ) {
-  return runRollback(peers, clientFactory, opts);
+  return await runRollback(peers, clientFactory, opts);
 }
 
 function matchNodeGlob(name: string, glob: string): boolean {
@@ -314,7 +315,7 @@ function matchNodeGlob(name: string, glob: string): boolean {
   if (!glob.includes("*")) return name === glob;
   const escaped = glob
     .split("*")
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .map((part) => part.replaceAll(/[.+?^${}()|[\]\\]/g, "\\$&"))
     .join(".*");
   return new RegExp(`^${escaped}$`).test(name);
 }
@@ -377,23 +378,23 @@ export async function runInfra(argv: string[]): Promise<number> {
   }
   switch (sub) {
     case "list":
-      return runList();
+      return await runList();
     case "install":
-      return runInstall(rest);
+      return await runInstall(rest);
     case "activate":
-      return runActivate(rest);
+      return await runActivate(rest);
     case "uninstall":
-      return runUninstall(rest);
+      return await runUninstall(rest);
     case "current":
-      return runCurrent(rest);
+      return await runCurrent(rest);
     case "list-specs":
       return runListSpecs(rest);
     case "service":
-      return runService(rest);
+      return await runService(rest);
     case "rollout":
-      return runRolloutMain(rest);
+      return await runRolloutMain(rest);
     case "rollback":
-      return runRollbackMain(rest);
+      return await runRollbackMain(rest);
     default:
       process.stderr.write(`infra: unknown subcommand ${sub}\n\n${USAGE}`);
       return 1;

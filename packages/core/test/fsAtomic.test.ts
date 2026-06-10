@@ -2,11 +2,14 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { appendLine, atomicWriteFile } from "../src/fsAtomic.js";
 
 describe("fsAtomic", () => {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-fsatomic-"));
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   test("atomicWriteFile creates the target + leaves no tmp files behind", () => {
     const target = join(dir, "nested", "file.tsv");

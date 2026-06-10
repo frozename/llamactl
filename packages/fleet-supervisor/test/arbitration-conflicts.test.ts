@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { MigrationController, type NodeSnapshot } from "../src/migration-controller.js";
+
 import type { FleetExecutionEntry, FleetJournalEntry, MoveProposal } from "../src/types.js";
+
+import { MigrationController, type NodeSnapshot } from "../src/migration-controller.js";
 
 describe("Arbitration conflicts", () => {
   let nowMs = 1_700_000_000_000;

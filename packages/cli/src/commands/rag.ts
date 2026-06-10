@@ -1,5 +1,7 @@
 import type { NodeClient } from "@llamactl/remote";
+
 import { config as kubecfg, resolveNodeKind } from "@llamactl/remote";
+
 import { getNodeClient } from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl rag <subcommand>
@@ -65,14 +67,14 @@ export async function runRag(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
     case "ask":
-      return runAsk(rest);
+      return await runAsk(rest);
     case "pipeline": {
       const { runRagPipeline } = await import("./rag-pipeline.js");
-      return runRagPipeline(rest);
+      return await runRagPipeline(rest);
     }
     case "bench": {
       const { runRagBenchCli } = await import("./rag-bench.js");
-      return runRagBenchCli(rest);
+      return await runRagBenchCli(rest);
     }
     case undefined:
     case "--help":
@@ -224,7 +226,7 @@ function autoResolveKb(): { name: string } | { error: string } {
     error:
       `rag ask: --kb is required — multiple rag nodes available (${names}).\n` +
       "  hint: pick one explicitly, e.g. --kb " +
-      `${ragNodes[0]!.name}`,
+      ragNodes[0]!.name,
   };
 }
 
@@ -245,10 +247,10 @@ interface SearchResponseShape {
 }
 
 interface ChatResponseShape {
-  choices: Array<{
+  choices: {
     message: { role: string; content: string | null | unknown[] };
     finish_reason?: string | null;
-  }>;
+  }[];
   model?: string;
 }
 
@@ -303,7 +305,7 @@ async function runAsk(args: string[]): Promise<number> {
       collection?: string;
     } = { node: kbName, query: opts.question, topK: opts.topK };
     if (opts.collection) ragInput.collection = opts.collection;
-    retrieval = (await client.ragSearch.query(ragInput)) as SearchResponseShape;
+    retrieval = await client.ragSearch.query(ragInput);
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     process.stderr.write(`rag ask: retrieval failed from '${kbName}': ${msg}\n`);

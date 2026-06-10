@@ -1,6 +1,7 @@
-import { mkdirSync, appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
+
 import type { FleetJournalEntry } from "./types.js";
 
 export function defaultFleetJournalPath(): string {
@@ -41,7 +42,7 @@ export function readCurrentLeaseHolder(journalPath: string): string | null {
 
 export function readRecentMovesFromJournal(
   journalPath: string,
-): Array<{ workload: string; movedAtMs: number }> {
+): { workload: string; movedAtMs: number }[] {
   if (!existsSync(journalPath)) return [];
   const raw = readFileSync(journalPath, "utf8");
   const latestByWorkload = new Map<string, number>();

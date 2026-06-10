@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { aggregateMetrics, percentile } from "../src/index.js";
 
 describe("aggregateMetrics", () => {

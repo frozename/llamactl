@@ -13,9 +13,7 @@ export interface AggregateResult {
   per_class: PerClassMetric[];
 }
 
-export function aggregateMetrics(
-  predictions: Array<{ pred: string; gold: string }>,
-): AggregateResult {
+export function aggregateMetrics(predictions: { pred: string; gold: string }[]): AggregateResult {
   const labels = [...new Set(predictions.flatMap((row) => [row.pred, row.gold]))].sort();
   const perClass = labels.map((label) => {
     let tp = 0;

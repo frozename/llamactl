@@ -1,4 +1,3 @@
-import { describe, expect, test } from "bun:test";
 import {
   AppsV1Api,
   CoreV1Api,
@@ -10,11 +9,13 @@ import {
   type V1Service,
   type V1StatefulSet,
 } from "@kubernetes/client-node";
+import { describe, expect, test } from "bun:test";
 
-import { KubernetesBackend, createKubernetesBackend } from "../src/runtime/kubernetes/backend.js";
-import { RuntimeError } from "../src/runtime/errors.js";
-import { K8S_ANNOTATION_KEYS, K8S_LABEL_KEYS } from "../src/runtime/kubernetes/labels.js";
 import type { ServiceDeployment } from "../src/runtime/backend.js";
+
+import { RuntimeError } from "../src/runtime/errors.js";
+import { createKubernetesBackend, KubernetesBackend } from "../src/runtime/kubernetes/backend.js";
+import { K8S_ANNOTATION_KEYS, K8S_LABEL_KEYS } from "../src/runtime/kubernetes/labels.js";
 
 /**
  * Phase 2 + 3 — backend tests. Phase 2 covers skeleton + ping(); Phase
@@ -371,7 +372,7 @@ describe("KubernetesBackend.ensureService — Deployment happy path", () => {
               annotations: { [K8S_ANNOTATION_KEYS.specHash]: spec.specHash },
             },
             spec: { ports: [{ port: 8000 }] },
-          } as V1Service;
+          };
         },
         "core.createNamespacedService": (p) => p.body,
         "apps.readNamespacedDeployment": () => {
@@ -418,8 +419,8 @@ describe("KubernetesBackend.ensureService — configMap volumes", () => {
         },
       ],
     });
-    const configMapsCreated: Array<{ body: unknown; order: number }> = [];
-    const deploymentsCreated: Array<{ body: unknown; order: number }> = [];
+    const configMapsCreated: { body: unknown; order: number }[] = [];
+    const deploymentsCreated: { body: unknown; order: number }[] = [];
     let tick = 0;
     const stub = stubKubeConfig({
       handlers: {
@@ -478,11 +479,11 @@ describe("KubernetesBackend.ensureService — configMap volumes", () => {
       spec?: {
         template?: {
           spec?: {
-            volumes?: Array<{
+            volumes?: {
               configMap?: { name?: string };
               hostPath?: unknown;
               persistentVolumeClaim?: unknown;
-            }>;
+            }[];
           };
         };
       };
@@ -633,7 +634,7 @@ describe("KubernetesBackend.ensureService — validation + failure modes", () =>
               creationTimestamp: new Date("2026-04-20T15:00:00Z"),
             },
             status: { readyReplicas: 0, replicas: 1 },
-          } as V1Deployment;
+          };
         },
         "apps.createNamespacedDeployment": (p) => ({
           ...(p.body as V1Deployment),
@@ -702,7 +703,7 @@ describe("KubernetesBackend.ensureService — StatefulSet happy path", () => {
         "core.readNamespace": () => {
           throw notFound();
         },
-        "core.createNamespace": (p) => p.body as V1Namespace,
+        "core.createNamespace": (p) => p.body,
         "core.readNamespacedSecret": () => {
           throw notFound();
         },
@@ -1161,7 +1162,7 @@ describe("KubernetesBackend.destroyCompositeBoundary", () => {
       },
     });
     const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
-    await backend.destroyCompositeBoundary!("kb-stack");
+    await backend.destroyCompositeBoundary("kb-stack");
     expect(deleted).toEqual(["llamactl-kb-stack"]);
   });
 
@@ -1174,7 +1175,7 @@ describe("KubernetesBackend.destroyCompositeBoundary", () => {
       },
     });
     const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
-    await backend.destroyCompositeBoundary!("kb-stack");
+    await backend.destroyCompositeBoundary("kb-stack");
   });
 });
 
@@ -1182,7 +1183,7 @@ describe("KubernetesBackend.resolveExternalServiceEndpoint", () => {
   test("ClusterIP short-circuits with null (no live service read)", async () => {
     const stub = stubKubeConfig({ handlers: {} });
     const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
-    const url = await backend.resolveExternalServiceEndpoint!(
+    const url = await backend.resolveExternalServiceEndpoint(
       { name: "chroma-main" },
       { serviceType: "ClusterIP" },
     );
@@ -1209,7 +1210,7 @@ describe("KubernetesBackend.resolveExternalServiceEndpoint", () => {
       },
     });
     const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
-    const url = await backend.resolveExternalServiceEndpoint!(
+    const url = await backend.resolveExternalServiceEndpoint(
       { name: "chroma-main" },
       { serviceType: "NodePort" },
     );
@@ -1246,7 +1247,7 @@ describe("KubernetesBackend.resolveExternalServiceEndpoint", () => {
       },
     });
     const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
-    const url = await backend.resolveExternalServiceEndpoint!(
+    const url = await backend.resolveExternalServiceEndpoint(
       { name: "pg-main" },
       { serviceType: "NodePort" },
     );
@@ -1267,7 +1268,7 @@ describe("KubernetesBackend.resolveExternalServiceEndpoint", () => {
       },
     });
     const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
-    const url = await backend.resolveExternalServiceEndpoint!(
+    const url = await backend.resolveExternalServiceEndpoint(
       { name: "chroma-main" },
       { serviceType: "LoadBalancer" },
     );
@@ -1290,7 +1291,7 @@ describe("KubernetesBackend.resolveExternalServiceEndpoint", () => {
       },
     });
     const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
-    const url = await backend.resolveExternalServiceEndpoint!(
+    const url = await backend.resolveExternalServiceEndpoint(
       { name: "chroma-main" },
       { serviceType: "LoadBalancer" },
     );
@@ -1313,7 +1314,7 @@ describe("KubernetesBackend.resolveExternalServiceEndpoint", () => {
       },
     });
     const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
-    const url = await backend.resolveExternalServiceEndpoint!(
+    const url = await backend.resolveExternalServiceEndpoint(
       { name: "chroma-main" },
       { serviceType: "LoadBalancer" },
     );
@@ -1328,7 +1329,7 @@ describe("KubernetesBackend.resolveExternalServiceEndpoint", () => {
       },
     });
     const backend = new KubernetesBackend({ kubeConfig: stub.kubeConfig });
-    const url = await backend.resolveExternalServiceEndpoint!(
+    const url = await backend.resolveExternalServiceEndpoint(
       { name: "missing" },
       { serviceType: "NodePort" },
     );

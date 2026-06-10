@@ -1,6 +1,8 @@
 import { stringify as stringifyYaml } from "yaml";
-import { entrySpecHash } from "../../workload/gateway-catalog/hash.js";
+
 import type { CompositeStatusComponent, PipelineCompositeEntry } from "../schema.js";
+
+import { entrySpecHash } from "../../workload/gateway-catalog/hash.js";
 
 /**
  * Wire shape returned by `ragPipelineApply` when ownership is supplied.

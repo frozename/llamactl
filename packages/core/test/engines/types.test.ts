@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { ENGINES, type EngineName } from "../../src/engines/index.js";
+
+import { type EngineName, ENGINES } from "../../src/engines/index.js";
 
 describe("engine registry", () => {
   test("registry contains llamacpp and omlx keys", () => {

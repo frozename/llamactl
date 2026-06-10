@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
+
+import { hashToken } from "../src/server/auth.js";
 import {
   createTunnelClient,
   createTunnelServer,
   type TunnelReq,
   type TunnelSubscription,
 } from "../src/tunnel/index.js";
-import { hashToken } from "../src/server/auth.js";
 
 /**
  * B.3 coverage — `sendSubscribe` on the central tunnel server.
@@ -55,7 +56,9 @@ async function startPair(script: Map<string, ScriptedSub>): Promise<RunningPair>
     subscribe(handlers) {
       const entry = script.get(req.method);
       if (!entry) {
-        setImmediate(() => handlers.onError(new Error(`unknown method ${req.method}`)));
+        setImmediate(() => {
+          handlers.onError(new Error(`unknown method ${req.method}`));
+        });
         return {
           cancel() {
             /* no-op */
@@ -150,7 +153,7 @@ describe("tunnel-server: sendSubscribe", () => {
         ],
       ]),
     );
-    let events: unknown[] = [];
+    const events: unknown[] = [];
     let caught: Error | null = null;
     try {
       for await (const v of pair.server.sendSubscribe(pair.nodeName, makeReq("boom"))) {
@@ -161,7 +164,7 @@ describe("tunnel-server: sendSubscribe", () => {
     }
     expect(events).toEqual([{ only: true }]);
     expect(caught).not.toBeNull();
-    expect((caught as Error).message).toBe("sim failure");
+    expect(caught!.message).toBe("sim failure");
   });
 
   test("break mid-stream fires a stream-cancel on the agent", async () => {
@@ -227,6 +230,6 @@ describe("tunnel-server: sendSubscribe", () => {
       caught = err as Error;
     }
     expect(caught).not.toBeNull();
-    expect((caught as Error).message).toContain("tunnel not connected");
+    expect(caught!.message).toContain("tunnel not connected");
   });
 });

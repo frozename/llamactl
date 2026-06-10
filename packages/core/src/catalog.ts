@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+
 import { CuratedModel, curatedTsvFields, formatTsvRow, splitTsvRow } from "./schemas.js";
 
 /**
@@ -170,8 +171,7 @@ export function readCustomCatalog(file: string): CuratedModel[] {
 
   const out: CuratedModel[] = [];
   const lines = raw.split("\n");
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
+  for (const [i, line] of lines.entries()) {
     if (line === undefined) continue;
     const trimmed = line.trim();
     if (trimmed === "" || trimmed.startsWith("#")) continue;
@@ -180,8 +180,7 @@ export function readCustomCatalog(file: string): CuratedModel[] {
     if (cols.length < curatedTsvFields.length - 1) continue;
 
     const record: Record<string, string> = {};
-    for (let j = 0; j < curatedTsvFields.length; j += 1) {
-      const field = curatedTsvFields[j];
+    for (const [j, field] of curatedTsvFields.entries()) {
       if (field === undefined) continue;
       if (field === "format" && (cols[j] === undefined || cols[j] === "")) {
         record[field] = "gguf";

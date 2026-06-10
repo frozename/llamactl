@@ -1,42 +1,42 @@
 #!/usr/bin/env bun
-import { runEnv } from "./commands/env.js";
-import { runCatalog } from "./commands/catalog.js";
+import { runAdmit } from "./commands/admit.js";
+import { runAgent } from "./commands/agent.js";
+import { runArtifacts } from "./commands/artifacts.js";
 import { runBench } from "./commands/bench.js";
 import { runCandidate } from "./commands/candidate.js";
-import { runServer } from "./commands/server.js";
+import { runCatalog } from "./commands/catalog.js";
+import { runComposite } from "./commands/composite.js";
+import { runController } from "./commands/controller.js";
+import { runCostGuardian } from "./commands/cost-guardian.js";
+import { runCtx } from "./commands/ctx.js";
+import { runDeployNode } from "./commands/deploy.js";
+import { runDisable } from "./commands/disable.js";
+import { runDiscover } from "./commands/discover.js";
+import { runDoctor } from "./commands/doctor.js";
+import { runEmbersynth } from "./commands/embersynth.js";
+import { runEnable } from "./commands/enable.js";
+import { runEnv } from "./commands/env.js";
+import { runEval } from "./commands/eval.js";
+import { runExpose } from "./commands/expose.js";
+import { runFleet } from "./commands/fleet.js";
+import { runHeal } from "./commands/heal.js";
+import { runInfra } from "./commands/infra.js";
+import { runInit } from "./commands/init.js";
 import { runKeepAlive } from "./commands/keepAlive.js";
 import { runLMStudio } from "./commands/lmstudio.js";
-import { runRecommendations } from "./commands/recommendations.js";
-import { runDiscover } from "./commands/discover.js";
-import { runPull } from "./commands/pull.js";
-import { runUninstall } from "./commands/uninstall.js";
-import { runAgent } from "./commands/agent.js";
 import { runNode } from "./commands/node.js";
-import { runRag } from "./commands/rag.js";
-import { runCtx } from "./commands/ctx.js";
-import { runApply, runDelete, runDescribe, runGet } from "./commands/workload.js";
-import { runEnable } from "./commands/enable.js";
-import { runDisable } from "./commands/disable.js";
-import { runComposite } from "./commands/composite.js";
-import { runDoctor } from "./commands/doctor.js";
-import { runInit } from "./commands/init.js";
-import { runController } from "./commands/controller.js";
-import { runExpose } from "./commands/expose.js";
-import { runSirius } from "./commands/sirius.js";
-import { runEmbersynth } from "./commands/embersynth.js";
-import { runRunbookCmd } from "./commands/runbook.js";
-import { runHeal } from "./commands/heal.js";
-import { runSupervisor } from "./commands/supervisor.js";
-import { runAdmit } from "./commands/admit.js";
-import { runDeployNode } from "./commands/deploy.js";
-import { runArtifacts } from "./commands/artifacts.js";
-import { runEval } from "./commands/eval.js";
-import { runCostGuardian } from "./commands/cost-guardian.js";
 import { runPlan } from "./commands/plan.js";
-import { runInfra } from "./commands/infra.js";
 import { runProject } from "./commands/project.js";
+import { runPull } from "./commands/pull.js";
+import { runRag } from "./commands/rag.js";
+import { runRecommendations } from "./commands/recommendations.js";
+import { runRunbookCmd } from "./commands/runbook.js";
+import { runServer } from "./commands/server.js";
+import { runSirius } from "./commands/sirius.js";
+import { runSupervisor } from "./commands/supervisor.js";
 import { runTunnel } from "./commands/tunnel.js";
-import { runFleet } from "./commands/fleet.js";
+import { runUninstall } from "./commands/uninstall.js";
+import { runApply, runDelete, runDescribe, runGet } from "./commands/workload.js";
 import { extractGlobalFlags, setGlobals } from "./dispatcher.js";
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
@@ -223,88 +223,88 @@ async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
   switch (command) {
     case "env":
-      return runEnv(rest);
+      return await runEnv(rest);
     case "catalog":
-      return runCatalog(rest);
+      return await runCatalog(rest);
     case "bench":
-      return runBench(rest);
+      return await runBench(rest);
     case "recommendations":
-      return runRecommendations(rest);
+      return await runRecommendations(rest);
     case "discover":
-      return runDiscover(rest);
+      return await runDiscover(rest);
     case "uninstall":
-      return runUninstall(rest);
+      return await runUninstall(rest);
     case "pull":
-      return runPull(rest);
+      return await runPull(rest);
     case "candidate":
-      return runCandidate(rest);
+      return await runCandidate(rest);
     case "server":
-      return runServer(rest);
+      return await runServer(rest);
     case "keep-alive":
-      return runKeepAlive(rest);
+      return await runKeepAlive(rest);
     case "lmstudio":
-      return runLMStudio(rest);
+      return await runLMStudio(rest);
     case "agent":
-      return runAgent(rest);
+      return await runAgent(rest);
     case "node":
-      return runNode(rest);
+      return await runNode(rest);
     case "rag":
-      return runRag(rest);
+      return await runRag(rest);
     case "ctx":
-      return runCtx(rest);
+      return await runCtx(rest);
     case "apply":
-      return runApply(rest);
+      return await runApply(rest);
     case "get":
-      return runGet(rest);
+      return await runGet(rest);
     case "describe":
-      return runDescribe(rest);
+      return await runDescribe(rest);
     case "delete":
-      return runDelete(rest);
+      return await runDelete(rest);
     case "enable":
-      return runEnable(rest);
+      return await runEnable(rest);
     case "disable":
-      return runDisable(rest);
+      return await runDisable(rest);
     case "composite":
-      return runComposite(rest);
+      return await runComposite(rest);
     case "doctor":
-      return runDoctor(rest);
+      return await runDoctor(rest);
     case "init":
-      return runInit(rest);
+      return await runInit(rest);
     case "controller":
-      return runController(rest);
+      return await runController(rest);
     case "expose":
-      return runExpose(rest);
+      return await runExpose(rest);
     case "sirius":
-      return runSirius(rest);
+      return await runSirius(rest);
     case "embersynth":
-      return runEmbersynth(rest);
+      return await runEmbersynth(rest);
     case "runbook":
-      return runRunbookCmd(rest);
+      return await runRunbookCmd(rest);
     // Alias: canonical form is 'llamactl agent heal'.
     case "heal":
-      return runHeal(rest);
+      return await runHeal(rest);
     case "supervisor":
       process.exit(await runSupervisor(rest));
     case "admit":
       process.exit(await runAdmit(rest));
     case "cost-guardian":
-      return runCostGuardian(rest);
+      return await runCostGuardian(rest);
     case "plan":
-      return runPlan(rest);
+      return await runPlan(rest);
     case "deploy-node":
-      return runDeployNode(rest);
+      return await runDeployNode(rest);
     case "artifacts":
-      return runArtifacts(rest);
+      return await runArtifacts(rest);
     case "eval":
-      return runEval(rest);
+      return await runEval(rest);
     case "infra":
-      return runInfra(rest);
+      return await runInfra(rest);
     case "project":
-      return runProject(rest);
+      return await runProject(rest);
     case "tunnel":
-      return runTunnel(rest);
+      return await runTunnel(rest);
     case "fleet":
-      return runFleet(rest);
+      return await runFleet(rest);
     case undefined:
     case "--help":
     case "-h":

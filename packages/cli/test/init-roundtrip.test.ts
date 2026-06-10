@@ -3,11 +3,14 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runInit } from "../src/commands/init.js";
 import { runComposite } from "../src/commands/composite.js";
-import { runApply } from "../src/commands/workload.js";
-import { runGet } from "../src/commands/workload.js";
-import { __resetWorkloadTestSeams, __setWorkloadTestSeams } from "../src/commands/workload.js";
+import { runInit } from "../src/commands/init.js";
+import {
+  __resetWorkloadTestSeams,
+  __setWorkloadTestSeams,
+  runApply,
+  runGet,
+} from "../src/commands/workload.js";
 
 /**
  * Opt-in E2E covering the full onboarding round-trip:

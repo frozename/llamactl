@@ -1,7 +1,11 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { listCatalog } from "../catalog.js";
+
+import type { CuratedModel } from "../schemas.js";
+import type { ModelClass } from "../types.js";
+
 import { resolveBuildId } from "../build.js";
+import { listCatalog } from "../catalog.js";
 import { ctxForModel } from "../ctx.js";
 import { resolveEnv } from "../env.js";
 import { defaultModeForRel, machineLabel } from "./mode.js";
@@ -9,13 +13,11 @@ import {
   benchProfileFile,
   benchVisionFile,
   findLatestProfile,
-  findLegacyProfile,
   findLatestVision,
+  findLegacyProfile,
   readBenchProfiles,
   readBenchVision,
 } from "./store.js";
-import type { CuratedModel } from "../schemas.js";
-import type { ModelClass } from "../types.js";
 
 export interface BenchCompareRow {
   label: string;

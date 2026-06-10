@@ -1,12 +1,13 @@
-import { evictionScore } from "./evictionScore.js";
 import type { KvEntry, KvRegistry } from "./registry.js";
 
+import { evictionScore } from "./evictionScore.js";
+
 export interface LookupParams {
-  candidatePrefixes: Array<{
+  candidatePrefixes: {
     sha: string;
     prefixByteLength: number;
     tokenCount: number;
-  }>;
+  }[];
   workload: string;
   quantBits: number;
   ctxSize: number;

@@ -1,7 +1,7 @@
 import type { WorkloadEval } from "../types.js";
 
 interface CorpusRow {
-  messages: Array<Record<string, unknown>>;
+  messages: Record<string, unknown>[];
   tools?: unknown[];
   tool_choice?: string | object;
 }
@@ -54,7 +54,7 @@ export const toolCallGrammarWorkload: WorkloadEval = {
   scorer: (row, completion, meta) => {
     void completion;
     const r = row as CorpusRow;
-    const goldTurn = r.messages[r.messages.length - 1] as Record<string, unknown> | undefined;
+    const goldTurn = r.messages[r.messages.length - 1];
     const pred = __signature(meta?.tool_calls);
     const gold =
       goldTurn && "tool_calls" in goldTurn

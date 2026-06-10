@@ -1,13 +1,13 @@
 import { createDefaultToolClient } from "@llamactl/agents";
+import { createOpenAICompatProvider } from "@nova/contracts";
 import {
-  DEFAULT_ALLOWLIST,
   createLlmExecutor,
+  DEFAULT_ALLOWLIST,
+  type Plan,
+  type PlannerExecutor,
   runPlanner,
   stubPlannerExecutor,
-  type PlannerExecutor,
-  type Plan,
 } from "@nova/mcp";
-import { createOpenAICompatProvider } from "@nova/contracts";
 
 const USAGE = `llamactl plan — LLM-backed operator planner
 
@@ -247,7 +247,7 @@ export async function runPlan(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
     case "run":
-      return runPlanRun(rest);
+      return await runPlanRun(rest);
     case undefined:
     case "--help":
     case "-h":

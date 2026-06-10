@@ -1,8 +1,12 @@
 import type { TRPCLink } from "@trpc/client";
+
 import { httpBatchLink, httpSubscriptionLink, splitLink } from "@trpc/client";
 import { EventSource } from "eventsource";
-import { fingerprintsEqual, computeFingerprint } from "../server/tls.js";
+import type { FetchLike } from "eventsource";
+
 import type { ClusterNode } from "../config/schema.js";
+
+import { computeFingerprint, fingerprintsEqual } from "../server/tls.js";
 
 /**
  * Cycle-free link builder shared by `node-client.ts` (typed AppRouter
@@ -17,11 +21,6 @@ export type PinnedFetchFactory = (node: ClusterNode) => PinnedFetch;
 
 // eventsource@4's FetchLike is a stripped-down RequestInit. We widen to
 // a loose shape that our pinned fetch wrapper can satisfy.
-type EventSourceFetchLike = (
-  url: string | URL,
-  init?: { headers?: Record<string, string>; signal?: AbortSignal; body?: unknown },
-) => Promise<Response>;
-
 /**
  * Verify the supplied PEM's fingerprint matches the stored one. Shared
  * by every pinned-fetch implementation (Bun on the CLI, undici in the
@@ -53,7 +52,7 @@ export function makePinnedFetch(node: ClusterNode): PinnedFetch {
   const ca = node.certificate;
   return async (input, init) => {
     const extraInit = ca ? { tls: { ca } } : {};
-    return fetch(input as FetchInput, { ...init, ...extraInit } as RequestInit);
+    return await fetch(input, { ...init, ...extraInit });
   };
 }
 
@@ -69,7 +68,7 @@ export function makePinnedFetch(node: ClusterNode): PinnedFetch {
  * (Electron main, browser envs) inject their own pinned-fetch
  * implementation. Defaults to the Bun-native one.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 export function buildPinnedLinks(
   node: ClusterNode,
   token: string,
@@ -91,14 +90,14 @@ export function buildPinnedLinks(
         url: trpcUrl,
         EventSource,
         eventSourceOptions: {
-          fetch: ((url: string | URL, init?: Record<string, unknown>) =>
+          fetch: ((url, init) =>
             pinnedFetch(url as string, {
               ...(init as RequestInit | undefined),
               headers: {
                 ...((init?.["headers"] as Record<string, string> | undefined) ?? {}),
                 authorization: authHeader,
               },
-            })) as unknown as EventSourceFetchLike,
+            })) satisfies FetchLike,
         },
       }),
       false: httpBatchLink({

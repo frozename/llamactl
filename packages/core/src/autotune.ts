@@ -1,5 +1,8 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+
+import type { ResolvedEnv } from "./types.js";
+
 import {
   benchHistoryFile,
   benchProfileFile,
@@ -12,10 +15,10 @@ import {
   readBenchVision,
 } from "./bench/index.js";
 import {
-  benchPreset,
-  benchVision,
   type BenchEvent,
+  benchPreset,
   type BenchPresetResult,
+  benchVision,
   type BenchVisionResult,
   type RunCli,
 } from "./bench/runner.js";
@@ -24,7 +27,6 @@ import { findByRel } from "./catalog.js";
 import { ctxForModel } from "./ctx.js";
 import { resolveEnv } from "./env.js";
 import { findLocalMmprojForRel } from "./mmproj.js";
-import type { ResolvedEnv } from "./types.js";
 
 function envFlagEnabled(raw: string | undefined, defaultOn: boolean): boolean {
   const value = raw ?? (defaultOn ? "true" : "false");

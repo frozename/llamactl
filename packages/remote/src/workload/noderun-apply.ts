@@ -1,5 +1,5 @@
-import type { InstalledInfra } from "../infra/layout.js";
 import type { InstallResult } from "../infra/install.js";
+import type { InstalledInfra } from "../infra/layout.js";
 import type { NodeRun, NodeRunInfraItem, NodeRunStatus } from "./noderun-schema.js";
 
 /**

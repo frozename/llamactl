@@ -1,8 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+
 import { trpc } from "@/lib/trpc";
-import { Button, Input, EditorialHero } from "@/ui";
+import { Button, EditorialHero, Input } from "@/ui";
 
 type Mode = "file" | "candidate" | "test";
 type Profile = "mac-mini-16g" | "balanced" | "macbook-pro-48g";
@@ -82,7 +83,7 @@ function PullCard({
         appendLog({ kind: "stderr", text: String(e.line ?? "") });
         break;
       case "exit":
-        appendLog({ kind: "exit" as "stdout", text: `(exit ${e.code})` });
+        appendLog({ kind: "exit", text: `(exit ${e.code})` });
         break;
       case "profile-start":
         appendLog({ kind: "profile", text: `-- profile=${String(e.profile)} --` });
@@ -235,7 +236,9 @@ function PullCard({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => onDismiss(spec.id)}
+            onClick={() => {
+              onDismiss(spec.id);
+            }}
             disabled={state === "running"}
             style={{ fontSize: 12, padding: "2px 8px" }}
             aria-label="Dismiss"
@@ -375,7 +378,9 @@ export default function Pulls(): React.JSX.Element {
                 aria-selected={isActive}
                 data-testid={`pulls-mode-${m}`}
                 data-active={isActive ? "true" : "false"}
-                onClick={() => setMode(m)}
+                onClick={() => {
+                  setMode(m);
+                }}
                 style={{
                   borderRadius: 4,
                   border: isActive ? "1px solid var(--color-brand)" : "1px solid transparent",
@@ -411,7 +416,9 @@ export default function Pulls(): React.JSX.Element {
             </span>
             <Input
               value={repo}
-              onChange={(e) => setRepo(e.target.value)}
+              onChange={(e) => {
+                setRepo(e.target.value);
+              }}
               placeholder="unsloth/gemma-4-E4B-it-GGUF"
               style={{ width: "100%", fontFamily: "monospace" }}
             />
@@ -429,7 +436,9 @@ export default function Pulls(): React.JSX.Element {
             </span>
             <Input
               value={file}
-              onChange={(e) => setFile(e.target.value)}
+              onChange={(e) => {
+                setFile(e.target.value);
+              }}
               placeholder={mode === "file" ? "gemma-4-E4B-it-Q8_0.gguf" : "(auto-pick via profile)"}
               style={{ width: "100%", fontFamily: "monospace" }}
             />
@@ -448,7 +457,9 @@ export default function Pulls(): React.JSX.Element {
               </span>
               <select
                 value={profile}
-                onChange={(e) => setProfile(e.target.value as Profile | "")}
+                onChange={(e) => {
+                  setProfile(e.target.value as Profile | "");
+                }}
                 style={{
                   width: "100%",
                   borderRadius: 4,

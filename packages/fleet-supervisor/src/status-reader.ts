@@ -1,6 +1,8 @@
-import * as fs from "fs";
-import * as readline from "readline";
-import type { FleetJournalEntry, FleetPressureStatusEntry, FleetTransitionEntry } from "./types.js";
+import * as fs from "node:fs";
+import * as readline from "node:readline";
+
+import type { FleetJournalEntry, FleetPressureStatusEntry } from "./types.js";
+
 import { DEFAULT_PRESSURE_THRESHOLDS } from "./loop.js";
 
 export interface NodePressureStatus {
@@ -70,7 +72,7 @@ export async function readSupervisorStatus(
       if (opts.node && entry.node !== opts.node) continue;
 
       if (entry.kind === "fleet-transition" && entry.subjectKind === "node") {
-        const trans = entry as FleetTransitionEntry;
+        const trans = entry;
         if (trans.signal === "pressure" && trans.to === "HIGH") {
           const state = ensureNode(entry.node);
           state.state = "HIGH";
@@ -83,7 +85,7 @@ export async function readSupervisorStatus(
           state.lastTransitionTs = trans.ts;
         }
       } else if (entry.kind === "fleet-pressure-status") {
-        const status = entry as FleetPressureStatusEntry;
+        const status = entry;
         const state = ensureNode(entry.node);
         state.lastStatus = status;
         state.recent.push(status);

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useMemo, useState } from "react";
 import { stringify as stringifyYaml } from "yaml";
+
 import { trpc } from "@/lib/trpc";
 
 /**
@@ -27,7 +28,7 @@ interface BenchReport {
       node: string;
       collection?: string;
       topK: number;
-      queries: Array<Record<string, unknown>>;
+      queries: Record<string, unknown>[];
     };
   };
   hitRate: number;
@@ -35,14 +36,14 @@ interface BenchReport {
   totalQueries: number;
   hits: number;
   errors: number;
-  perQuery: Array<{
+  perQuery: {
     query: string;
     topK: number;
     hitRank: number | null;
     hitKind: "doc_id" | "substring" | null;
     matchedDocId: string | null;
     error?: string;
-  }>;
+  }[];
   elapsed_ms: number;
 }
 
@@ -50,7 +51,7 @@ function starterYaml(nodeName: string, collection: string | null): string {
   const manifest = {
     apiVersion: "llamactl/v1",
     kind: "RagBench",
-    metadata: { name: `${nodeName.replace(/[^a-z0-9-]/gi, "-")}-quality` },
+    metadata: { name: `${nodeName.replaceAll(/[^a-z0-9-]/gi, "-")}-quality` },
     spec: {
       node: nodeName,
       ...(collection ? { collection } : {}),
@@ -101,7 +102,7 @@ export function QualityTab(props: { nodeName: string; collection: string }): Rea
 
   const bench = trpc.ragBench.useMutation({
     onSuccess: (data) => {
-      setReport(data as BenchReport);
+      setReport(data);
       setError(null);
       setRunning(false);
     },

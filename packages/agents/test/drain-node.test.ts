@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { runRunbook, type RunbookToolClient, type ToolCallInput } from "../src/index.js";
+
+import { type RunbookToolClient, runRunbook, type ToolCallInput } from "../src/index.js";
 
 interface Call {
   name: string;
@@ -22,7 +23,7 @@ function makeClient(responses: Record<string, (args: Record<string, unknown>) =>
   return { client, calls };
 }
 
-function listPayload(rows: Array<{ name: string; node: string }>): unknown {
+function listPayload(rows: { name: string; node: string }[]): unknown {
   return {
     count: rows.length,
     workloads: rows.map((r) => ({

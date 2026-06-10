@@ -1,16 +1,18 @@
 import { describe, expect, test } from "bun:test";
+
 import type { ClusterNode } from "../src/config/schema.js";
-import { applyOne, type ApplyEvent, type WorkloadClient } from "../src/workload/apply.js";
+import type { ModelRun } from "../src/workload/schema.js";
+
+import { type ApplyEvent, applyOne, type WorkloadClient } from "../src/workload/apply.js";
 import {
   AGENT_GATEWAY_HANDLER_KIND,
+  agentGatewayHandler,
   DEFAULT_GATEWAY_HANDLERS,
   dispatchGatewayApply,
-  agentGatewayHandler,
   embersynthHandler,
-  siriusHandler,
   type GatewayHandler,
+  siriusHandler,
 } from "../src/workload/gateway-handlers/index.js";
-import type { ModelRun } from "../src/workload/schema.js";
 
 function gatewayManifest(node: string, target = "openai/gpt-4o"): ModelRun {
   return {

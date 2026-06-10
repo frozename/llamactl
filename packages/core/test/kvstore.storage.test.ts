@@ -1,15 +1,21 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { KvRegistry, openKvStorage, type KvEntry } from "../src/kvstore/index.js";
+import { join } from "node:path";
+
+import { type KvEntry, KvRegistry, openKvStorage } from "../src/kvstore/index.js";
 import { runMigrations } from "../src/kvstore/storage.js";
 import { workloadRuntimeRoot } from "../src/workloadRuntime.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-kvstore-"));
-  return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return {
+    root,
+    cleanup: () => {
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
 }
 
 function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
@@ -55,9 +61,9 @@ test("schema migration creates schema_version=5 and kv_entries columns", () => {
       )
       .get() as { name: string } | null;
     expect(table?.name).toBe("kv_entries");
-    const columns = storage.db.query("PRAGMA table_info('kv_entries')").all() as Array<{
+    const columns = storage.db.query("PRAGMA table_info('kv_entries')").all() as {
       name: string;
-    }>;
+    }[];
     expect(columns.map((c) => c.name)).toEqual([
       "sha",
       "workload",
@@ -222,9 +228,9 @@ test("kvstore migrations are idempotent after a restart replays the same version
       version: number;
     } | null;
     expect(version?.version).toBe(5);
-    const columns = reopened.db.query("PRAGMA table_info('kv_entries')").all() as Array<{
+    const columns = reopened.db.query("PRAGMA table_info('kv_entries')").all() as {
       name: string;
-    }>;
+    }[];
     expect(columns.some((column) => column.name === "ext_flags")).toBe(true);
     reopened.close();
   } finally {
@@ -274,9 +280,9 @@ test("kvstore migration recovers when schema_version lags behind already-added c
       version: number;
     } | null;
     expect(version?.version).toBe(5);
-    const columns = storage.db.query("PRAGMA table_info('kv_entries')").all() as Array<{
+    const columns = storage.db.query("PRAGMA table_info('kv_entries')").all() as {
       name: string;
-    }>;
+    }[];
     expect(columns.map((column) => column.name)).toContain("state");
     expect(columns.map((column) => column.name)).toContain("first_response_token");
     expect(columns.map((column) => column.name)).toContain("ext_flags");

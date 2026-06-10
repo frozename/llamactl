@@ -1,8 +1,9 @@
 import * as React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+
 import { trpc } from "@/lib/trpc";
-import { useOpsExecutorStore } from "@/stores/ops-executor-store";
 import { OpsExecutorPicker } from "@/modules/ops/ops-executor-picker";
+import { useOpsExecutorStore } from "@/stores/ops-executor-store";
 
 /**
  * N.4.5 — operator-plan chat UI. Starts empty; each user message runs
@@ -341,7 +342,7 @@ export default function Plan(): React.JSX.Element {
   const latestAssistantId = useMemo(() => {
     for (let i = turns.length - 1; i >= 0; i -= 1) {
       const turn = turns[i];
-      if (turn && turn.role === "assistant") return turn.id;
+      if (turn?.role === "assistant") return turn.id;
     }
     return null;
   }, [turns]);
@@ -497,8 +498,12 @@ export default function Plan(): React.JSX.Element {
               <div style={{ width: "100%" }}>
                 <PlanCard
                   result={turn.result}
-                  onApprove={() => setDecision("approved")}
-                  onReject={() => setDecision("rejected")}
+                  onApprove={() => {
+                    setDecision("approved");
+                  }}
+                  onReject={() => {
+                    setDecision("rejected");
+                  }}
                   decision={turn.id === latestAssistantId ? decision : null}
                   isLatest={turn.id === latestAssistantId}
                 />
@@ -551,7 +556,9 @@ export default function Plan(): React.JSX.Element {
       >
         <textarea
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+          }}
           onKeyDown={(e) => {
             // Cmd/Ctrl+Enter sends, plain Enter inserts a newline so
             // operators can type multi-line refinements without losing
@@ -636,7 +643,9 @@ export default function Plan(): React.JSX.Element {
         </ul>
         <button
           type="button"
-          onClick={() => setCatalog(DEFAULT_CATALOG)}
+          onClick={() => {
+            setCatalog(DEFAULT_CATALOG);
+          }}
           style={{
             marginTop: 8,
             borderRadius: "var(--r-md)",

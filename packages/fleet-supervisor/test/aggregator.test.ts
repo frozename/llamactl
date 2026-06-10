@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+
 import type { FleetSnapshotEntry } from "../src/types.js";
+
 import { FleetAggregator } from "../src/aggregator.js";
 
 const snapshot = (node: string, ts: string): FleetSnapshotEntry => ({

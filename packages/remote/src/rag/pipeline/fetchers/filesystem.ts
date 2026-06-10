@@ -7,10 +7,11 @@
  * minimal glob matcher when running under plain Node (dev-time test
  * runs on CI that haven't switched to Bun yet).
  */
-import { readFile, readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import type { Fetcher } from "../types.js";
+
 import { FilesystemSourceSpecSchema } from "../schema.js";
 
 export const filesystemFetcher: Fetcher = {

@@ -1,5 +1,7 @@
 import postgres from "postgres";
+
 import type { RagBinding } from "../../config/schema.js";
+
 import { resolveSecret } from "../../config/secret.js";
 import { RagError } from "../errors.js";
 

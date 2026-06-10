@@ -2,8 +2,10 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ENGINES } from "../../src/engines/index.js";
+
 import type { ModelHostSpecForEngine } from "../../src/engines/types.js";
+
+import { ENGINES } from "../../src/engines/index.js";
 
 function makeFakeBinary(): string {
   const dir = join(
@@ -55,7 +57,7 @@ describe("omlx engine dflash boot command", () => {
       LLAMA_CPP_MODELS: "/unused/models",
       LLAMACTL_RUNTIME_DIR: runtimeRoot,
       workloadName: "mlx-host-local",
-    } as any);
+    });
 
     const expectedBasePath = join(runtimeRoot, "workloads", "mlx-host-local", ".omlx");
     expect(built.args).toContain("--base-path");

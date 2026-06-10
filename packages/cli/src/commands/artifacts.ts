@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { platform as nodePlatform, arch as nodeArch } from "node:os";
 import { infraArtifactsFetch } from "@llamactl/remote";
+import { existsSync, mkdirSync } from "node:fs";
+import { arch as nodeArch, platform as nodePlatform } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 const USAGE = `llamactl artifacts — manage pre-built llamactl-agent binaries
 
@@ -333,7 +333,7 @@ function runList(argv: string[]): number {
     process.stderr.write(`artifacts list: unknown arg ${arg}\n`);
     return 1;
   }
-  const rows: Array<{ platform: Platform; path: string; sizeBytes: number }> = [];
+  const rows: { platform: Platform; path: string; sizeBytes: number }[] = [];
   for (const platform of ALLOWED_PLATFORMS) {
     const path = agentBinaryPath(platform, dir);
     if (!existsSync(path)) continue;
@@ -586,9 +586,9 @@ export async function runArtifacts(argv: string[]): Promise<number> {
     case "prune":
       return runPrune(rest);
     case "build-agent":
-      return runBuildAgent(rest);
+      return await runBuildAgent(rest);
     case "fetch":
-      return runFetch(rest);
+      return await runFetch(rest);
     case "show-path":
       return runShowPath(rest);
     case undefined:

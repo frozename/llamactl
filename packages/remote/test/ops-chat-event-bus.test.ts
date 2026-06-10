@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { sessionEventBus } from "../src/ops-chat/sessions/event-bus";
+
 import type { JournalEvent } from "../src/ops-chat/sessions/journal-schema";
+
+import { sessionEventBus } from "../src/ops-chat/sessions/event-bus";
 
 const baseEvt: JournalEvent = {
   type: "session_started",
@@ -17,7 +19,7 @@ describe("sessionEventBus", () => {
     const got: JournalEvent[] = [];
     const off = sessionEventBus.subscribe("s1", (e) => got.push(e));
     sessionEventBus.publish("s1", baseEvt);
-    sessionEventBus.publish("s1", { ...baseEvt, type: "done", iterations: 0 } as JournalEvent);
+    sessionEventBus.publish("s1", { ...baseEvt, type: "done", iterations: 0 });
     expect(got.length).toBe(2);
     off();
     sessionEventBus.close("s1");

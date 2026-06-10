@@ -10,12 +10,14 @@
  * Uses a fake RunbookToolClient so no network, no fs writes outside
  * a tempdir, no real usage corpus needed.
  */
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCostGuardianTick } from "../src/cost-guardian/tick.js";
+
 import type { CostGuardianConfig } from "../src/cost-guardian/config.js";
 import type { RunbookToolClient, ToolCallInput } from "../src/types.js";
+
+import { runCostGuardianTick } from "../src/cost-guardian/tick.js";
 
 const NARRATIVE = `\
 N.5 golden-path demo — cost-clamp (guardian tier escalation)

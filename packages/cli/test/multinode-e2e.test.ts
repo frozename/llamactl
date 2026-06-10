@@ -1,18 +1,19 @@
+import { rpcServer } from "@llamactl/core";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { createServer as createNetServer, connect as tcpConnect } from "node:net";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
 } from "node:fs";
+import { createServer as createNetServer, connect as tcpConnect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rpcServer } from "@llamactl/core";
-import { makeCluster, type Cluster } from "../../remote/test/helpers";
+
+import { type Cluster, makeCluster } from "../../remote/test/helpers";
 
 /**
  * Phase E.2 — real two-node multinode apply, end-to-end.
@@ -145,7 +146,9 @@ function pickFreePort(): Promise<number> {
       const addr = srv.address();
       if (addr && typeof addr === "object") {
         const port = addr.port;
-        srv.close(() => resolve(port));
+        srv.close(() => {
+          resolve(port);
+        });
       } else {
         srv.close();
         reject(new Error("could not read OS-assigned port"));

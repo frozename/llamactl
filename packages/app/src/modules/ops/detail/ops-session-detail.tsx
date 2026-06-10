@@ -1,9 +1,10 @@
 import * as React from "react";
+
 import { useOpsSession } from "../../../lib/use-ops-session";
 import { useTabStore } from "../../../stores/tab-store";
-import { SessionHeader } from "./session-header";
-import { IterationCard } from "./iteration-card";
 import { OpsSessionEmpty } from "./empty-state";
+import { IterationCard } from "./iteration-card";
+import { SessionHeader } from "./session-header";
 
 interface Props {
   sessionId: string;
@@ -64,7 +65,9 @@ export function OpsSessionDetail({ sessionId }: Props): React.JSX.Element {
             key={it.stepId}
             it={it}
             expanded={isExpanded(it.stepId)}
-            onToggle={() => toggle(it.stepId)}
+            onToggle={() => {
+              toggle(it.stepId);
+            }}
           />
         ))}
       </div>

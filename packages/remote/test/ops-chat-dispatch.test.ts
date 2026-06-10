@@ -3,14 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { router } from "../src/router.js";
-import {
-  KNOWN_OPS_CHAT_TOOLS,
-  dispatchOpsChatTool,
-  toolTier,
-  type Caller,
-} from "../src/ops-chat/dispatch.js";
 import { readOpsChatAudit } from "../src/ops-chat/audit.js";
+import {
+  type Caller,
+  dispatchOpsChatTool,
+  KNOWN_OPS_CHAT_TOOLS,
+  toolTier,
+} from "../src/ops-chat/dispatch.js";
+import { router } from "../src/router.js";
 
 /**
  * N.4.a — ops-chat tool dispatch. Every handler returns a
@@ -149,7 +149,7 @@ describe("operatorRunTool", () => {
     const listing = await caller.opsChatTools();
     expect(listing.tools.length).toBe(KNOWN_OPS_CHAT_TOOLS.length);
     const known = [...KNOWN_OPS_CHAT_TOOLS].sort();
-    const got = [...listing.tools].sort() as typeof known;
+    const got = [...listing.tools].sort();
     expect(got).toEqual(known);
   });
 });
@@ -162,7 +162,7 @@ describe("RAG dispatch", () => {
    * without hitting the procedure.
    */
 
-  type RagCalls = Array<{ method: string; input: unknown }>;
+  type RagCalls = { method: string; input: unknown }[];
 
   function makeFakeCaller(calls: RagCalls): Caller {
     const stub = (method: string, reply: unknown) => async (input: unknown) => {
@@ -329,7 +329,7 @@ describe("Composite dispatch", () => {
    * every case just forwards `input.dryRun` verbatim.
    */
 
-  type CompositeCalls = Array<{ method: string; input: unknown }>;
+  type CompositeCalls = { method: string; input: unknown }[];
 
   function makeFakeCompositeCaller(calls: CompositeCalls): Caller {
     const stub = (method: string, reply: unknown) => async (input: unknown) => {

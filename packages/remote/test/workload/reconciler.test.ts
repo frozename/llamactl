@@ -3,15 +3,18 @@ import * as fs from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { reconcileOnce, type ReconcileResult } from "../../src/workload/reconciler.js";
-import { saveWorkload } from "../../src/workload/store.js";
-import { saveModelHost } from "../../src/workload/modelhost-store.js";
-import { resolveEnv } from "../../../core/src/env.js";
+
+import type { WorkloadClient } from "../../src/workload/apply.js";
+
 import {
   computeModelHostSpecHash,
   readModelHostState,
   writeModelHostState,
 } from "../../../core/src/engines/state.js";
+import { resolveEnv } from "../../../core/src/env.js";
+import { saveModelHost } from "../../src/workload/modelhost-store.js";
+import { reconcileOnce, type ReconcileResult } from "../../src/workload/reconciler.js";
+import { saveWorkload } from "../../src/workload/store.js";
 
 function seedRunningSidecar(dir: string, manifest: ReturnType<typeof makeHostManifest>): void {
   writeModelHostState(
@@ -29,7 +32,6 @@ function seedRunningSidecar(dir: string, manifest: ReturnType<typeof makeHostMan
     resolveEnv({ LOCAL_AI_RUNTIME_DIR: dir }),
   );
 }
-import type { WorkloadClient } from "../../src/workload/apply.js";
 
 function makeClient(): WorkloadClient {
   return {
@@ -287,7 +289,7 @@ describe("reconcileOnce", () => {
                     ...currentManifest.spec,
                     extraArgs: ["--threads", "2"],
                   },
-                } as never,
+                },
                 dir,
               );
               return {
@@ -404,7 +406,7 @@ describe("reconcileOnce", () => {
             ...makeHostManifest().spec,
             enabled: false,
           },
-        } as never,
+        },
         dir,
       );
       process.env.LOCAL_AI_RUNTIME_DIR = dir;

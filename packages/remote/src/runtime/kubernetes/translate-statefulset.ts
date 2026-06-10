@@ -51,6 +51,7 @@ import type {
 } from "@kubernetes/client-node";
 
 import type { ServiceDeployment } from "../backend.js";
+
 import { K8S_ANNOTATION_KEYS, K8S_LABEL_KEYS, MANAGED_BY_VALUE } from "./labels.js";
 
 export interface TranslateStatefulSetOptions {
@@ -204,7 +205,7 @@ function buildVolumeClaimTemplates(
   const templates: V1PersistentVolumeClaim[] = [];
   const mounts: V1VolumeMount[] = [];
   const podVolumes: V1Volume[] = [];
-  volumes.forEach((v, i) => {
+  for (const [i, v] of volumes.entries()) {
     // ConfigMap volumes don't map onto a `volumeClaimTemplates`
     // entry — they need a pod-level `volumes[]` source referencing
     // the composite-scoped ConfigMap that the backend materializes.
@@ -224,7 +225,7 @@ function buildVolumeClaimTemplates(
         mountPath: v.containerPath,
         ...(v.readOnly !== undefined && { readOnly: v.readOnly }),
       });
-      return;
+      continue;
     }
     const name = v.name ?? `data-${i}`;
     const pvcSpec: V1PersistentVolumeClaim["spec"] = {
@@ -246,7 +247,7 @@ function buildVolumeClaimTemplates(
       mountPath: v.containerPath,
       ...(v.readOnly !== undefined && { readOnly: v.readOnly }),
     });
-  });
+  }
   return { templates, mounts, podVolumes };
 }
 

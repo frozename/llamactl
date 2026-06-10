@@ -1,7 +1,8 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
+
 import { readSupervisorStatus } from "../src/status-reader.js";
 
 describe("status-reader", () => {
@@ -9,7 +10,7 @@ describe("status-reader", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "status-reader-test-"));
     const journalPath = path.join(tmp, "journal.jsonl");
     if (content) fs.writeFileSync(journalPath, content, "utf8");
-    return fn(journalPath).finally(() => {
+    await fn(journalPath).finally(() => {
       fs.rmSync(tmp, { recursive: true, force: true });
     });
   }

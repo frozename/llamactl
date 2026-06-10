@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+
 import { unauthorizedResponse, verifyBearer } from "./auth.js";
 
 /**

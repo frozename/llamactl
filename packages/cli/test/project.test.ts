@@ -1,11 +1,16 @@
+import type { NodeClient } from "@llamactl/remote";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { NodeClient } from "@llamactl/remote";
 import { parse as parseYaml } from "yaml";
-import { runProject } from "../src/commands/project.js";
-import { __setProjectTestSeams, __resetProjectTestSeams } from "../src/commands/project.js";
+
+import {
+  __resetProjectTestSeams,
+  __setProjectTestSeams,
+  runProject,
+} from "../src/commands/project.js";
 
 /**
  * CLI coverage for `llamactl project …`. Tests run against a stubbed
@@ -121,7 +126,7 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
       // Parse `project:<name>/<taskKind>`; stub defaults to a
       // "matched" decision pointing at mac-mini.claude-pro so the
       // existing CLI tests don't have to inject overrides.
-      const m = node.match(/^project:([^/]+)\/(.+)$/);
+      const m = /^project:([^/]+)\/(.+)$/.exec(node);
       const project = m?.[1] ?? "unknown";
       const taskKind = m?.[2] ?? "unknown";
       return {
@@ -396,7 +401,7 @@ describe("project route", () => {
     __setProjectTestSeams({
       nodeClient: makeStubClient({
         projectRoutePreview: async ({ node }) => {
-          const m = node.match(/^project:([^/]+)\/(.+)$/);
+          const m = /^project:([^/]+)\/(.+)$/.exec(node);
           return {
             ok: true,
             node: "private-first",
@@ -433,7 +438,7 @@ describe("project route", () => {
     __setProjectTestSeams({
       nodeClient: makeStubClient({
         projectRoutePreview: async ({ node }) => {
-          const m = node.match(/^project:([^/]+)\/(.+)$/);
+          const m = /^project:([^/]+)\/(.+)$/.exec(node);
           return {
             ok: true,
             node: "private-first",

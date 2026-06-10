@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+
 import {
+  benchProfileArgs,
+  defaultModeForRel,
   findLatestProfile,
   findLatestVision,
   findLegacyProfile,
@@ -8,8 +11,6 @@ import {
   readBenchProfiles,
   readBenchVision,
   serverProfileArgs,
-  benchProfileArgs,
-  defaultModeForRel,
 } from "../src/bench/index.js";
 import { resolveEnv } from "../src/env.js";
 import { FIXTURE_DIR } from "./helpers.js";
@@ -86,7 +87,7 @@ describe("bench.defaultModeForRel", () => {
     DEV_STORAGE: "/tmp/ds",
     LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
     LOCAL_AI_RECOMMENDATIONS_SOURCE: "off",
-  } as NodeJS.ProcessEnv);
+  });
 
   test("Qwen 3.5 27B locked to text", () => {
     expect(defaultModeForRel("Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf", env)).toBe("text");

@@ -1,11 +1,13 @@
-import * as React from "react";
-import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Layers } from "lucide-react";
+import * as React from "react";
+import { useState } from "react";
 import * as YAML from "yaml";
+
 import { trpc } from "@/lib/trpc";
-import { Badge, Button, StatusDot, Input } from "@/ui";
-import { WorkersPanel, type WorkerManifest } from "./workers-panel";
+import { Badge, Button, Input, StatusDot } from "@/ui";
+
+import { WorkersPanel } from "./workers-panel";
 
 /**
  * Workloads module. Drives the declarative `ModelRun` manifests stored
@@ -148,14 +150,18 @@ function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
             type="text"
             placeholder="gemma-qa"
             value={tplName}
-            onChange={(e) => setTplName(e.target.value)}
+            onChange={(e) => {
+              setTplName(e.target.value);
+            }}
           />
         </div>
         <div style={{ display: "flex", flexDirection: "column" }}>
           <label style={{ color: "var(--color-text-secondary)" }}>node</label>
           <select
             value={tplNode}
-            onChange={(e) => setTplNode(e.target.value)}
+            onChange={(e) => {
+              setTplNode(e.target.value);
+            }}
             style={{
               width: 128,
               borderRadius: "var(--r-md)",
@@ -182,7 +188,9 @@ function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
             type="text"
             placeholder="gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
             value={tplTarget}
-            onChange={(e) => setTplTarget(e.target.value)}
+            onChange={(e) => {
+              setTplTarget(e.target.value);
+            }}
           />
         </div>
         <Button
@@ -200,7 +208,9 @@ function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
       <textarea
         placeholder="apiVersion: llamactl/v1&#10;kind: ModelRun&#10;metadata:&#10;  name: gemma-qa&#10;spec:&#10;  node: local&#10;  target:&#10;    kind: rel&#10;    value: …"
         value={yaml}
-        onChange={(e) => setYaml(e.target.value)}
+        onChange={(e) => {
+          setYaml(e.target.value);
+        }}
         style={{
           height: 192,
           width: "100%",
@@ -346,7 +356,9 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
             type="button"
             variant="secondary"
             size="sm"
-            onClick={() => setShowDescribe((v) => !v)}
+            onClick={() => {
+              setShowDescribe((v) => !v);
+            }}
           >
             {showDescribe ? "Hide" : "Describe"}
           </Button>
@@ -364,7 +376,9 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
                 <input
                   type="checkbox"
                   checked={keepRunning}
-                  onChange={(e) => setKeepRunning(e.target.checked)}
+                  onChange={(e) => {
+                    setKeepRunning(e.target.checked);
+                  }}
                 />
                 keep server running
               </label>
@@ -372,7 +386,9 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
                 type="button"
                 variant="destructive"
                 size="sm"
-                onClick={() => del.mutate({ name: row.name, keepRunning })}
+                onClick={() => {
+                  del.mutate({ name: row.name, keepRunning });
+                }}
                 disabled={del.isPending}
               >
                 {del.isPending ? "Deleting…" : "Confirm delete"}
@@ -381,7 +397,9 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
                 type="button"
                 variant="secondary"
                 size="sm"
-                onClick={() => setConfirmDelete(false)}
+                onClick={() => {
+                  setConfirmDelete(false);
+                }}
               >
                 Cancel
               </Button>
@@ -391,7 +409,9 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
               type="button"
               variant="secondary"
               size="sm"
-              onClick={() => setConfirmDelete(true)}
+              onClick={() => {
+                setConfirmDelete(true);
+              }}
             >
               Delete
             </Button>
@@ -435,9 +455,7 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
             <span style={{ color: "var(--color-err)" }}>{describe.error.message}</span>
           ) : describe.data ? (
             <div style={{ marginTop: 8 }}>
-              <WorkersPanel
-                workers={(describe.data.manifest.spec.workers ?? []) as WorkerManifest[]}
-              />
+              <WorkersPanel workers={describe.data.manifest.spec.workers ?? []} />
               <div>
                 <div style={{ fontWeight: 500, color: "var(--color-text)" }}>Manifest</div>
                 <pre
@@ -568,7 +586,9 @@ function ReconcilerToolbar(): React.JSX.Element {
           type="button"
           variant="secondary"
           size="sm"
-          onClick={() => kick.mutate()}
+          onClick={() => {
+            kick.mutate();
+          }}
           disabled={kick.isPending}
           title="run one reconcile pass now"
         >
@@ -579,7 +599,9 @@ function ReconcilerToolbar(): React.JSX.Element {
             type="button"
             variant="secondary"
             size="sm"
-            onClick={() => stop.mutate()}
+            onClick={() => {
+              stop.mutate();
+            }}
             disabled={stop.isPending}
           >
             Stop
@@ -589,7 +611,9 @@ function ReconcilerToolbar(): React.JSX.Element {
             type="button"
             variant="primary"
             size="sm"
-            onClick={() => start.mutate({ intervalSeconds: 10 })}
+            onClick={() => {
+              start.mutate({ intervalSeconds: 10 });
+            }}
             disabled={start.isPending}
           >
             Start
@@ -645,11 +669,24 @@ export default function Workloads(): React.JSX.Element {
             )
           </div>
         </div>
-        <Button type="button" variant="secondary" size="sm" onClick={() => setShowApply((v) => !v)}>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            setShowApply((v) => !v);
+          }}
+        >
           {showApply ? "Cancel" : "Apply workload"}
         </Button>
       </div>
-      {showApply && <ApplyPanel onDone={() => setShowApply(false)} />}
+      {showApply && (
+        <ApplyPanel
+          onDone={() => {
+            setShowApply(false);
+          }}
+        />
+      )}
       <ReconcilerToolbar />
       <div style={{ marginTop: 8 }}>
         {rows.length === 0 && (
@@ -678,7 +715,9 @@ export default function Workloads(): React.JSX.Element {
               type="button"
               variant="primary"
               size="sm"
-              onClick={() => setShowApply(true)}
+              onClick={() => {
+                setShowApply(true);
+              }}
               data-testid="workloads-apply"
             >
               Apply workload

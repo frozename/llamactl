@@ -1,12 +1,14 @@
-import { describe, expect, test } from "bun:test";
-import { EventEmitter } from "node:events";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
-import { readFileSync, rmSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { registerFleetTools } from "../src/tools/fleet.js";
 
 type SpawnFn = typeof import("node:child_process").spawn;
@@ -17,10 +19,7 @@ type SpawnMockOptions = {
   holdOpenMs?: number;
 };
 
-function mockSpawn(
-  opts: SpawnMockOptions,
-  calls: Array<{ cmd: string; args: string[] }> = [],
-): SpawnFn {
+function mockSpawn(opts: SpawnMockOptions, calls: { cmd: string; args: string[] }[] = []): SpawnFn {
   return ((cmd: string, args: string[], _options?: SpawnOptions) => {
     calls.push({ cmd, args });
     const proc = new EventEmitter() as any;
@@ -53,7 +52,7 @@ async function connected(deps?: {
 }
 
 function textOf(result: unknown): string {
-  const c = (result as { content?: Array<{ type: string; text: string }> }).content ?? [];
+  const c = (result as { content?: { type: string; text: string }[] }).content ?? [];
   return c[0]?.text ?? "";
 }
 
@@ -65,7 +64,7 @@ function call(client: Client, name: string, args: Record<string, unknown>) {
 
 describe("llamactl_admit_measure", () => {
   test("success (code 0) returns ok:true with stdout", async () => {
-    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0, stdout: '{"peakMb":1024}' }, calls);
     const { client } = await connected({ spawn: spawnFn });
 
@@ -98,7 +97,7 @@ describe("llamactl_admit_measure", () => {
   });
 
   test("node flag is appended to args when provided", async () => {
-    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0 }, calls);
     const { client } = await connected({ spawn: spawnFn });
 
@@ -107,7 +106,7 @@ describe("llamactl_admit_measure", () => {
   });
 
   test("does not allow concurrent in-flight runs for the same workload", async () => {
-    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0, stdout: "ok", holdOpenMs: 15 }, calls);
     const { client } = await connected({ spawn: spawnFn });
 
@@ -127,7 +126,7 @@ describe("llamactl_admit_measure", () => {
     const original = process.env.LLAMACTL_FLEET_DIR;
     process.env.LLAMACTL_FLEET_DIR = tmpDir;
 
-    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0, stdout: '{"peakMb":1024}' }, calls);
     const { client } = await connected({ spawn: spawnFn });
     const result = await call(client, "llamactl_admit_measure", { workload: "granite" });
@@ -156,7 +155,7 @@ describe("llamactl_admit_measure", () => {
 
 describe("llamactl_supervisor_execute", () => {
   test("proposalId mode passes --execute flag", async () => {
-    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0, stdout: "executed" }, calls);
     const { client } = await connected({ spawn: spawnFn });
 
@@ -174,7 +173,7 @@ describe("llamactl_supervisor_execute", () => {
   });
 
   test("proposalId mode requires confirm", async () => {
-    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0 }, calls);
     const { client } = await connected({ spawn: spawnFn });
 
@@ -186,7 +185,7 @@ describe("llamactl_supervisor_execute", () => {
   });
 
   test("auto mode passes --auto flag", async () => {
-    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0 }, calls);
     const { client } = await connected({ spawn: spawnFn });
 
@@ -196,7 +195,7 @@ describe("llamactl_supervisor_execute", () => {
   });
 
   test("supervisor existing process blocks execution", async () => {
-    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0 }, calls);
     const { client } = await connected({
       spawn: spawnFn,
@@ -214,7 +213,7 @@ describe("llamactl_supervisor_execute", () => {
   });
 
   test("severityThreshold is propagated in auto mode", async () => {
-    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0 }, calls);
     const { client } = await connected({ spawn: spawnFn });
 
@@ -227,7 +226,7 @@ describe("llamactl_supervisor_execute", () => {
   });
 
   test("node flag is appended when provided", async () => {
-    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0 }, calls);
     const { client } = await connected({ spawn: spawnFn });
 
@@ -240,7 +239,7 @@ describe("llamactl_supervisor_execute", () => {
   });
 
   test("neither proposalId nor auto returns validation error without spawning", async () => {
-    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0 }, calls);
     const { client } = await connected({ spawn: spawnFn });
 
@@ -252,7 +251,7 @@ describe("llamactl_supervisor_execute", () => {
   });
 
   test("both proposalId and auto returns validation error without spawning", async () => {
-    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0 }, calls);
     const { client } = await connected({ spawn: spawnFn });
 

@@ -1,5 +1,6 @@
 // packages/remote/test/search-text-match.test.ts
 import { describe, expect, test } from "bun:test";
+
 import { findTextMatches } from "../src/search/text-match";
 
 describe("findTextMatches", () => {

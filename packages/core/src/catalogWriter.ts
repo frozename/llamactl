@@ -1,11 +1,12 @@
+import type { CuratedModel } from "./schemas.js";
+import type { ModelClass } from "./types.js";
+
 import { findByRel, listCatalog } from "./catalog.js";
 import { classifyRepo } from "./discovery.js";
 import { resolveEnv } from "./env.js";
 import { appendLine } from "./fsAtomic.js";
 import { fetchModelInfo } from "./hf.js";
 import { quantFromRel } from "./quant.js";
-import type { CuratedModel } from "./schemas.js";
-import type { ModelClass } from "./types.js";
 
 export interface AddCuratedInput {
   repo: string;
@@ -39,7 +40,7 @@ function deriveFamily(repo: string): string {
 function deriveEntryId(repoBase: string, rel: string): string {
   const quant = quantFromRel(rel);
   const raw = `${repoBase.toLowerCase()}-${quant}`;
-  return raw.replace(/[^a-z0-9._-]/g, "-");
+  return raw.replaceAll(/[^a-z0-9._-]/g, "-");
 }
 
 /**
@@ -105,7 +106,7 @@ export async function addCurated(input: AddCuratedInput): Promise<AddCuratedResu
   const entry: CuratedModel = {
     ...fields,
     class: klass as CuratedModel["class"],
-    format: format as CuratedModel["format"],
+    format: format,
   };
 
   // `findByRel` reads the catalog each call so subsequent writers in the

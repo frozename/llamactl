@@ -1,9 +1,13 @@
+import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:child_process";
+
+import { infraArtifactsFetch } from "@llamactl/remote";
+import { spawnSync as nodeSpawnSync } from "node:child_process";
 import {
   accessSync,
   chmodSync,
-  constants as fsConstants,
   copyFileSync,
   existsSync,
+  constants as fsConstants,
   mkdirSync,
   readFileSync,
   statSync,
@@ -12,19 +16,17 @@ import {
 } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { dirname, join } from "node:path";
-import { spawnSync as nodeSpawnSync } from "node:child_process";
-import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:child_process";
-import { infraArtifactsFetch } from "@llamactl/remote";
+
 import {
   agentBinaryPath,
   ALLOWED_PLATFORMS,
   buildAgentBinary,
   currentPlatform,
   defaultArtifactsDir,
-  resolveSourceDefault,
   type Platform,
+  resolveSourceDefault,
 } from "../artifacts.js";
-import { buildSystemPlist, buildUserPlist, type BuildPlistOptions } from "./templates.js";
+import { type BuildPlistOptions, buildSystemPlist, buildUserPlist } from "./templates.js";
 
 /**
  * `llamactl agent install-launchd` — resolve an agent binary, render a
@@ -370,9 +372,9 @@ export async function resolveBinary(opts: ResolveBinaryOptions): Promise<string>
     return resolveBinaryFromPath(source.path, installPath, dryRun, deps);
   }
   if (source.kind === "release") {
-    return resolveBinaryFromRelease(source.tag, installPath, repo, dryRun, deps);
+    return await resolveBinaryFromRelease(source.tag, installPath, repo, dryRun, deps);
   }
-  return resolveBinaryFromSource(installPath, dryRun, deps);
+  return await resolveBinaryFromSource(installPath, dryRun, deps);
 }
 
 function looksLikePrivilegedPath(p: string): boolean {
@@ -601,7 +603,7 @@ export async function pollLaunchctlHealthy(
     lastStdout = res.stdout ?? "";
     if (res.status === 0) {
       const pidMatch = /\bpid = (\d+)\b/.exec(lastStdout);
-      const stateRunning = /state = running/.test(lastStdout);
+      const stateRunning = lastStdout.includes("state = running");
       if (stateRunning && pidMatch) {
         const pid = Number.parseInt(pidMatch[1]!, 10);
         if (Number.isFinite(pid) && pid > 0) {

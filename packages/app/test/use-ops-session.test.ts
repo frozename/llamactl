@@ -1,7 +1,7 @@
 import "./setup.ts";
 import { describe, expect, test } from "bun:test";
 
-import { mergeEventIntoView, initialView, type JournalEvent } from "../src/lib/use-ops-session";
+import { initialView, type JournalEvent, mergeEventIntoView } from "../src/lib/use-ops-session";
 
 describe("useOpsSession view-model merge", () => {
   test("session_started seeds the view", () => {
@@ -35,7 +35,7 @@ describe("useOpsSession view-model merge", () => {
       iteration: 0,
       tier: "read",
       reasoning: "because",
-      step: { tool: "foo", annotation: "a" } as any,
+      step: { tool: "foo", annotation: "a" },
     });
     expect(v.iterations.length).toBe(1);
     expect(v.iterations[0]!.tool).toBe("foo");
@@ -59,7 +59,7 @@ describe("useOpsSession view-model merge", () => {
       iteration: 0,
       tier: "read",
       reasoning: "",
-      step: { tool: "foo", annotation: "a" } as any,
+      step: { tool: "foo", annotation: "a" },
     });
     v = mergeEventIntoView(v, {
       type: "preview_outcome",
@@ -95,7 +95,7 @@ describe("useOpsSession view-model merge", () => {
       iteration: 0,
       tier: "read",
       reasoning: "",
-      step: { tool: "foo", annotation: "a" } as any,
+      step: { tool: "foo", annotation: "a" },
     };
     v = mergeEventIntoView(v, evt);
     v = mergeEventIntoView(v, evt);

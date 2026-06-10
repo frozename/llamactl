@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+
+import type { HFModelInfo } from "../src/schemas.js";
+
 import {
   classifyRepo,
   eligibleGgufSiblings,
@@ -6,7 +9,6 @@ import {
   fitScore,
   pickFile,
 } from "../src/discovery.js";
-import type { HFModelInfo } from "../src/schemas.js";
 
 describe("discovery.classifyRepo", () => {
   test("pipeline=image-text-to-text short-circuits to multimodal", () => {
@@ -41,7 +43,7 @@ describe("discovery.eligibleGgufSiblings", () => {
         { rfilename: "fp16/model-FP16.gguf" },
         { rfilename: "model-00001-of-00004.gguf" },
         { rfilename: "model-UD-Q3_K_M.gguf" },
-        { rfilename: "README.md" as unknown as string },
+        { rfilename: "README.md" },
       ],
     };
     expect(eligibleGgufSiblings(info)).toEqual(["model-UD-Q4_K_XL.gguf", "model-UD-Q3_K_M.gguf"]);

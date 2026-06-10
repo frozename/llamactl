@@ -1,4 +1,5 @@
 import type { FleetSnapshotEntry } from "./types.js";
+
 import { listPeers, type PeerNode } from "../../remote/src/config/peers.js";
 
 export type AggregatorPeer = PeerNode;

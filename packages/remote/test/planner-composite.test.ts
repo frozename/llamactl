@@ -1,10 +1,11 @@
-import { describe, expect, test } from "bun:test";
 import {
-  runPlanner,
   DEFAULT_ALLOWLIST,
   type PlannerExecutor,
   type PlannerToolDescriptor,
+  runPlanner,
 } from "@nova/mcp";
+import { describe, expect, test } from "bun:test";
+
 import { BUILT_IN_PLANNER_TOOLS, mergePlannerTools } from "../src/router.js";
 
 /**

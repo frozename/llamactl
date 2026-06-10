@@ -1,5 +1,5 @@
-import { readFileSync, existsSync } from "node:fs";
 import { config as kubecfg } from "@llamactl/remote";
+import { existsSync, readFileSync } from "node:fs";
 
 const USAGE = `Usage: llamactl ctx <subcommand>
 
@@ -20,7 +20,7 @@ export async function runCtx(args: string[]): Promise<number> {
     case "get":
       return runGet(rest);
     case "nodes":
-      return (await import("./node.js")).runNode(["ls", ...rest]);
+      return await (await import("./node.js")).runNode(["ls", ...rest]);
     case undefined:
     case "--help":
     case "-h":

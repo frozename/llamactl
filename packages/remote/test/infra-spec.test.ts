@@ -3,13 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+
 import {
   defaultInfraPackagesDir,
+  type InfraPackageSpec,
   infraPackageSpecPath,
   listInfraPackageSpecs,
   loadInfraPackageSpec,
   resolveInfraArtifact,
-  type InfraPackageSpec,
 } from "../src/infra/spec.js";
 
 let dir = "";

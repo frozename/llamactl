@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { ctxForModel } from "../src/ctx.js";
 import { resolveEnv } from "../src/env.js";
 
@@ -7,7 +8,7 @@ describe("ctxForModel", () => {
     LLAMA_CPP_GEMMA_CTX_SIZE: "32768",
     LLAMA_CPP_QWEN_CTX_SIZE: "65536",
     LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
-  } as NodeJS.ProcessEnv);
+  });
 
   test("Qwen 3.6 35B-A3B uses Qwen ctx", () => {
     expect(ctxForModel("Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", env)).toBe("65536");

@@ -34,18 +34,18 @@ export type ResponseFormat =
   | { type: "json_schema"; json_schema: { name: string; schema: Record<string, unknown> } };
 
 export interface CompletionResponse {
-  choices: Array<{
+  choices: {
     message: {
       content: string | null;
       reasoning_content?: string | null;
-      tool_calls?: Array<{
+      tool_calls?: {
         id: string;
         type: "function";
         function: { name: string; arguments: string };
-      }>;
+      }[];
     };
     finish_reason: string;
-  }>;
+  }[];
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;

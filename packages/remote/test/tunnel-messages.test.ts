@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
+
 import {
   encodeTunnelMessage,
   parseTunnelMessage,
-  TunnelMessageSchema,
   type TunnelMessage,
+  TunnelMessageSchema,
   type TunnelStreamCancel,
   type TunnelStreamDone,
   type TunnelStreamEvent,

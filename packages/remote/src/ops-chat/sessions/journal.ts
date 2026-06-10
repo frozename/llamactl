@@ -1,8 +1,9 @@
-import { mkdir, appendFile, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+
 import { defaultSessionDir } from "../paths.js";
-import { JournalEventSchema, type JournalEvent } from "./journal-schema.js";
+import { type JournalEvent, JournalEventSchema } from "./journal-schema.js";
 
 export function journalDir(sessionId: string): string {
   return defaultSessionDir(process.env, sessionId);

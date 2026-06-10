@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { mkdirSync } from "node:fs";
+
 import type { FleetSnapshotEntry } from "./types.js";
 
 export interface SnapshotRow {
@@ -63,7 +64,7 @@ export function getLatestPerNode(db: Database): SnapshotRow[] {
       ORDER BY node ASC
     `,
     )
-    .all() as Array<{ node: string; ts: string; snapshot_json: string }>;
+    .all() as { node: string; ts: string; snapshot_json: string }[];
   return rows.map((row) => ({
     node: row.node,
     ts: row.ts,
@@ -93,7 +94,7 @@ export function getHistoricalForNode(
       $node: node,
       $sinceTs: opts.sinceTs ?? null,
       $limit: limit,
-    }) as Array<{ node: string; ts: string; snapshot_json: string }>;
+    }) as { node: string; ts: string; snapshot_json: string }[];
   return rows.map((row) => ({
     node: row.node,
     ts: row.ts,

@@ -1,8 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+
 import { trpc } from "@/lib/trpc";
-import { Button, Input, StatusDot, EditorialHero } from "@/ui";
+import { Button, EditorialHero, Input, StatusDot } from "@/ui";
 
 type Mode = "auto" | "text" | "vision";
 type RunKind = "preset" | "vision";
@@ -85,7 +86,9 @@ function SchedulerPanel(): React.JSX.Element {
           setId("");
           setRel("");
         },
-        onError: (e) => setError(e.message),
+        onError: (e) => {
+          setError(e.message);
+        },
       },
     );
   }
@@ -112,7 +115,9 @@ function SchedulerPanel(): React.JSX.Element {
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => kick.mutate()}
+            onClick={() => {
+              kick.mutate();
+            }}
             disabled={kick.isPending}
             style={{ fontSize: 10, padding: "2px 8px" }}
           >
@@ -122,7 +127,9 @@ function SchedulerPanel(): React.JSX.Element {
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => stop.mutate()}
+              onClick={() => {
+                stop.mutate();
+              }}
               style={{ fontSize: 10, padding: "2px 8px" }}
             >
               Stop
@@ -131,7 +138,9 @@ function SchedulerPanel(): React.JSX.Element {
             <Button
               variant="primary"
               size="sm"
-              onClick={() => start.mutate({ tickIntervalSeconds: 60 })}
+              onClick={() => {
+                start.mutate({ tickIntervalSeconds: 60 });
+              }}
               style={{ fontSize: 10, padding: "2px 8px" }}
             >
               Start
@@ -153,13 +162,17 @@ function SchedulerPanel(): React.JSX.Element {
           type="text"
           placeholder="id (e.g. gemma-daily)"
           value={id}
-          onChange={(e) => setId(e.target.value)}
+          onChange={(e) => {
+            setId(e.target.value);
+          }}
           data-testid="bench-schedule-id"
           style={{ width: 160 }}
         />
         <select
           value={node}
-          onChange={(e) => setNode(e.target.value)}
+          onChange={(e) => {
+            setNode(e.target.value);
+          }}
           data-testid="bench-schedule-node"
           style={{
             width: 128,
@@ -180,7 +193,9 @@ function SchedulerPanel(): React.JSX.Element {
           type="text"
           placeholder="rel path"
           value={rel}
-          onChange={(e) => setRel(e.target.value)}
+          onChange={(e) => {
+            setRel(e.target.value);
+          }}
           data-testid="bench-schedule-rel"
           style={{ flex: 1, fontFamily: "monospace" }}
         />
@@ -198,7 +213,9 @@ function SchedulerPanel(): React.JSX.Element {
             min={1}
             max={168}
             value={hours}
-            onChange={(e) => setHours(Math.max(1, Number(e.target.value) || 1))}
+            onChange={(e) => {
+              setHours(Math.max(1, Number(e.target.value) || 1));
+            }}
             style={{ width: 56, textAlign: "right" }}
           />
           hours
@@ -260,7 +277,9 @@ function SchedulerPanel(): React.JSX.Element {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => toggle.mutate({ id: s.id, enabled: !s.enabled })}
+                onClick={() => {
+                  toggle.mutate({ id: s.id, enabled: !s.enabled });
+                }}
                 style={{ fontSize: 10, padding: "2px 8px" }}
               >
                 {s.enabled ? "pause" : "resume"}
@@ -268,7 +287,9 @@ function SchedulerPanel(): React.JSX.Element {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => remove.mutate({ id: s.id })}
+                onClick={() => {
+                  remove.mutate({ id: s.id });
+                }}
                 style={{ fontSize: 10, padding: "2px 8px" }}
               >
                 remove
@@ -447,7 +468,9 @@ export default function Bench(): React.JSX.Element {
       <SchedulerPanel />
 
       <form
-        onSubmit={(e) => e.preventDefault()}
+        onSubmit={(e) => {
+          e.preventDefault();
+        }}
         style={{
           marginBottom: 16,
           borderRadius: 6,
@@ -473,7 +496,9 @@ export default function Bench(): React.JSX.Element {
             <Input
               list="bench-rel-suggestions"
               value={target}
-              onChange={(e) => setTarget(e.target.value)}
+              onChange={(e) => {
+                setTarget(e.target.value);
+              }}
               disabled={busy}
               data-testid="bench-target"
               style={{ width: "100%", fontFamily: "monospace" }}
@@ -501,7 +526,9 @@ export default function Bench(): React.JSX.Element {
             </span>
             <select
               value={mode}
-              onChange={(e) => setMode(e.target.value as Mode)}
+              onChange={(e) => {
+                setMode(e.target.value as Mode);
+              }}
               disabled={busy}
               style={{
                 width: "100%",
@@ -539,7 +566,9 @@ export default function Bench(): React.JSX.Element {
               <>
                 <Button
                   variant="primary"
-                  onClick={() => start("preset")}
+                  onClick={() => {
+                    start("preset");
+                  }}
                   disabled={!canRun}
                   data-testid="bench-run-preset"
                   title={canRun ? "Run text preset bench." : "Enter a target first."}
@@ -549,7 +578,9 @@ export default function Bench(): React.JSX.Element {
                 </Button>
                 <Button
                   variant="secondary"
-                  onClick={() => start("vision")}
+                  onClick={() => {
+                    start("vision");
+                  }}
                   disabled={!canRun}
                   data-testid="bench-run-vision"
                   title={canRun ? "Run vision bench." : "Enter a target first."}

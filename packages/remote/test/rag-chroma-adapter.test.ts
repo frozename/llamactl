@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { ChromaRagAdapter } from "../src/rag/chroma/adapter.js";
+
+import type { RagBinding } from "../src/config/schema.js";
 import type { ChromaMcpClient, ChromaToolResult } from "../src/rag/chroma/client.js";
+
+import { ChromaRagAdapter } from "../src/rag/chroma/adapter.js";
 import { connectChromaMcp } from "../src/rag/chroma/client.js";
 import { RagError } from "../src/rag/errors.js";
-import type { RagBinding } from "../src/config/schema.js";
 
 /**
  * Unit-level coverage of the Chroma adapter. A lightweight mock
@@ -37,7 +39,7 @@ function makeClient(handler: (call: ToolCall) => ChromaToolResult | Promise<Chro
   const client: ChromaMcpClient = {
     async callTool(params) {
       calls.push({ name: params.name, arguments: params.arguments });
-      return handler({ name: params.name, arguments: params.arguments });
+      return await handler({ name: params.name, arguments: params.arguments });
     },
     async close() {
       closed.value = true;

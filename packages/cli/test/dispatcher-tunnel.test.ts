@@ -1,16 +1,18 @@
+import { type Config, tls } from "@llamactl/remote";
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import type { FetchLike } from "../src/tunnel-dispatch.js";
+
 import {
   __resetTestSeams,
   __setTestSeams,
+  EMPTY_GLOBALS,
   getNodeClient,
   getNodeClientByName,
-  EMPTY_GLOBALS,
 } from "../src/dispatcher.js";
-import { tls, type Config } from "@llamactl/remote";
-import type { FetchLike } from "../src/tunnel-dispatch.js";
 
 // Slice C (I.3.7) — pin fields are now required to reach the relay
 // unless `--insecure-tunnel-relay` is set. These tests exercise the
@@ -91,7 +93,7 @@ describe("dispatcher — tunnelPreferred routing", () => {
   });
 
   test("tunnelPreferred=true routes queries via /tunnel-relay/<nodeId>", async () => {
-    const captured: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const captured: { url: string; init: RequestInit | undefined }[] = [];
     const fetchImpl: FetchLike = async (url, init) => {
       captured.push({ url: String(url), init });
       return new Response(

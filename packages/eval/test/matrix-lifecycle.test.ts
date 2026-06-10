@@ -3,14 +3,15 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   __ownedProcsForTests,
   __seedOwnedProcForTests,
   buildBootCommandForModelSpec,
   ensureModelServing,
+  type ModelSpec,
   probeInference,
   teardownIfOwned,
-  type ModelSpec,
 } from "../src/index.js";
 
 function isAlive(pid: number): boolean {

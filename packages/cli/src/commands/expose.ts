@@ -1,4 +1,10 @@
-import { config as kubecfg, workloadApply, workloadSchema, workloadStore } from "@llamactl/remote";
+import {
+  config as kubecfg,
+  workloadApply,
+  type workloadSchema,
+  workloadStore,
+} from "@llamactl/remote";
+
 import { getNodeClientByName, resolveEffectiveNodeName } from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl expose <target> [--node <name>]
@@ -39,8 +45,8 @@ function slug(s: string): string {
   return (
     s
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
+      .replaceAll(/[^a-z0-9]+/g, "-")
+      .replaceAll(/^-+|-+$/g, "")
       .slice(0, 63) || "expose"
   );
 }

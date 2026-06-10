@@ -1,9 +1,11 @@
-import { describe, expect, test } from "bun:test";
 import type postgres from "postgres";
-import { PgvectorRagAdapter, extractQueryVector } from "../src/rag/pgvector/adapter.js";
+
+import { describe, expect, test } from "bun:test";
+
+import { RagError } from "../src/rag/errors.js";
+import { extractQueryVector, PgvectorRagAdapter } from "../src/rag/pgvector/adapter.js";
 import { connectPgvector, redactPostgresUrl } from "../src/rag/pgvector/client.js";
 import { createPgvectorAdapter } from "../src/rag/pgvector/index.js";
-import { RagError } from "../src/rag/errors.js";
 
 /**
  * Unit tests for the pgvector adapter. We can't stand up a real
@@ -60,7 +62,7 @@ function createMockSql(): MockSql {
     // names).
     if (Array.isArray(first) && Object.prototype.hasOwnProperty.call(first, "raw")) {
       mock.calls.push({
-        strings: first as unknown as readonly string[],
+        strings: first,
         values: rest,
       });
       const next = mock.queue.shift();
@@ -324,7 +326,7 @@ describe("PgvectorRagAdapter.store", () => {
     expect(valuesHelper).toBeDefined();
     expect(Array.isArray(valuesHelper!.first)).toBe(true);
     expect(valuesHelper!.rest).toEqual(["id", "content", "metadata", "embedding"]);
-    const rows = valuesHelper!.first as Array<{ id: string; embedding: string }>;
+    const rows = valuesHelper!.first as { id: string; embedding: string }[];
     expect(rows[0]!.id).toBe("a");
     // Embedding is formatted as the pgvector literal string.
     expect(rows[0]!.embedding).toBe("[0.1,0.2]");
@@ -400,7 +402,7 @@ describe("PgvectorRagAdapter.store", () => {
           Array.isArray((h as { rest: unknown[] }).rest) &&
           (h as { rest: unknown[] }).rest.length > 0,
       )!;
-    const rows = valuesHelper.first as Array<{ id: string; embedding: string }>;
+    const rows = valuesHelper.first as { id: string; embedding: string }[];
     expect(rows[0]!.embedding).toBe("[0.7,0.8]");
     expect(rows[1]!.embedding).toBe("[0.1,0.2]");
     expect(rows[2]!.embedding).toBe("[1.1,1.2]");
@@ -493,7 +495,7 @@ describe("PgvectorRagAdapter.store — auto-schema bootstrap", () => {
       })
       .map(({ c, i }) => ({
         i,
-        kind: (c.strings[0] ?? "").match(/CREATE EXTENSION|CREATE TABLE|INSERT INTO/)?.[0] ?? "",
+        kind: /CREATE EXTENSION|CREATE TABLE|INSERT INTO/.exec(c.strings[0] ?? "")?.[0] ?? "",
       }));
     expect(indices.map((x) => x.kind)).toEqual(["CREATE EXTENSION", "CREATE TABLE", "INSERT INTO"]);
   });

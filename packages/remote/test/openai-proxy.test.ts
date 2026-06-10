@@ -1,10 +1,11 @@
+import { openaiProxy } from "@llamactl/core";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openaiProxy } from "@llamactl/core";
+
 import { generateToken } from "../src/server/auth.js";
-import { startAgentServer, type RunningAgent } from "../src/server/serve.js";
+import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 import { generateSelfSignedCert } from "../src/server/tls.js";
 
 /**
@@ -113,7 +114,7 @@ beforeAll(async () => {
             return new Response("not found", { status: 404 });
           },
         });
-        return { label, port: server.port as number, server, requests };
+        return { label, port: server.port!, server, requests };
       } catch {
         continue;
       }
@@ -216,7 +217,7 @@ function pinnedFetch(path: string, init?: RequestInit): Promise<Response> {
       authorization: `Bearer ${agentToken}`,
     },
     ...({ tls: { ca: caPem } } as Record<string, unknown>),
-  } as RequestInit);
+  });
 }
 
 describe("agent OpenAI proxy", () => {
@@ -315,7 +316,7 @@ describe("agent OpenAI proxy", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       object: string;
-      data: Array<{ id: string; owned_by: string }>;
+      data: { id: string; owned_by: string }[];
     };
     expect(body.object).toBe("list");
     expect(body.data).toHaveLength(2);
@@ -457,7 +458,7 @@ describe("agent OpenAI proxy", () => {
   test("missing bearer token yields 401", async () => {
     const res = await fetch(`${agent!.url}/v1/models`, {
       ...({ tls: { ca: caPem } } as Record<string, unknown>),
-    } as RequestInit);
+    });
     expect(res.status).toBe(401);
   });
 

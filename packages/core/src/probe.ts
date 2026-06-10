@@ -24,7 +24,9 @@ export async function probeHealthEndpoint(
   const { fetch: fetchFn = globalThis.fetch, timeoutMs = 1000 } = opts;
   const endpoint = formatEndpoint(host, port);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
   try {
     const res = await fetchFn(`${endpoint}/health`, { signal: controller.signal });
     return { reachable: res.ok };

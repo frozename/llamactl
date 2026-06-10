@@ -1,11 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { useWorkloadSelectionStore } from "@/stores/workload-selection-store";
-import {
-  getLiveWorkloads,
-  selectActiveWorkload,
-  type LiveWorkload,
-  type WorkloadRow,
-} from "./workload-selection";
+
+import { getLiveWorkloads, type LiveWorkload, selectActiveWorkload } from "./workload-selection";
 
 export interface ActiveWorkload {
   workload: string | null;
@@ -23,7 +19,7 @@ export function useActiveWorkload(): ActiveWorkload {
     return { workload: null, workloads: [], setWorkload: setSelected, loading: true };
   }
 
-  const live = getLiveWorkloads((query.data ?? []) as WorkloadRow[]);
+  const live = getLiveWorkloads(query.data ?? []);
   const workload = selectActiveWorkload(selected, live);
 
   return { workload, workloads: live, setWorkload: setSelected, loading: false };

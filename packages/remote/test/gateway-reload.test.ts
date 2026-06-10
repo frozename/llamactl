@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
-import { siriusHandler } from "../src/workload/gateway-handlers/sirius.js";
-import { embersynthHandler } from "../src/workload/gateway-handlers/embersynth.js";
 import type { ClusterNode } from "../src/config/schema.js";
 import type { ModelRun } from "../src/workload/schema.js";
+
+import { embersynthHandler } from "../src/workload/gateway-handlers/embersynth.js";
+import { siriusHandler } from "../src/workload/gateway-handlers/sirius.js";
 
 /**
  * K.7.2 / K.7.3 — handlers actually POST the reload endpoint and

@@ -12,11 +12,12 @@
  * the manifest it was declared in.
  */
 import { z } from "zod";
-import { ProviderConfigCommonSchema } from "../workload/gateway-catalog/schema.js";
-import { ModelRunSpecSchema } from "../workload/schema.js";
+
 import { RagBindingSchema } from "../config/schema.js";
 import { RagPipelineSpecSchema } from "../rag/pipeline/schema.js";
 import { ServiceSpecSchema } from "../service/schema.js";
+import { ProviderConfigCommonSchema } from "../workload/gateway-catalog/schema.js";
+import { ModelRunSpecSchema } from "../workload/schema.js";
 
 /**
  * ComponentRef — names a component by (kind, name) inside this
@@ -214,9 +215,7 @@ export const CompositeSchema = z
     for (const p of spec.pipelines) {
       seen.pipeline.set(p.name, (seen.pipeline.get(p.name) ?? 0) + 1);
     }
-    for (const [kind, bag] of Object.entries(seen) as Array<
-      [keyof typeof seen, Map<string, number>]
-    >) {
+    for (const [kind, bag] of Object.entries(seen) as [keyof typeof seen, Map<string, number>][]) {
       for (const [name, count] of bag) {
         if (count > 1) {
           ctx.addIssue({

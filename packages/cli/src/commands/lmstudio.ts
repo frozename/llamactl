@@ -1,4 +1,5 @@
 import { hf, lmstudio } from "@llamactl/core";
+
 import { getGlobals, getNodeClient, isLocalDispatch } from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl lmstudio <subcommand>
@@ -55,7 +56,7 @@ async function runScan(args: string[]): Promise<number> {
     scan = lmstudio.scanLMStudio({ root });
   } else {
     try {
-      scan = (await getNodeClient().lmstudioScan.query(root ? { root } : undefined)) as typeof scan;
+      scan = await getNodeClient().lmstudioScan.query(root ? { root } : undefined);
     } catch (err) {
       process.stderr.write(
         `lmstudio scan: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
@@ -102,10 +103,10 @@ async function runImport(args: string[]): Promise<number> {
       try {
         const input: { root?: string; link?: boolean } = {};
         if (root !== undefined) input.root = root;
-        if (link !== true) input.link = link;
-        plan = (await getNodeClient().lmstudioPlan.query(
+        if (!link) input.link = link;
+        plan = await getNodeClient().lmstudioPlan.query(
           Object.keys(input).length > 0 ? input : undefined,
-        )) as typeof plan;
+        );
       } catch (err) {
         process.stderr.write(
           `lmstudio plan: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
@@ -141,8 +142,8 @@ async function runImport(args: string[]): Promise<number> {
     try {
       const input: { root?: string; link?: boolean } = {};
       if (root !== undefined) input.root = root;
-      if (link !== true) input.link = link;
-      result = (await getNodeClient().lmstudioImport.mutate(input)) as typeof result;
+      if (!link) input.link = link;
+      result = await getNodeClient().lmstudioImport.mutate(input);
     } catch (err) {
       process.stderr.write(
         `lmstudio import: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
@@ -177,9 +178,9 @@ export async function runLMStudio(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
     case "scan":
-      return runScan(rest);
+      return await runScan(rest);
     case "import":
-      return runImport(rest);
+      return await runImport(rest);
     case undefined:
     case "-h":
     case "--help":

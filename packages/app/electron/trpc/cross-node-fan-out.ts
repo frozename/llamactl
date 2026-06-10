@@ -66,9 +66,13 @@ export async function fanOutSurface<T>(opts: FanOutOpts<T>): Promise<FanOutResul
   const settled = await Promise.allSettled(
     opts.nodes.map(async (node) => {
       const child = new AbortController();
-      const onOuterAbort = (): void => child.abort();
+      const onOuterAbort = (): void => {
+        child.abort();
+      };
       opts.signal?.addEventListener("abort", onOuterAbort);
-      const timer = setTimeout(() => child.abort(), timeoutMs);
+      const timer = setTimeout(() => {
+        child.abort();
+      }, timeoutMs);
       try {
         const result = await opts.perNodeFetch(node, child.signal);
         return { node: node.name, ok: true as const, hits: result };

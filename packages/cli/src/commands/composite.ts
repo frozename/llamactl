@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+
 import { getNodeClient } from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl composite <subcommand>
@@ -27,16 +28,16 @@ export async function runComposite(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
     case "apply":
-      return runApply(rest);
+      return await runApply(rest);
     case "destroy":
-      return runDestroy(rest);
+      return await runDestroy(rest);
     case "list":
     case "ls":
-      return runList(rest);
+      return await runList(rest);
     case "get":
-      return runGet(rest);
+      return await runGet(rest);
     case "status":
-      return runStatus(rest);
+      return await runStatus(rest);
     case undefined:
     case "-h":
     case "--help":
@@ -109,20 +110,20 @@ async function runApply(args: string[]): Promise<number> {
     const r = result as {
       dryRun: true;
       manifest: { metadata: { name: string } };
-      order: Array<{ kind: string; name: string }>;
-      impliedEdges: Array<{
+      order: { kind: string; name: string }[];
+      impliedEdges: {
         from: { kind: string; name: string };
         to: { kind: string; name: string };
-      }>;
+      }[];
     };
     process.stdout.write(`dry-run composite/${r.manifest.metadata.name}\n`);
     process.stdout.write(`  topological order (${r.order.length} components):\n`);
     if (r.order.length === 0) {
       process.stdout.write(`    (none)\n`);
     } else {
-      r.order.forEach((ref, i) => {
+      for (const [i, ref] of r.order.entries()) {
         process.stdout.write(`    ${i + 1}. ${ref.kind}/${ref.name}\n`);
-      });
+      }
     }
     if (r.impliedEdges.length > 0) {
       process.stdout.write(`  implied edges (${r.impliedEdges.length}):\n`);
@@ -143,11 +144,11 @@ async function runApply(args: string[]): Promise<number> {
       appliedAt?: string;
     };
     rolledBack: boolean;
-    componentResults: Array<{
+    componentResults: {
       ref: { kind: string; name: string };
       state: "Ready" | "Failed";
       message?: string;
-    }>;
+    }[];
   };
   process.stdout.write(`composite phase: ${r.status.phase}\n`);
   if (r.componentResults.length > 0) {
@@ -178,8 +179,8 @@ function parseDestroyFlags(args: string[]): DestroyFlags | { error: string } {
   let name = "";
   let dryRun = false;
   let purgeVolumes = false;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+  for (const arg_ of args) {
+    const arg = arg_;
     if (arg === "--dry-run") {
       dryRun = true;
     } else if (arg === "--purge-volumes") {
@@ -223,16 +224,16 @@ async function runDestroy(args: string[]): Promise<number> {
     const r = result as {
       dryRun: true;
       name: string;
-      wouldRemove: Array<{ kind: string; name: string }>;
+      wouldRemove: { kind: string; name: string }[];
     };
     process.stdout.write(`dry-run destroy composite/${r.name}\n`);
     process.stdout.write(`  would remove (reverse-topo, ${r.wouldRemove.length}):\n`);
     if (r.wouldRemove.length === 0) {
       process.stdout.write(`    (none)\n`);
     } else {
-      r.wouldRemove.forEach((ref, i) => {
+      for (const [i, ref] of r.wouldRemove.entries()) {
         process.stdout.write(`    ${i + 1}. ${ref.kind}/${ref.name}\n`);
-      });
+      }
     }
     return 0;
   }
@@ -240,8 +241,8 @@ async function runDestroy(args: string[]): Promise<number> {
   const r = result as {
     dryRun: false;
     ok: boolean;
-    removed: Array<{ kind: string; name: string }>;
-    errors: Array<{ ref: { kind: string; name: string }; message: string }>;
+    removed: { kind: string; name: string }[];
+    errors: { ref: { kind: string; name: string }; message: string }[];
   };
   process.stdout.write(`destroyed composite/${parsed.name}\n`);
   if (r.removed.length > 0) {
@@ -288,7 +289,7 @@ async function runList(args: string[]): Promise<number> {
   const client = getNodeClient();
   let rows: CompositeListRow[];
   try {
-    rows = (await client.compositeList.query()) as CompositeListRow[];
+    rows = await client.compositeList.query();
   } catch (err) {
     process.stderr.write(`composite list: ${(err as Error).message}\n`);
     return 1;
@@ -301,7 +302,7 @@ async function runList(args: string[]): Promise<number> {
 
   const entries = rows.map((r) => ({
     name: r.metadata.name,
-    phase: (r.status?.phase ?? "Pending") as string,
+    phase: r.status?.phase ?? "Pending",
     components: String(
       r.spec.services.length +
         r.spec.workloads.length +
@@ -469,7 +470,7 @@ async function runStatus(args: string[]): Promise<number> {
   }
 
   // Remote path: handler-based subscription with unsubscribe().
-  return new Promise<number>((resolve) => {
+  return await new Promise<number>((resolve) => {
     let settled = false;
     const sub = subscribeFn(
       { name },

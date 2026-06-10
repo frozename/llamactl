@@ -1,6 +1,8 @@
-import { existsSync, statSync, openSync, readSync, closeSync } from "node:fs";
-import { findTextMatches } from "./text-match.js";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
+
 import type { LogHit, MatchExcerpt } from "./types.js";
+
+import { findTextMatches } from "./text-match.js";
 
 const DEFAULT_WINDOW = 5 * 1024 * 1024;
 
@@ -44,9 +46,9 @@ export async function searchLogs(opts: SearchLogsOpts): Promise<LogHit[]> {
     const lines = text.split("\n");
     const matches: (MatchExcerpt & { lineNumber: number })[] = [];
     let score = 0;
-    for (let i = 0; i < lines.length; i++) {
+    for (const [i, line] of lines.entries()) {
       if (matches.length >= cap) break;
-      const lineMatches = findTextMatches({ needle: opts.query, text: lines[i]! });
+      const lineMatches = findTextMatches({ needle: opts.query, text: line });
       for (const m of lineMatches) {
         if (matches.length >= cap) break;
         matches.push({

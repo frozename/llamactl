@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { freshConfig, type Config } from "../src/config/schema.js";
-import { parseProviderNodeName, synthesizeProviderNodes } from "../src/config/provider-nodes.js";
+
 import type { SiriusProvider } from "../src/config/sirius-providers.js";
+
 import { DEFAULT_EMBERSYNTH_PROFILES, EmbersynthConfigSchema } from "../src/config/embersynth.js";
+import { parseProviderNodeName, synthesizeProviderNodes } from "../src/config/provider-nodes.js";
+import { type Config, freshConfig } from "../src/config/schema.js";
 
 /**
  * Provider-kind nodes are virtual — synthesized from

@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { generateToken } from "../src/server/auth.js";
-import { startAgentServer, type RunningAgent } from "../src/server/serve.js";
+import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 import { generateSelfSignedCert } from "../src/server/tls.js";
 
 let dir: string;
@@ -111,10 +112,10 @@ describe("startAgentServer no-auth bypass", () => {
   test("logs the first unauthenticated request and suppresses the next 98", async () => {
     const writes: string[] = [];
     const originalWrite = process.stderr.write.bind(process.stderr);
-    process.stderr.write = ((chunk: string | Uint8Array) => {
+    process.stderr.write = (chunk: string | Uint8Array) => {
       writes.push(String(chunk));
       return true;
-    }) as typeof process.stderr.write;
+    };
     try {
       await server.handleRequest!(new Request("http://x/v1/models"), {
         address: "127.0.0.1",

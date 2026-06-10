@@ -62,7 +62,7 @@ export function buildExplorerTree(
   for (const mod of modules) {
     const g = mod.beaconGroup;
     if (!g || g === "hidden" || g === "settings") continue;
-    if (!GROUP_ORDER.includes(g as ExplorerGroupId)) continue;
+    if (!GROUP_ORDER.includes(g)) continue;
     const leaf: ExplorerLeaf = {
       id: mod.id,
       title: mod.labelKey,
@@ -73,7 +73,7 @@ export function buildExplorerTree(
       const src = dynamicSourceFor(leaf.id);
       leaf.instances = src ? sources[src] : [];
     }
-    byGroup.get(g as ExplorerGroupId)!.push(leaf);
+    byGroup.get(g)!.push(leaf);
   }
 
   return GROUP_ORDER.map((id) => {

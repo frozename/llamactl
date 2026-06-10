@@ -1,6 +1,13 @@
-import { config as kubecfg, workloadApply, workloadSchema, workloadStore } from "@llamactl/remote";
-import { applyOneModelHost } from "../../../remote/src/workload/apply.js";
+import {
+  config as kubecfg,
+  workloadApply,
+  type workloadSchema,
+  workloadStore,
+} from "@llamactl/remote";
+
 import type { ModelHostManifest } from "../../../remote/src/workload/modelhost-schema.js";
+
+import { applyOneModelHost } from "../../../remote/src/workload/apply.js";
 import {
   loadModelHostByName,
   saveModelHost,
@@ -88,5 +95,5 @@ export async function setWorkloadEnabled(
   name: string,
   enabled: boolean,
 ): Promise<SetEnabledResult> {
-  return setWorkloadEnabledWithDeps(name, enabled);
+  return await setWorkloadEnabledWithDeps(name, enabled);
 }

@@ -31,8 +31,8 @@ const CLOSED_MAX = 10;
  */
 function lastPinnedIndex(tabs: readonly TabEntry[]): number {
   let idx = -1;
-  for (let i = 0; i < tabs.length; i += 1) {
-    if (tabs[i]?.pinned) idx = i;
+  for (const [i, tab] of tabs.entries()) {
+    if (tab?.pinned) idx = i;
     else break;
   }
   return idx;
@@ -84,7 +84,7 @@ export function pinTab(s: TabState, key: string): TabState {
 export function unpinTab(s: TabState, key: string): TabState {
   const idx = s.tabs.findIndex((t) => t.tabKey === key);
   if (idx < 0 || !s.tabs[idx]?.pinned) return s;
-  const marked = { ...s.tabs[idx]!, pinned: false };
+  const marked = { ...s.tabs[idx], pinned: false };
   // Leave it where it is; pin boundary shifts left by one.
   const nextTabs = [...s.tabs];
   nextTabs[idx] = marked;

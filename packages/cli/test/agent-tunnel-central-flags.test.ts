@@ -1,6 +1,7 @@
+import { auth } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { auth } from "@llamactl/remote";
+
 import { parseServeFlags } from "../src/commands/agent.js";
 import { makeTempRuntime, runCli } from "./helpers.js";
 
@@ -50,7 +51,9 @@ describe("agent serve tunnel-central validation", () => {
   beforeEach(() => {
     temp = makeTempRuntime();
   });
-  afterEach(() => temp.cleanup());
+  afterEach(() => {
+    temp.cleanup();
+  });
 
   function initAgent(env: NodeJS.ProcessEnv): void {
     const r = runCli(

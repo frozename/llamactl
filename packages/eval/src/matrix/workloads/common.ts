@@ -2,7 +2,7 @@ import type { ResponseFormat } from "../../client.js";
 import type { WorkloadEval } from "../types.js";
 
 export interface ChatCorpusRow {
-  messages: Array<{ role: string; content: string }>;
+  messages: { role: string; content: string }[];
 }
 
 export interface JsonClassifierOpts {
@@ -19,7 +19,7 @@ export interface JsonClassifierOpts {
 }
 
 export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadEval {
-  if (opts.validLabels && opts.validLabels.size === 0) {
+  if (opts.validLabels?.size === 0) {
     throw new Error("buildJsonClassifierWorkload: validLabels must contain at least one label");
   }
   const normalize = opts.normalizeLabel ?? ((v: unknown) => String(v));
@@ -30,7 +30,7 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
     ? {
         type: "json_schema",
         json_schema: {
-          name: opts.name.replace(/[^a-zA-Z0-9_]/g, "_"),
+          name: opts.name.replaceAll(/[^a-zA-Z0-9_]/g, "_"),
           schema: {
             type: "object",
             properties: {
@@ -44,7 +44,7 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
       }
     : undefined;
   function stripCodeFences(s: string): string {
-    const m = s.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
+    const m = /```(?:json)?\s*\n([\s\S]*?)\n```/.exec(s);
     if (m) return m[1] ?? "";
     return s;
   }
@@ -53,7 +53,7 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
     try {
       return JSON.parse(stripped) as Record<string, unknown>;
     } catch {}
-    const m = stripped.match(/\{[\s\S]*\}/);
+    const m = /\{[\s\S]*\}/.exec(stripped);
     if (m) {
       try {
         return JSON.parse(m[0]) as Record<string, unknown>;

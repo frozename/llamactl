@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
 import { applyImport, detectLMStudioRoot, planImport, scanLMStudio } from "../src/lmstudio.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 
@@ -21,7 +22,9 @@ describe("lmstudio.scanLMStudio", () => {
   beforeEach(() => {
     temp = makeTempRuntime();
   });
-  afterEach(() => temp.cleanup());
+  afterEach(() => {
+    temp.cleanup();
+  });
 
   test("returns null root when nothing matches", () => {
     const scan = scanLMStudio({ root: join(temp.devStorage, "missing") });
@@ -122,7 +125,9 @@ describe("lmstudio.detectLMStudioRoot — LLAMACTL_TEST_PROFILE", () => {
   beforeEach(() => {
     temp = makeTempRuntime();
   });
-  afterEach(() => temp.cleanup());
+  afterEach(() => {
+    temp.cleanup();
+  });
 
   test("probes a profile-scoped dir instead of homedir when the test profile is set", () => {
     const profile = temp.devStorage;

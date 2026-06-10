@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { createTunnelRouterHandler } from "../src/tunnel/index.js";
 
 /**
@@ -11,7 +12,7 @@ import { createTunnelRouterHandler } from "../src/tunnel/index.js";
 
 interface FakeCaller {
   catalog: {
-    list: (input?: { classFilter?: string }) => Promise<Array<{ rel: string }>>;
+    list: (input?: { classFilter?: string }) => Promise<{ rel: string }[]>;
     promote: (input: { rel: string }) => Promise<{ ok: true }>;
   };
   node: {

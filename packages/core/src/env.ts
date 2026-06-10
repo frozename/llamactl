@@ -1,8 +1,10 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
-import { resolveProfile } from "./profile.js";
+import { join } from "node:path";
+
 import type { MachineProfile, Provider, ResolvedEnv } from "./types.js";
+
+import { resolveProfile } from "./profile.js";
 import { MANAGED_DIRS } from "./types.js";
 
 const GEMMA_CTX_BY_PROFILE: Record<MachineProfile, string> = {
@@ -368,7 +370,7 @@ const POSIX_SAFE = /^[A-Za-z0-9_./:=@%+,\-]+$/;
 function shellEscape(value: string): string {
   if (value === "") return "''";
   if (POSIX_SAFE.test(value)) return value;
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 /**

@@ -5,8 +5,8 @@ import { join } from "node:path";
 
 import {
   defaultOpsChatAuditPath,
-  defaultSessionsDir,
   defaultSessionDir,
+  defaultSessionsDir,
 } from "../src/ops-chat/paths.js";
 
 /**
@@ -76,7 +76,7 @@ describe("ops-chat paths — sessions", () => {
   });
 
   test("defaultSessionsDir falls back to homedir/.llamactl when DEV_STORAGE missing", () => {
-    const out = defaultSessionsDir({} as any);
+    const out = defaultSessionsDir({});
     expect(out.endsWith("/.llamactl/ops-chat/sessions")).toBe(true);
   });
 

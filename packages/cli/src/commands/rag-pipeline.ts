@@ -1,12 +1,14 @@
-import { existsSync, readFileSync, statSync, watchFile, unwatchFile } from "node:fs";
-import { resolve } from "node:path";
 import type {
   NodeClient,
   PipelineSchedulerHandle,
   PipelineSchedulerOptions,
   TickReport,
 } from "@llamactl/remote";
+
 import { startPipelineScheduler } from "@llamactl/remote";
+import { existsSync, readFileSync, statSync, unwatchFile, watchFile } from "node:fs";
+import { resolve } from "node:path";
+
 import { getNodeClient } from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl rag pipeline <subcommand>
@@ -87,23 +89,23 @@ export async function runRagPipeline(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
     case "apply":
-      return runApply(rest);
+      return await runApply(rest);
     case "run":
-      return runRun(rest);
+      return await runRun(rest);
     case "list":
     case "ls":
-      return runList(rest);
+      return await runList(rest);
     case "get":
-      return runGet(rest);
+      return await runGet(rest);
     case "rm":
     case "remove":
-      return runRemove(rest);
+      return await runRemove(rest);
     case "logs":
-      return runLogs(rest);
+      return await runLogs(rest);
     case "scheduler":
-      return runScheduler(rest);
+      return await runScheduler(rest);
     case "draft":
-      return runDraft(rest);
+      return await runDraft(rest);
     case undefined:
     case "--help":
     case "-h":
@@ -208,8 +210,8 @@ function parseRunFlags(args: string[]): RunOpts | { error: string } {
   let name = "";
   let dryRun = false;
   let json = false;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+  for (const arg_ of args) {
+    const arg = arg_;
     if (arg === "--dry-run") dryRun = true;
     else if (arg === "--json") json = true;
     else if (arg === "-h" || arg === "--help") return { error: "help" };

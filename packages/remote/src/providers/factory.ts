@@ -1,16 +1,18 @@
-import { createOpenAICompatProvider, type AiProvider } from "@nova/contracts";
+import { type AiProvider, createOpenAICompatProvider } from "@nova/contracts";
+
+import type { PinnedFetchFactory } from "../client/links.js";
+
+import { resolveApiKeyRef, resolveToken } from "../config/kubeconfig.js";
 import {
+  type CloudBinding,
+  type CloudProvider,
+  type ClusterNode,
+  type Config,
   DEFAULT_CLOUD_BASE_URLS,
   LOCAL_NODE_ENDPOINT,
   resolveNodeKind,
-  type ClusterNode,
-  type CloudBinding,
-  type CloudProvider,
-  type Config,
   type User,
 } from "../config/schema.js";
-import { resolveApiKeyRef, resolveToken } from "../config/kubeconfig.js";
-import type { PinnedFetchFactory } from "../client/links.js";
 
 /**
  * Factory that turns a kubeconfig cloud node + resolved API key into
@@ -72,10 +74,9 @@ function applyProviderQuirks(base: AiProvider, providerName: CloudProvider): AiP
 
   const transformRequest = <T extends { model?: string } | undefined>(req: T): T => {
     if (providerName !== "gemini" || !req || !req.model) return req;
-    return { ...req, model: stripGeminiPrefix(req.model) } as T;
+    return { ...req, model: stripGeminiPrefix(req.model) };
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const wrapped = {
     ...base,
     createResponse: (req: any) => base.createResponse(transformRequest(req)),
@@ -156,7 +157,7 @@ function normalizeOpenAICompatBaseUrl(url: string, providerName?: CloudProvider)
   // that DOESN'T end in /v<n> so the default-append rule above
   // would bolt on a bogus /v1 and every request would 404. Skip
   // the append when the URL already terminates at .../openai.
-  if (/\/openai$/.test(trimmed)) return trimmed;
+  if (trimmed.endsWith("/openai")) return trimmed;
   if (/\/v\d+$/.test(trimmed)) return trimmed;
   if (providerName === "gemini") return trimmed;
   return `${trimmed}/v1`;
@@ -216,7 +217,7 @@ export function providerForNode(opts: {
     const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
     const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
     const parent = cluster?.nodes.find((n) => n.name === node.provider!.gateway);
-    if (!parent || !parent.cloud) {
+    if (!parent?.cloud) {
       throw new Error(
         `provider-kind node '${node.name}': parent gateway '${node.provider.gateway}' not found or missing cloud{}`,
       );

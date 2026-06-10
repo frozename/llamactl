@@ -75,7 +75,7 @@ export interface Runbook<Params = void> {
  * so the details stay in one place.
  */
 export function parseToolJson<T = unknown>(result: unknown): T {
-  const content = (result as { content?: Array<{ type: string; text: string }> }).content ?? [];
+  const content = (result as { content?: { type: string; text: string }[] }).content ?? [];
   const text = content[0]?.text ?? "null";
   return JSON.parse(text) as T;
 }

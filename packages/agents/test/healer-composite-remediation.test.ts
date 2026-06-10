@@ -3,13 +3,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+
 import {
-  startHealerLoop,
   type JournalEntry,
   type JournalExecutedEntry,
   type JournalProposalEntry,
   type JournalRefusedEntry,
   type RunbookToolClient,
+  startHealerLoop,
   type ToolCallInput,
 } from "../src/index.js";
 
@@ -73,7 +74,7 @@ function seedYamls(): {
 }
 
 function envelope(payload: unknown): {
-  content: Array<{ type: "text"; text: string }>;
+  content: { type: "text"; text: string }[];
 } {
   return { content: [{ type: "text", text: JSON.stringify(payload) }] };
 }
@@ -93,7 +94,7 @@ function makeMockClient(handler: (input: ToolCallInput) => Promise<unknown>): {
     client: {
       async callTool(input: ToolCallInput) {
         calls.push({ name: input.name, arguments: input.arguments });
-        return handler(input);
+        return await handler(input);
       },
     },
   };
@@ -118,7 +119,7 @@ const HEALTHY_HEALTHCHECK = envelope({
 function manifestFixture(
   name: string,
   phase: string,
-  components: Array<{ kind: string; name: string; state: string }>,
+  components: { kind: string; name: string; state: string }[],
 ): Record<string, unknown> {
   return {
     apiVersion: "llamactl/v1",
@@ -419,7 +420,7 @@ describe("healer composite remediation — list failure", () => {
       (e) => e.kind === "plan-failed" && e.transition.resourceKind === "composite",
     );
     expect(planFailed).toBeDefined();
-    if (planFailed && planFailed.kind === "plan-failed") {
+    if (planFailed?.kind === "plan-failed") {
       expect(planFailed.reason).toBe("composite-list-failed");
       expect(planFailed.message).toContain("composite store unreachable");
     }

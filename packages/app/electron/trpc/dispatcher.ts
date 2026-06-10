@@ -1,19 +1,20 @@
-import { initTRPC, TRPCError } from "@trpc/server";
-import { getErrorShape } from "@trpc/server/unstable-core-do-not-import";
-import { observable } from "@trpc/server/observable";
-import { createTRPCClient } from "@trpc/client";
-import { z } from "zod";
 import {
-  router as baseRouter,
   type AppRouter as BaseAppRouter,
+  router as baseRouter,
   buildPinnedLinks,
+  type ClusterNode,
   config as kubecfg,
   LOCAL_NODE_ENDPOINT,
   type PinnedFetchFactory,
-  type ClusterNode,
 } from "@llamactl/remote";
-import { makeNodePinnedFetch } from "./node-pinned-fetch.js";
+import { createTRPCClient } from "@trpc/client";
+import { initTRPC, TRPCError } from "@trpc/server";
+import { observable } from "@trpc/server/observable";
+import { getErrorShape } from "@trpc/server/unstable-core-do-not-import";
+import { z } from "zod";
+
 import { fanOutSurface, listAgentNodes } from "./cross-node-fan-out.js";
+import { makeNodePinnedFetch } from "./node-pinned-fetch.js";
 
 /**
  * Electron main's dispatcher router. Exposes the same wire shape as
@@ -61,10 +62,10 @@ function asyncIterableToObservable<T>(iter: AsyncIterable<T>) {
             emit.complete();
             return;
           }
-          emit.next(value as T);
+          emit.next(value);
         }
       } catch (err) {
-        if (!cancelled) emit.error(err as TRPCError);
+        if (!cancelled) emit.error(err);
       }
     })();
     return () => {
@@ -338,7 +339,7 @@ const uiRouter = t.router({
             properties: ["openDirectory", "createDirectory"],
           });
       if (result.canceled || result.filePaths.length === 0) return null;
-      return result.filePaths[0] as string;
+      return result.filePaths[0]!;
     }),
   /**
    * Scan `root` for directories that look like git checkouts —
@@ -489,7 +490,7 @@ type ProxyClient = Record<string, any>;
  * `ProxyClient` type alias so downstream reads are still dynamically
  * dispatched but we don't repeat the cast every hot path.
  */
-const baseCaller: ProxyClient = baseRouter.createCaller({}) as unknown as ProxyClient;
+const baseCaller: ProxyClient = baseRouter.createCaller({});
 
 /**
  * Pinned remote-client cache, keyed by the (endpoint + fingerprint +
@@ -606,7 +607,7 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
   // undefined"`. Pass-through semantics preserved via `z.unknown()`.
   return t.procedure.input(z.unknown()).subscription(async function* (opts) {
     const target = resolveDispatchTarget(path);
-    const clientSignal = opts.signal as AbortSignal | undefined;
+    const clientSignal = opts.signal;
     if (target.kind === "local") {
       // The base subscription resolver needs a real AbortSignal
       // (`bridgeEventStream` in @llamactl/remote calls
@@ -620,7 +621,9 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
       // subscription's cleanup fire.
       const controller = new AbortController();
       if (clientSignal?.aborted) controller.abort();
-      const onOuterAbort = (): void => controller.abort();
+      const onOuterAbort = (): void => {
+        controller.abort();
+      };
       clientSignal?.addEventListener("abort", onOuterAbort);
       try {
         const localCaller = baseRouter.createCaller(
@@ -716,7 +719,6 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
  */
 export function buildDispatcherRouter(
   fetchFactory: PinnedFetchFactory = makeNodePinnedFetch,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): BaseAppRouter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const procs: Record<string, any> = {};
@@ -822,7 +824,7 @@ export function buildDispatcherRouter(
         error:
           opts.error instanceof TRPCError
             ? opts.error
-            : new TRPCError({ code: "INTERNAL_SERVER_ERROR", cause: opts.error as Error }),
+            : new TRPCError({ code: "INTERNAL_SERVER_ERROR", cause: opts.error }),
         type: opts.type,
         path: opts.path,
         input: opts.input,

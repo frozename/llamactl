@@ -74,7 +74,7 @@ function parseJudgeJson(
     const endParts = s.split("@@end", 1);
     if (endParts.length > 0) s = endParts[0] ?? "";
   }
-  const fenceMatch = s.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  const fenceMatch = /```(?:json)?\s*\n?([\s\S]*?)\n?```/.exec(s);
   if (fenceMatch) s = fenceMatch[1] ?? "";
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
@@ -143,8 +143,10 @@ export const taskRefinerRubricWorkload: WorkloadEval = {
         body: JSON.stringify(judgeReq),
       });
       if (!resp.ok) return fail(`judge_http_${resp.status}`);
-      const j = (await resp.json()) as any;
-      judgeText = j?.choices?.[0]?.message?.content ?? "";
+      const j = (await resp.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      judgeText = j.choices?.[0]?.message?.content ?? "";
     } catch (err) {
       return fail(`judge_fetch_${err instanceof Error ? err.message : "unknown"}`);
     }

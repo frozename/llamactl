@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { resolveWorkloadName } from "../src/commands/_workload-resolve.js";
 
 const tempEnv = () => {
@@ -9,7 +10,9 @@ const tempEnv = () => {
   return {
     runtimeDir: dir,
     resolved: { LOCAL_AI_RUNTIME_DIR: dir } as any,
-    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+    cleanup: () => {
+      rmSync(dir, { recursive: true, force: true });
+    },
   };
 };
 

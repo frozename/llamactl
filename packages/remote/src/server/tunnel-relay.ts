@@ -1,6 +1,7 @@
-import { unauthorizedResponse, verifyBearer } from "./auth.js";
-import { appendTunnelJournal, type TunnelJournalEntry } from "../tunnel/journal.js";
 import type { TunnelServer } from "../tunnel/index.js";
+
+import { appendTunnelJournal, type TunnelJournalEntry } from "../tunnel/journal.js";
+import { unauthorizedResponse, verifyBearer } from "./auth.js";
 
 /**
  * HTTP bridge from the CLI to a tunneled node.
@@ -156,7 +157,9 @@ function handleStream(
   // even if `req.signal` isn't supported by the runtime; we still
   // wire req.signal into it when available.
   const abort = new AbortController();
-  const onReqAbort = (): void => abort.abort();
+  const onReqAbort = (): void => {
+    abort.abort();
+  };
   if (req.signal) {
     if (req.signal.aborted) abort.abort();
     else req.signal.addEventListener("abort", onReqAbort, { once: true });
@@ -209,7 +212,9 @@ function handleStream(
           }
           const nextPromise = iterator.next();
           const abortPromise = new Promise<{ aborted: true }>((resolve) => {
-            const handler = (): void => resolve({ aborted: true });
+            const handler = (): void => {
+              resolve({ aborted: true });
+            };
             if (abort.signal.aborted) handler();
             else abort.signal.addEventListener("abort", handler, { once: true });
           });

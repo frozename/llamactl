@@ -37,8 +37,8 @@ function parseRanking(text: string): string[] | null {
       if (head !== undefined) s = head;
     }
   }
-  const fenceMatch = s.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (fenceMatch && fenceMatch[1] !== undefined) s = fenceMatch[1];
+  const fenceMatch = /```(?:json)?\s*\n?([\s\S]*?)\n?```/.exec(s);
+  if (fenceMatch?.[1] !== undefined) s = fenceMatch[1];
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
@@ -47,7 +47,7 @@ function parseRanking(text: string): string[] | null {
     const r = obj.ranking;
     if (!Array.isArray(r)) return null;
     if (!r.every((v) => typeof v === "string")) return null;
-    return r as string[];
+    return r;
   } catch {
     return null;
   }
@@ -92,7 +92,7 @@ export function recallAtK(ranking: string[], goldIds: string[], k = 5): number {
  * when the output mentions no candidate IDs at all.
  */
 export function extractIdsByAppearance(text: string, candidates: Candidate[]): string[] | null {
-  const found: Array<{ id: string; at: number }> = [];
+  const found: { id: string; at: number }[] = [];
   for (const c of candidates) {
     const at = text.indexOf(c.id);
     if (at >= 0) found.push({ id: c.id, at });

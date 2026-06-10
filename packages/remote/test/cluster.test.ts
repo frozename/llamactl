@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { makeCluster, type Cluster } from "./helpers.js";
+
+import { type Cluster, makeCluster } from "./helpers.js";
 
 describe("makeCluster", () => {
   let cluster: Cluster;

@@ -1,7 +1,9 @@
 // packages/remote/test/gateway-catalog-derive-sirius.test.ts
 import { describe, expect, test } from "bun:test";
-import { deriveSiriusEntries } from "../src/workload/gateway-catalog/sirius-entries";
+
 import type { CompositeGatewayContext } from "../src/workload/gateway-handlers/types";
+
+import { deriveSiriusEntries } from "../src/workload/gateway-catalog/sirius-entries";
 
 const ctx: CompositeGatewayContext = {
   compositeName: "mc",

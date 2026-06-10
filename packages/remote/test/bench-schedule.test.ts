@@ -1,15 +1,16 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   addSchedule,
+  type BenchSchedule,
   isDue,
   loadSchedules,
   removeSchedule,
   saveSchedules,
   updateSchedule,
-  type BenchSchedule,
 } from "../src/bench/schedule.js";
 
 /**
@@ -77,7 +78,7 @@ describe("bench schedule store", () => {
     expect(removeSchedule(seeded, "a")).toHaveLength(1);
     expect(updateSchedule(seeded, "a", { enabled: false })[0]!.enabled).toBe(false);
     // `id` cannot be mutated through updateSchedule.
-    expect(updateSchedule(seeded, "a", { id: "nope" } as Partial<BenchSchedule>)[0]!.id).toBe("a");
+    expect(updateSchedule(seeded, "a", { id: "nope" })[0]!.id).toBe("a");
   });
 
   test("isDue returns true for fresh schedules and elapsed intervals", () => {

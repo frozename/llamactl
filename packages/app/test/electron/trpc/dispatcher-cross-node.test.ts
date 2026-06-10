@@ -1,10 +1,11 @@
-import { describe, expect, test, afterEach, beforeEach, spyOn, mock } from "bun:test";
 import { config as kubecfg } from "@llamactl/remote";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+
 import {
-  buildDispatcherRouter,
-  __setPeerClientFactoryForTests,
-  __resetPeerClientFactoryForTests,
   __resetActiveNodeOverrideForTests,
+  __resetPeerClientFactoryForTests,
+  __setPeerClientFactoryForTests,
+  buildDispatcherRouter,
 } from "../../../electron/trpc/dispatcher.js";
 
 describe("UI Cross-Node Dispatcher Procedures", () => {
@@ -48,7 +49,7 @@ describe("UI Cross-Node Dispatcher Procedures", () => {
             return { hits: [{ id: `session-${nodeName}` }] };
           },
         },
-      } as any;
+      };
     });
 
     const router = buildDispatcherRouter();
@@ -77,7 +78,7 @@ describe("UI Cross-Node Dispatcher Procedures", () => {
             return { hits: [{ line: `log-${nodeName}` }] };
           },
         },
-      } as any;
+      };
     });
 
     const router = buildDispatcherRouter();

@@ -1,8 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+
 import { trpc, trpcUIClient } from "@/lib/trpc";
 import { useUIStore } from "@/stores/ui-store";
 
@@ -84,7 +85,9 @@ export function NodeSelector(): React.JSX.Element | null {
   return (
     <button
       type="button"
-      onClick={() => setActiveModule("dashboard")}
+      onClick={() => {
+        setActiveModule("dashboard");
+      }}
       className="flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text)] hover:border-[var(--color-ok)]"
       style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       data-testid="node-selector-root"

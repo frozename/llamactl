@@ -7,15 +7,17 @@
  * v1 providers: `chroma` (MCP-proxied), `pgvector` (native SQL).
  */
 import type { RetrievalProvider } from "@nova/contracts";
+
 import type { ClusterNode, Config } from "../config/schema.js";
-import { createChromaAdapter } from "./chroma/index.js";
-import { createPgvectorAdapter } from "./pgvector/index.js";
 import type { Embedder } from "./embedding.js";
 
-export { RagError, type RagErrorCode } from "./errors.js";
+import { createChromaAdapter } from "./chroma/index.js";
+import { createPgvectorAdapter } from "./pgvector/index.js";
+
 export { ChromaRagAdapter, createChromaAdapter } from "./chroma/index.js";
-export { PgvectorRagAdapter, createPgvectorAdapter } from "./pgvector/index.js";
 export { createEmbedderFromBinding, type Embedder } from "./embedding.js";
+export { RagError, type RagErrorCode } from "./errors.js";
+export { createPgvectorAdapter, PgvectorRagAdapter } from "./pgvector/index.js";
 
 export interface CreateRagAdapterOptions {
   env?: NodeJS.ProcessEnv;
@@ -46,13 +48,13 @@ export async function createRagAdapter(
       // HTTP-mode chroma honors a delegated embedder the same way
       // pgvector does; MCP-mode ignores it (chroma-mcp embeds via
       // the collection's embedding function).
-      return createChromaAdapter(node.rag, {
+      return await createChromaAdapter(node.rag, {
         env,
         ...(opts.config && { config: opts.config }),
         ...(opts.embedder && { embedder: opts.embedder }),
       });
     case "pgvector":
-      return createPgvectorAdapter(node.rag, {
+      return await createPgvectorAdapter(node.rag, {
         env,
         ...(opts.config && { config: opts.config }),
         ...(opts.embedder && { embedder: opts.embedder }),

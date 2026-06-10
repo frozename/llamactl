@@ -1,4 +1,3 @@
-import type postgres from "postgres";
 import type {
   DeleteRequest,
   DeleteResponse,
@@ -10,8 +9,11 @@ import type {
   StoreRequest,
   StoreResponse,
 } from "@nova/contracts";
-import { RagError } from "../errors.js";
+import type postgres from "postgres";
+
 import type { Embedder } from "../embedding.js";
+
+import { RagError } from "../errors.js";
 
 /**
  * Native pgvector adapter. Talks directly to Postgres over SQL via the
@@ -275,7 +277,7 @@ export class PgvectorRagAdapter implements RetrievalProvider {
       // UPDATE statements — authoritative row count from the server.
       const res = await this.sql`
         DELETE FROM ${this.sql(collection)}
-        WHERE id = ANY(${req.ids as string[]})
+        WHERE id = ANY(${req.ids})
       `;
       result = { count: res.count };
     } catch (err) {
@@ -411,11 +413,11 @@ export class PgvectorRagAdapter implements RetrievalProvider {
   private async ensureDocumentVectors(
     documents: readonly Document[],
   ): Promise<
-    Array<{ id: string; content: string; metadata?: Record<string, unknown>; vector: number[] }>
+    { id: string; content: string; metadata?: Record<string, unknown>; vector: number[] }[]
   > {
     const missingIdx: number[] = [];
-    for (let i = 0; i < documents.length; i++) {
-      const d = documents[i]!;
+    for (const [i, document] of documents.entries()) {
+      const d = document;
       if (!d.vector || d.vector.length === 0) missingIdx.push(i);
     }
     if (missingIdx.length > 0 && !this.embedder) {
@@ -439,7 +441,7 @@ export class PgvectorRagAdapter implements RetrievalProvider {
     }
 
     return documents.map((d, i) => {
-      const supplied = d.vector && d.vector.length > 0 ? (d.vector as number[]) : null;
+      const supplied = d.vector && d.vector.length > 0 ? d.vector : null;
       const computedIdx = missingIdx.indexOf(i);
       const vector = supplied ?? (computedIdx >= 0 ? computed[computedIdx]! : null);
       if (!vector) {

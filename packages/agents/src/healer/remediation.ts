@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
+
 import type { RunbookToolClient } from "../types.js";
-import type { PlanLike } from "./severity.js";
 import type { stateTransitions } from "./probe.js";
+import type { PlanLike } from "./severity.js";
 
 /**
  * Remediation coordinator. The loop, on every new unhealthy/degraded
@@ -42,14 +43,14 @@ export function buildGoal(transition: Transition): string {
 /** Minimal MCP tool-call envelope shape. */
 interface McpCallResult {
   isError?: boolean;
-  content?: Array<{ type: string; text?: string }>;
+  content?: { type: string; text?: string }[];
 }
 
 function firstTextBlock(result: McpCallResult): string | undefined {
   const content = result.content;
   if (!Array.isArray(content) || content.length === 0) return undefined;
   const first = content[0];
-  if (!first || first.type !== "text" || typeof first.text !== "string") return undefined;
+  if (first?.type !== "text" || typeof first.text !== "string") return undefined;
   return first.text;
 }
 
@@ -130,7 +131,7 @@ export async function askPlanner(
     };
   }
   const inner = parsed as PlannerResult;
-  if (inner.ok === false) {
+  if (!inner.ok) {
     return {
       ok: false,
       reason: inner.reason ?? "planner-failed",

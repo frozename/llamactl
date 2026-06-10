@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
+
+import type { AnthropicMessagesRequest } from "../src/anthropic/types.js";
+
 import {
   AnthropicTranslationError,
   translateAnthropicRequest,
 } from "../src/anthropic/translateRequest.js";
-import type { AnthropicMessagesRequest } from "../src/anthropic/types.js";
 
 test("translates a full anthropic request payload into openai chat completions shape", () => {
   const request: AnthropicMessagesRequest = {

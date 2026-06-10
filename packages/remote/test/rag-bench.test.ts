@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-  RagBenchManifestSchema,
-  runRagBench,
   type RagBenchManifest,
+  RagBenchManifestSchema,
   type RagSearchCaller,
+  runRagBench,
 } from "../src/rag/bench.js";
 
 function manifest(queries: RagBenchManifest["spec"]["queries"]): RagBenchManifest {
@@ -22,7 +22,7 @@ function manifest(queries: RagBenchManifest["spec"]["queries"]): RagBenchManifes
 }
 
 function stubSearch(
-  byQuery: Record<string, Array<{ id: string; content: string; score?: number }>>,
+  byQuery: Record<string, { id: string; content: string; score?: number }[]>,
 ): RagSearchCaller {
   return async (req) => {
     const rows = byQuery[req.query] ?? [];

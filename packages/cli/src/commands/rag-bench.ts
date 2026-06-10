@@ -1,6 +1,8 @@
+import type { NodeClient } from "@llamactl/remote";
+
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { NodeClient } from "@llamactl/remote";
+
 import { getNodeClient } from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl rag bench -f <file.yaml | ->

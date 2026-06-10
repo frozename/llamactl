@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { runDoctor, type CheckResult, type DoctorDeps } from "../src/commands/doctor.js";
+
+import { type CheckResult, type DoctorDeps, runDoctor } from "../src/commands/doctor.js";
 
 /**
  * `llamactl doctor` smoke tests. The probes hit real-ish surfaces

@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
+import type { RagPipelineManifest } from "../src/rag/pipeline/schema.js";
+import type { PipelineRecord } from "../src/rag/pipeline/store.js";
+
 import {
   DEFAULT_STALE_THRESHOLD_MS,
   detectOrphanedRuns,
   findTrailingOrphan,
 } from "../src/rag/pipeline/orphan.js";
-import type { PipelineRecord } from "../src/rag/pipeline/store.js";
-import type { RagPipelineManifest } from "../src/rag/pipeline/schema.js";
 
 /**
  * `findTrailingOrphan` is pure (string in, struct out) — every case
@@ -19,7 +20,7 @@ function line(obj: Record<string, unknown>): string {
   return JSON.stringify(obj);
 }
 
-function journal(...entries: Array<Record<string, unknown>>): string {
+function journal(...entries: Record<string, unknown>[]): string {
   return `${entries.map(line).join("\n")}\n`;
 }
 
@@ -35,7 +36,7 @@ function manifest(name: string): RagPipelineManifest {
       concurrency: 4,
       on_duplicate: "skip",
     },
-  } as RagPipelineManifest;
+  };
 }
 
 describe("findTrailingOrphan", () => {

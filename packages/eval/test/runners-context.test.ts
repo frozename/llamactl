@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { assembleHaystack } from "../src/runners/context-retrieval.js";
 
 function tokenize(text: string): string[] {
@@ -9,8 +10,8 @@ function needleIndex(haystack: string, needle: string): number {
   const hayTokens = tokenize(haystack);
   const needleTokens = tokenize(needle);
   outer: for (let i = 0; i <= hayTokens.length - needleTokens.length; i++) {
-    for (let j = 0; j < needleTokens.length; j++) {
-      if (hayTokens[i + j] !== needleTokens[j]) continue outer;
+    for (const [j, needleToken] of needleTokens.entries()) {
+      if (hayTokens[i + j] !== needleToken) continue outer;
     }
     return i;
   }

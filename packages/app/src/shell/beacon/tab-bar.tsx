@@ -1,6 +1,7 @@
+import { Pin, X } from "lucide-react";
 import * as React from "react";
-import { X, Pin } from "lucide-react";
-import { useTabStore, type TabEntry } from "@/stores/tab-store";
+
+import { type TabEntry, useTabStore } from "@/stores/tab-store";
 
 /**
  * Persistent tab strip. Pinned tabs render leftmost with a pin glyph
@@ -23,7 +24,9 @@ export function TabBar(): React.JSX.Element {
 
   React.useEffect(() => {
     if (!menu) return;
-    const dismiss = (): void => setMenu(null);
+    const dismiss = (): void => {
+      setMenu(null);
+    };
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") setMenu(null);
     };
@@ -63,7 +66,9 @@ export function TabBar(): React.JSX.Element {
             role="tab"
             aria-selected={active}
             tabIndex={active ? 0 : -1}
-            onClick={() => setActive(tab.tabKey)}
+            onClick={() => {
+              setActive(tab.tabKey);
+            }}
             onAuxClick={(e) => {
               if (e.button === 1) close(tab.tabKey);
             }}
@@ -176,7 +181,9 @@ export function TabBar(): React.JSX.Element {
       })}
       {menu && (
         <div
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+          }}
           style={{
             position: "fixed",
             left: menu.x,

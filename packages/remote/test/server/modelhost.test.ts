@@ -1,10 +1,12 @@
+import type { spawn as nodeSpawn } from "node:child_process";
+
 import { describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type spawn as nodeSpawn } from "node:child_process";
+
 import { ENGINES } from "../../../core/src/engines/index.js";
-import { startModelHost, stopModelHost, statusModelHost } from "../../src/server/modelhost.js";
+import { startModelHost, statusModelHost, stopModelHost } from "../../src/server/modelhost.js";
 
 function makeManifest(tmp: string) {
   const workloadsDir = join(tmp, "workloads");

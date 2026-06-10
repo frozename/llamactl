@@ -1,7 +1,9 @@
-import { totalmem } from "node:os";
-import { readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
 import type { ResolvedEnv } from "@llamactl/core";
+
+import { readdirSync, statSync } from "node:fs";
+import { totalmem } from "node:os";
+import { join } from "node:path";
+
 import type { ModelHostManifest } from "./modelhost-schema.js";
 import type { ModelRun } from "./schema.js";
 
@@ -23,7 +25,7 @@ export function sumReservedForNode(manifests: ModelRun[], nodeName: string): num
   let sum = 0;
   for (const m of manifests) {
     if (m.spec.node !== nodeName) continue;
-    if (m.spec.enabled === false) continue;
+    if (!m.spec.enabled) continue;
     sum += m.spec.resources?.expectedMemoryGiB ?? 0;
   }
   return sum;

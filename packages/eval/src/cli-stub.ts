@@ -2,8 +2,9 @@
 import { existsSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { spawnServer, waitForHealth, killServer } from "./server.js";
+
 import { runThroughput } from "./runners/throughput.js";
+import { killServer, spawnServer, waitForHealth } from "./server.js";
 
 const [, , modelRel, ubArg = "512"] = process.argv;
 if (!modelRel) {
@@ -25,7 +26,7 @@ if (!existsSync(modelPath)) {
   process.exit(3);
 }
 
-const ts = new Date().toISOString().replace(/[:.]/g, "-");
+const ts = new Date().toISOString().replaceAll(/[:.]/g, "-");
 const outDir = join(DEV_STORAGE, "eval", ts);
 mkdirSync(outDir, { recursive: true });
 const logPath = join(outDir, "server.log");

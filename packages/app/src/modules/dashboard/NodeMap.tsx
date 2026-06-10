@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useMemo, useState } from "react";
+
 import { trpc } from "@/lib/trpc";
 import { useUIStore } from "@/stores/ui-store";
 
@@ -70,7 +71,7 @@ function colorForKind(kind: NodeKind, isLocal: boolean): string {
  */
 function layoutCluster(nodes: NodeListItem[]): {
   placed: PlacedNode[];
-  edges: Array<{ from: string; to: string }>;
+  edges: { from: string; to: string }[];
 } {
   const local = nodes.find((n) => n.isLocal || n.name === "local");
   const agents = nodes.filter((n) => (n.effectiveKind ?? "agent") === "agent" && n !== local);
@@ -79,7 +80,7 @@ function layoutCluster(nodes: NodeListItem[]): {
   const providers = nodes.filter((n) => n.effectiveKind === "provider");
 
   const placed: PlacedNode[] = [];
-  const edges: Array<{ from: string; to: string }> = [];
+  const edges: { from: string; to: string }[] = [];
 
   // Centre — local (or first agent if no `local`).
   const centerNode = local ?? agents[0];
@@ -90,41 +91,41 @@ function layoutCluster(nodes: NodeListItem[]): {
   // Agents orbit the center.
   const orbitable = local ? agents : agents.slice(1);
   const ringRadius = 150;
-  orbitable.forEach((node, i) => {
+  for (const [i, node] of orbitable.entries()) {
     const angle = -Math.PI / 2 + (i / Math.max(orbitable.length, 1)) * Math.PI * 2;
     placed.push({
       ...node,
       x: CENTER.x + ringRadius * Math.cos(angle),
       y: CENTER.y + ringRadius * Math.sin(angle),
     });
-  });
+  }
 
   // Gateways stack on the right, then their providers fan beneath them.
   const gatewayX = VIEWBOX.w - 130;
   const gatewayStartY = 70;
   const gatewayStep = (VIEWBOX.h - 140) / Math.max(gateways.length, 1);
-  gateways.forEach((gw, i) => {
+  for (const [i, gw] of gateways.entries()) {
     const gy = gatewayStartY + i * gatewayStep;
     placed.push({ ...gw, x: gatewayX, y: gy });
     const children = providers.filter((p) => p.name.startsWith(`${gw.name}.`));
-    children.forEach((p, j) => {
+    for (const [j, p] of children.entries()) {
       const px = gatewayX + 80;
       const py = gy + (j - (children.length - 1) / 2) * 40;
       placed.push({ ...p, x: px, y: py, parent: gw.name });
       edges.push({ from: gw.name, to: p.name });
-    });
-  });
+    }
+  }
 
   // RAG nodes on the left.
   const ragX = 80;
   const ragStartY = 90;
-  rags.forEach((r, i) => {
+  for (const [i, r] of rags.entries()) {
     placed.push({
       ...r,
       x: ragX,
       y: ragStartY + i * 80,
     });
-  });
+  }
 
   return { placed, edges };
 }
@@ -156,8 +157,12 @@ function NodeBubble({
       data-active={isActive ? "true" : "false"}
       transform={`translate(${node.x}, ${node.y})`}
       onClick={onClick}
-      onMouseEnter={() => onHover(node.name)}
-      onMouseLeave={() => onHover(null)}
+      onMouseEnter={() => {
+        onHover(node.name);
+      }}
+      onMouseLeave={() => {
+        onHover(null);
+      }}
       style={{ cursor: "pointer" }}
     >
       {isActive && (
@@ -278,7 +283,7 @@ export function NodeMap(): React.JSX.Element {
     const enriched: NodeListItem[] = fromQuery.map((n) => ({
       name: n.name,
       endpoint: n.endpoint,
-      effectiveKind: n.effectiveKind as NodeKind | undefined,
+      effectiveKind: n.effectiveKind,
       isLocal: n.name === "local",
     }));
     if (!local) {
@@ -332,7 +337,9 @@ export function NodeMap(): React.JSX.Element {
             node={node}
             isActive={node.name === effective}
             isHovered={hovered === node.name}
-            onClick={() => setFocused(node.name)}
+            onClick={() => {
+              setFocused(node.name);
+            }}
             onHover={setHovered}
           />
         ))}
@@ -348,7 +355,7 @@ export function NodeMap(): React.JSX.Element {
         >
           <NodeDetail
             name={focusedNode.name}
-            kind={(focusedNode.effectiveKind ?? "agent") as NodeKind}
+            kind={focusedNode.effectiveKind ?? "agent"}
             endpoint={focusedNode.endpoint}
             isActive={focusedNode.name === effective}
             onActivate={() => {
@@ -359,7 +366,9 @@ export function NodeMap(): React.JSX.Element {
               setActiveModule("workloads");
               setFocused(null);
             }}
-            onClose={() => setFocused(null)}
+            onClose={() => {
+              setFocused(null);
+            }}
           />
         </div>
       )}

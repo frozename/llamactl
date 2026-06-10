@@ -1,6 +1,15 @@
-export * from "./types.js";
-export * from "./node-probe.js";
-export * from "./workload-probe.js";
+import type { AggregatorPeer } from "./aggregator.js";
+
+import { listPeers } from "../../remote/src/config/peers.js";
+import { defaultFleetJournalPath, readRecentMovesFromJournal } from "./journal.js";
+import { MigrationController, type MigrationControllerDeps } from "./migration-controller.js";
+import { createPeerFetch } from "./peer-fetch.js";
+
+export * from "./aggregator-db.js";
+export * from "./aggregator.js";
+export * from "./audit-reader.js";
+export * from "./executor.js";
+export * from "./infra-rollout.js";
 export {
   appendFleetJournal,
   defaultFleetAuditPath,
@@ -8,25 +17,17 @@ export {
   readCurrentLeaseHolder,
   readRecentMovesFromJournal,
 } from "./journal.js";
-export * from "./policy.js";
 export * from "./loop.js";
-export * from "./executor.js";
 export * from "./measured-memory.js";
-export * from "./status-reader.js";
-export * from "./audit-reader.js";
-export * from "./snapshot-reader.js";
-export { makePlacementDecision, chooseBestNode, scoreNodes } from "./placement.js";
-export * from "./aggregator.js";
-export * from "./peer-fetch.js";
-export * from "./aggregator-db.js";
-export * from "./infra-rollout.js";
 export * from "./migration-controller.js";
-
-import { MigrationController, type MigrationControllerDeps } from "./migration-controller.js";
-import { createPeerFetch } from "./peer-fetch.js";
-import type { AggregatorPeer } from "./aggregator.js";
-import { listPeers } from "../../remote/src/config/peers.js";
-import { defaultFleetJournalPath, readRecentMovesFromJournal } from "./journal.js";
+export * from "./node-probe.js";
+export * from "./peer-fetch.js";
+export { chooseBestNode, makePlacementDecision, scoreNodes } from "./placement.js";
+export * from "./policy.js";
+export * from "./snapshot-reader.js";
+export * from "./status-reader.js";
+export * from "./types.js";
+export * from "./workload-probe.js";
 
 export function createMigrationController(deps: MigrationControllerDeps): MigrationController {
   return new MigrationController(deps);

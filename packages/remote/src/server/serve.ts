@@ -1,31 +1,15 @@
-import { existsSync, readFileSync } from "node:fs";
-import { startSearchIngest, stopSearchIngest } from "../search/ingest/lifecycle.js";
-import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { openaiProxy } from "@llamactl/core";
+import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import type { ModelRun } from "../workload/schema.js";
+
 import { resolveEnv } from "../../../core/src/env.js";
 import { migrateLegacySingletonRuntime } from "../../../core/src/workloadRuntime.js";
 import { router as appRouter } from "../router.js";
-import { extractBearer, unauthorizedResponse, verifyBearer } from "./auth.js";
-import { loadCert } from "./tls.js";
-import {
-  agentInfo,
-  llamaServerUp,
-  openaiPathBucket,
-  openaiRequestDurationSeconds,
-  openaiRequestsTotal,
-  openaiUpstreamErrorsTotal,
-  registry as metricsRegistry,
-  statusClass,
-} from "./metrics.js";
-import { publishAgentMdns, type PublishedAgent } from "./mdns.js";
-import { startPeerSnapshotPoller } from "./peer-snapshot-poller.js";
-import { handleRegister, type RegisterHandlerOptions } from "./register.js";
-import { handleInstallScript, type InstallScriptHandlerOptions } from "./install-script.js";
-import { handleArtifact, type ArtifactsHandlerOptions } from "./artifacts.js";
-import { handleAgentRollback, handleAgentUpdate } from "./agent-update.js";
-import { handleRagChatCompletions } from "./rag-chat-endpoint.js";
-import { handleTunnelRelay } from "./tunnel-relay.js";
 import { handleFleetSnapshotRoute } from "../routes/fleet.js";
+import { startSearchIngest, stopSearchIngest } from "../search/ingest/lifecycle.js";
 import {
   createTunnelClient,
   createTunnelRouterHandler,
@@ -34,9 +18,27 @@ import {
   type TunnelServer,
   type TunnelState,
 } from "../tunnel/index.js";
-import { join } from "node:path";
 import { listWorkloads, saveWorkload } from "../workload/store.js";
-import type { ModelRun } from "../workload/schema.js";
+import { handleAgentRollback, handleAgentUpdate } from "./agent-update.js";
+import { type ArtifactsHandlerOptions, handleArtifact } from "./artifacts.js";
+import { extractBearer, unauthorizedResponse, verifyBearer } from "./auth.js";
+import { handleInstallScript, type InstallScriptHandlerOptions } from "./install-script.js";
+import { publishAgentMdns, type PublishedAgent } from "./mdns.js";
+import {
+  agentInfo,
+  llamaServerUp,
+  registry as metricsRegistry,
+  openaiPathBucket,
+  openaiRequestDurationSeconds,
+  openaiRequestsTotal,
+  openaiUpstreamErrorsTotal,
+  statusClass,
+} from "./metrics.js";
+import { startPeerSnapshotPoller } from "./peer-snapshot-poller.js";
+import { handleRagChatCompletions } from "./rag-chat-endpoint.js";
+import { handleRegister, type RegisterHandlerOptions } from "./register.js";
+import { loadCert } from "./tls.js";
+import { handleTunnelRelay } from "./tunnel-relay.js";
 
 export interface StartAgentOptions {
   bindHost?: string; // default '127.0.0.1'
@@ -571,7 +573,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     port: listenPort,
     fingerprint,
     handleRequest: async (req: Request, address: ClientAddress | null = null) => {
-      return fetchHandler(req, {
+      return await fetchHandler(req, {
         requestIP: () => address,
       });
     },

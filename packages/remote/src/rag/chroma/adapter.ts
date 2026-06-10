@@ -11,11 +11,13 @@ import type {
   StoreRequest,
   StoreResponse,
 } from "@nova/contracts";
+
 import type { RagBinding } from "../../config/schema.js";
 import type { Embedder } from "../embedding.js";
-import { RagError } from "../errors.js";
 import type { ChromaMcpClient, ChromaToolResult } from "./client.js";
 import type { HttpChromaClient } from "./http-client.js";
+
+import { RagError } from "../errors.js";
 
 /**
  * Proxies the `RetrievalProvider` surface onto a chroma backend —
@@ -68,8 +70,8 @@ interface ChromaQueryResponse {
   // follow what the caller passed in `include`.
   ids?: string[][];
   distances?: number[][];
-  documents?: Array<Array<string | null>>;
-  metadatas?: Array<Array<Record<string, unknown> | null>>;
+  documents?: (string | null)[][];
+  metadatas?: (Record<string, unknown> | null)[][];
 }
 
 /**
@@ -119,7 +121,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
     if (isChromaBackend(backendOrClient)) {
       this.backend = backendOrClient;
     } else {
-      const client = backendOrClient as ChromaMcpClient;
+      const client = backendOrClient;
       this.backend = {
         kind: "mcp",
         client,
@@ -132,25 +134,25 @@ export class ChromaRagAdapter implements RetrievalProvider {
   async search(request: SearchRequest): Promise<SearchResponse> {
     const collection = request.collection ?? this.defaultCollection;
     if (this.backend.kind === "mcp") {
-      return this.searchMcp(collection, request);
+      return await this.searchMcp(collection, request);
     }
-    return this.searchHttp(collection, request);
+    return await this.searchHttp(collection, request);
   }
 
   async store(request: StoreRequest): Promise<StoreResponse> {
     const collection = request.collection ?? this.defaultCollection;
     if (this.backend.kind === "mcp") {
-      return this.storeMcp(collection, request);
+      return await this.storeMcp(collection, request);
     }
-    return this.storeHttp(collection, request);
+    return await this.storeHttp(collection, request);
   }
 
   async delete(request: DeleteRequest): Promise<DeleteResponse> {
     const collection = request.collection ?? this.defaultCollection;
     if (this.backend.kind === "mcp") {
-      return this.deleteMcp(collection, request);
+      return await this.deleteMcp(collection, request);
     }
-    return this.deleteHttp(collection, request);
+    return await this.deleteHttp(collection, request);
   }
 
   async listCollections(): Promise<ListCollectionsResponse> {
@@ -323,8 +325,8 @@ export class ChromaRagAdapter implements RetrievalProvider {
   private async embedDocuments(documents: readonly Document[]): Promise<number[][]> {
     if (this.backend.kind !== "http") throw new Error("unreachable");
     const missingIdx: number[] = [];
-    for (let i = 0; i < documents.length; i++) {
-      const d = documents[i]!;
+    for (const [i, document] of documents.entries()) {
+      const d = document;
       if (!d.vector || d.vector.length === 0) missingIdx.push(i);
     }
     if (missingIdx.length > 0 && !this.backend.embedder) {
@@ -348,7 +350,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
     }
 
     return documents.map((d, i) => {
-      if (d.vector && d.vector.length > 0) return d.vector as number[];
+      if (d.vector && d.vector.length > 0) return d.vector;
       const idx = missingIdx.indexOf(i);
       const v = idx >= 0 ? computed[idx] : null;
       if (!v) {
@@ -425,7 +427,7 @@ function buildResult(
 
 function extractText(raw: ChromaToolResult): string | null {
   const first = raw.content?.[0];
-  if (first && first.type === "text" && typeof first.text === "string") return first.text;
+  if (first?.type === "text" && typeof first.text === "string") return first.text;
   return null;
 }
 

@@ -1,7 +1,8 @@
-import { expect, test, describe, spyOn } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
+
 import { readAuditEntries } from "../src/audit-reader.js";
 
 describe("audit-reader", () => {

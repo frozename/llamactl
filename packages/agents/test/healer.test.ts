@@ -3,13 +3,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+
 import {
+  type JournalEntry,
   probeFleet,
   probeFleetViaNova,
-  stateTransitions,
-  startHealerLoop,
-  type JournalEntry,
   type RunbookToolClient,
+  startHealerLoop,
+  stateTransitions,
   type ToolCallInput,
 } from "../src/index.js";
 
@@ -30,8 +31,8 @@ afterEach(() => {
 });
 
 function seedYamls(overrides?: {
-  gateways?: Array<{ name: string; provider: string; baseUrl: string }>;
-  providers?: Array<{ name: string; kind: string; baseUrl: string }>;
+  gateways?: { name: string; provider: string; baseUrl: string }[];
+  providers?: { name: string; kind: string; baseUrl: string }[];
 }): { kubeconfigPath: string; siriusProvidersPath: string } {
   const gateways = overrides?.gateways ?? [
     { name: "sirius-primary", provider: "sirius", baseUrl: "http://g1/v1" },
@@ -208,7 +209,7 @@ describe("startHealerLoop (--once)", () => {
     expect(transitions).toHaveLength(2);
     expect(ticks).toHaveLength(1);
     const first = ticks[0];
-    if (first && first.kind === "tick") {
+    if (first?.kind === "tick") {
       expect(first.report.unhealthy).toBe(0);
     }
   });
@@ -240,14 +241,14 @@ describe("startHealerLoop (--once)", () => {
  * implements the minimal `RunbookToolClient` surface the facade path
  * consumes.
  */
-function envelope(payload: unknown): { content: Array<{ type: "text"; text: string }> } {
+function envelope(payload: unknown): { content: { type: "text"; text: string }[] } {
   return { content: [{ type: "text", text: JSON.stringify(payload) }] };
 }
 
 function mockClient(handler: (input: ToolCallInput) => Promise<unknown>): RunbookToolClient {
   return {
     async callTool(input: ToolCallInput) {
-      return handler(input);
+      return await handler(input);
     },
   };
 }
@@ -318,8 +319,8 @@ describe("startHealerLoop (facade path)", () => {
     });
     await handle.done;
     const tick = journaled.find((e) => e.kind === "tick");
-    expect(tick && tick.kind === "tick" ? tick.source : null).toBe("nova");
-    if (tick && tick.kind === "tick") {
+    expect(tick?.kind === "tick" ? tick.source : null).toBe("nova");
+    if (tick?.kind === "tick") {
       expect(tick.report.probes).toHaveLength(3);
       expect(tick.report.unhealthy).toBe(1);
     }
@@ -366,7 +367,7 @@ describe("startHealerLoop (facade path)", () => {
     expect(fellBackLine).toContain("boom");
     expect(fellBackLine).toContain("falling back to direct probe");
     const tick = journaled.find((e) => e.kind === "tick");
-    expect(tick && tick.kind === "tick" ? tick.source : null).toBe("direct");
+    expect(tick?.kind === "tick" ? tick.source : null).toBe("direct");
   });
 
   test("fallback — isError: true envelope also falls back and carries the downstream message", async () => {
@@ -402,6 +403,6 @@ describe("startHealerLoop (facade path)", () => {
     expect(fellBackLine).toBeTruthy();
     expect(fellBackLine).toContain("downstream exploded");
     const tick = journaled.find((e) => e.kind === "tick");
-    expect(tick && tick.kind === "tick" ? tick.source : null).toBe("direct");
+    expect(tick?.kind === "tick" ? tick.source : null).toBe("direct");
   });
 });

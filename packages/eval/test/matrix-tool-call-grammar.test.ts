@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { __signature, toolCallGrammarWorkload } from "../src/matrix/workloads/tool-call-grammar.js";
 
 describe("tool-call-grammar workload", () => {

@@ -1,5 +1,4 @@
-import type { ResponseCacheEntry } from "./registry.js";
-import type { ResponseCacheRegistry } from "./registry.js";
+import type { ResponseCacheEntry, ResponseCacheRegistry } from "./registry.js";
 
 const HALF_LIFE_MS = 6 * 3600 * 1000;
 const PAYLOAD_SCALE_BYTES = 1024 * 1024;

@@ -1,10 +1,12 @@
+import type { NodeClient } from "@llamactl/remote";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { NodeClient } from "@llamactl/remote";
+
+import { __resetRagBenchTestSeams, __setRagBenchTestSeams } from "../src/commands/rag-bench.js";
 import { runRag } from "../src/commands/rag.js";
-import { __setRagBenchTestSeams, __resetRagBenchTestSeams } from "../src/commands/rag-bench.js";
 
 /**
  * CLI coverage for `llamactl rag bench`. Tests run against a

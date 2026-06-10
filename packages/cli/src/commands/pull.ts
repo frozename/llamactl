@@ -1,4 +1,5 @@
-import { autotune, bench, pull } from "@llamactl/core";
+import { autotune, type bench, pull } from "@llamactl/core";
+
 import {
   getGlobals,
   getNodeClient,
@@ -300,13 +301,13 @@ export async function runPull(args: string[]): Promise<number> {
   }
   switch (sub) {
     case "file":
-      return runPullFile(rest);
+      return await runPullFile(rest);
     case "candidate":
-      return runPullCandidate(rest);
+      return await runPullCandidate(rest);
     default:
       // First positional wasn't a subcommand — treat the whole argv
       // as a bulk `pull <repo> [target]` call. Keeps `llamactl pull
       // <repo>` terse for the common case.
-      return runPullRepo(args);
+      return await runPullRepo(args);
   }
 }

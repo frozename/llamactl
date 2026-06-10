@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
+  type CostGuardianConfig,
   CostGuardianConfigSchema,
   postGuardianWebhook,
-  runCostGuardianTick,
-  type CostGuardianConfig,
   type RunbookToolClient,
+  runCostGuardianTick,
   type ToolCallInput,
   type WebhookFetcher,
 } from "../src/index.js";
@@ -125,7 +126,7 @@ describe("runCostGuardianTick — webhook dispatch", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function readJournal(path: string): Array<Record<string, unknown>> {
+  function readJournal(path: string): Record<string, unknown>[] {
     const body = readFileSync(path, "utf8").trim();
     return body.split("\n").map((line) => JSON.parse(line));
   }
@@ -272,7 +273,7 @@ describe("runCostGuardianTick — tier-3 deregister dry-run intent", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function readJournal(path: string): Array<Record<string, unknown>> {
+  function readJournal(path: string): Record<string, unknown>[] {
     const body = readFileSync(path, "utf8").trim();
     return body.split("\n").map((line) => JSON.parse(line));
   }
@@ -505,7 +506,7 @@ describe("runCostGuardianTick — tier-2 force-private intent", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function readJournal(path: string): Array<Record<string, unknown>> {
+  function readJournal(path: string): Record<string, unknown>[] {
     const body = readFileSync(path, "utf8").trim();
     return body.split("\n").map((line) => JSON.parse(line));
   }
@@ -730,7 +731,7 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function readJournal(path: string): Array<Record<string, unknown>> {
+  function readJournal(path: string): Record<string, unknown>[] {
     const body = readFileSync(path, "utf8").trim();
     return body.split("\n").map((line) => JSON.parse(line));
   }

@@ -1,3 +1,30 @@
+import type { ClusterNode, Config } from "../config/schema.js";
+import type { RuntimeBackend, ServiceInstance, ServiceRef } from "../runtime/backend.js";
+import type { ApplyEvent, WorkloadClient } from "../workload/apply.js";
+import type { GatewayHandler } from "../workload/gateway-handlers/types.js";
+import type { ModelRun, ModelRunSpec } from "../workload/schema.js";
+import type {
+  ComponentRef,
+  Composite,
+  CompositeStatus,
+  CompositeStatusComponent,
+} from "./schema.js";
+import type {
+  CompositeApplyEvent,
+  CompositeApplyResult,
+  CompositeComponentResult,
+} from "./types.js";
+
+import { resolveInternalProxyEndpoint } from "../../../core/src/env.js";
+import {
+  resolveNode as kubecfgResolveNode,
+  loadConfig,
+  removeNode,
+  saveConfig,
+  upsertNode,
+} from "../config/kubeconfig.js";
+import { findServiceHandler } from "../service/handlers/registry.js";
+import { applyOne } from "../workload/apply.js";
 /**
  * Composite applier. Walks the component DAG (topological order),
  * drives each component through its type-specific apply path, and
@@ -24,45 +51,18 @@
  *     single stuck teardown can't keep the applier from finishing.
  */
 import {
-  removeCompositeEntries,
   readGatewayCatalog,
+  removeCompositeEntries,
   writeGatewayCatalog,
 } from "../workload/gateway-catalog/index.js";
 import { reloadAllGatewayNodesOfKind } from "../workload/gateway-catalog/reload.js";
-import { resolveInternalProxyEndpoint } from "../../../core/src/env.js";
-import type { RuntimeBackend, ServiceInstance, ServiceRef } from "../runtime/backend.js";
-import type { Config, ClusterNode } from "../config/schema.js";
 import {
-  loadConfig,
-  saveConfig,
-  resolveNode as kubecfgResolveNode,
-  upsertNode,
-  removeNode,
-} from "../config/kubeconfig.js";
-import type { ModelRun, ModelRunSpec } from "../workload/schema.js";
-import { applyOne } from "../workload/apply.js";
-import type { WorkloadClient, ApplyEvent } from "../workload/apply.js";
-import {
-  dispatchGatewayApply,
   DEFAULT_GATEWAY_HANDLERS,
+  dispatchGatewayApply,
 } from "../workload/gateway-handlers/registry.js";
-import type { GatewayHandler } from "../workload/gateway-handlers/types.js";
-import { findServiceHandler } from "../service/handlers/registry.js";
-import type { ServiceSpec } from "../service/schema.js";
-import type {
-  Composite,
-  ComponentRef,
-  CompositeStatus,
-  CompositeStatusComponent,
-} from "./schema.js";
-import { topologicalOrder, reverseOrder } from "./dag.js";
-import { saveComposite, defaultCompositesDir } from "./store.js";
-import type {
-  CompositeApplyEvent,
-  CompositeApplyResult,
-  CompositeComponentResult,
-} from "./types.js";
+import { reverseOrder, topologicalOrder } from "./dag.js";
 import { applyPipelineComponent, removePipelineComponent } from "./handlers/pipeline.js";
+import { defaultCompositesDir, saveComposite } from "./store.js";
 
 export interface CompositeApplyOptions {
   manifest: Composite;
@@ -124,8 +124,8 @@ export async function applyComposite(opts: CompositeApplyOptions): Promise<Compo
   let haltedOnPending: { ref: ComponentRef; message: string } | null = null;
   let lastProcessedIdx = -1;
 
-  for (let i = 0; i < order.length; i++) {
-    const ref = order[i] as ComponentRef;
+  for (const [i, element] of order.entries()) {
+    const ref = element;
     emit({ type: "component-start", ref });
     try {
       const record = await applyComponent(ref, manifest, opts, applied);
@@ -135,8 +135,7 @@ export async function applyComposite(opts: CompositeApplyOptions): Promise<Compo
       // (Pending on shape/name conflict). When the handler reported
       // Pending, halt the loop here without flagging this as a failure
       // — rollback is reserved for genuine errors.
-      const pipelinePending =
-        record.pipelineStatus !== undefined && record.pipelineStatus.state === "Pending";
+      const pipelinePending = record.pipelineStatus?.state === "Pending";
       const message = record.pipelineStatus?.message;
       if (pipelinePending) {
         const pendingMessage = message ?? "pipeline reported Pending";
@@ -171,7 +170,7 @@ export async function applyComposite(opts: CompositeApplyOptions): Promise<Compo
   if (haltedOnPending !== null) {
     const haltRef = haltedOnPending.ref;
     for (let i = lastProcessedIdx + 1; i < order.length; i++) {
-      const ref = order[i] as ComponentRef;
+      const ref = order[i]!;
       componentResults.push({
         ref,
         state: "Pending",
@@ -271,15 +270,15 @@ async function applyComponent(
 ): Promise<AppliedRecord> {
   switch (ref.kind) {
     case "service":
-      return applyServiceComponent(ref, manifest, opts);
+      return await applyServiceComponent(ref, manifest, opts);
     case "workload":
-      return applyWorkloadComponent(ref, manifest, opts);
+      return await applyWorkloadComponent(ref, manifest, opts);
     case "rag":
-      return applyRagComponent(ref, manifest, opts, applied);
+      return await applyRagComponent(ref, manifest, opts, applied);
     case "gateway":
-      return applyGatewayComponent(ref, manifest, opts, applied);
+      return await applyGatewayComponent(ref, manifest, opts, applied);
     case "pipeline":
-      return applyPipelineComponentRef(ref, manifest);
+      return await applyPipelineComponentRef(ref, manifest);
     default: {
       const exhaustive: never = ref.kind;
       throw new Error(`unknown component kind: ${String(exhaustive)}`);
@@ -296,10 +295,10 @@ async function applyServiceComponent(
   if (!spec) throw new Error(`service '${ref.name}' not found in composite`);
 
   const handler = findServiceHandler(spec);
-  handler.validate(spec as ServiceSpec);
+  handler.validate(spec);
 
-  const specHash = handler.computeSpecHash(spec as ServiceSpec);
-  const deployment = handler.toDeployment(spec as ServiceSpec, {
+  const specHash = handler.computeSpecHash(spec);
+  const deployment = handler.toDeployment(spec, {
     compositeName: manifest.metadata.name,
   });
 
@@ -394,7 +393,7 @@ async function applyRagComponent(
     );
     const handler = findServiceHandler(serviceSpec);
     const instance = serviceRecord?.serviceInstance ?? null;
-    const resolved = handler.resolvedEndpoint(serviceSpec as ServiceSpec, instance);
+    const resolved = handler.resolvedEndpoint(serviceSpec, instance);
     // Default to the handler's in-cluster DNS endpoint. For k8s
     // services with `serviceType: NodePort | LoadBalancer` we then
     // swap in a host-reachable URL sourced from the live Service.
@@ -656,7 +655,7 @@ export interface CompositeDestroyOptions {
 export interface CompositeDestroyResult {
   ok: boolean;
   removed: ComponentRef[];
-  errors: Array<{ ref: ComponentRef; message: string }>;
+  errors: { ref: ComponentRef; message: string }[];
 }
 
 /**
@@ -669,7 +668,7 @@ export async function destroyComposite(
 ): Promise<CompositeDestroyResult> {
   const order = reverseOrder(topologicalOrder(opts.manifest.spec));
   const removed: ComponentRef[] = [];
-  const errors: Array<{ ref: ComponentRef; message: string }> = [];
+  const errors: { ref: ComponentRef; message: string }[] = [];
 
   // If the backend owns a composite-level boundary (k8s namespace,
   // future resource group, ...), prefer that — a single call lets
@@ -773,7 +772,7 @@ async function destroyComponent(ref: ComponentRef, opts: CompositeDestroyOptions
         if (spec.runtime === "external") return;
       }
       const handler = findServiceHandler(spec);
-      const deployment = handler.toDeployment(spec as ServiceSpec, {
+      const deployment = handler.toDeployment(spec, {
         compositeName: manifest.metadata.name,
       });
       if (deployment === null) return;
@@ -828,7 +827,7 @@ function synthesizeModelRun(spec: ModelRunSpec, compositeName: string): ModelRun
 function buildGatewayDispatch(opts: CompositeApplyOptions): Parameters<typeof applyOne>[3] {
   return async (inner) => {
     const handlers = opts.gatewayHandlers ?? DEFAULT_GATEWAY_HANDLERS;
-    return dispatchGatewayApply({
+    return await dispatchGatewayApply({
       manifest: inner.manifest,
       getClient: inner.getClient,
       resolveNode: (nodeName: string) => {

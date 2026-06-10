@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
+import { generateToken, hashToken } from "../src/server/auth.js";
+import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 import {
   createTunnelClient,
   encodeTunnelMessage,
   parseTunnelMessage,
   type TunnelReq,
 } from "../src/tunnel/index.js";
-import { generateToken, hashToken } from "../src/server/auth.js";
-import { startAgentServer, type RunningAgent } from "../src/server/serve.js";
 
 /**
  * Phase I.3.1 — agent-side mounting of tunnelServer + /tunnel-relay.
@@ -76,7 +77,9 @@ describe("startAgentServer with tunnelCentral", () => {
     const ws = new WebSocket(h.wsUrl);
     let ackSeen = false;
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("ack timeout")), 2000);
+      const timer = setTimeout(() => {
+        reject(new Error("ack timeout"));
+      }, 2000);
       ws.onopen = () => {
         ws.send(
           encodeTunnelMessage({
@@ -97,7 +100,7 @@ describe("startAgentServer with tunnelCentral", () => {
       };
       ws.onerror = (err) => {
         clearTimeout(timer);
-        reject(err as unknown as Error);
+        reject(err);
       };
     });
     expect(ackSeen).toBe(true);

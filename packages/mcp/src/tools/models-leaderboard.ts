@@ -1,10 +1,12 @@
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+import { toTextContent } from "@nova/mcp-shared";
+import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
 import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { queryRows, type QueryFilter } from "../../../eval/src/index.js";
-import { toTextContent } from "@nova/mcp-shared";
+
+import { type QueryFilter, queryRows } from "../../../eval/src/index.js";
 
 function leaderboardDbPath(): string {
   const root = process.env.DEV_STORAGE ?? "";

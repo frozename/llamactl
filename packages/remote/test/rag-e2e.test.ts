@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { router } from "../src/router.js";
 import { saveConfig, upsertNode } from "../src/config/kubeconfig.js";
 import { freshConfig } from "../src/config/schema.js";
+import { router } from "../src/router.js";
 
 /**
  * Phase 7 — RAG end-to-end smoke. Opt-in; default CI skips every block.

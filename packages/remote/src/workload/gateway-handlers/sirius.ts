@@ -1,11 +1,12 @@
-import { resolveNodeKind, type ClusterNode } from "../../config/schema.js";
-import { loadSiriusProviders } from "../../config/sirius-providers.js";
-import { resolveToken, loadConfig, currentContext } from "../../config/kubeconfig.js";
 import type { ApplyResult } from "../apply.js";
 import type { GatewayApplyOptions, GatewayHandler } from "./types.js";
+
+import { currentContext, loadConfig, resolveToken } from "../../config/kubeconfig.js";
+import { type ClusterNode, resolveNodeKind } from "../../config/schema.js";
+import { loadSiriusProviders } from "../../config/sirius-providers.js";
 import {
-  deriveSiriusEntries,
   applyCompositeEntries,
+  deriveSiriusEntries,
   readGatewayCatalog,
   writeGatewayCatalog,
 } from "../gateway-catalog/index.js";

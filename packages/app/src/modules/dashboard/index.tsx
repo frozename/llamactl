@@ -1,12 +1,14 @@
+import type { bench, schemas } from "@llamactl/core";
+
+import { skipToken, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { Suspense, useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { stringify as yamlStringify } from "yaml";
-import type { bench, schemas } from "@llamactl/core";
-import { trpc } from "@/lib/trpc";
-import { skipToken } from "@tanstack/react-query";
+
 import { useActiveWorkload } from "@/hooks/useActiveWorkload";
-import { EditorialHero, StatCard, Button } from "@/ui";
+import { trpc } from "@/lib/trpc";
+import { Button, EditorialHero, StatCard } from "@/ui";
+
 import { ThemedNodeMap } from "./ThemedNodeMap";
 
 type BenchCompareRow = bench.BenchCompareRow;
@@ -43,7 +45,9 @@ function ExposePanel(): React.JSX.Element {
       void utils.workloadList.invalidate();
       void qc.invalidateQueries();
     },
-    onError: (err) => setStatus({ kind: "error", message: err.message }),
+    onError: (err) => {
+      setStatus({ kind: "error", message: err.message });
+    },
   });
 
   function onSubmit(): void {
@@ -73,7 +77,7 @@ function ExposePanel(): React.JSX.Element {
   if (nodeOptions.length === 0) nodeOptions.push("local");
   const catalogRels = useMemo(() => {
     if (!catalog.data) return [] as string[];
-    const rows = catalog.data as Array<{ rel?: string; name?: string }>;
+    const rows = catalog.data as { rel?: string; name?: string }[];
     return rows.map((r) => r.rel).filter((s): s is string => typeof s === "string" && s.length > 0);
   }, [catalog.data]);
   const canSubmit = name.trim().length > 0 && rel.trim().length > 0 && node.trim().length > 0;
@@ -108,7 +112,9 @@ function ExposePanel(): React.JSX.Element {
             type="text"
             placeholder="gemma-qa"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+            }}
             data-testid="dashboard-expose-name"
             style={{
               width: 160,
@@ -124,7 +130,9 @@ function ExposePanel(): React.JSX.Element {
           <label style={{ color: "var(--color-text-secondary)" }}>node</label>
           <select
             value={node}
-            onChange={(e) => setNode(e.target.value)}
+            onChange={(e) => {
+              setNode(e.target.value);
+            }}
             style={{
               width: 128,
               borderRadius: "var(--r-md)",
@@ -148,7 +156,9 @@ function ExposePanel(): React.JSX.Element {
             placeholder="gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
             list="dashboard-rel-suggestions"
             value={rel}
-            onChange={(e) => setRel(e.target.value)}
+            onChange={(e) => {
+              setRel(e.target.value);
+            }}
             style={{
               width: "100%",
               borderRadius: "var(--r-md)",
@@ -214,13 +224,13 @@ function ExposePanel(): React.JSX.Element {
 
 function ExposedWorkloads(): React.JSX.Element {
   const list = trpc.workloadList.useQuery(undefined, { refetchInterval: 5000 });
-  const rows = (list.data ?? []) as Array<{
+  const rows = (list.data ?? []) as {
     name: string;
     node: string;
     rel: string;
     phase: string;
     endpoint: string | null;
-  }>;
+  }[];
   const running = rows.filter((r) => r.phase === "Running" && r.endpoint);
   if (running.length === 0) {
     return (

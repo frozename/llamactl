@@ -21,11 +21,12 @@
  * connect time.
  */
 import type { ServiceDeployment, ServiceInstance } from "../../runtime/backend.js";
+import type { PgvectorServiceSpec } from "../schema.js";
+import type { HandlerTranslateOptions, ResolvedServiceEndpoint, ServiceHandler } from "./types.js";
+
 import { LABEL_KEYS, MANAGED_BY_VALUE } from "../../runtime/labels.js";
 import { ServiceError } from "../errors.js";
-import type { PgvectorServiceSpec } from "../schema.js";
 import { sha256Hex } from "./hash.js";
-import type { ResolvedServiceEndpoint, ServiceHandler, HandlerTranslateOptions } from "./types.js";
 
 const DEFAULT_IMAGE_REPOSITORY = "pgvector/pgvector";
 const DEFAULT_IMAGE_TAG = "0.8.2-pg18-trixie";
@@ -220,7 +221,7 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
       return { host: parsed.hostname, port, url: raw };
     }
 
-    if (!instance || !instance.endpoint) {
+    if (!instance?.endpoint) {
       throw new ServiceError(
         "endpoint-unresolvable",
         `pgvector service '${spec.name}': docker runtime has no reachable endpoint yet (instance=${instance ? "present-no-endpoint" : "null"})`,

@@ -17,9 +17,10 @@
 import type { RunSummary } from "./runtime.js";
 import type { RagPipelineManifest } from "./schema.js";
 import type { PipelineRecord } from "./store.js";
-import { listPipelines, writeLastRun, journalPathFor } from "./store.js";
-import { openJournal, type JournalEntry } from "./journal.js";
+
+import { type JournalEntry, openJournal } from "./journal.js";
 import { runPipeline } from "./runtime.js";
+import { journalPathFor, listPipelines, writeLastRun } from "./store.js";
 
 /**
  * Compute the timestamp of the next scheduled run for a manifest
@@ -55,7 +56,7 @@ export function nextRunAt(
     const next = SUNDAY_EPOCH + Math.ceil(sinceAnchor / WEEK) * WEEK;
     return next > now ? next : next + WEEK;
   }
-  const m = trimmed.match(/^@every\s+(\d+)([mhd])$/);
+  const m = /^@every\s+(\d+)([mhd])$/.exec(trimmed);
   if (m) {
     const n = Number(m[1]);
     const unit = m[2];
@@ -149,10 +150,15 @@ export function startPipelineScheduler(
   const tickMs = Math.max(5_000, opts.tickIntervalMs ?? 60_000);
   const now = opts.now ?? Date.now;
   const list = opts.listPipelines ?? (() => listPipelines(opts.env));
-  const write = opts.writeLastRun ?? ((name, summary) => writeLastRun(name, summary, opts.env));
+  const write =
+    opts.writeLastRun ??
+    ((name, summary) => {
+      writeLastRun(name, summary, opts.env);
+    });
   const journalPath = opts.journalPathFor ?? ((name: string) => journalPathFor(name, opts.env));
   const run =
-    opts.runPipeline ?? (async (manifest, path) => runPipeline({ manifest, journalPath: path }));
+    opts.runPipeline ??
+    (async (manifest, path) => await runPipeline({ manifest, journalPath: path }));
 
   let stopped = false;
   const inFlight = new Set<string>();
@@ -268,7 +274,7 @@ async function appendSchedulerEntry(path: string, entry: SchedulerJournalEntry):
     // The on-disk JSON shape is unchanged — readers that don't know
     // the new `kind` values will tolerate them (the `logs` tailer
     // just prints the JSON as-is).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     await j.append(entry as unknown as JournalEntry);
     await j.close();
   } catch {

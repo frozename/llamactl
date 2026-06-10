@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rpcServerStatus, startRpcServer, stopRpcServer } from "../src/rpcServer.js";
+
 import { resolveEnv } from "../src/env.js";
+import { rpcServerStatus, startRpcServer, stopRpcServer } from "../src/rpcServer.js";
 
 let tmp: string;
 let resolved: ReturnType<typeof resolveEnv>;
@@ -100,7 +101,7 @@ describe("rpcServer", () => {
   });
 
   test("emits launch → waiting*? → ready events", async () => {
-    const events: Array<{ type: string }> = [];
+    const events: { type: string }[] = [];
     const port = pickPort();
     const result = await startRpcServer({
       host: "127.0.0.1",

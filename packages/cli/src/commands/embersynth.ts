@@ -1,4 +1,4 @@
-import { config as kubecfg, embersynth as embersynthMod, resolveNodeKind } from "@llamactl/remote";
+import { embersynth as embersynthMod, config as kubecfg, resolveNodeKind } from "@llamactl/remote";
 
 const USAGE = `llamactl embersynth — embersynth orchestrator integration
 
@@ -65,7 +65,7 @@ function parseCommonOpts(argv: string[]): { opts: CommonOpts; rest: string[] } |
       process.stdout.write(USAGE);
       return null;
     } else {
-      rest.push(a as string);
+      rest.push(a!);
     }
   }
   return { opts: { path }, rest };
@@ -245,11 +245,11 @@ export async function runEmbersynth(argv: string[]): Promise<number> {
     process.stdout.write(USAGE);
     return 0;
   }
-  if (sub === "init") return runInit(argv.slice(1));
-  if (sub === "sync") return runSync(argv.slice(1));
-  if (sub === "show") return runShow(argv.slice(1));
-  if (sub === "connect") return runConnect(argv.slice(1));
-  if (sub === "promote-private") return runPromotePrivate(argv.slice(1));
+  if (sub === "init") return await runInit(argv.slice(1));
+  if (sub === "sync") return await runSync(argv.slice(1));
+  if (sub === "show") return await runShow(argv.slice(1));
+  if (sub === "connect") return await runConnect(argv.slice(1));
+  if (sub === "promote-private") return await runPromotePrivate(argv.slice(1));
   process.stderr.write(`unknown embersynth subcommand: ${sub}\n\n${USAGE}`);
   return 1;
 }

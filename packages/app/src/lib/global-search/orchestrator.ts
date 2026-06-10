@@ -1,15 +1,16 @@
-// packages/app/src/lib/global-search/orchestrator.ts
-import type { GroupedResults, Hit, ParsedQuery, SurfaceGroup, SurfaceKind } from "./types";
-import type { TabHistoryState } from "./surfaces/tab-history";
-import type { WorkloadItem } from "./surfaces/workloads";
 import type { NodeItem } from "./surfaces/nodes";
 import type { PresetItem } from "./surfaces/presets";
+import type { TabHistoryState } from "./surfaces/tab-history";
+import type { WorkloadItem } from "./surfaces/workloads";
+// packages/app/src/lib/global-search/orchestrator.ts
+import type { GroupedResults, Hit, ParsedQuery, SurfaceGroup, SurfaceKind } from "./types";
+
+import { applySurfaceBias, sortGroups } from "./ranking";
 import { matchModules } from "./surfaces/modules";
-import { matchTabHistory } from "./surfaces/tab-history";
-import { matchWorkloads } from "./surfaces/workloads";
 import { matchNodes } from "./surfaces/nodes";
 import { matchPresets } from "./surfaces/presets";
-import { applySurfaceBias, sortGroups } from "./ranking";
+import { matchTabHistory } from "./surfaces/tab-history";
+import { matchWorkloads } from "./surfaces/workloads";
 
 export interface ClientPhaseInput {
   query: ParsedQuery;

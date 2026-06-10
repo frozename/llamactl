@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { runRunbook, type RunbookToolClient, type ToolCallInput } from "../src/index.js";
+
+import { type RunbookToolClient, runRunbook, type ToolCallInput } from "../src/index.js";
 
 /**
  * Runbook-flow tests. The real @llamactl/mcp surface is exercised by
@@ -34,7 +35,7 @@ function makeClient(responses: Record<string, (args: Record<string, unknown>) =>
 const VISION_REL = "acme/visionmax-Q4_K_M.gguf";
 
 function benchResponse(
-  rows: Array<{ rel: string; class: string; installed: boolean; gen_tps?: string }>,
+  rows: { rel: string; class: string; installed: boolean; gen_tps?: string }[],
 ) {
   return rows.map((r) => ({
     label: r.rel,

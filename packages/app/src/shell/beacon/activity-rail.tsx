@@ -1,8 +1,10 @@
+import { Coins, type LucideIcon, Settings as SettingsIcon } from "lucide-react";
 import * as React from "react";
-import { Coins, Settings as SettingsIcon, type LucideIcon } from "lucide-react";
-import { RAIL_VIEWS, type RailViewId } from "./rail-views";
+
 import { useTabStore } from "@/stores/tab-store";
 import { cx } from "@/ui";
+
+import { RAIL_VIEWS, type RailViewId } from "./rail-views";
 
 interface ActivityRailProps {
   activeView: RailViewId;
@@ -56,9 +58,14 @@ export function ActivityRail({ activeView, onChange }: ActivityRailProps): React
           key={m.id}
           opener={m}
           active={activeKey === `module:${m.id}`}
-          onOpen={() =>
-            open({ tabKey: `module:${m.id}`, title: m.label, kind: "module", openedAt: Date.now() })
-          }
+          onOpen={() => {
+            open({
+              tabKey: `module:${m.id}`,
+              title: m.label,
+              kind: "module",
+              openedAt: Date.now(),
+            });
+          }}
         />
       ))}
     </div>
@@ -130,7 +137,9 @@ function RailButton({
       aria-selected={active}
       aria-label={view.label}
       title={view.label}
-      onClick={() => onChange(view.id)}
+      onClick={() => {
+        onChange(view.id);
+      }}
       data-testid={`rail-icon-${view.id}`}
       style={{
         width: 40,

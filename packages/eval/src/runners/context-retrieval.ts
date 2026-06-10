@@ -1,6 +1,6 @@
-import promptsRaw from "../fixtures/prompts-context.json" with { type: "json" };
-import haystackBase from "../fixtures/haystack-base.txt" with { type: "text" };
 import { buildCompletionRequest, completeChat } from "../client.js";
+import haystackBase from "../fixtures/haystack-base.txt" with { type: "text" };
+import promptsRaw from "../fixtures/prompts-context.json" with { type: "json" };
 import { killServer, spawnServer, waitForHealth } from "../server.js";
 
 // Simpler v1: pin ctx-size to 17408 for the whole sub-bench so all depths use
@@ -31,7 +31,7 @@ function tokens(text: string): string[] {
 }
 
 function detokenize(parts: string[]): string {
-  return parts.join(" ").replace(/\s+([,.;:!?])/g, "$1");
+  return parts.join(" ").replaceAll(/\s+([,.;:!?])/g, "$1");
 }
 
 function buildHaystack(base: string, needle: string, depth: number, position: number): string {

@@ -3,10 +3,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
-import { handleRegister } from "../src/server/register.js";
+
 import { encodeBootstrap } from "../src/config/agent-config.js";
 import { generateBootstrapToken } from "../src/config/bootstrap-tokens.js";
 import { loadConfig } from "../src/config/kubeconfig.js";
+import { handleRegister } from "../src/server/register.js";
 
 /**
  * Unit tests for the /register HTTP handler. We invoke the handler

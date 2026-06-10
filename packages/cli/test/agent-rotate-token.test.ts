@@ -16,11 +16,11 @@ function captureStdout(): void {
   stdoutBuf = "";
   originalStdoutWrite = process.stdout.write.bind(process.stdout);
   originalStderrWrite = process.stderr.write.bind(process.stderr);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
+  process.stdout.write = (chunk: string | Uint8Array) => {
     stdoutBuf += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
     return true;
-  }) as typeof process.stdout.write;
-  process.stderr.write = ((_chunk: string | Uint8Array) => true) as typeof process.stderr.write;
+  };
+  process.stderr.write = (_chunk: string | Uint8Array) => true;
 }
 
 function restore(): void {

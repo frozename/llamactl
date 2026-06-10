@@ -1,9 +1,10 @@
 import type { Runbook } from "../types.js";
-import { promoteFastestVisionModel } from "./promote-fastest-vision-model.js";
+
 import { auditFleet } from "./audit-fleet.js";
 import { costSnapshot } from "./cost-snapshot.js";
 import { drainNode } from "./drain-node.js";
 import { onboardNewGpuNode } from "./onboard-new-gpu-node.js";
+import { promoteFastestVisionModel } from "./promote-fastest-vision-model.js";
 
 /**
  * Registry of known runbooks, keyed by name. New runbooks land here
@@ -19,7 +20,7 @@ export const RUNBOOKS: Record<string, Runbook<never>> = {
   [onboardNewGpuNode.name]: onboardNewGpuNode as Runbook<never>,
 };
 
-export function listRunbooks(): Array<{ name: string; description: string }> {
+export function listRunbooks(): { name: string; description: string }[] {
   return Object.values(RUNBOOKS).map((r) => ({
     name: r.name,
     description: r.description,

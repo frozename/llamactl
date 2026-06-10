@@ -1,6 +1,8 @@
 import * as React from "react";
-import { WorkloadDetail, NodeDetail, OpsSessionDetail } from "@/modules/ops/detail";
+
+import { NodeDetail, OpsSessionDetail, WorkloadDetail } from "@/modules/ops/detail";
 import type { TabEntry } from "@/stores/tab-store";
+
 import { dispatchTab } from "./tab-dispatch";
 
 /**

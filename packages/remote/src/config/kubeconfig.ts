@@ -1,14 +1,15 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+
 import {
+  type ClusterNode,
+  type Config,
   ConfigSchema,
+  type Context,
   freshConfig,
   LOCAL_NODE_NAME,
-  type Config,
-  type ClusterNode,
-  type Context,
   type User,
 } from "./schema.js";
 import { resolveSecret } from "./secret.js";
@@ -90,7 +91,7 @@ export function resolveNode(
         };
         return { node: virtualNode, context, user };
       }
-      if (parent.cli && parent.cli.some((b) => b.name === leafName)) {
+      if (parent.cli?.some((b) => b.name === leafName)) {
         const virtualNode: ClusterNode = {
           name: nodeName,
           endpoint: "",

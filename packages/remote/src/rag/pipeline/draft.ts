@@ -26,7 +26,7 @@
 
 import { stringify as stringifyYaml } from "yaml";
 
-import { RagPipelineManifestSchema, type RagPipelineManifest, type SourceSpec } from "./schema.js";
+import { type RagPipelineManifest, RagPipelineManifestSchema, type SourceSpec } from "./schema.js";
 
 export interface DraftContext {
   /**
@@ -178,7 +178,7 @@ function pickRagNode(desc: string, ctx: DraftContext, warnings: string[]): strin
 }
 
 function pickCollection(desc: string, urls: string[], paths: string[], warnings: string[]): string {
-  const m = desc.match(COLLECTION_RE);
+  const m = COLLECTION_RE.exec(desc);
   if (m) return m[1]!;
   // Infer from the first source: host for URLs (incl. git clone
   // URLs), last path segment for filesystem. Collapses to snake_case.
@@ -189,7 +189,7 @@ function pickCollection(desc: string, urls: string[], paths: string[], warnings:
     } catch {
       // Bare SSH git URLs (`git@host:org/repo.git`) don't parse as
       // URLs. Split on `:` to get the host, then snake_case it.
-      const ssh = urls[0]!.match(/^git@([\w.-]+):/);
+      const ssh = /^git@([\w.-]+):/.exec(urls[0]!);
       if (ssh) return snakeCase(ssh[1]!);
     }
   }
@@ -204,14 +204,14 @@ function pickCollection(desc: string, urls: string[], paths: string[], warnings:
 }
 
 function pickSchedule(desc: string): string | null {
-  const aliasMatch = desc.match(SCHEDULE_ALIAS_RE);
+  const aliasMatch = SCHEDULE_ALIAS_RE.exec(desc);
   if (aliasMatch) return `@${aliasMatch[1]!.toLowerCase()}`;
   // Also catch bare "daily" / "hourly" / "weekly" (no @).
   if (/\b(hourly|daily|weekly)\b/i.test(desc)) {
-    const m = desc.match(/\b(hourly|daily|weekly)\b/i)!;
+    const m = /\b(hourly|daily|weekly)\b/i.exec(desc)!;
     return `@${m[1]!.toLowerCase()}`;
   }
-  const everyMatch = desc.match(SCHEDULE_EVERY_RE);
+  const everyMatch = SCHEDULE_EVERY_RE.exec(desc);
   if (everyMatch) {
     const n = everyMatch[1]!;
     const unit = everyMatch[2]!.toLowerCase();
@@ -228,9 +228,9 @@ function inferName(desc: string, urls: string[], paths: string[]): string {
     // `https://github.com/pytorch/docs.git` becomes `pytorch-docs`
     // rather than `github-com`.
     if (first.endsWith(".git")) {
-      const slugFromHttps = first.match(/\/([^/\s]+?)\/([^/\s]+?)\.git$/);
+      const slugFromHttps = /\/([^/\s]+?)\/([^/\s]+?)\.git$/.exec(first);
       if (slugFromHttps) return kebabCase(`${slugFromHttps[1]!}-${slugFromHttps[2]!}`);
-      const slugFromSsh = first.match(/:([^/\s]+?)\/([^/\s]+?)\.git$/);
+      const slugFromSsh = /:([^/\s]+?)\/([^/\s]+?)\.git$/.exec(first);
       if (slugFromSsh) return kebabCase(`${slugFromSsh[1]!}-${slugFromSsh[2]!}`);
     }
     try {
@@ -246,7 +246,7 @@ function inferName(desc: string, urls: string[], paths: string[]): string {
   }
   // Last-ditch: if the description has a clear "noun-noun" label,
   // use it. E.g. "pytorch docs" → "pytorch-docs".
-  const labelMatch = desc.match(/\b([a-z][a-z0-9]+(?:[-\s][a-z][a-z0-9]+)+)\b/i);
+  const labelMatch = /\b([a-z][a-z0-9]+(?:[-\s][a-z][a-z0-9]+)+)\b/i.exec(desc);
   if (labelMatch) return kebabCase(labelMatch[1]!);
   return "";
 }
@@ -266,17 +266,17 @@ function uniq(xs: string[]): string[] {
 function snakeCase(s: string): string {
   return s
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
+    .replaceAll(/[^a-z0-9]+/g, "_")
+    .replaceAll(/^_+|_+$/g, "");
 }
 
 function kebabCase(s: string): string {
   return s
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "");
 }
 
 function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

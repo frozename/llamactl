@@ -5,11 +5,11 @@ import {
   type TunnelJournalEntry,
 } from "./journal.js";
 import {
+  encodeTunnelMessage,
+  parseTunnelMessage,
   TUNNEL_CLOSE_BAD_HELLO,
   TUNNEL_CLOSE_HELLO_TIMEOUT,
   TUNNEL_CLOSE_UNAUTHORIZED,
-  encodeTunnelMessage,
-  parseTunnelMessage,
   type TunnelMessage,
   type TunnelReq,
   type TunnelRes,
@@ -219,7 +219,7 @@ function buildSubscriptionIterable(
             });
           }
           if (finished) return { value: undefined, done: true };
-          return new Promise<IteratorResult<unknown>>((resolve, reject) => {
+          return await new Promise<IteratorResult<unknown>>((resolve, reject) => {
             pending = { resolve, reject };
           });
         },
@@ -332,8 +332,8 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
         pending: new Map(),
         subscriptions: new Map(),
       };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const upgraded = (server as any).upgrade(req, { data: state });
+
+      const upgraded = server.upgrade(req, { data: state });
       if (!upgraded) {
         return new Response("tunnel upgrade failed", { status: 400 });
       }
@@ -465,13 +465,13 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       if (!ws) throw new Error(`tunnel not connected for node '${nodeName}'`);
       const state = getState(ws);
       const full: TunnelReq = { type: "req", ...req };
-      return new Promise<TunnelRes>((resolve, reject) => {
+      return await new Promise<TunnelRes>((resolve, reject) => {
         state.pending.set(full.id, { resolve, reject });
         try {
           ws.send(encodeTunnelMessage(full));
         } catch (err) {
           state.pending.delete(full.id);
-          reject(err as Error);
+          reject(err);
         }
       });
     },
@@ -516,7 +516,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
                 ws.send(encodeTunnelMessage(req));
               } catch (err) {
                 state.pending.delete(req.id);
-                reject(err as Error);
+                reject(err);
               }
             }),
           close: (code, reason) => {

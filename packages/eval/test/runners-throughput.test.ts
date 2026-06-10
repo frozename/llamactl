@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { aggregateThroughput } from "../src/runners/throughput.js";
 
 describe("aggregateThroughput", () => {

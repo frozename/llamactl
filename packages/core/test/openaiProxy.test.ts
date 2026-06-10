@@ -1,9 +1,11 @@
-import { afterEach, expect, test, spyOn } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openaiProxy } from "../src/index.js";
+
 import type { PeerSnapshot } from "../src/workloadRuntime.js";
+
+import { openaiProxy } from "../src/index.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -17,7 +19,9 @@ function tempEnv() {
   return {
     env: { LOCAL_AI_RUNTIME_DIR: dir } as any,
     dir,
-    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+    cleanup: () => {
+      rmSync(dir, { recursive: true, force: true });
+    },
   };
 }
 
@@ -40,7 +44,7 @@ test("routes chat completions to a ModelHost by rel alias", async () => {
       }),
     );
 
-    const calls: Array<{ url: string; body: string | null }> = [];
+    const calls: { url: string; body: string | null }[] = [];
     globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -76,7 +80,7 @@ test("route cache invalidates when a workload state file is rewritten in place",
     const workload = join(t.dir, "workloads", "mlx-host");
     mkdirSync(workload, { recursive: true });
     writeFileSync(join(workload, "modelhost.pid"), `${process.pid}\n`);
-    const writeState = (port: number) =>
+    const writeState = (port: number) => {
       writeFileSync(
         join(workload, "modelhost.state"),
         JSON.stringify({
@@ -89,6 +93,7 @@ test("route cache invalidates when a workload state file is rewritten in place",
           startedAt: new Date().toISOString(),
         }),
       );
+    };
     writeState(8123);
 
     const calls: string[] = [];
@@ -152,7 +157,7 @@ test("routes chat completions to a ModelHost by basename alias", async () => {
       }),
     );
 
-    const calls: Array<{ url: string }> = [];
+    const calls: { url: string }[] = [];
     globalThis.fetch = (async (input: Request | URL | string) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -274,7 +279,7 @@ test("forwards chat completions with the current request shape intact", async ()
 test("/v1/messages translates into /v1/chat/completions and forwards upstream", async () => {
   const t = tempEnv();
   try {
-    const calls: Array<{ url: string; body: string | null }> = [];
+    const calls: { url: string; body: string | null }[] = [];
     globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -683,7 +688,7 @@ test("same-kind alias collision keeps the alphabetically earlier workload", asyn
       }),
     );
 
-    const calls: Array<{ url: string }> = [];
+    const calls: { url: string }[] = [];
     globalThis.fetch = (async (input: Request | URL | string) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -787,7 +792,7 @@ test("POST /v1/chat/completions forwards peer-only model to peer endpoint", asyn
 
     let forwardedAuthorization = "";
     let forwardedCa = "";
-    const calls: Array<{ url: string }> = [];
+    const calls: { url: string }[] = [];
     globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;

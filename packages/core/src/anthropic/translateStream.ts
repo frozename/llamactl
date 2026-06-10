@@ -348,7 +348,9 @@ export function translateOpenAIStreamToAnthropic(
           const readResult = await Promise.race([
             pendingRead.then((value) => ({ kind: "read" as const, value })),
             new Promise<{ kind: "ping" }>((resolve) => {
-              setTimeout(() => resolve({ kind: "ping" }), PING_INTERVAL_MS);
+              setTimeout(() => {
+                resolve({ kind: "ping" });
+              }, PING_INTERVAL_MS);
             }),
           ]);
 
@@ -367,8 +369,8 @@ export function translateOpenAIStreamToAnthropic(
           if (value) {
             buffer += decoder
               .decode(value, { stream: true })
-              .replace(/\r\n/g, "\n")
-              .replace(/\r/g, "\n");
+              .replaceAll("\r\n", "\n")
+              .replaceAll("\r", "\n");
           }
 
           pendingRead = reader.read();

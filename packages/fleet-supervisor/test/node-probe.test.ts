@@ -1,4 +1,5 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
+
 import { parseVmStatOutput } from "../src/node-probe.js";
 
 const FAKE_VM_STAT = `

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { router } from "../src/router.js";
 
 describe("router workload validation", () => {

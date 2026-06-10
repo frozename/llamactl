@@ -84,7 +84,7 @@ export const LAUNCHD_SYSTEM_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
  * (e.g. `<` → `&lt;` → `&amp;lt;`).
  */
 export function xmlEscape(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 /**
@@ -135,7 +135,7 @@ export function renderEnvDict(env: Record<string, string>, indent = "    "): str
  * which escape individual arg/env strings internally).
  */
 export function renderPlist(template: string, vars: Record<string, string>): string {
-  const out = template.replace(/\{\{(\w+)\}\}/g, (_m, k: string) => {
+  const out = template.replaceAll(/\{\{(\w+)\}\}/g, (_m, k: string) => {
     if (!(k in vars)) throw new Error(`plist template missing var: ${k}`);
     return vars[k]!;
   });

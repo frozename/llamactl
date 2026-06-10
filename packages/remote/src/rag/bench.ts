@@ -91,16 +91,19 @@ export interface BenchReport {
  * `ragSearch` return value (narrowed for this surface). Tests stub
  * this directly; production callers pass `caller.ragSearch`.
  */
-export interface RagSearchCaller {
-  (input: { node: string; query: string; topK: number; collection?: string }): Promise<{
-    results: Array<{
-      document: { id: string; content: string; metadata?: Record<string, unknown> };
-      score: number;
-      distance?: number;
-    }>;
-    collection: string;
-  }>;
-}
+export type RagSearchCaller = (input: {
+  node: string;
+  query: string;
+  topK: number;
+  collection?: string;
+}) => Promise<{
+  results: {
+    document: { id: string; content: string; metadata?: Record<string, unknown> };
+    score: number;
+    distance?: number;
+  }[];
+  collection: string;
+}>;
 
 export interface RunRagBenchOptions {
   manifest: RagBenchManifest;
@@ -185,11 +188,11 @@ export async function runRagBench(opts: RunRagBenchOptions): Promise<BenchReport
  * rank — it's the more specific signal.
  */
 function findFirstHit(
-  results: Array<{ document: { id: string; content: string } }>,
+  results: { document: { id: string; content: string } }[],
   q: RagBenchQuery,
 ): { rank: number; kind: "doc_id" | "substring"; docId: string } | null {
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i]!;
+  for (const [i, result] of results.entries()) {
+    const r = result;
     if (q.expected_doc_id && r.document.id === q.expected_doc_id) {
       return { rank: i + 1, kind: "doc_id", docId: r.document.id };
     }

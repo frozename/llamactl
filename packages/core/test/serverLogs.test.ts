@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { serverLogFile, tailServerLog } from "../src/serverLogs.js";
+
 import { resolveEnv } from "../src/env.js";
+import { serverLogFile, tailServerLog } from "../src/serverLogs.js";
 
 let tmp: string;
 let resolved: ReturnType<typeof resolveEnv>;
@@ -67,9 +68,15 @@ describe("tailServerLog", () => {
       },
     });
     // Schedule appends after the tail loop starts.
-    setTimeout(() => appendFileSync(logPath, "alpha\n"), 30);
-    setTimeout(() => appendFileSync(logPath, "beta\n"), 60);
-    setTimeout(() => appendFileSync(logPath, "gamma\n"), 90);
+    setTimeout(() => {
+      appendFileSync(logPath, "alpha\n");
+    }, 30);
+    setTimeout(() => {
+      appendFileSync(logPath, "beta\n");
+    }, 60);
+    setTimeout(() => {
+      appendFileSync(logPath, "gamma\n");
+    }, 90);
     await task;
     expect(seen).toEqual(["alpha", "beta", "gamma"]);
   });
@@ -106,8 +113,12 @@ describe("tailServerLog", () => {
         if (seen.length >= 1) ac.abort();
       },
     });
-    setTimeout(() => appendFileSync(logPath, "hel"), 30);
-    setTimeout(() => appendFileSync(logPath, "lo\n"), 80);
+    setTimeout(() => {
+      appendFileSync(logPath, "hel");
+    }, 30);
+    setTimeout(() => {
+      appendFileSync(logPath, "lo\n");
+    }, 80);
     await task;
     expect(seen).toEqual(["hello"]);
   });

@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { findByRel } from "./catalog.js";
+
 import { benchHistoryFile, benchProfileFile, benchVisionFile } from "./bench/store.js";
+import { findByRel } from "./catalog.js";
 import { resolveEnv } from "./env.js";
 import { atomicWriteFile } from "./fsAtomic.js";
 

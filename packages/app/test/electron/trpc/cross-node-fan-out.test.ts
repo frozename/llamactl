@@ -1,10 +1,12 @@
+import type { ClusterNode, Config } from "@llamactl/remote";
+
 import { describe, expect, test } from "bun:test";
+
 import {
   fanOutSurface,
   listAgentNodes,
   type NodeFailure,
 } from "../../../electron/trpc/cross-node-fan-out";
-import type { Config, ClusterNode } from "@llamactl/remote";
 
 const cfg: Config = {
   apiVersion: "llamactl/v1" as const,
@@ -106,7 +108,9 @@ describe("fanOutSurface", () => {
 
   test("outer abort short-circuits in-flight fetches", async () => {
     const ctrl = new AbortController();
-    setTimeout(() => ctrl.abort(), 20);
+    setTimeout(() => {
+      ctrl.abort();
+    }, 20);
     const out = await fanOutSurface<{ id: string }>({
       nodes,
       perNodeFetch: async (node, signal) => {

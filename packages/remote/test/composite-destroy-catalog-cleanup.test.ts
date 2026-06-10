@@ -1,10 +1,11 @@
 // packages/remote/test/composite-destroy-catalog-cleanup.test.ts
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeGatewayCatalog, readGatewayCatalog } from "../src/workload/gateway-catalog/io.js";
+
 import { destroyComposite } from "../src/composite/apply.js";
+import { readGatewayCatalog, writeGatewayCatalog } from "../src/workload/gateway-catalog/io.js";
 
 describe("destroyComposite catalog cleanup", () => {
   let tmp: string;

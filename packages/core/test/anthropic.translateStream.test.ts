@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import {
   __parseAnthropicSseEventPayloadForTests,
   __resetTranslatorUnknownEventTotalForTests,
@@ -42,7 +43,7 @@ async function readStreamText(stream: ReadableStream<Uint8Array>): Promise<strin
 }
 
 function parseAnthropicSse(text: string): ParsedEvent[] {
-  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const normalized = text.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
   const frames = normalized.split("\n\n").filter((frame) => frame.trim().length > 0);
   return frames.map((frame) => {
     const lines = frame.split("\n");

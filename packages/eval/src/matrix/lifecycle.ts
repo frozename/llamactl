@@ -1,10 +1,12 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { ENGINES } from "../../../core/src/engines/index.js";
+
 import type { EngineBootEnv, ModelHostSpecForEngine } from "../../../core/src/engines/index.js";
-import { resolveProfile } from "../../../core/src/profile.js";
 import type { ModelSpec } from "./types.js";
+
+import { ENGINES } from "../../../core/src/engines/index.js";
+import { resolveProfile } from "../../../core/src/profile.js";
 
 const HEALTH_POLL_INTERVAL_MS = 1000;
 const HEALTH_TIMEOUT_MS = 120_000;
@@ -78,7 +80,9 @@ function installExitHook() {
 async function pingHealth(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
     const resp = await fetch(`http://${host}:${port}/health`, { signal: controller.signal });
     clearTimeout(timer);
     return resp.ok;
@@ -95,7 +99,9 @@ export async function probeInference(
 ): Promise<boolean> {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
     const resp = await fetch(`http://${host}:${port}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -110,7 +116,7 @@ export async function probeInference(
     clearTimeout(timer);
     if (!resp.ok) return false;
     const body = (await resp.json()) as {
-      choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown } }>;
+      choices?: { message?: { content?: unknown; reasoning_content?: unknown } }[];
     };
     // Some engines (oMLX gemma4 parser) route chain-of-thought into
     // reasoning_content and leave content empty under tight max_tokens
@@ -184,7 +190,7 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
       model.request_model_id ?? (model.gguf_path ? basename(model.gguf_path) : model.name);
     const spec: ModelHostSpecForEngine = {
       engine: "omlx",
-      binary: model.binary!,
+      binary: model.binary,
       endpoint: { host: model.host, port: model.port },
       hostedModels: [model.dflash ? { rel, dflash: model.dflash as never } : { rel }],
       resources: {},

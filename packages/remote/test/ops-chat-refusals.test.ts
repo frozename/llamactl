@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { checkRefusal, normalizeGoal, DEFAULT_REFUSAL_RULES } from "../src/ops-chat/refusals.js";
+import { checkRefusal, DEFAULT_REFUSAL_RULES, normalizeGoal } from "../src/ops-chat/refusals.js";
 
 /**
  * N.4 Phase 3 — refusal heuristic. Cheap, auditable pattern

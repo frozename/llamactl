@@ -1,12 +1,14 @@
-import * as React from "react";
 import { Command } from "lucide-react";
+import * as React from "react";
+
 import { trpc } from "@/lib/trpc";
-import { useTabStore } from "@/stores/tab-store";
-import { useStatusBarStore } from "@/stores/status-bar-store";
-import { useThemeStore } from "@/stores/theme-store";
 import { useCommandPaletteOpen } from "@/shell/command-palette";
-import { WorkloadPicker } from "./workload-picker";
+import { useStatusBarStore } from "@/stores/status-bar-store";
+import { useTabStore } from "@/stores/tab-store";
+import { useThemeStore } from "@/stores/theme-store";
 import { getTheme } from "@/themes";
+
+import { WorkloadPicker } from "./workload-picker";
 
 /**
  * Beacon status bar. Three lanes preserved from the legacy shell:
@@ -73,7 +75,9 @@ export function StatusBar(): React.JSX.Element {
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
         <button
           type="button"
-          onClick={() => setPaletteOpen(true)}
+          onClick={() => {
+            setPaletteOpen(true);
+          }}
           style={{
             all: "unset",
             cursor: "pointer",

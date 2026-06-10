@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { runRunbook, type RunbookToolClient, type ToolCallInput } from "../src/index.js";
+
+import { type RunbookToolClient, runRunbook, type ToolCallInput } from "../src/index.js";
 
 /**
  * cost-snapshot is read-only; it invokes nova.ops.cost.snapshot once
@@ -62,8 +63,8 @@ describe("cost-snapshot runbook", () => {
     expect(calls).toEqual(["nova.ops.cost.snapshot"]);
     const summary = result.summary as {
       totalRequests: number;
-      topProviders: Array<{ key: string }>;
-      topModels: Array<{ key: string }>;
+      topProviders: { key: string }[];
+      topModels: { key: string }[];
     };
     expect(summary.totalRequests).toBe(55);
     expect(summary.topProviders.map((g) => g.key)).toEqual([

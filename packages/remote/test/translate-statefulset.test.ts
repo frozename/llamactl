@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { ServiceDeployment } from "../src/runtime/backend.js";
+
 import { translateToStatefulSet } from "../src/runtime/kubernetes/translate-statefulset.js";
 
 /**

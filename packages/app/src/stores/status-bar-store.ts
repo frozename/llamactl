@@ -31,14 +31,16 @@ interface StatusBarStore {
 
 export const useStatusBarStore = create<StatusBarStore>((set) => ({
   contributions: {},
-  setModuleItems: (moduleId, items) =>
+  setModuleItems: (moduleId, items) => {
     set((state) => ({
       contributions: { ...state.contributions, [moduleId]: items },
-    })),
-  clearModuleItems: (moduleId) =>
+    }));
+  },
+  clearModuleItems: (moduleId) => {
     set((state) => {
       const next = { ...state.contributions };
       delete next[moduleId];
       return { contributions: next };
-    }),
+    });
+  },
 }));

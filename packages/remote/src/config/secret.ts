@@ -174,5 +174,5 @@ function defaultRunSecurityCli(service: string, account: string): string {
  * a local helper is cheaper than a dep.
  */
 function shellEscape(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
+  return `'${s.replaceAll("'", `'\\''`)}'`;
 }

@@ -9,7 +9,7 @@ const PAGE_FIELDS: Record<string, keyof NodeMemSnapshot> = {
 };
 
 export function parseVmStatOutput(raw: string): NodeMemSnapshot {
-  const pageSizeMatch = raw.match(/page size of (\d+) bytes/);
+  const pageSizeMatch = /page size of (\d+) bytes/.exec(raw);
   const pageSize = pageSizeMatch ? parseInt(pageSizeMatch[1]!, 10) : 4096;
   const toMb = (pages: number) => (pages * pageSize) / 1024 / 1024;
 
@@ -24,7 +24,7 @@ export function parseVmStatOutput(raw: string): NodeMemSnapshot {
   };
 
   for (const line of raw.split("\n")) {
-    const pageMatch = line.match(/^(.+?):\s+([\d.]+)\./);
+    const pageMatch = /^(.+?):\s+([\d.]+)\./.exec(line);
     if (!pageMatch) continue;
     const label = pageMatch[1]!.trim();
     const count = parseFloat(pageMatch[2]!);

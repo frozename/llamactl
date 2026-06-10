@@ -1,11 +1,12 @@
-import { test, expect } from "bun:test";
-import { planRollout, runRollout, runRollback } from "@llamactl/fleet-supervisor";
 import type { PeerNode } from "@llamactl/remote";
 
+import { planRollout, runRollback, runRollout } from "@llamactl/fleet-supervisor";
+import { expect, test } from "bun:test";
+
 const mockPeers: PeerNode[] = [
-  { id: "node-a", endpoint: "http://a" } as any,
-  { id: "node-b", endpoint: "http://b" } as any,
-  { id: "m4-pro-local", endpoint: "http://local" } as any,
+  { id: "node-a", endpoint: "http://a" },
+  { id: "node-b", endpoint: "http://b" },
+  { id: "m4-pro-local", endpoint: "http://local" },
 ];
 
 test("T5: orchestrating node appears last in rollout sequence", () => {

@@ -30,7 +30,9 @@ export function openKvStorage(dataRoot: string): KvStorage {
     kv_replay_mismatch_total: 0,
     kv_model_mismatch_total: 0,
     safeWrite: (fn) => safeWrite(storage, fn),
-    close: () => db.close(),
+    close: () => {
+      db.close();
+    },
   };
   runIntegrityScan(storage);
   return storage;
@@ -157,7 +159,7 @@ export function runMigrations(db: Database, fromVersion: number, toVersion: numb
 }
 
 function addColumnIfMissing(db: Database, table: string, column: string, sql: string): void {
-  const columns = db.query(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>;
+  const columns = db.query(`PRAGMA table_info('${table}')`).all() as { name: string }[];
   if (columns.some((candidate) => candidate.name === column)) return;
   db.run(sql);
 }
@@ -172,12 +174,12 @@ function runIntegrityScan(storage: KvStorage): void {
   storage.db.transaction(() => {
     const rows = storage.db
       .query("SELECT sha, upstream_slot_file, quarantined, last_used FROM kv_entries")
-      .all() as Array<{
+      .all() as {
       sha: string;
       upstream_slot_file: string;
       quarantined: number;
       last_used: number;
-    }>;
+    }[];
     const quarantine = storage.db.query("UPDATE kv_entries SET quarantined = 1 WHERE sha = ?");
     const unquarantine = storage.db.query("UPDATE kv_entries SET quarantined = 0 WHERE sha = ?");
     const purge = storage.db.query("DELETE FROM kv_entries WHERE sha = ?");

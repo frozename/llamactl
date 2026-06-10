@@ -13,14 +13,16 @@
  * + MCP + future Electron wizard. Tests override the root via
  * `LLAMACTL_RAG_PIPELINES_DIR`.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import { RagPipelineManifestSchema, type RagPipelineManifest } from "./schema.js";
-import type { RunSummary } from "./runtime.js";
-import { entrySpecHash } from "../../workload/gateway-catalog/hash.js";
+
 import type { CompositeOwnership } from "../../workload/gateway-catalog/schema.js";
+import type { RunSummary } from "./runtime.js";
+
+import { entrySpecHash } from "../../workload/gateway-catalog/hash.js";
+import { type RagPipelineManifest, RagPipelineManifestSchema } from "./schema.js";
 
 export function defaultPipelinesDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_RAG_PIPELINES_DIR?.trim();

@@ -1,22 +1,23 @@
 import { env as envMod } from "@llamactl/core";
 import { listPeers, workloadStore } from "@llamactl/remote";
-import { readSchedulerLease } from "../../../remote/src/config/peers.js";
+
 import {
-  startSupervisorLoop,
-  defaultFleetJournalPath,
   appendFleetJournal,
-  redactEndpoint,
-  readSupervisorStatus,
-  readAuditEntries,
-  type SupervisorLoopOptions,
-  type WorkloadTarget,
-  type FleetJournalEntry,
-  DEFAULT_PRESSURE_THRESHOLDS,
   createMigrationController,
   createPeerFetch,
-  runExecutor,
+  DEFAULT_PRESSURE_THRESHOLDS,
+  defaultFleetJournalPath,
+  type FleetJournalEntry,
+  readAuditEntries,
   readRecentMovesFromJournal,
+  readSupervisorStatus,
+  redactEndpoint,
+  runExecutor,
+  startSupervisorLoop,
+  type SupervisorLoopOptions,
+  type WorkloadTarget,
 } from "../../../fleet-supervisor/src/index.js";
+import { readSchedulerLease } from "../../../remote/src/config/peers.js";
 import { getGlobals } from "../dispatcher.js";
 import { setWorkloadEnabled } from "./setEnabled.js";
 
@@ -140,7 +141,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
         console.log(`  last ${node.recent.length} pressure-status:`);
         for (const recent of node.recent) {
           const t = new Date(recent.ts).toLocaleTimeString("en-US", { hour12: false });
-          let hits = [];
+          const hits = [];
           if (recent.headroomBreach) hits.push("headroom");
           if (recent.compressorBreach) hits.push("compressor");
           const hitsStr = hits.length > 0 ? hits.join(",") : "(none)";
@@ -210,7 +211,9 @@ export async function runSupervisor(args: string[]): Promise<number> {
   }
 
   const once = sub === "tick" || flags.once;
-  const writeJournal = (entry: FleetJournalEntry) => appendFleetJournal(entry, journalPath);
+  const writeJournal = (entry: FleetJournalEntry) => {
+    appendFleetJournal(entry, journalPath);
+  };
 
   const migrationEnabled = process.env.LLAMACTL_FLEET_MOVE_ENABLED === "1";
   const migrationController = migrationEnabled
@@ -320,8 +323,12 @@ export async function runSupervisor(args: string[]): Promise<number> {
 
   const handle = startSupervisorLoop(loopOpts);
   if (!once) {
-    process.on("SIGINT", () => handle.stop());
-    process.on("SIGTERM", () => handle.stop());
+    process.on("SIGINT", () => {
+      handle.stop();
+    });
+    process.on("SIGTERM", () => {
+      handle.stop();
+    });
   }
   await handle.done;
   return 0;

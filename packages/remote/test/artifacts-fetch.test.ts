@@ -1,24 +1,34 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync as writeFileSyncNode,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   agentAssetCertUrl,
   agentAssetShaUrl,
   agentAssetSigUrl,
   agentAssetUrl,
   agentVersionDir,
+  type ArtifactFetcher,
   cosignIdentityRegex,
+  type CosignVerifier,
   fetchAgentRelease,
   isKnownAgentTarget,
   listAgentVersions,
   parseShaLine,
   pruneAgentArtifacts,
-  type ArtifactFetcher,
-  type CosignVerifier,
 } from "../src/infra/artifacts-fetch.js";
-import { lstatSync, mkdirSync, utimesSync, writeFileSync as writeFileSyncNode } from "node:fs";
 import { agentBinaryPath } from "../src/server/artifacts.js";
 
 let dir = "";

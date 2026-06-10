@@ -3,11 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { applyComposite, destroyComposite } from "../src/composite/apply.js";
-import type { CompositeApplyEvent } from "../src/composite/types.js";
 import type { Composite } from "../src/composite/schema.js";
-import { saveConfig } from "../src/config/kubeconfig.js";
-import { freshConfig } from "../src/config/schema.js";
+import type { CompositeApplyEvent } from "../src/composite/types.js";
 import type {
   ImageRef,
   RemoveServiceOptions,
@@ -18,6 +15,10 @@ import type {
   ServiceRef,
 } from "../src/runtime/backend.js";
 import type { WorkloadClient } from "../src/workload/apply.js";
+
+import { applyComposite, destroyComposite } from "../src/composite/apply.js";
+import { saveConfig } from "../src/config/kubeconfig.js";
+import { freshConfig } from "../src/config/schema.js";
 
 /**
  * Phase 4 — applyComposite tests. Fake `RuntimeBackend` + fake
@@ -55,7 +56,7 @@ afterEach(() => {
 
 class FakeRuntimeBackend implements RuntimeBackend {
   readonly kind = "fake";
-  readonly calls: Array<{ op: string; arg: unknown }> = [];
+  readonly calls: { op: string; arg: unknown }[] = [];
   readonly services = new Map<string, ServiceInstance>();
   /** When set, the next ensureService call throws. */
   failNextEnsure: string | null = null;
@@ -476,7 +477,7 @@ describe("applyComposite — service failure triggers rollback", () => {
     backend.ensureService = async (spec) => {
       callCount++;
       if (callCount === 2) throw new Error("simulated docker failure");
-      return origEnsure(spec);
+      return await origEnsure(spec);
     };
 
     const events: CompositeApplyEvent[] = [];
@@ -549,7 +550,7 @@ describe("applyComposite — onFailure=leave-partial", () => {
     backend.ensureService = async (spec) => {
       callCount++;
       if (callCount === 2) throw new Error("partial failure");
-      return origEnsure(spec);
+      return await origEnsure(spec);
     };
 
     const result = await applyComposite({
@@ -783,7 +784,7 @@ describe("destroyComposite — purgeVolumes plumbing", () => {
     backend.ensureService = async (spec) => {
       callCount++;
       if (callCount === 2) throw new Error("simulated docker failure");
-      return origEnsure(spec);
+      return await origEnsure(spec);
     };
 
     const result = await applyComposite({
@@ -856,7 +857,7 @@ describe("applyComposite — external-runtime service short-circuits", () => {
 describe("destroyComposite — boundary-based destroy (k8s cascade)", () => {
   test("backend with destroyCompositeBoundary skips per-service removeService", async () => {
     const backend = new FakeRuntimeBackend();
-    const boundaryCalls: Array<{ compositeName: string; opts: unknown }> = [];
+    const boundaryCalls: { compositeName: string; opts: unknown }[] = [];
     // Attach the optional hook — the applier should prefer it.
     (
       backend as FakeRuntimeBackend & {
@@ -1006,18 +1007,18 @@ describe("applyComposite — gateway upstream threading", () => {
 
     // Fake gateway handler records every apply call. `canHandle`
     // matches the gateway-kind sirius node.
-    const recorded: Array<{
+    const recorded: {
       compositeName: string;
-      upstreams: ReadonlyArray<{ name: string; endpoint: string; nodeName: string }>;
+      upstreams: readonly { name: string; endpoint: string; nodeName: string }[];
       providerConfig: Readonly<Record<string, unknown>>;
-    }> = [];
+    }[] = [];
     const fakeSirius = {
       kind: "sirius",
       canHandle: (node: { cloud?: { provider: string } }) => node.cloud?.provider === "sirius",
       apply: async (o: {
         composite?: {
           compositeName: string;
-          upstreams: ReadonlyArray<{ name: string; endpoint: string; nodeName: string }>;
+          upstreams: readonly { name: string; endpoint: string; nodeName: string }[];
           providerConfig: Readonly<Record<string, unknown>>;
         };
       }) => {
@@ -1116,15 +1117,15 @@ describe("applyComposite — gateway upstream threading", () => {
       configPath,
     );
 
-    const recorded: Array<{
-      upstreams: ReadonlyArray<{ endpoint: string }>;
-    }> = [];
+    const recorded: {
+      upstreams: readonly { endpoint: string }[];
+    }[] = [];
     const fakeSirius = {
       kind: "sirius",
       canHandle: (node: { cloud?: { provider: string } }) => node.cloud?.provider === "sirius",
       apply: async (o: {
         composite?: {
-          upstreams: ReadonlyArray<{ endpoint: string }>;
+          upstreams: readonly { endpoint: string }[];
         };
       }) => {
         if (o.composite) recorded.push(o.composite);
@@ -1215,15 +1216,15 @@ describe("applyComposite — gateway upstream threading", () => {
       configPath,
     );
 
-    const recorded: Array<{
-      upstreams: ReadonlyArray<{ endpoint: string }>;
-    }> = [];
+    const recorded: {
+      upstreams: readonly { endpoint: string }[];
+    }[] = [];
     const fakeSirius = {
       kind: "sirius",
       canHandle: (node: { cloud?: { provider: string } }) => node.cloud?.provider === "sirius",
       apply: async (o: {
         composite?: {
-          upstreams: ReadonlyArray<{ endpoint: string }>;
+          upstreams: readonly { endpoint: string }[];
         };
       }) => {
         if (o.composite) recorded.push(o.composite);

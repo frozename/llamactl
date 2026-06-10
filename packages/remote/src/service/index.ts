@@ -1,6 +1,18 @@
 export { ServiceError } from "./errors.js";
 export type { ServiceErrorCode } from "./errors.js";
 export {
+  chromaHandler,
+  DEFAULT_SERVICE_HANDLERS,
+  findServiceHandler,
+  genericContainerHandler,
+  pgvectorHandler,
+} from "./handlers/index.js";
+export type {
+  HandlerTranslateOptions,
+  ResolvedServiceEndpoint,
+  ServiceHandler,
+} from "./handlers/index.js";
+export {
   ChromaServiceSpecSchema,
   GenericContainerServiceSpecSchema,
   PgvectorServiceSpecSchema,
@@ -12,15 +24,3 @@ export type {
   PgvectorServiceSpec,
   ServiceSpec,
 } from "./schema.js";
-export {
-  chromaHandler,
-  genericContainerHandler,
-  pgvectorHandler,
-  DEFAULT_SERVICE_HANDLERS,
-  findServiceHandler,
-} from "./handlers/index.js";
-export type {
-  HandlerTranslateOptions,
-  ResolvedServiceEndpoint,
-  ServiceHandler,
-} from "./handlers/index.js";

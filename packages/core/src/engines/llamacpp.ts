@@ -1,6 +1,8 @@
-import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from "./types.js";
-import { gracefulShutdown, pollUntilModelIds } from "./lifecycle.js";
 import { resolve, sep } from "node:path";
+
+import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from "./types.js";
+
+import { gracefulShutdown, pollUntilModelIds } from "./lifecycle.js";
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost", "0.0.0.0"]);
 
@@ -52,7 +54,7 @@ export const llamacppEngine: EngineAdapter = {
   },
 
   async probeReady(endpoint, timeoutMs) {
-    return pollUntilModelIds(endpoint, timeoutMs);
+    return await pollUntilModelIds(endpoint, timeoutMs);
   },
 
   async teardown(pid) {

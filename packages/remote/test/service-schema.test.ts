@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import {
   ChromaServiceSpecSchema,
   GenericContainerServiceSpecSchema,
@@ -217,6 +218,6 @@ describe("ServiceSpecSchema (discriminated union)", () => {
   });
 
   test("rejects missing kind discriminator", () => {
-    expect(() => ServiceSpecSchema.parse({ name: "x", node: "gpu1" } as unknown)).toThrow();
+    expect(() => ServiceSpecSchema.parse({ name: "x", node: "gpu1" })).toThrow();
   });
 });

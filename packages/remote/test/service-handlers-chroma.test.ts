@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
+
 import type { ServiceInstance } from "../src/runtime/backend.js";
+
 import { LABEL_KEYS, MANAGED_BY_VALUE } from "../src/runtime/labels.js";
 import { ServiceError } from "../src/service/errors.js";
 import { chromaHandler } from "../src/service/handlers/chroma-handler.js";
 import { DEFAULT_SERVICE_HANDLERS, findServiceHandler } from "../src/service/handlers/registry.js";
-import { ChromaServiceSpecSchema, type ChromaServiceSpec } from "../src/service/schema.js";
+import { type ChromaServiceSpec, ChromaServiceSpecSchema } from "../src/service/schema.js";
 
 function spec(overrides: Partial<ChromaServiceSpec> = {}): ChromaServiceSpec {
   return ChromaServiceSpecSchema.parse({
@@ -37,12 +39,16 @@ describe("chromaHandler registry", () => {
 
 describe("chromaHandler.validate", () => {
   test("accepts default docker runtime", () => {
-    expect(() => chromaHandler.validate(spec())).not.toThrow();
+    expect(() => {
+      chromaHandler.validate(spec());
+    }).not.toThrow();
   });
 
   test("rejects external runtime without externalEndpoint", () => {
     const s = spec({ runtime: "external" });
-    expect(() => chromaHandler.validate(s)).toThrow(ServiceError);
+    expect(() => {
+      chromaHandler.validate(s);
+    }).toThrow(ServiceError);
   });
 
   test("rejects external runtime with image override", () => {
@@ -51,7 +57,9 @@ describe("chromaHandler.validate", () => {
       externalEndpoint: "http://chroma.internal:8000",
       image: { repository: "chromadb/chroma", tag: "1.5.8" },
     });
-    expect(() => chromaHandler.validate(s)).toThrow(ServiceError);
+    expect(() => {
+      chromaHandler.validate(s);
+    }).toThrow(ServiceError);
   });
 
   test("accepts external runtime with externalEndpoint", () => {
@@ -59,12 +67,16 @@ describe("chromaHandler.validate", () => {
       runtime: "external",
       externalEndpoint: "http://chroma.internal:8000",
     });
-    expect(() => chromaHandler.validate(s)).not.toThrow();
+    expect(() => {
+      chromaHandler.validate(s);
+    }).not.toThrow();
   });
 
   test("rejects docker runtime with externalEndpoint", () => {
     const s = spec({ externalEndpoint: "http://chroma.internal:8000" });
-    expect(() => chromaHandler.validate(s)).toThrow(ServiceError);
+    expect(() => {
+      chromaHandler.validate(s);
+    }).toThrow(ServiceError);
   });
 });
 

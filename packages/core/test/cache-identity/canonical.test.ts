@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
+
 import {
-  canonicalRequestSha,
   boundaryNaiveBytePrefixSha,
+  canonicalRequestSha,
 } from "../../src/cache-identity/canonical.js";
 
 test("canonicalRequestSha is stable across JSON key reorder", () => {

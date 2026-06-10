@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { applyCompositeEntries } from "../src/workload/gateway-catalog/apply.js";
+
 import type { SiriusProvider } from "../src/config/sirius-providers.js";
+
+import { applyCompositeEntries } from "../src/workload/gateway-catalog/apply.js";
 
 const baseDerived: SiriusProvider = {
   name: "mc-llama",
   kind: "openai-compatible",
   baseUrl: "http://h:1/v1",
-} as SiriusProvider;
+};
 
 describe("applyCompositeEntries — sirius", () => {
   test("appends new entry on empty current", () => {
@@ -35,7 +37,7 @@ describe("applyCompositeEntries — sirius", () => {
       kind: "sirius",
       compositeName: "mc",
       derived: [baseDerived],
-      current: first.next as SiriusProvider[],
+      current: first.next,
     });
     expect(second.changed).toBe(false);
   });
@@ -51,7 +53,7 @@ describe("applyCompositeEntries — sirius", () => {
       kind: "sirius",
       compositeName: "other",
       derived: [baseDerived],
-      current: first.next as SiriusProvider[],
+      current: first.next,
     });
     expect(second.changed).toBe(true);
     const o = (second.next[0] as any).ownership;
@@ -69,7 +71,7 @@ describe("applyCompositeEntries — sirius", () => {
       kind: "sirius",
       compositeName: "other",
       derived: [{ ...baseDerived, baseUrl: "http://different:1/v1" }],
-      current: first.next as SiriusProvider[],
+      current: first.next,
     });
     expect(second.conflicts.length).toBe(1);
     expect(second.conflicts[0]!.kind).toBe("shape");
@@ -81,7 +83,7 @@ describe("applyCompositeEntries — sirius", () => {
       name: "mc-llama",
       kind: "openai",
       apiKeyRef: "$OPENAI",
-    } as SiriusProvider;
+    };
     const r = applyCompositeEntries({
       kind: "sirius",
       compositeName: "mc",

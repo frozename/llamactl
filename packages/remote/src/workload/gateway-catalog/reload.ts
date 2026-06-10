@@ -7,7 +7,7 @@ export async function reloadAllGatewayNodesOfKind(kind: "sirius" | "embersynth")
   for (const cluster of cfg.clusters) {
     for (const node of cluster.nodes ?? []) {
       if (
-        resolveNodeKind(node as any) === "gateway" &&
+        resolveNodeKind(node) === "gateway" &&
         node.cloud?.provider === kind &&
         node.cloud?.baseUrl
       ) {

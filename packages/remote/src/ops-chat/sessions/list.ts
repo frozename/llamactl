@@ -1,10 +1,10 @@
+import { existsSync } from "node:fs";
 // packages/remote/src/ops-chat/sessions/list.ts
 import { readdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
+
 import { defaultSessionsDir } from "../paths.js";
-import { readJournal } from "./journal.js";
-import type { JournalEvent } from "./journal-schema.js";
 import { isTerminal } from "./journal-schema.js";
+import { readJournal } from "./journal.js";
 
 export type SessionStatus = "live" | "done" | "refused" | "aborted";
 
@@ -22,7 +22,7 @@ export interface SessionSummary {
 export async function getSessionSummary(sessionId: string): Promise<SessionSummary> {
   const events = await readJournal(sessionId);
   const start = events.find((e) => e.type === "session_started");
-  if (!start || start.type !== "session_started") {
+  if (start?.type !== "session_started") {
     throw new Error(`session ${sessionId} has no session_started event`);
   }
   const terminal = events.find((e) => isTerminal(e));

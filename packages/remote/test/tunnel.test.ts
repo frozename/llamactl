@@ -1,15 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
+import { hashToken } from "../src/server/auth.js";
 import {
-  TUNNEL_CLOSE_UNAUTHORIZED,
   createTunnelClient,
   createTunnelServer,
   encodeTunnelMessage,
   parseTunnelMessage,
+  TUNNEL_CLOSE_UNAUTHORIZED,
   type TunnelMessage,
   type TunnelReq,
   type TunnelState,
 } from "../src/tunnel/index.js";
-import { hashToken } from "../src/server/auth.js";
 
 // Bun's built-in WebSocket on the client side is globalThis.WebSocket.
 // The server is Bun.serve with a websocket handler.
@@ -20,12 +21,12 @@ interface RunningServer {
   url: string;
   server: ReturnType<typeof createTunnelServer>;
   connects: string[];
-  disconnects: Array<{ node: string; reason: string }>;
+  disconnects: { node: string; reason: string }[];
 }
 
 function startServer(bearer: string, opts: { fixedTime?: string } = {}): RunningServer {
   const connects: string[] = [];
-  const disconnects: Array<{ node: string; reason: string }> = [];
+  const disconnects: { node: string; reason: string }[] = [];
   const srv = createTunnelServer({
     expectedBearerHash: hashToken(bearer),
     onNodeConnect: (n) => connects.push(n),
@@ -315,7 +316,9 @@ describe("disconnect semantics", () => {
       nodeName: "gpu1",
       handleRequest: () =>
         new Promise<unknown>((resolve) => {
-          release = () => resolve(null);
+          release = () => {
+            resolve(null);
+          };
         }),
     });
     await client.start();

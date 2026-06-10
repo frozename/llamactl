@@ -1,5 +1,6 @@
-import { spawn } from "node:child_process";
 import { env as envMod, keepAlive } from "@llamactl/core";
+import { spawn } from "node:child_process";
+
 import { getGlobals, getNodeClient, isLocalDispatch } from "../dispatcher.js";
 import { resolveWorkloadName } from "./_workload-resolve.js";
 
@@ -161,10 +162,10 @@ async function runStop(args: string[]): Promise<number> {
     result = await keepAlive.stopKeepAlive({ key: { name: workload }, graceSeconds });
   } else {
     try {
-      result = (await getNodeClient().keepAliveStop.mutate({
+      result = await getNodeClient().keepAliveStop.mutate({
         workload,
         graceSeconds,
-      })) as typeof result;
+      });
     } catch (err) {
       process.stderr.write(
         `keep-alive stop: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
@@ -199,7 +200,7 @@ async function runStatus(args: string[]): Promise<number> {
     status = keepAlive.keepAliveStatus();
   } else {
     try {
-      status = (await getNodeClient().keepAliveStatus.query()) as typeof status;
+      status = await getNodeClient().keepAliveStatus.query();
     } catch (err) {
       process.stderr.write(
         `keep-alive status: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
@@ -246,7 +247,9 @@ async function runWorker(args: string[]): Promise<number> {
   // Wire SIGTERM to a trip the abort signal so the loop exits cleanly
   // (allowing the `finally` cleanup to stop llama-server).
   const controller = new AbortController();
-  const onSignal = () => controller.abort();
+  const onSignal = () => {
+    controller.abort();
+  };
   process.on("SIGTERM", onSignal);
   process.on("SIGINT", onSignal);
 
@@ -269,13 +272,13 @@ export async function runKeepAlive(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
     case "start":
-      return runStart(rest);
+      return await runStart(rest);
     case "stop":
-      return runStop(rest);
+      return await runStop(rest);
     case "status":
-      return runStatus(rest);
+      return await runStatus(rest);
     case "worker":
-      return runWorker(rest);
+      return await runWorker(rest);
     case undefined:
     case "-h":
     case "--help":

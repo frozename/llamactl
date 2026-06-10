@@ -1,6 +1,7 @@
+import type { KnowledgeHit, MatchExcerpt } from "./types.js";
+
 // packages/remote/src/search/knowledge.ts
 import { findTextMatches } from "./text-match.js";
-import type { KnowledgeHit, MatchExcerpt } from "./types.js";
 
 export interface KnowledgeEntity {
   id: string;

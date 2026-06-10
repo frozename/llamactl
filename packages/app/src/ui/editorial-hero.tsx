@@ -1,6 +1,7 @@
 import * as React from "react";
-import { cx } from "./classes";
+
 import { AtmosphericPanel } from "./atmospheric-panel";
+import { cx } from "./classes";
 
 export interface EditorialHeroProps {
   eyebrow?: React.ReactNode;

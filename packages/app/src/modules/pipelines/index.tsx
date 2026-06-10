@@ -2,8 +2,9 @@ import * as React from "react";
 import { useMemo, useState } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+
 import { trpc } from "@/lib/trpc";
-import { Badge, Button, StatusDot, Input, Kbd } from "@/ui";
+import { Button, Input } from "@/ui";
 
 /**
  * Pipelines — ordered chains of model calls where stage N's final
@@ -235,7 +236,9 @@ function Sidebar(props: {
           >
             <Button
               type="button"
-              onClick={() => props.onSelect(p.id)}
+              onClick={() => {
+                props.onSelect(p.id);
+              }}
               style={{
                 flex: 1,
                 overflow: "hidden",
@@ -262,7 +265,9 @@ function Sidebar(props: {
             </Button>
             <Button
               type="button"
-              onClick={() => props.onDelete(p.id)}
+              onClick={() => {
+                props.onDelete(p.id);
+              }}
               style={{ color: "var(--color-text-secondary)" }}
               title="delete pipeline"
             >
@@ -280,7 +285,7 @@ function StageCard(props: {
   index: number;
   output: string;
   running: boolean;
-  nodes: Array<{ name: string }>;
+  nodes: { name: string }[];
   onUpdate: (patch: Partial<Stage>) => void;
   onToggleCapability: (tag: CapabilityTag) => void;
   onRemove: () => void;
@@ -288,7 +293,7 @@ function StageCard(props: {
   const modelList = trpc.nodeModels.useQuery({ name: props.stage.node }, { staleTime: 60_000 });
   const models = useMemo(
     () =>
-      (modelList.data?.models as Array<{ id?: string }> | undefined)
+      (modelList.data?.models as { id?: string }[] | undefined)
         ?.map((m) => m.id)
         .filter((id): id is string => typeof id === "string") ?? [],
     [modelList.data],
@@ -334,7 +339,9 @@ function StageCard(props: {
         <span style={{ color: "var(--color-text-secondary)" }}>node</span>
         <select
           value={props.stage.node}
-          onChange={(e) => props.onUpdate({ node: e.target.value })}
+          onChange={(e) => {
+            props.onUpdate({ node: e.target.value });
+          }}
           style={{
             borderRadius: "var(--r-md)",
             border: "1px solid var(--color-border)",
@@ -358,7 +365,9 @@ function StageCard(props: {
         <span style={{ marginLeft: 8, color: "var(--color-text-secondary)" }}>model</span>
         <select
           value={props.stage.model}
-          onChange={(e) => props.onUpdate({ model: e.target.value })}
+          onChange={(e) => {
+            props.onUpdate({ model: e.target.value });
+          }}
           style={{
             borderRadius: "var(--r-md)",
             border: "1px solid var(--color-border)",
@@ -395,7 +404,9 @@ function StageCard(props: {
       <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 12 }}>
         <textarea
           value={props.stage.systemPrompt}
-          onChange={(e) => props.onUpdate({ systemPrompt: e.target.value })}
+          onChange={(e) => {
+            props.onUpdate({ systemPrompt: e.target.value });
+          }}
           placeholder="System prompt (optional)…"
           style={{
             height: 64,
@@ -422,7 +433,9 @@ function StageCard(props: {
               <Button
                 key={tag}
                 type="button"
-                onClick={() => props.onToggleCapability(tag)}
+                onClick={() => {
+                  props.onToggleCapability(tag);
+                }}
                 style={{
                   borderRadius: 9999,
                   border: "1px solid",
@@ -500,7 +513,9 @@ export default function Pipelines(): React.JSX.Element {
         setExportInfo({ kind: "error", message: res.message });
       }
     },
-    onError: (err) => setExportInfo({ kind: "error", message: err.message }),
+    onError: (err) => {
+      setExportInfo({ kind: "error", message: err.message });
+    },
   });
 
   function exportActiveAsMcp(overwrite: boolean): void {
@@ -526,12 +541,12 @@ export default function Pipelines(): React.JSX.Element {
   }
   type StreamInput = {
     node: string;
-    request: { model: string; messages: Array<{ role: string; content: string }> };
+    request: { model: string; messages: { role: string; content: string }[] };
   };
   const [streamInput, setStreamInput] = useState<StreamInput | null>(null);
 
   function buildStageRequest(stage: Stage, userContent: string): StreamInput {
-    const messages: Array<{ role: string; content: string }> = [];
+    const messages: { role: string; content: string }[] = [];
     if (stage.systemPrompt.trim()) {
       messages.push({ role: "system", content: stage.systemPrompt });
     }
@@ -592,7 +607,9 @@ export default function Pipelines(): React.JSX.Element {
           // functional set, then schedule the next stage.
           setOutputs((prev) => {
             const final = prev[currentIdx] ?? "";
-            queueMicrotask(() => advance(active, currentIdx, final));
+            queueMicrotask(() => {
+              advance(active, currentIdx, final);
+            });
             return prev;
           });
         }
@@ -693,7 +710,9 @@ export default function Pipelines(): React.JSX.Element {
           >
             <Input
               value={active.name}
-              onChange={(e) => store.rename(active.id, e.target.value)}
+              onChange={(e) => {
+                store.rename(active.id, e.target.value);
+              }}
               style={{
                 borderRadius: "var(--r-md)",
                 border: "1px solid var(--color-border)",
@@ -721,7 +740,9 @@ export default function Pipelines(): React.JSX.Element {
             </Button>
             <Button
               type="button"
-              onClick={() => exportActiveAsMcp(false)}
+              onClick={() => {
+                exportActiveAsMcp(false);
+              }}
               disabled={exportMcp.isPending || active.stages.length === 0}
               data-testid="pipelines-save-mcp"
               title={
@@ -796,7 +817,9 @@ export default function Pipelines(): React.JSX.Element {
               {exportInfo.kind === "error" && /already exists/i.test(exportInfo.message) ? (
                 <Button
                   type="button"
-                  onClick={() => exportActiveAsMcp(true)}
+                  onClick={() => {
+                    exportActiveAsMcp(true);
+                  }}
                   style={{
                     borderRadius: "var(--r-md)",
                     border: "1px solid var(--color-border)",
@@ -814,7 +837,9 @@ export default function Pipelines(): React.JSX.Element {
               ) : (
                 <Button
                   type="button"
-                  onClick={() => setExportInfo(null)}
+                  onClick={() => {
+                    setExportInfo(null);
+                  }}
                   style={{ color: "var(--color-text-secondary)" }}
                 >
                   ×
@@ -859,9 +884,15 @@ export default function Pipelines(): React.JSX.Element {
                 output={outputs[idx] ?? ""}
                 running={runningId === active.id && currentIdx === idx}
                 nodes={nodes}
-                onUpdate={(patch) => store.updateStage(active.id, stage.id, patch)}
-                onToggleCapability={(tag) => store.toggleStageCapability(active.id, stage.id, tag)}
-                onRemove={() => store.removeStage(active.id, stage.id)}
+                onUpdate={(patch) => {
+                  store.updateStage(active.id, stage.id, patch);
+                }}
+                onToggleCapability={(tag) => {
+                  store.toggleStageCapability(active.id, stage.id, tag);
+                }}
+                onRemove={() => {
+                  store.removeStage(active.id, stage.id);
+                }}
               />
             ))}
           </div>
@@ -881,7 +912,9 @@ export default function Pipelines(): React.JSX.Element {
           >
             <textarea
               value={initialInput}
-              onChange={(e) => setInitialInput(e.target.value)}
+              onChange={(e) => {
+                setInitialInput(e.target.value);
+              }}
               placeholder="Initial input for stage 1…"
               style={{
                 height: 64,

@@ -1,6 +1,6 @@
-import { currentContext, loadConfig, resolveToken } from "./kubeconfig.js";
 import { readCurrentLeaseHolder } from "../../../fleet-supervisor/src/journal.js";
-import { LOCAL_NODE_ENDPOINT, LOCAL_NODE_NAME, type ClusterNode, type Config } from "./schema.js";
+import { currentContext, loadConfig, resolveToken } from "./kubeconfig.js";
+import { type ClusterNode, type Config, LOCAL_NODE_ENDPOINT, LOCAL_NODE_NAME } from "./schema.js";
 
 export interface PeerNode {
   id: string;

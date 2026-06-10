@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ModelRunSchema, type ModelRun } from "../src/workload/schema.js";
+
 import { applyOne } from "../src/workload/apply.js";
+import { type ModelRun, ModelRunSchema } from "../src/workload/schema.js";
 import {
   defaultWorkloadsDir,
   deleteWorkload,
@@ -244,7 +245,7 @@ describe("applyOne gateway branch", () => {
       },
     };
     let clientCalls = 0;
-    const events: Array<{ type: string; message: string }> = [];
+    const events: { type: string; message: string }[] = [];
     const result = await applyOne(
       manifest,
       () => {
@@ -413,10 +414,10 @@ metadata:
 spec:
   node: local
   target:
-    value: ${"${env:MODEL_REL}"}
+    value: \${env:MODEL_REL}
   extraArgs:
     - --models-dir
-    - ${"${env:MODELS_DIR}"}
+    - \${env:MODELS_DIR}
 `);
       expect(parsedRun).toMatchObject({
         spec: {
@@ -433,12 +434,12 @@ metadata:
 spec:
   engine: omlx
   node: local
-  binary: ${"${env:HOST_BINARY}"}
+  binary: \${env:HOST_BINARY}
   endpoint:
     host: 127.0.0.1
     port: 19090
   hostedModels:
-    - rel: ${"${env:HOST_REL}"}
+    - rel: \${env:HOST_REL}
 `);
       expect(parsedHost).toMatchObject({
         spec: {

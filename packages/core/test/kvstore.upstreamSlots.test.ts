@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+
 import { UpstreamSlotClient } from "../src/kvstore/index.js";
 
 interface TestServer {
@@ -20,16 +20,20 @@ async function startTestServer(
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
+    server.listen(0, "127.0.0.1", () => {
+      resolve();
+    });
   });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Failed to bind test server");
   return {
-    baseUrl: `http://127.0.0.1:${(address as AddressInfo).port}`,
+    baseUrl: `http://127.0.0.1:${address.port}`,
     requestCount: () => requests,
     close: () =>
       new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
+        server.close((error) => {
+          error ? reject(error) : resolve();
+        });
       }),
   };
 }
@@ -45,13 +49,17 @@ async function acquireClosedLocalPort(): Promise<number> {
   const server = createServer((_req, res) => res.end());
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
+    server.listen(0, "127.0.0.1", () => {
+      resolve();
+    });
   });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Failed to get local test port");
-  const port = (address as AddressInfo).port;
+  const port = address.port;
   await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
+    server.close((error) => {
+      error ? reject(error) : resolve();
+    });
   });
   return port;
 }
@@ -268,7 +276,7 @@ test("network failure returns network", async () => {
 test("timeout returns network", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (_input: Request | URL | string, init?: RequestInit) =>
-    new Promise<Response>((_resolve, reject) => {
+    await new Promise<Response>((_resolve, reject) => {
       init?.signal?.addEventListener("abort", () => {
         reject(new DOMException("The operation was aborted.", "AbortError"));
       });
@@ -494,7 +502,7 @@ test("supportsRequestHandle does NOT cache a transient network-error result (re-
       probes += 1;
       throw new TypeError("network down");
     }
-    return originalFetch(input as Parameters<typeof fetch>[0], init);
+    return await originalFetch(input, init);
   }) as typeof fetch;
   try {
     const client = new UpstreamSlotClient("http://127.0.0.1:9", {
@@ -578,7 +586,7 @@ test("supportsRequestHandle invalidates cache on save() fetch failure", async ()
         if (init?.method === "POST" && url.pathname.startsWith("/slots/")) {
           throw new TypeError("network down");
         }
-        return originalFetch(input as Parameters<typeof fetch>[0], init);
+        return await originalFetch(input, init);
       }) as typeof fetch;
       const result = await client.save(1, "slot-failure.bin");
       expect(result.ok).toBe(false);
@@ -614,7 +622,7 @@ test("supportsRequestHandle invalidates cache on restore() fetch failure", async
         if (init?.method === "POST" && url.pathname.startsWith("/slots/")) {
           throw new TypeError("network down");
         }
-        return originalFetch(input as Parameters<typeof fetch>[0], init);
+        return await originalFetch(input, init);
       }) as typeof fetch;
       const result = await client.restore(1, "slot-failure.bin");
       expect(result.ok).toBe(false);

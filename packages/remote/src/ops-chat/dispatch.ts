@@ -1,5 +1,7 @@
 import type { router as AppRouterType } from "../router.js";
 
+import { appendOpsChatAudit, hashArguments } from "./audit.js";
+
 /**
  * N.4 — Ops Chat tool dispatch. Maps an MCP-style tool name +
  * arguments to the equivalent tRPC procedure on the llamactl router
@@ -342,12 +344,12 @@ export async function dispatchOpsChatTool(
       case "llamactl.rag.store": {
         const node = requireString(args, "node");
         const documents = Array.isArray(args.documents)
-          ? (args.documents as Array<{
+          ? (args.documents as {
               id: string;
               content: string;
               metadata?: Record<string, unknown>;
               vector?: number[];
-            }>)
+            }[])
           : [];
         if (input.dryRun) {
           result = {
@@ -357,7 +359,7 @@ export async function dispatchOpsChatTool(
         } else {
           const payload: Parameters<Caller["ragStore"]>[0] = {
             node,
-            documents: documents as Parameters<Caller["ragStore"]>[0]["documents"],
+            documents: documents,
           };
           if (typeof args.collection === "string") {
             payload.collection = args.collection;
@@ -531,8 +533,6 @@ export async function dispatchOpsChatTool(
     };
   }
 }
-
-import { appendOpsChatAudit, hashArguments } from "./audit.js";
 
 export function auditOpsChatToolRun(args: {
   tool: string;

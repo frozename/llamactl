@@ -1,4 +1,3 @@
-import { AnthropicTranslationError } from "./translateRequest.js";
 import type {
   AnthropicContentBlock,
   AnthropicMessagesResponse,
@@ -6,6 +5,8 @@ import type {
   OpenAIChatResponse,
   OpenAIChatToolCall,
 } from "./types.js";
+
+import { AnthropicTranslationError } from "./translateRequest.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

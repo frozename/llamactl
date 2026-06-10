@@ -11,6 +11,7 @@
  * anchor without relying on the body text naming itself.
  */
 import type { RawDoc, Transform } from "../types.js";
+
 import { MarkdownChunkTransformSchema } from "../schema.js";
 
 interface Section {
@@ -25,8 +26,8 @@ export const markdownChunkTransform: Transform = {
     for await (const doc of docs) {
       const chunks = chunkMarkdown(doc, spec);
       const total = chunks.length;
-      for (let i = 0; i < chunks.length; i++) {
-        const c = chunks[i]!;
+      for (const [i, chunk] of chunks.entries()) {
+        const c = chunk;
         yield {
           id: `${doc.id}#${i}`,
           content: c.content,
@@ -49,9 +50,9 @@ export function chunkMarkdown(
     overlap: number;
     preserve_headings: boolean;
   },
-): Array<{ content: string; headingPath: string[] }> {
+): { content: string; headingPath: string[] }[] {
   const sections = splitByHeadings(doc.content);
-  const out: Array<{ content: string; headingPath: string[] }> = [];
+  const out: { content: string; headingPath: string[] }[] = [];
 
   for (const sec of sections) {
     const prefix =
@@ -111,7 +112,7 @@ export function chunkMarkdown(
 function splitByHeadings(text: string): Section[] {
   const lines = text.split(/\r?\n/);
   const sections: Section[] = [];
-  let pathStack: Array<{ level: number; title: string }> = [];
+  const pathStack: { level: number; title: string }[] = [];
   let bodyLines: string[] = [];
 
   const flush = () => {
@@ -124,7 +125,7 @@ function splitByHeadings(text: string): Section[] {
   };
 
   for (const line of lines) {
-    const m = line.match(/^(#{1,6})\s+(.*)$/);
+    const m = /^(#{1,6})\s+(.*)$/.exec(line);
     if (m) {
       const level = m[1]!.length;
       const title = m[2]!.trim();

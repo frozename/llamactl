@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   defaultBinaryPath,
   defaultServicesDir,
@@ -13,9 +14,9 @@ import {
   renderServiceUnit,
   renderSystemdUnit,
   runServiceLifecycle,
+  type SubprocessRunner,
   unitBaseName,
   writeServiceUnit,
-  type SubprocessRunner,
 } from "../src/infra/services.js";
 
 let dir = "";

@@ -2,15 +2,16 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { generateToken, hashToken } from "../src/server/auth.js";
+import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 import {
   appendTunnelJournal,
-  defaultTunnelJournalPath,
   createTunnelClient,
+  defaultTunnelJournalPath,
   encodeTunnelMessage,
   type TunnelJournalEntry,
 } from "../src/tunnel/index.js";
-import { generateToken, hashToken } from "../src/server/auth.js";
-import { startAgentServer, type RunningAgent } from "../src/server/serve.js";
 
 /**
  * Slice D (tunnel-hardening) — JSONL audit journal tests.
@@ -111,8 +112,8 @@ describe("appendTunnelJournal (unit)", () => {
       "tunnel-replaced",
     ]);
     for (const e of round) expect(e.ts).toBe(ts);
-    expect(round[0]).toEqual(entries[0]!);
-    expect(round[5]).toEqual(entries[5]!);
+    expect(round[0]).toEqual(entries[0]);
+    expect(round[5]).toEqual(entries[5]);
   });
 
   test("creates parent directory if missing", () => {
@@ -132,14 +133,14 @@ describe("defaultTunnelJournalPath (unit)", () => {
       LLAMACTL_TUNNEL_JOURNAL: "/some/override/path.jsonl",
       DEV_STORAGE: "/tmp/dev",
       HOME: "/home/u",
-    } as NodeJS.ProcessEnv);
+    });
     expect(got).toBe("/some/override/path.jsonl");
   });
 
   test("DEV_STORAGE fallback nests under tunnel/journal.jsonl", () => {
     const got = defaultTunnelJournalPath({
       DEV_STORAGE: "/tmp/dev",
-    } as NodeJS.ProcessEnv);
+    });
     expect(got).toBe(join("/tmp/dev", "tunnel", "journal.jsonl"));
   });
 
@@ -148,7 +149,7 @@ describe("defaultTunnelJournalPath (unit)", () => {
     // not $HOME, so we can't force an arbitrary prefix from env.
     // Assert the suffix (the part this module actually composes) is
     // what we expect.
-    const got = defaultTunnelJournalPath({} as NodeJS.ProcessEnv);
+    const got = defaultTunnelJournalPath({});
     expect(got.endsWith(join(".llamactl", "tunnel", "journal.jsonl"))).toBe(true);
   });
 });
@@ -393,7 +394,9 @@ describe("tunnel journal — integration", () => {
     // Raw ws so we can send a hello with the wrong bearer.
     const ws = new WebSocket(h.wsUrl);
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("ws timeout")), 2000);
+      const timer = setTimeout(() => {
+        reject(new Error("ws timeout"));
+      }, 2000);
       ws.onopen = () => {
         ws.send(
           encodeTunnelMessage({

@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createTRPCClient, httpBatchLink, TRPCClientError } from "@trpc/client";
 import { initTRPC, TRPCError } from "@trpc/server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
-import { createTRPCClient, httpBatchLink, TRPCClientError } from "@trpc/client";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { z } from "zod";
 
 /**
@@ -39,7 +39,9 @@ function createSpikeRouter() {
       // observe that (the fetch adapter wires request.signal into
       // createContext's signal).
       await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => resolve(null), input.ms);
+        const timer = setTimeout(() => {
+          resolve(null);
+        }, input.ms);
         const abortCb = () => {
           ctx.aborted.flag = true;
           clearTimeout(timer);

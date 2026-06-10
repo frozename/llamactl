@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { quantFromRel } from "../src/quant.js";
 
 describe("quantFromRel", () => {

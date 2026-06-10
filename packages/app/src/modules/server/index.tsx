@@ -1,9 +1,9 @@
+import { skipToken, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { trpc } from "@/lib/trpc";
-import { skipToken } from "@tanstack/react-query";
+
 import { useActiveWorkload } from "@/hooks/useActiveWorkload";
+import { trpc } from "@/lib/trpc";
 import { Button, Input, StatusDot } from "@/ui";
 
 interface LogLine {
@@ -113,7 +113,9 @@ export default function Server(): React.JSX.Element {
         queryKey: [["serverStatus"], { type: "query" }],
       });
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      setError(err.message);
+    },
   });
 
   const rels = useMemo(() => (catalog.data ?? []).map((row) => row.rel), [catalog.data]);
@@ -143,7 +145,9 @@ export default function Server(): React.JSX.Element {
         queryKey: [["keepAliveStatus"], { type: "query" }],
       });
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      setError(err.message);
+    },
   });
   const keepAliveStopMutation = trpc.keepAliveStop.useMutation({
     onSuccess: async () => {
@@ -151,7 +155,9 @@ export default function Server(): React.JSX.Element {
         queryKey: [["keepAliveStatus"], { type: "query" }],
       });
     },
-    onError: (err) => setError(err.message),
+    onError: (err) => {
+      setError(err.message);
+    },
   });
   const ka = keepAliveStatus.data;
 
@@ -369,7 +375,9 @@ export default function Server(): React.JSX.Element {
             <Input
               list="server-rel-suggestions"
               value={target}
-              onChange={(e) => setTarget(e.target.value)}
+              onChange={(e) => {
+                setTarget(e.target.value);
+              }}
               disabled={busy}
               style={{ width: "100%", fontFamily: "monospace" }}
               placeholder="current | best | <rel>"
@@ -399,7 +407,9 @@ export default function Server(): React.JSX.Element {
               min={5}
               max={600}
               value={timeoutSeconds}
-              onChange={(e) => setTimeoutSeconds(Math.max(5, Number(e.target.value) || 60))}
+              onChange={(e) => {
+                setTimeoutSeconds(Math.max(5, Number(e.target.value) || 60));
+              }}
               disabled={busy}
               style={{ width: "100%", fontFamily: "monospace" }}
             />
@@ -419,7 +429,9 @@ export default function Server(): React.JSX.Element {
               <input
                 type="checkbox"
                 checked={!skipTuned}
-                onChange={(e) => setSkipTuned(!e.target.checked)}
+                onChange={(e) => {
+                  setSkipTuned(!e.target.checked);
+                }}
                 disabled={busy}
               />
               <span>use tuned</span>
@@ -551,7 +563,9 @@ export default function Server(): React.JSX.Element {
             </span>
             <Input
               value={target}
-              onChange={(e) => setTarget(e.target.value)}
+              onChange={(e) => {
+                setTarget(e.target.value);
+              }}
               disabled={ka?.running || keepAliveStartMutation.isPending}
               style={{ width: "100%", fontFamily: "monospace" }}
             />
@@ -567,7 +581,9 @@ export default function Server(): React.JSX.Element {
             <Button
               type="button"
               variant="primary"
-              onClick={() => keepAliveStartMutation.mutate({ target: target.trim() || "current" })}
+              onClick={() => {
+                keepAliveStartMutation.mutate({ target: target.trim() || "current" });
+              }}
               disabled={ka?.running || keepAliveStartMutation.isPending}
               style={{ flex: 1 }}
             >

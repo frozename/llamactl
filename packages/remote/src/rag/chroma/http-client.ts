@@ -1,4 +1,5 @@
 import type { RagBinding } from "../../config/schema.js";
+
 import { resolveSecret } from "../../config/secret.js";
 import { RagError } from "../errors.js";
 
@@ -47,7 +48,7 @@ export interface ChromaQueryPayload {
   n_results?: number;
   where?: Record<string, unknown>;
   where_document?: Record<string, unknown>;
-  include?: Array<"distances" | "documents" | "embeddings" | "metadatas" | "uris">;
+  include?: ("distances" | "documents" | "embeddings" | "metadatas" | "uris")[];
 }
 
 /**
@@ -57,17 +58,17 @@ export interface ChromaQueryPayload {
  */
 export interface ChromaQueryResponse {
   ids: string[][];
-  distances?: Array<Array<number | null>> | null;
-  documents?: Array<Array<string | null>> | null;
-  metadatas?: Array<Array<Record<string, unknown> | null>> | null;
+  distances?: (number | null)[][] | null;
+  documents?: (string | null)[][] | null;
+  metadatas?: (Record<string, unknown> | null)[][] | null;
   include?: string[];
 }
 
 export interface ChromaUpsertPayload {
   ids: string[];
   embeddings: number[][];
-  documents?: Array<string | null>;
-  metadatas?: Array<Record<string, unknown> | null>;
+  documents?: (string | null)[];
+  metadatas?: (Record<string, unknown> | null)[];
 }
 
 export interface ChromaDeletePayload {
@@ -258,7 +259,7 @@ export class HttpChromaClient {
     if (opts.getOrCreate) body.get_or_create = true;
     if (opts.metadata) body.metadata = opts.metadata;
     if (opts.configuration) body.configuration = opts.configuration;
-    return (await this.json<ChromaCollection>("POST", path, body)) as ChromaCollection;
+    return await this.json<ChromaCollection>("POST", path, body);
   }
 
   /** `GET /collections` — list collection names in the current
@@ -289,7 +290,7 @@ export class HttpChromaClient {
 
   async query(collectionId: string, payload: ChromaQueryPayload): Promise<ChromaQueryResponse> {
     const path = `/api/v2/tenants/${encodeURIComponent(this.tenant)}/databases/${encodeURIComponent(this.database)}/collections/${encodeURIComponent(collectionId)}/query`;
-    return (await this.json<ChromaQueryResponse>("POST", path, payload)) as ChromaQueryResponse;
+    return await this.json<ChromaQueryResponse>("POST", path, payload);
   }
 
   async deleteRecords(collectionId: string, payload: ChromaDeletePayload): Promise<number> {

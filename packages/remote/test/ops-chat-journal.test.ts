@@ -1,8 +1,9 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendJournalEvent, readJournal, journalPath } from "../src/ops-chat/sessions/journal";
+
+import { appendJournalEvent, journalPath, readJournal } from "../src/ops-chat/sessions/journal";
 
 describe("journal append + read", () => {
   let tmp: string;

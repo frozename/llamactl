@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+
 import { formatEndpoint, probeHealthEndpoint } from "../src/probe.js";
 
 describe("formatEndpoint", () => {
@@ -25,7 +26,7 @@ describe("probeHealthEndpoint", () => {
   ): typeof globalThis.fetch {
     return (async (input: Parameters<typeof fetch>[0]) => {
       const url = typeof input === "string" ? input : input.toString();
-      return handler(url);
+      return await handler(url);
     }) as typeof globalThis.fetch;
   }
 

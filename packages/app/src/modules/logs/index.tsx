@@ -1,8 +1,9 @@
+import { skipToken } from "@tanstack/react-query";
 import * as React from "react";
 import { useEffect, useRef, useState } from "react";
-import { skipToken } from "@tanstack/react-query";
-import { trpc } from "@/lib/trpc";
+
 import { useActiveWorkload } from "@/hooks/useActiveWorkload";
+import { trpc } from "@/lib/trpc";
 import { Button, StatusDot } from "@/ui";
 import type { StatusDotTone } from "@/ui";
 
@@ -49,7 +50,7 @@ export default function Logs(): React.JSX.Element {
         const e = evt as { type?: string; line?: string };
         if (e.type === "line" && typeof e.line === "string") {
           setLines((prev) => {
-            const next = [...prev, e.line as string];
+            const next = [...prev, e.line!];
             if (next.length > MAX_BUFFER_LINES) {
               return next.slice(next.length - MAX_BUFFER_LINES);
             }
@@ -163,7 +164,9 @@ export default function Logs(): React.JSX.Element {
               max={1000}
               step={50}
               value={historyLines}
-              onChange={(e) => setHistoryLines(Number(e.target.value) || 0)}
+              onChange={(e) => {
+                setHistoryLines(Number(e.target.value) || 0);
+              }}
               style={{
                 borderRadius: "var(--r-md)",
                 border: "1px solid var(--color-border)",
@@ -187,7 +190,9 @@ export default function Logs(): React.JSX.Element {
             <input
               type="checkbox"
               checked={autoscroll}
-              onChange={(e) => setAutoscroll(e.target.checked)}
+              onChange={(e) => {
+                setAutoscroll(e.target.checked);
+              }}
             />
             autoscroll
           </label>

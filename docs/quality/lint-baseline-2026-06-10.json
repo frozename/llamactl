@@ -1,16 +1,12 @@
 {
   "totals": {
-    "errors": 5815,
-    "warnings": 4688
+    "errors": 4249,
+    "warnings": 2642
   },
   "byRule": {
-    "perfectionist/sort-imports": {
-      "errors": 0,
-      "warnings": 1239
-    },
     "security/detect-non-literal-fs-filename": {
       "errors": 0,
-      "warnings": 1362
+      "warnings": 1365
     },
     "@typescript-eslint/no-dynamic-delete": {
       "errors": 63,
@@ -18,23 +14,15 @@
     },
     "@typescript-eslint/explicit-function-return-type": {
       "errors": 0,
-      "warnings": 683
+      "warnings": 700
     },
     "@typescript-eslint/restrict-template-expressions": {
-      "errors": 703,
-      "warnings": 0
-    },
-    "@typescript-eslint/array-type": {
-      "errors": 316,
+      "errors": 705,
       "warnings": 0
     },
     "@typescript-eslint/use-unknown-in-catch-callback-variable": {
       "errors": 9,
       "warnings": 0
-    },
-    "perfectionist/sort-named-imports": {
-      "errors": 0,
-      "warnings": 490
     },
     "@typescript-eslint/require-await": {
       "errors": 761,
@@ -44,12 +32,8 @@
       "errors": 17,
       "warnings": 0
     },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "errors": 276,
-      "warnings": 0
-    },
     "@typescript-eslint/no-unsafe-return": {
-      "errors": 72,
+      "errors": 71,
       "warnings": 0
     },
     "@typescript-eslint/prefer-nullish-coalescing": {
@@ -62,22 +46,10 @@
     },
     "max-lines-per-function": {
       "errors": 0,
-      "warnings": 103
-    },
-    "@typescript-eslint/no-unnecessary-boolean-literal-compare": {
-      "errors": 27,
-      "warnings": 0
+      "warnings": 105
     },
     "@typescript-eslint/no-unnecessary-condition": {
-      "errors": 292,
-      "warnings": 0
-    },
-    "@typescript-eslint/prefer-function-type": {
-      "errors": 2,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-confusing-void-expression": {
-      "errors": 500,
+      "errors": 288,
       "warnings": 0
     },
     "@typescript-eslint/no-unsafe-call": {
@@ -85,19 +57,15 @@
       "warnings": 0
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "errors": 453,
+      "errors": 449,
       "warnings": 0
     },
     "regexp/no-unused-capturing-group": {
       "errors": 8,
       "warnings": 0
     },
-    "@typescript-eslint/return-await": {
-      "errors": 225,
-      "warnings": 0
-    },
     "@typescript-eslint/no-unsafe-assignment": {
-      "errors": 290,
+      "errors": 274,
       "warnings": 0
     },
     "@typescript-eslint/no-unnecessary-type-parameters": {
@@ -108,29 +76,13 @@
       "errors": 225,
       "warnings": 0
     },
-    "@typescript-eslint/prefer-optional-chain": {
-      "errors": 56,
-      "warnings": 0
-    },
     "@typescript-eslint/no-non-null-assertion": {
-      "errors": 193,
+      "errors": 190,
       "warnings": 0
     },
     "@typescript-eslint/no-redundant-type-constituents": {
       "errors": 14,
       "warnings": 0
-    },
-    "unicorn/no-array-for-each": {
-      "errors": 0,
-      "warnings": 11
-    },
-    "perfectionist/sort-named-exports": {
-      "errors": 0,
-      "warnings": 109
-    },
-    "perfectionist/sort-exports": {
-      "errors": 0,
-      "warnings": 94
     },
     "@typescript-eslint/unbound-method": {
       "errors": 31,
@@ -140,12 +92,12 @@
       "errors": 68,
       "warnings": 0
     },
-    "@typescript-eslint/non-nullable-type-assertion-style": {
-      "errors": 20,
+    "@typescript-eslint/no-confusing-void-expression": {
+      "errors": 70,
       "warnings": 0
     },
     "(no-rule-id)": {
-      "errors": 22,
+      "errors": 6,
       "warnings": 0
     },
     "@typescript-eslint/no-floating-promises": {
@@ -153,19 +105,15 @@
       "warnings": 0
     },
     "@typescript-eslint/no-explicit-any": {
-      "errors": 141,
-      "warnings": 217
+      "errors": 129,
+      "warnings": 193
     },
     "@typescript-eslint/no-unsafe-argument": {
-      "errors": 229,
+      "errors": 213,
       "warnings": 0
     },
     "@typescript-eslint/only-throw-error": {
       "errors": 5,
-      "warnings": 0
-    },
-    "unused-imports/no-unused-imports": {
-      "errors": 17,
       "warnings": 0
     },
     "react-hooks/set-state-in-effect": {
@@ -184,10 +132,6 @@
       "errors": 20,
       "warnings": 0
     },
-    "@typescript-eslint/prefer-regexp-exec": {
-      "errors": 34,
-      "warnings": 0
-    },
     "no-constant-binary-expression": {
       "errors": 1,
       "warnings": 0
@@ -204,25 +148,17 @@
       "errors": 4,
       "warnings": 0
     },
-    "import-x/no-duplicates": {
-      "errors": 31,
-      "warnings": 0
-    },
     "react/no-unescaped-entities": {
       "errors": 8,
       "warnings": 0
     },
     "unicorn/no-for-loop": {
       "errors": 0,
-      "warnings": 22
+      "warnings": 1
     },
     "react-hooks/exhaustive-deps": {
       "errors": 0,
       "warnings": 2
-    },
-    "unicorn/prefer-string-replace-all": {
-      "errors": 0,
-      "warnings": 63
     },
     "no-alert": {
       "errors": 1,
@@ -244,10 +180,6 @@
       "errors": 0,
       "warnings": 2
     },
-    "import-x/first": {
-      "errors": 15,
-      "warnings": 0
-    },
     "no-fallthrough": {
       "errors": 2,
       "warnings": 0
@@ -258,26 +190,6 @@
     },
     "no-console": {
       "errors": 73,
-      "warnings": 0
-    },
-    "@typescript-eslint/prefer-includes": {
-      "errors": 21,
-      "warnings": 0
-    },
-    "@typescript-eslint/consistent-type-imports": {
-      "errors": 0,
-      "warnings": 42
-    },
-    "@typescript-eslint/prefer-string-starts-ends-with": {
-      "errors": 23,
-      "warnings": 0
-    },
-    "@typescript-eslint/prefer-for-of": {
-      "errors": 4,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-inferrable-types": {
-      "errors": 3,
       "warnings": 0
     },
     "@typescript-eslint/explicit-module-boundary-types": {
@@ -292,17 +204,17 @@
       "errors": 18,
       "warnings": 0
     },
-    "@typescript-eslint/no-unnecessary-template-expression": {
-      "errors": 6,
-      "warnings": 0
-    },
     "no-warning-comments": {
       "errors": 0,
       "warnings": 3
     },
-    "prefer-const": {
-      "errors": 6,
+    "@typescript-eslint/prefer-promise-reject-errors": {
+      "errors": 12,
       "warnings": 0
+    },
+    "@typescript-eslint/consistent-type-imports": {
+      "errors": 0,
+      "warnings": 27
     },
     "@typescript-eslint/restrict-plus-operands": {
       "errors": 14,
@@ -312,25 +224,41 @@
       "errors": 50,
       "warnings": 0
     },
-    "@typescript-eslint/consistent-generic-constructors": {
-      "errors": 1,
-      "warnings": 0
-    },
     "@typescript-eslint/no-misused-spread": {
       "errors": 19,
+      "warnings": 0
+    },
+    "@typescript-eslint/no-unused-expressions": {
+      "errors": 2,
+      "warnings": 0
+    },
+    "import-x/no-duplicates": {
+      "errors": 2,
       "warnings": 0
     },
     "regexp/no-super-linear-backtracking": {
       "errors": 10,
       "warnings": 0
     },
+    "@typescript-eslint/prefer-optional-chain": {
+      "errors": 2,
+      "warnings": 0
+    },
+    "@typescript-eslint/array-type": {
+      "errors": 1,
+      "warnings": 0
+    },
     "@typescript-eslint/no-empty-object-type": {
       "errors": 1,
       "warnings": 0
     },
-    "unicorn/prefer-node-protocol": {
+    "perfectionist/sort-imports": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
+    },
+    "@typescript-eslint/dot-notation": {
+      "errors": 1,
+      "warnings": 0
     },
     "@typescript-eslint/prefer-as-const": {
       "errors": 1,
@@ -339,18 +267,6 @@
     "@typescript-eslint/no-invalid-void-type": {
       "errors": 1,
       "warnings": 0
-    },
-    "@typescript-eslint/no-meaningless-void-operator": {
-      "errors": 1,
-      "warnings": 0
-    },
-    "@typescript-eslint/prefer-promise-reject-errors": {
-      "errors": 2,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-import-type-side-effects": {
-      "errors": 0,
-      "warnings": 1
     },
     "no-unused-vars": {
       "errors": 16,
@@ -367,20 +283,20 @@
       "warnings": 0
     },
     "packages/agents/demos/demo-audit.ts": {
-      "errors": 12,
-      "warnings": 3
+      "errors": 11,
+      "warnings": 2
     },
     "packages/agents/demos/demo-cost-clamp.ts": {
       "errors": 4,
-      "warnings": 6
+      "warnings": 2
     },
     "packages/agents/demos/demo-failover.ts": {
-      "errors": 19,
-      "warnings": 10
+      "errors": 16,
+      "warnings": 5
     },
     "packages/agents/demos/demo-onboard.ts": {
       "errors": 10,
-      "warnings": 6
+      "warnings": 4
     },
     "packages/agents/src/cost-guardian/config.ts": {
       "errors": 1,
@@ -388,135 +304,135 @@
     },
     "packages/agents/src/cost-guardian/journal.ts": {
       "errors": 1,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/agents/src/cost-guardian/state.ts": {
       "errors": 0,
       "warnings": 1
     },
     "packages/agents/src/cost-guardian/tick.ts": {
-      "errors": 6,
-      "warnings": 5
+      "errors": 1,
+      "warnings": 2
     },
     "packages/agents/src/cost-guardian/webhook.ts": {
-      "errors": 3,
+      "errors": 1,
       "warnings": 0
     },
     "packages/agents/src/harness.ts": {
-      "errors": 24,
-      "warnings": 5
+      "errors": 18,
+      "warnings": 3
     },
     "packages/agents/src/healer/composites.ts": {
-      "errors": 11,
+      "errors": 6,
       "warnings": 1
     },
     "packages/agents/src/healer/execute.ts": {
-      "errors": 7,
-      "warnings": 1
+      "errors": 4,
+      "warnings": 0
     },
     "packages/agents/src/healer/facade-probe.ts": {
-      "errors": 6,
-      "warnings": 2
+      "errors": 3,
+      "warnings": 1
     },
     "packages/agents/src/healer/journal.ts": {
-      "errors": 3,
-      "warnings": 4
+      "errors": 1,
+      "warnings": 2
     },
     "packages/agents/src/healer/loop.ts": {
-      "errors": 9,
-      "warnings": 10
+      "errors": 5,
+      "warnings": 3
     },
     "packages/agents/src/healer/probe.ts": {
-      "errors": 10,
+      "errors": 4,
       "warnings": 3
     },
     "packages/agents/src/healer/remediation.ts": {
-      "errors": 8,
-      "warnings": 2
+      "errors": 5,
+      "warnings": 0
     },
     "packages/agents/src/healer/severity.ts": {
-      "errors": 3,
-      "warnings": 1
+      "errors": 1,
+      "warnings": 0
     },
     "packages/agents/src/index.ts": {
       "errors": 0,
-      "warnings": 29
+      "warnings": 0
     },
     "packages/agents/src/runbooks/audit-fleet.ts": {
-      "errors": 5,
-      "warnings": 2
+      "errors": 4,
+      "warnings": 0
     },
     "packages/agents/src/runbooks/cost-snapshot.ts": {
       "errors": 3,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/agents/src/runbooks/drain-node.ts": {
       "errors": 1,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/agents/src/runbooks/index.ts": {
-      "errors": 1,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/agents/src/runbooks/onboard-new-gpu-node.ts": {
-      "errors": 2,
-      "warnings": 2
+      "errors": 1,
+      "warnings": 0
     },
     "packages/agents/src/runbooks/promote-fastest-vision-model.ts": {
       "errors": 3,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/agents/src/types.ts": {
-      "errors": 2,
+      "errors": 1,
       "warnings": 0
     },
     "packages/agents/test/audit-fleet.test.ts": {
-      "errors": 9,
-      "warnings": 3
+      "errors": 4,
+      "warnings": 1
     },
     "packages/agents/test/cost-guardian-webhook.test.ts": {
-      "errors": 37,
-      "warnings": 9
+      "errors": 33,
+      "warnings": 7
     },
     "packages/agents/test/cost-guardian.test.ts": {
-      "errors": 6,
-      "warnings": 6
+      "errors": 4,
+      "warnings": 4
     },
     "packages/agents/test/cost-snapshot.test.ts": {
-      "errors": 5,
-      "warnings": 2
+      "errors": 3,
+      "warnings": 0
     },
     "packages/agents/test/drain-node.test.ts": {
-      "errors": 8,
-      "warnings": 2
+      "errors": 7,
+      "warnings": 0
     },
     "packages/agents/test/e2e-golden-path.test.ts": {
-      "errors": 4,
-      "warnings": 2
+      "errors": 3,
+      "warnings": 1
     },
     "packages/agents/test/healer-composite-remediation.test.ts": {
-      "errors": 11,
-      "warnings": 5
+      "errors": 7,
+      "warnings": 3
     },
     "packages/agents/test/healer-e2e.test.ts": {
       "errors": 2,
-      "warnings": 6
+      "warnings": 4
     },
     "packages/agents/test/healer-remediation.test.ts": {
-      "errors": 24,
-      "warnings": 7
+      "errors": 8,
+      "warnings": 5
     },
     "packages/agents/test/healer.test.ts": {
-      "errors": 32,
-      "warnings": 6
+      "errors": 18,
+      "warnings": 3
     },
     "packages/agents/test/onboard-new-gpu-node.test.ts": {
       "errors": 9,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/agents/test/promote-fastest-vision-model.test.ts": {
-      "errors": 12,
-      "warnings": 3
+      "errors": 11,
+      "warnings": 1
     },
     "packages/agents/test/severity-composite.test.ts": {
       "errors": 0,
@@ -547,44 +463,44 @@
       "warnings": 0
     },
     "packages/app/electron/trpc/cross-node-fan-out.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/electron/trpc/dispatcher.ts": {
-      "errors": 85,
-      "warnings": 21
+      "errors": 78,
+      "warnings": 14
     },
     "packages/app/electron/trpc/node-pinned-fetch.ts": {
-      "errors": 3,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/electron/trpc/router.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/app/src/App.tsx": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/app/src/hooks/use-status-bar-items.ts": {
-      "errors": 1,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 1
     },
     "packages/app/src/hooks/useActiveWorkload.ts": {
-      "errors": 1,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/src/hooks/workload-selection.ts": {
       "errors": 1,
       "warnings": 0
     },
     "packages/app/src/lib/global-search/hooks/use-global-search.ts": {
-      "errors": 24,
-      "warnings": 20
+      "errors": 22,
+      "warnings": 13
     },
     "packages/app/src/lib/global-search/orchestrator.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 1
     },
     "packages/app/src/lib/global-search/query.ts": {
       "errors": 0,
@@ -639,120 +555,120 @@
       "warnings": 1
     },
     "packages/app/src/lib/ipc-link.ts": {
-      "errors": 18,
-      "warnings": 13
+      "errors": 12,
+      "warnings": 8
     },
     "packages/app/src/lib/trpc.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/src/lib/use-ops-session.ts": {
-      "errors": 3,
-      "warnings": 2
+      "errors": 2,
+      "warnings": 1
     },
     "packages/app/src/main.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/modules/bench/index.tsx": {
-      "errors": 30,
-      "warnings": 10
+      "errors": 15,
+      "warnings": 7
     },
     "packages/app/src/modules/chat/index.tsx": {
-      "errors": 48,
-      "warnings": 20
+      "errors": 20,
+      "warnings": 17
     },
     "packages/app/src/modules/composites/index.tsx": {
-      "errors": 35,
-      "warnings": 8
-    },
-    "packages/app/src/modules/cost/index.tsx": {
-      "errors": 10,
-      "warnings": 3
-    },
-    "packages/app/src/modules/dashboard/NodeMap.tsx": {
-      "errors": 15,
+      "errors": 8,
       "warnings": 5
     },
-    "packages/app/src/modules/dashboard/NodeMapVariants.tsx": {
+    "packages/app/src/modules/cost/index.tsx": {
+      "errors": 5,
+      "warnings": 2
+    },
+    "packages/app/src/modules/dashboard/NodeMap.tsx": {
       "errors": 7,
-      "warnings": 1
+      "warnings": 0
+    },
+    "packages/app/src/modules/dashboard/NodeMapVariants.tsx": {
+      "errors": 5,
+      "warnings": 0
     },
     "packages/app/src/modules/dashboard/ThemedNodeMap.tsx": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/src/modules/dashboard/index.tsx": {
-      "errors": 13,
-      "warnings": 9
+      "errors": 5,
+      "warnings": 2
     },
     "packages/app/src/modules/knowledge/index.tsx": {
-      "errors": 27,
-      "warnings": 13
+      "errors": 11,
+      "warnings": 10
     },
     "packages/app/src/modules/knowledge/pipeline-wizard.tsx": {
-      "errors": 39,
-      "warnings": 5
-    },
-    "packages/app/src/modules/knowledge/pipelines-tab.tsx": {
-      "errors": 29,
-      "warnings": 6
-    },
-    "packages/app/src/modules/knowledge/quality-tab.tsx": {
-      "errors": 7,
-      "warnings": 3
-    },
-    "packages/app/src/modules/lmstudio/index.tsx": {
-      "errors": 11,
-      "warnings": 5
-    },
-    "packages/app/src/modules/logs/index.tsx": {
-      "errors": 3,
-      "warnings": 5
-    },
-    "packages/app/src/modules/models/index.tsx": {
-      "errors": 7,
+      "errors": 10,
       "warnings": 4
     },
+    "packages/app/src/modules/knowledge/pipelines-tab.tsx": {
+      "errors": 15,
+      "warnings": 5
+    },
+    "packages/app/src/modules/knowledge/quality-tab.tsx": {
+      "errors": 4,
+      "warnings": 1
+    },
+    "packages/app/src/modules/lmstudio/index.tsx": {
+      "errors": 7,
+      "warnings": 2
+    },
+    "packages/app/src/modules/logs/index.tsx": {
+      "errors": 1,
+      "warnings": 2
+    },
+    "packages/app/src/modules/models/index.tsx": {
+      "errors": 4,
+      "warnings": 2
+    },
     "packages/app/src/modules/nodes/index.tsx": {
-      "errors": 27,
-      "warnings": 7
+      "errors": 4,
+      "warnings": 4
     },
     "packages/app/src/modules/ops-chat/index.tsx": {
-      "errors": 27,
-      "warnings": 5
+      "errors": 17,
+      "warnings": 2
     },
     "packages/app/src/modules/ops-sessions/delete-confirm.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/modules/ops-sessions/index.tsx": {
-      "errors": 1,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/src/modules/ops-sessions/sessions-table.tsx": {
-      "errors": 2,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/src/modules/ops/detail/empty-state.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/modules/ops/detail/index.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/modules/ops/detail/iteration-card.tsx": {
       "errors": 4,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/src/modules/ops/detail/node-detail.tsx": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/app/src/modules/ops/detail/ops-session-detail.tsx": {
-      "errors": 1,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/src/modules/ops/detail/result-viewer.tsx": {
       "errors": 0,
@@ -760,59 +676,59 @@
     },
     "packages/app/src/modules/ops/detail/session-header.tsx": {
       "errors": 1,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/src/modules/ops/detail/workload-detail.tsx": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/app/src/modules/ops/ops-executor-picker.tsx": {
-      "errors": 4,
-      "warnings": 1
+      "errors": 1,
+      "warnings": 0
     },
     "packages/app/src/modules/pipelines/index.tsx": {
-      "errors": 29,
-      "warnings": 13
+      "errors": 6,
+      "warnings": 11
     },
     "packages/app/src/modules/plan/index.tsx": {
-      "errors": 11,
-      "warnings": 4
+      "errors": 6,
+      "warnings": 2
     },
     "packages/app/src/modules/presets/index.tsx": {
-      "errors": 14,
-      "warnings": 5
+      "errors": 3,
+      "warnings": 2
     },
     "packages/app/src/modules/projects/index.tsx": {
-      "errors": 25,
-      "warnings": 11
+      "errors": 10,
+      "warnings": 10
     },
     "packages/app/src/modules/pulls/index.tsx": {
-      "errors": 16,
-      "warnings": 11
+      "errors": 10,
+      "warnings": 8
     },
     "packages/app/src/modules/registry.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 0
     },
     "packages/app/src/modules/server/index.tsx": {
-      "errors": 21,
-      "warnings": 10
+      "errors": 11,
+      "warnings": 6
     },
     "packages/app/src/modules/settings/index.tsx": {
-      "errors": 12,
-      "warnings": 7
+      "errors": 1,
+      "warnings": 3
     },
     "packages/app/src/modules/settings/project-scan-roots.ts": {
       "errors": 0,
       "warnings": 1
     },
     "packages/app/src/modules/ui-primitives/index.tsx": {
-      "errors": 1,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 1
     },
     "packages/app/src/modules/workloads/index.tsx": {
-      "errors": 21,
-      "warnings": 8
+      "errors": 5,
+      "warnings": 3
     },
     "packages/app/src/modules/workloads/placeholder.tsx": {
       "errors": 0,
@@ -823,12 +739,12 @@
       "warnings": 0
     },
     "packages/app/src/shell/beacon/activity-rail.tsx": {
-      "errors": 2,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/src/shell/beacon/dynamic-tab-router.tsx": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/src/shell/beacon/error-boundary.tsx": {
       "errors": 0,
@@ -836,30 +752,30 @@
     },
     "packages/app/src/shell/beacon/explorer-panel.tsx": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 0
     },
     "packages/app/src/shell/beacon/explorer-tree.tsx": {
-      "errors": 8,
-      "warnings": 7
-    },
-    "packages/app/src/shell/beacon/first-run-tip.tsx": {
-      "errors": 3,
+      "errors": 2,
       "warnings": 1
     },
-    "packages/app/src/shell/beacon/fleet-view.tsx": {
+    "packages/app/src/shell/beacon/first-run-tip.tsx": {
       "errors": 2,
-      "warnings": 2
+      "warnings": 0
+    },
+    "packages/app/src/shell/beacon/fleet-view.tsx": {
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/src/shell/beacon/layout.tsx": {
-      "errors": 7,
-      "warnings": 10
+      "errors": 6,
+      "warnings": 2
     },
     "packages/app/src/shell/beacon/rail-views.ts": {
       "errors": 1,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/shell/beacon/registry-view.ts": {
-      "errors": 3,
+      "errors": 1,
       "warnings": 0
     },
     "packages/app/src/shell/beacon/search-modules.ts": {
@@ -867,60 +783,60 @@
       "warnings": 0
     },
     "packages/app/src/shell/beacon/search-results-tree.tsx": {
-      "errors": 2,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/src/shell/beacon/search-view.tsx": {
-      "errors": 5,
-      "warnings": 6
+      "errors": 3,
+      "warnings": 0
     },
     "packages/app/src/shell/beacon/session-buckets.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/app/src/shell/beacon/sessions-view.tsx": {
-      "errors": 3,
-      "warnings": 4
+      "errors": 2,
+      "warnings": 0
     },
     "packages/app/src/shell/beacon/status-bar.tsx": {
-      "errors": 2,
-      "warnings": 6
+      "errors": 1,
+      "warnings": 0
     },
     "packages/app/src/shell/beacon/tab-bar.tsx": {
-      "errors": 3,
-      "warnings": 7
+      "errors": 0,
+      "warnings": 3
     },
     "packages/app/src/shell/beacon/tab-dispatch.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/app/src/shell/beacon/title-bar.tsx": {
-      "errors": 1,
-      "warnings": 6
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/src/shell/beacon/workload-picker.tsx": {
-      "errors": 2,
-      "warnings": 1
+      "errors": 1,
+      "warnings": 0
     },
     "packages/app/src/shell/command-palette.tsx": {
-      "errors": 11,
-      "warnings": 7
+      "errors": 5,
+      "warnings": 4
     },
     "packages/app/src/shell/commands.ts": {
-      "errors": 22,
-      "warnings": 5
+      "errors": 3,
+      "warnings": 2
     },
     "packages/app/src/shell/match-snippet.tsx": {
       "errors": 1,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/shell/node-selector.tsx": {
-      "errors": 9,
-      "warnings": 3
+      "errors": 8,
+      "warnings": 1
     },
     "packages/app/src/shell/theme-provider.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/stores/explorer-collapse-store.ts": {
       "errors": 0,
@@ -931,16 +847,16 @@
       "warnings": 2
     },
     "packages/app/src/stores/status-bar-store.ts": {
-      "errors": 3,
+      "errors": 1,
       "warnings": 2
     },
     "packages/app/src/stores/tab-store.ts": {
-      "errors": 5,
-      "warnings": 10
+      "errors": 4,
+      "warnings": 9
     },
     "packages/app/src/stores/theme-store.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/app/src/stores/ui-store.ts": {
       "errors": 0,
@@ -960,19 +876,19 @@
     },
     "packages/app/src/ui/atmospheric-panel.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/ui/badge.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/ui/button.tsx": {
       "errors": 2,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/app/src/ui/card.tsx": {
       "errors": 2,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/ui/classes.ts": {
       "errors": 0,
@@ -980,103 +896,103 @@
     },
     "packages/app/src/ui/command-bar.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/ui/editorial-hero.tsx": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 1
     },
     "packages/app/src/ui/index.ts": {
       "errors": 0,
-      "warnings": 14
+      "warnings": 0
     },
     "packages/app/src/ui/input.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/ui/kbd.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/ui/lockup.tsx": {
       "errors": 1,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/ui/stat-card.tsx": {
       "errors": 1,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/ui/status-dot.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/ui/tabs.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/ui/theme-orbs.tsx": {
-      "errors": 1,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/src/ui/tree-item.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/test/dispatcher.test.ts": {
-      "errors": 39,
-      "warnings": 8
+      "errors": 36,
+      "warnings": 2
     },
     "packages/app/test/electron/trpc/cross-node-fan-out.test.ts": {
-      "errors": 5,
-      "warnings": 3
+      "errors": 4,
+      "warnings": 0
     },
     "packages/app/test/electron/trpc/dispatcher-cross-node.test.ts": {
-      "errors": 33,
-      "warnings": 16
+      "errors": 31,
+      "warnings": 9
     },
     "packages/app/test/hooks/useActiveWorkload.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/app/test/lib/global-search/orchestrator.test.ts": {
-      "errors": 3,
-      "warnings": 5
+      "errors": 2,
+      "warnings": 2
     },
     "packages/app/test/lib/global-search/query.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/test/lib/global-search/ranking.test.ts": {
       "errors": 2,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/app/test/lib/global-search/surfaces/modules.test.ts": {
       "errors": 2,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/test/lib/global-search/surfaces/sessions-rag.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/test/lib/global-search/surfaces/tab-history.test.ts": {
       "errors": 1,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/test/lib/global-search/surfaces/workloads.test.ts": {
       "errors": 2,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/test/lib/global-search/use-global-search.test.ts": {
       "errors": 6,
       "warnings": 6
     },
     "packages/app/test/modules/ops-detail/iteration-card-helpers.test.ts": {
-      "errors": 4,
-      "warnings": 4
+      "errors": 2,
+      "warnings": 1
     },
     "packages/app/test/modules/settings/project-scan-roots.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/test/setup.ts": {
       "errors": 3,
@@ -1084,127 +1000,127 @@
     },
     "packages/app/test/shell/beacon/dynamic-tab-router.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/test/shell/beacon/search-view.test.ts": {
       "errors": 4,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/test/shell/beacon/sessions-view.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/test/shell/registry-view.test.ts": {
-      "errors": 4,
-      "warnings": 4
+      "errors": 2,
+      "warnings": 0
     },
     "packages/app/test/stores/explorer-collapse-store.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/test/stores/tab-store.test.ts": {
       "errors": 2,
-      "warnings": 6
+      "warnings": 0
     },
     "packages/app/test/themes/migrate.test.ts": {
-      "errors": 1,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/test/ui-audit-modules-drift.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 1
     },
     "packages/app/test/ui/button.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/test/ui/classes.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/app/test/ui/stat-card.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/app/test/use-ops-session.test.ts": {
-      "errors": 6,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 0
     },
     "packages/cli/src/bin.ts": {
-      "errors": 41,
-      "warnings": 17
+      "errors": 2,
+      "warnings": 0
     },
     "packages/cli/src/commands/_workload-resolve.ts": {
       "errors": 4,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/admit-measure.ts": {
-      "errors": 29,
-      "warnings": 9
-    },
-    "packages/cli/src/commands/admit.ts": {
-      "errors": 21,
-      "warnings": 6
-    },
-    "packages/cli/src/commands/agent-install/index.ts": {
-      "errors": 14,
-      "warnings": 11
-    },
-    "packages/cli/src/commands/agent-install/templates.ts": {
-      "errors": 1,
-      "warnings": 4
-    },
-    "packages/cli/src/commands/agent-rollback.ts": {
-      "errors": 5,
-      "warnings": 3
-    },
-    "packages/cli/src/commands/agent-rpc-doctor.ts": {
-      "errors": 2,
-      "warnings": 3
-    },
-    "packages/cli/src/commands/agent-update.ts": {
-      "errors": 8,
-      "warnings": 8
-    },
-    "packages/cli/src/commands/agent.ts": {
-      "errors": 24,
-      "warnings": 9
-    },
-    "packages/cli/src/commands/artifacts.ts": {
-      "errors": 18,
-      "warnings": 9
-    },
-    "packages/cli/src/commands/bench.ts": {
-      "errors": 14,
-      "warnings": 6
-    },
-    "packages/cli/src/commands/candidate.ts": {
-      "errors": 5,
-      "warnings": 4
-    },
-    "packages/cli/src/commands/catalog.ts": {
       "errors": 26,
       "warnings": 4
     },
-    "packages/cli/src/commands/cli-doctor.ts": {
-      "errors": 3,
+    "packages/cli/src/commands/admit.ts": {
+      "errors": 19,
       "warnings": 3
     },
+    "packages/cli/src/commands/agent-install/index.ts": {
+      "errors": 11,
+      "warnings": 4
+    },
+    "packages/cli/src/commands/agent-install/templates.ts": {
+      "errors": 1,
+      "warnings": 0
+    },
+    "packages/cli/src/commands/agent-rollback.ts": {
+      "errors": 5,
+      "warnings": 2
+    },
+    "packages/cli/src/commands/agent-rpc-doctor.ts": {
+      "errors": 1,
+      "warnings": 1
+    },
+    "packages/cli/src/commands/agent-update.ts": {
+      "errors": 7,
+      "warnings": 6
+    },
+    "packages/cli/src/commands/agent.ts": {
+      "errors": 14,
+      "warnings": 6
+    },
+    "packages/cli/src/commands/artifacts.ts": {
+      "errors": 15,
+      "warnings": 6
+    },
+    "packages/cli/src/commands/bench.ts": {
+      "errors": 8,
+      "warnings": 4
+    },
+    "packages/cli/src/commands/candidate.ts": {
+      "errors": 4,
+      "warnings": 2
+    },
+    "packages/cli/src/commands/catalog.ts": {
+      "errors": 10,
+      "warnings": 3
+    },
+    "packages/cli/src/commands/cli-doctor.ts": {
+      "errors": 2,
+      "warnings": 1
+    },
     "packages/cli/src/commands/composite.ts": {
-      "errors": 28,
-      "warnings": 9
+      "errors": 12,
+      "warnings": 5
     },
     "packages/cli/src/commands/controller.ts": {
       "errors": 6,
-      "warnings": 4
+      "warnings": 3
     },
     "packages/cli/src/commands/cost-guardian.ts": {
-      "errors": 4,
+      "errors": 3,
       "warnings": 1
     },
     "packages/cli/src/commands/ctx.ts": {
-      "errors": 4,
-      "warnings": 4
+      "errors": 3,
+      "warnings": 2
     },
     "packages/cli/src/commands/deploy.ts": {
       "errors": 4,
@@ -1216,179 +1132,179 @@
     },
     "packages/cli/src/commands/discover.ts": {
       "errors": 4,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/cli/src/commands/doctor.ts": {
-      "errors": 14,
+      "errors": 13,
       "warnings": 8
     },
     "packages/cli/src/commands/embersynth.ts": {
-      "errors": 18,
-      "warnings": 2
+      "errors": 13,
+      "warnings": 1
     },
     "packages/cli/src/commands/enable.ts": {
       "errors": 1,
       "warnings": 0
     },
     "packages/cli/src/commands/env.ts": {
-      "errors": 1,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/cli/src/commands/eval.ts": {
-      "errors": 18,
-      "warnings": 13
+      "errors": 9,
+      "warnings": 6
     },
     "packages/cli/src/commands/expose.ts": {
       "errors": 3,
-      "warnings": 6
+      "warnings": 2
     },
     "packages/cli/src/commands/fleet.ts": {
-      "errors": 20,
-      "warnings": 11
-    },
-    "packages/cli/src/commands/heal.ts": {
-      "errors": 9,
-      "warnings": 4
-    },
-    "packages/cli/src/commands/infra.ts": {
-      "errors": 12,
-      "warnings": 10
-    },
-    "packages/cli/src/commands/init.ts": {
-      "errors": 9,
-      "warnings": 9
-    },
-    "packages/cli/src/commands/keepAlive.ts": {
-      "errors": 13,
-      "warnings": 7
-    },
-    "packages/cli/src/commands/lmstudio.ts": {
       "errors": 14,
-      "warnings": 3
-    },
-    "packages/cli/src/commands/node.ts": {
-      "errors": 24,
-      "warnings": 11
-    },
-    "packages/cli/src/commands/noderun-helpers.ts": {
-      "errors": 2,
-      "warnings": 1
-    },
-    "packages/cli/src/commands/plan.ts": {
-      "errors": 10,
-      "warnings": 5
-    },
-    "packages/cli/src/commands/project.ts": {
-      "errors": 12,
       "warnings": 8
     },
-    "packages/cli/src/commands/pull.ts": {
+    "packages/cli/src/commands/heal.ts": {
+      "errors": 8,
+      "warnings": 2
+    },
+    "packages/cli/src/commands/infra.ts": {
+      "errors": 2,
+      "warnings": 7
+    },
+    "packages/cli/src/commands/init.ts": {
+      "errors": 7,
+      "warnings": 7
+    },
+    "packages/cli/src/commands/keepAlive.ts": {
       "errors": 6,
-      "warnings": 4
+      "warnings": 5
+    },
+    "packages/cli/src/commands/lmstudio.ts": {
+      "errors": 7,
+      "warnings": 2
+    },
+    "packages/cli/src/commands/node.ts": {
+      "errors": 20,
+      "warnings": 8
+    },
+    "packages/cli/src/commands/noderun-helpers.ts": {
+      "errors": 1,
+      "warnings": 0
+    },
+    "packages/cli/src/commands/plan.ts": {
+      "errors": 9,
+      "warnings": 1
+    },
+    "packages/cli/src/commands/project.ts": {
+      "errors": 3,
+      "warnings": 5
+    },
+    "packages/cli/src/commands/pull.ts": {
+      "errors": 3,
+      "warnings": 2
     },
     "packages/cli/src/commands/rag-bench.ts": {
       "errors": 10,
-      "warnings": 6
+      "warnings": 4
     },
     "packages/cli/src/commands/rag-pipeline.ts": {
-      "errors": 27,
-      "warnings": 17
+      "errors": 17,
+      "warnings": 12
     },
     "packages/cli/src/commands/rag.ts": {
-      "errors": 18,
-      "warnings": 4
+      "errors": 12,
+      "warnings": 2
     },
     "packages/cli/src/commands/recommendations.ts": {
       "errors": 1,
-      "warnings": 3
+      "warnings": 1
     },
     "packages/cli/src/commands/runbook.ts": {
       "errors": 2,
       "warnings": 1
     },
     "packages/cli/src/commands/server.ts": {
-      "errors": 22,
-      "warnings": 8
+      "errors": 15,
+      "warnings": 5
     },
     "packages/cli/src/commands/setEnabled.ts": {
-      "errors": 1,
-      "warnings": 5
+      "errors": 0,
+      "warnings": 1
     },
     "packages/cli/src/commands/sirius.ts": {
-      "errors": 16,
-      "warnings": 5
+      "errors": 11,
+      "warnings": 3
     },
     "packages/cli/src/commands/supervisor.ts": {
-      "errors": 57,
-      "warnings": 22
+      "errors": 53,
+      "warnings": 12
     },
     "packages/cli/src/commands/tunnel.ts": {
-      "errors": 16,
-      "warnings": 2
+      "errors": 9,
+      "warnings": 0
     },
     "packages/cli/src/commands/uninstall.ts": {
-      "errors": 1,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 1
     },
     "packages/cli/src/commands/workload.ts": {
-      "errors": 17,
-      "warnings": 20
+      "errors": 9,
+      "warnings": 11
     },
     "packages/cli/src/dispatcher.ts": {
-      "errors": 5,
-      "warnings": 6
+      "errors": 4,
+      "warnings": 3
     },
     "packages/cli/src/tunnel-dispatch.ts": {
-      "errors": 10,
-      "warnings": 5
+      "errors": 8,
+      "warnings": 4
     },
     "packages/cli/test/admit-measure.test.ts": {
       "errors": 1,
-      "warnings": 10
+      "warnings": 4
     },
     "packages/cli/test/agent-install-launchd.test.ts": {
-      "errors": 20,
-      "warnings": 34
+      "errors": 11,
+      "warnings": 31
     },
     "packages/cli/test/agent-install-templates.test.ts": {
       "errors": 1,
-      "warnings": 6
+      "warnings": 4
     },
     "packages/cli/test/agent-noauth-validation.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/cli/test/agent-rotate-token.test.ts": {
-      "errors": 4,
-      "warnings": 6
+      "errors": 2,
+      "warnings": 8
     },
     "packages/cli/test/agent-rpc-doctor.test.ts": {
       "errors": 4,
-      "warnings": 17
+      "warnings": 14
     },
     "packages/cli/test/agent-tunnel-central-flags.test.ts": {
-      "errors": 1,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/cli/test/artifacts-sign.test.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 1
     },
     "packages/cli/test/bench.test.ts": {
-      "errors": 1,
-      "warnings": 5
+      "errors": 0,
+      "warnings": 4
     },
     "packages/cli/test/benchRunner.test.ts": {
-      "errors": 5,
-      "warnings": 1
+      "errors": 4,
+      "warnings": 0
     },
     "packages/cli/test/candidate.test.ts": {
-      "errors": 3,
-      "warnings": 1
+      "errors": 2,
+      "warnings": 0
     },
     "packages/cli/test/catalog.test.ts": {
-      "errors": 3,
-      "warnings": 1
+      "errors": 2,
+      "warnings": 0
     },
     "packages/cli/test/cli-doctor.test.ts": {
       "errors": 14,
@@ -1396,67 +1312,67 @@
     },
     "packages/cli/test/composite.test.ts": {
       "errors": 4,
-      "warnings": 5
+      "warnings": 3
     },
     "packages/cli/test/controller-e2e.test.ts": {
-      "errors": 13,
-      "warnings": 14
+      "errors": 12,
+      "warnings": 11
     },
     "packages/cli/test/describe-node.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/test/dispatcher-tunnel.test.ts": {
-      "errors": 10,
-      "warnings": 5
+      "errors": 9,
+      "warnings": 0
     },
     "packages/cli/test/dispatcher.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/cli/test/doctor.test.ts": {
       "errors": 11,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/cli/test/enable-disable.test.ts": {
       "errors": 2,
-      "warnings": 9
+      "warnings": 5
     },
     "packages/cli/test/env.test.ts": {
-      "errors": 4,
-      "warnings": 1
-    },
-    "packages/cli/test/expose-e2e.test.ts": {
-      "errors": 17,
-      "warnings": 15
-    },
-    "packages/cli/test/fleet.test.ts": {
-      "errors": 11,
-      "warnings": 2
-    },
-    "packages/cli/test/helpers.ts": {
       "errors": 3,
       "warnings": 0
     },
+    "packages/cli/test/expose-e2e.test.ts": {
+      "errors": 17,
+      "warnings": 12
+    },
+    "packages/cli/test/fleet.test.ts": {
+      "errors": 11,
+      "warnings": 0
+    },
+    "packages/cli/test/helpers.ts": {
+      "errors": 2,
+      "warnings": 1
+    },
     "packages/cli/test/infraRollout.test.ts": {
-      "errors": 15,
-      "warnings": 22
+      "errors": 11,
+      "warnings": 15
     },
     "packages/cli/test/init-roundtrip.test.ts": {
-      "errors": 25,
-      "warnings": 16
+      "errors": 22,
+      "warnings": 15
     },
     "packages/cli/test/init.test.ts": {
       "errors": 3,
       "warnings": 11
     },
     "packages/cli/test/multinode-e2e.test.ts": {
-      "errors": 14,
-      "warnings": 14
+      "errors": 13,
+      "warnings": 9
     },
     "packages/cli/test/node-add-cloud.test.ts": {
       "errors": 8,
-      "warnings": 9
+      "warnings": 8
     },
     "packages/cli/test/node-add-rag.test.ts": {
       "errors": 5,
@@ -1464,91 +1380,91 @@
     },
     "packages/cli/test/node-add-reachability.test.ts": {
       "errors": 6,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/cli/test/plan.test.ts": {
-      "errors": 7,
-      "warnings": 2
-    },
-    "packages/cli/test/project.test.ts": {
-      "errors": 28,
-      "warnings": 5
-    },
-    "packages/cli/test/pull.test.ts": {
-      "errors": 3,
+      "errors": 6,
       "warnings": 1
     },
+    "packages/cli/test/project.test.ts": {
+      "errors": 23,
+      "warnings": 1
+    },
+    "packages/cli/test/pull.test.ts": {
+      "errors": 2,
+      "warnings": 0
+    },
     "packages/cli/test/rag-ask.test.ts": {
-      "errors": 34,
-      "warnings": 9
+      "errors": 31,
+      "warnings": 4
     },
     "packages/cli/test/rag-bench.test.ts": {
       "errors": 10,
-      "warnings": 7
+      "warnings": 3
     },
     "packages/cli/test/rag-pipeline.test.ts": {
       "errors": 26,
-      "warnings": 12
+      "warnings": 7
     },
     "packages/cli/test/remote.test.ts": {
-      "errors": 3,
-      "warnings": 6
+      "errors": 0,
+      "warnings": 4
     },
     "packages/cli/test/sirius.test.ts": {
-      "errors": 7,
-      "warnings": 2
+      "errors": 2,
+      "warnings": 1
     },
     "packages/cli/test/supervisor-status.test.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 2
     },
     "packages/cli/test/supervisor-use-proxy.test.ts": {
       "errors": 8,
-      "warnings": 3
-    },
-    "packages/cli/test/tunnel-dispatch-pinning.test.ts": {
-      "errors": 8,
       "warnings": 2
     },
+    "packages/cli/test/tunnel-dispatch-pinning.test.ts": {
+      "errors": 6,
+      "warnings": 0
+    },
     "packages/cli/test/tunnel-dispatch-subscribe.test.ts": {
-      "errors": 21,
-      "warnings": 6
+      "errors": 20,
+      "warnings": 3
     },
     "packages/cli/test/uninstall.test.ts": {
-      "errors": 5,
-      "warnings": 14
+      "errors": 4,
+      "warnings": 13
     },
     "packages/cli/test/workload-apply.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/cli/test/workload-delete.test.ts": {
       "errors": 6,
-      "warnings": 10
+      "warnings": 8
     },
     "packages/cli/test/workload-e2e.test.ts": {
       "errors": 7,
-      "warnings": 16
+      "warnings": 13
     },
     "packages/cli/test/workload-resolve.test.ts": {
-      "errors": 10,
-      "warnings": 11
+      "errors": 9,
+      "warnings": 9
     },
     "packages/core/src/anthropic/index.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/src/anthropic/translateRequest.ts": {
-      "errors": 7,
+      "errors": 3,
       "warnings": 1
     },
     "packages/core/src/anthropic/translateResponse.ts": {
       "errors": 2,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/src/anthropic/translateStream.ts": {
-      "errors": 11,
-      "warnings": 16
+      "errors": 10,
+      "warnings": 14
     },
     "packages/core/src/anthropic/types.ts": {
       "errors": 0,
@@ -1556,35 +1472,35 @@
     },
     "packages/core/src/autotune.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 2
     },
     "packages/core/src/bench/compare.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 2
     },
     "packages/core/src/bench/index.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/src/bench/launchArgs.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/core/src/bench/mode.ts": {
-      "errors": 1,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 1
     },
     "packages/core/src/bench/runner.ts": {
-      "errors": 15,
-      "warnings": 28
+      "errors": 8,
+      "warnings": 23
     },
     "packages/core/src/bench/store.ts": {
-      "errors": 0,
-      "warnings": 8
+      "errors": 3,
+      "warnings": 3
     },
     "packages/core/src/build.ts": {
       "errors": 1,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/core/src/cache-identity/canonical.ts": {
       "errors": 0,
@@ -1592,43 +1508,43 @@
     },
     "packages/core/src/candidateTest.ts": {
       "errors": 2,
-      "warnings": 10
-    },
-    "packages/core/src/catalog.ts": {
-      "errors": 2,
-      "warnings": 5
-    },
-    "packages/core/src/catalogWriter.ts": {
-      "errors": 2,
       "warnings": 3
     },
+    "packages/core/src/catalog.ts": {
+      "errors": 4,
+      "warnings": 2
+    },
+    "packages/core/src/catalogWriter.ts": {
+      "errors": 1,
+      "warnings": 1
+    },
     "packages/core/src/ctx.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/src/discovery.ts": {
-      "errors": 12,
-      "warnings": 4
+      "errors": 5,
+      "warnings": 2
     },
     "packages/core/src/engines/index.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/core/src/engines/lifecycle.ts": {
-      "errors": 5,
+      "errors": 4,
       "warnings": 0
     },
     "packages/core/src/engines/llamacpp.ts": {
-      "errors": 3,
-      "warnings": 2
+      "errors": 2,
+      "warnings": 0
     },
     "packages/core/src/engines/omlx.ts": {
-      "errors": 8,
-      "warnings": 12
+      "errors": 7,
+      "warnings": 8
     },
     "packages/core/src/engines/state.ts": {
-      "errors": 6,
-      "warnings": 10
+      "errors": 5,
+      "warnings": 5
     },
     "packages/core/src/engines/types.ts": {
       "errors": 0,
@@ -1636,7 +1552,7 @@
     },
     "packages/core/src/env.ts": {
       "errors": 1,
-      "warnings": 9
+      "warnings": 4
     },
     "packages/core/src/fsAtomic.ts": {
       "errors": 1,
@@ -1644,15 +1560,15 @@
     },
     "packages/core/src/hf.ts": {
       "errors": 11,
-      "warnings": 10
+      "warnings": 6
     },
     "packages/core/src/index.ts": {
       "errors": 0,
-      "warnings": 14
+      "warnings": 0
     },
     "packages/core/src/keepAlive.ts": {
       "errors": 4,
-      "warnings": 30
+      "warnings": 27
     },
     "packages/core/src/kvstore/evictionScore.ts": {
       "errors": 0,
@@ -1660,83 +1576,83 @@
     },
     "packages/core/src/kvstore/index.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 0
     },
     "packages/core/src/kvstore/orphanSweep.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 3
     },
     "packages/core/src/kvstore/policy.ts": {
-      "errors": 1,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 1
     },
     "packages/core/src/kvstore/registry.ts": {
-      "errors": 2,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 1
     },
     "packages/core/src/kvstore/slotAllocator.ts": {
       "errors": 1,
       "warnings": 2
     },
     "packages/core/src/kvstore/slotPath.ts": {
-      "errors": 4,
+      "errors": 3,
       "warnings": 1
     },
     "packages/core/src/kvstore/storage.ts": {
-      "errors": 6,
+      "errors": 3,
       "warnings": 3
     },
     "packages/core/src/kvstore/trailer.ts": {
       "errors": 1,
-      "warnings": 7
+      "warnings": 5
     },
     "packages/core/src/kvstore/upstreamSlots.ts": {
-      "errors": 6,
+      "errors": 4,
       "warnings": 0
     },
     "packages/core/src/kvstore/workloadEpoch.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/core/src/lmstudio.ts": {
-      "errors": 3,
-      "warnings": 16
+      "errors": 0,
+      "warnings": 14
     },
     "packages/core/src/mmproj.ts": {
       "errors": 0,
       "warnings": 1
     },
     "packages/core/src/nodeFacts.ts": {
-      "errors": 6,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 0
     },
     "packages/core/src/openaiProxy.ts": {
-      "errors": 30,
-      "warnings": 36
+      "errors": 23,
+      "warnings": 19
     },
     "packages/core/src/presets.ts": {
-      "errors": 4,
-      "warnings": 8
+      "errors": 5,
+      "warnings": 4
     },
     "packages/core/src/probe.ts": {
-      "errors": 2,
+      "errors": 1,
       "warnings": 0
     },
     "packages/core/src/profile.ts": {
-      "errors": 1,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 1
     },
     "packages/core/src/pull.ts": {
       "errors": 5,
-      "warnings": 10
+      "warnings": 8
     },
     "packages/core/src/quant.ts": {
-      "errors": 12,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/src/recommendations.ts": {
-      "errors": 4,
-      "warnings": 4
+      "errors": 2,
+      "warnings": 0
     },
     "packages/core/src/responsecache/deterministic.ts": {
       "errors": 0,
@@ -1744,10 +1660,10 @@
     },
     "packages/core/src/responsecache/index.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/core/src/responsecache/policy.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/src/responsecache/registry.ts": {
@@ -1759,28 +1675,28 @@
       "warnings": 0
     },
     "packages/core/src/responsecache/storage.ts": {
-      "errors": 4,
+      "errors": 3,
       "warnings": 1
     },
     "packages/core/src/rpcServer.ts": {
-      "errors": 11,
-      "warnings": 19
+      "errors": 8,
+      "warnings": 16
     },
     "packages/core/src/schemas.ts": {
       "errors": 5,
       "warnings": 0
     },
     "packages/core/src/server.ts": {
-      "errors": 18,
-      "warnings": 24
+      "errors": 13,
+      "warnings": 21
     },
     "packages/core/src/serverLogs.ts": {
       "errors": 1,
-      "warnings": 10
+      "warnings": 7
     },
     "packages/core/src/target.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/core/src/types.ts": {
       "errors": 0,
@@ -1788,291 +1704,291 @@
     },
     "packages/core/src/uninstall.ts": {
       "errors": 1,
-      "warnings": 12
+      "warnings": 10
     },
     "packages/core/src/workloadRuntime.ts": {
-      "errors": 18,
-      "warnings": 27
+      "errors": 16,
+      "warnings": 22
     },
     "packages/core/test/advertisedEndpoint.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/core/test/anthropic.translateRequest.test.ts": {
       "errors": 2,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/core/test/anthropic.translateResponse.test.ts": {
       "errors": 4,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/test/anthropic.translateStream.test.ts": {
       "errors": 8,
-      "warnings": 6
+      "warnings": 3
     },
     "packages/core/test/autotune.test.ts": {
       "errors": 4,
-      "warnings": 8
+      "warnings": 5
     },
     "packages/core/test/bench.test.ts": {
-      "errors": 1,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/core/test/benchRunner.test.ts": {
       "errors": 2,
-      "warnings": 14
+      "warnings": 12
     },
     "packages/core/test/cache-identity/canonical.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/core/test/catalog.test.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 2
     },
     "packages/core/test/catalogWriter.test.ts": {
       "errors": 1,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/core/test/clusterRoutes.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/core/test/ctx.test.ts": {
-      "errors": 1,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/core/test/discovery.test.ts": {
-      "errors": 1,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/core/test/engines/lifecycle.test.ts": {
       "errors": 4,
-      "warnings": 5
+      "warnings": 4
     },
     "packages/core/test/engines/llamacpp.test.ts": {
-      "errors": 14,
-      "warnings": 2
+      "errors": 3,
+      "warnings": 0
     },
     "packages/core/test/engines/omlx-dflash.test.ts": {
-      "errors": 7,
-      "warnings": 7
+      "errors": 4,
+      "warnings": 5
     },
     "packages/core/test/engines/omlx.test.ts": {
-      "errors": 41,
-      "warnings": 16
+      "errors": 18,
+      "warnings": 12
     },
     "packages/core/test/engines/state.test.ts": {
       "errors": 1,
-      "warnings": 4
+      "warnings": 1
     },
     "packages/core/test/engines/types.test.ts": {
       "errors": 0,
-      "warnings": 2
-    },
-    "packages/core/test/env.test.ts": {
-      "errors": 16,
-      "warnings": 18
-    },
-    "packages/core/test/fsAtomic.test.ts": {
-      "errors": 8,
-      "warnings": 7
-    },
-    "packages/core/test/helpers.ts": {
-      "errors": 1,
       "warnings": 0
     },
-    "packages/core/test/hf.test.ts": {
+    "packages/core/test/env.test.ts": {
       "errors": 1,
-      "warnings": 3
+      "warnings": 17
+    },
+    "packages/core/test/fsAtomic.test.ts": {
+      "errors": 7,
+      "warnings": 6
+    },
+    "packages/core/test/helpers.ts": {
+      "errors": 0,
+      "warnings": 1
+    },
+    "packages/core/test/hf.test.ts": {
+      "errors": 0,
+      "warnings": 0
     },
     "packages/core/test/hfBin.test.ts": {
       "errors": 0,
-      "warnings": 7
+      "warnings": 6
     },
     "packages/core/test/keepAlive.test.ts": {
       "errors": 0,
-      "warnings": 10
+      "warnings": 8
     },
     "packages/core/test/kvstore.eviction.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/core/test/kvstore.orphanSweep.test.ts": {
-      "errors": 1,
-      "warnings": 15
+      "errors": 0,
+      "warnings": 13
     },
     "packages/core/test/kvstore.raceTransitions.test.ts": {
-      "errors": 1,
-      "warnings": 7
+      "errors": 0,
+      "warnings": 6
     },
     "packages/core/test/kvstore.registry.test.ts": {
-      "errors": 4,
-      "warnings": 23
+      "errors": 3,
+      "warnings": 22
     },
     "packages/core/test/kvstore.slotAllocator.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/test/kvstore.slotPath.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/core/test/kvstore.storage.test.ts": {
-      "errors": 7,
-      "warnings": 16
+      "errors": 3,
+      "warnings": 14
     },
     "packages/core/test/kvstore.trailer.test.ts": {
-      "errors": 4,
-      "warnings": 2
+      "errors": 3,
+      "warnings": 1
     },
     "packages/core/test/kvstore.upstreamSlots.test.ts": {
-      "errors": 27,
-      "warnings": 3
+      "errors": 14,
+      "warnings": 1
     },
     "packages/core/test/kvstore.workloadEpoch.test.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 4
     },
     "packages/core/test/lmstudio.test.ts": {
-      "errors": 2,
-      "warnings": 12
+      "errors": 0,
+      "warnings": 11
     },
     "packages/core/test/nodeFacts.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/core/test/openaiProxy.kvcache.test.ts": {
-      "errors": 148,
-      "warnings": 71
+      "errors": 143,
+      "warnings": 67
     },
     "packages/core/test/openaiProxy.test.ts": {
-      "errors": 73,
-      "warnings": 44
+      "errors": 66,
+      "warnings": 41
     },
     "packages/core/test/presets.test.ts": {
-      "errors": 3,
-      "warnings": 5
+      "errors": 2,
+      "warnings": 4
     },
     "packages/core/test/probe.test.ts": {
-      "errors": 2,
-      "warnings": 1
+      "errors": 1,
+      "warnings": 0
     },
     "packages/core/test/profile.test.ts": {
-      "errors": 2,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/core/test/pull.test.ts": {
       "errors": 9,
-      "warnings": 4
+      "warnings": 2
     },
     "packages/core/test/quant.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/test/recommendations.test.ts": {
-      "errors": 8,
-      "warnings": 2
+      "errors": 2,
+      "warnings": 1
     },
     "packages/core/test/responsecache/policy.test.ts": {
-      "errors": 1,
-      "warnings": 6
+      "errors": 0,
+      "warnings": 2
     },
     "packages/core/test/responsecache/proxy-integration.test.ts": {
-      "errors": 79,
-      "warnings": 15
+      "errors": 77,
+      "warnings": 10
     },
     "packages/core/test/responsecache/sha.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/test/responsecache/storage.test.ts": {
-      "errors": 3,
-      "warnings": 8
-    },
-    "packages/core/test/rpcServer-doctor.test.ts": {
       "errors": 0,
       "warnings": 7
     },
+    "packages/core/test/rpcServer-doctor.test.ts": {
+      "errors": 0,
+      "warnings": 6
+    },
     "packages/core/test/rpcServer.test.ts": {
-      "errors": 5,
-      "warnings": 8
+      "errors": 4,
+      "warnings": 6
     },
     "packages/core/test/server-adoption.test.ts": {
-      "errors": 19,
-      "warnings": 4
+      "errors": 15,
+      "warnings": 1
     },
     "packages/core/test/server.test.ts": {
-      "errors": 60,
-      "warnings": 49
+      "errors": 54,
+      "warnings": 46
     },
     "packages/core/test/serverLogs.test.ts": {
-      "errors": 6,
-      "warnings": 12
+      "errors": 1,
+      "warnings": 10
     },
     "packages/core/test/uninstall.test.ts": {
       "errors": 9,
-      "warnings": 24
+      "warnings": 23
     },
     "packages/core/test/workloadRuntime.test.ts": {
-      "errors": 17,
-      "warnings": 39
+      "errors": 16,
+      "warnings": 31
     },
     "packages/eval/src/cli-stub.ts": {
       "errors": 6,
-      "warnings": 6
+      "warnings": 2
     },
     "packages/eval/src/client.ts": {
-      "errors": 3,
+      "errors": 1,
       "warnings": 0
     },
     "packages/eval/src/index.ts": {
       "errors": 0,
-      "warnings": 7
+      "warnings": 0
     },
     "packages/eval/src/matrix/cli.ts": {
-      "errors": 13,
-      "warnings": 11
+      "errors": 11,
+      "warnings": 2
     },
     "packages/eval/src/matrix/diff.ts": {
       "errors": 6,
       "warnings": 1
     },
     "packages/eval/src/matrix/lifecycle.ts": {
-      "errors": 19,
-      "warnings": 11
+      "errors": 14,
+      "warnings": 6
     },
     "packages/eval/src/matrix/repo-root.ts": {
       "errors": 0,
       "warnings": 2
     },
     "packages/eval/src/matrix/report.ts": {
-      "errors": 3,
-      "warnings": 8
+      "errors": 2,
+      "warnings": 6
     },
     "packages/eval/src/matrix/runner.ts": {
-      "errors": 8,
-      "warnings": 16
+      "errors": 6,
+      "warnings": 11
     },
     "packages/eval/src/matrix/scoring.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/eval/src/matrix/store.ts": {
       "errors": 2,
-      "warnings": 4
+      "warnings": 2
     },
     "packages/eval/src/matrix/types.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/eval/src/matrix/workloads/common.ts": {
-      "errors": 7,
-      "warnings": 4
+      "errors": 3,
+      "warnings": 3
     },
     "packages/eval/src/matrix/workloads/kv-warm-bench.ts": {
-      "errors": 12,
-      "warnings": 4
+      "errors": 11,
+      "warnings": 3
     },
     "packages/eval/src/matrix/workloads/memory-efficacy-4way-balanced.ts": {
       "errors": 0,
@@ -2087,7 +2003,7 @@
       "warnings": 0
     },
     "packages/eval/src/matrix/workloads/memory-recall.ts": {
-      "errors": 6,
+      "errors": 2,
       "warnings": 1
     },
     "packages/eval/src/matrix/workloads/project-brief-gen.ts": {
@@ -2095,36 +2011,36 @@
       "warnings": 0
     },
     "packages/eval/src/matrix/workloads/reasoning-mc.ts": {
-      "errors": 7,
-      "warnings": 5
+      "errors": 5,
+      "warnings": 3
     },
     "packages/eval/src/matrix/workloads/task-refiner-rubric.ts": {
-      "errors": 8,
-      "warnings": 2
+      "errors": 4,
+      "warnings": 1
     },
     "packages/eval/src/matrix/workloads/tool-call-grammar.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/eval/src/report/render-card.ts": {
       "errors": 9,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/eval/src/runners/context-retrieval.ts": {
       "errors": 1,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/eval/src/runners/json-output.ts": {
-      "errors": 15,
-      "warnings": 2
+      "errors": 11,
+      "warnings": 1
     },
     "packages/eval/src/runners/throughput.ts": {
-      "errors": 5,
-      "warnings": 1
+      "errors": 4,
+      "warnings": 0
     },
     "packages/eval/src/runners/tool-calling.ts": {
-      "errors": 4,
-      "warnings": 1
+      "errors": 1,
+      "warnings": 0
     },
     "packages/eval/src/score/compose.ts": {
       "errors": 0,
@@ -2132,139 +2048,139 @@
     },
     "packages/eval/src/server.ts": {
       "errors": 5,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/eval/src/store/sqlite.ts": {
       "errors": 1,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/eval/test/client.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/eval/test/json-output.test.ts": {
       "errors": 2,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/eval/test/kv-warm-bench.test.ts": {
       "errors": 5,
-      "warnings": 4
+      "warnings": 0
     },
     "packages/eval/test/matrix-diff.test.ts": {
       "errors": 2,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/eval/test/matrix-lifecycle.test.ts": {
       "errors": 29,
-      "warnings": 9
+      "warnings": 7
     },
     "packages/eval/test/matrix-memory-recall.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/eval/test/matrix-report.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/eval/test/matrix-scoring.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/eval/test/matrix-task-refiner.test.ts": {
       "errors": 3,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/eval/test/matrix-tool-call-grammar.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/eval/test/matrix.test.ts": {
       "errors": 13,
-      "warnings": 5
+      "warnings": 0
     },
     "packages/eval/test/matrix/reasoning-mc.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/eval/test/report.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/eval/test/runners-context.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/eval/test/runners-throughput.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/eval/test/score.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/eval/test/server.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/eval/test/store.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/eval/test/tool-calling.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/fleet-supervisor/src/aggregator-db.ts": {
-      "errors": 2,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 1
     },
     "packages/fleet-supervisor/src/aggregator.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/fleet-supervisor/src/audit-reader.ts": {
       "errors": 1,
-      "warnings": 4
+      "warnings": 3
     },
     "packages/fleet-supervisor/src/executor.ts": {
       "errors": 4,
-      "warnings": 6
+      "warnings": 3
     },
     "packages/fleet-supervisor/src/index.ts": {
-      "errors": 5,
-      "warnings": 15
+      "errors": 0,
+      "warnings": 4
     },
     "packages/fleet-supervisor/src/infra-rollout.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/fleet-supervisor/src/journal.ts": {
-      "errors": 1,
-      "warnings": 9
+      "errors": 0,
+      "warnings": 7
     },
     "packages/fleet-supervisor/src/loop.ts": {
-      "errors": 8,
-      "warnings": 14
+      "errors": 7,
+      "warnings": 8
     },
     "packages/fleet-supervisor/src/measured-memory.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 4
     },
     "packages/fleet-supervisor/src/migration-controller.ts": {
-      "errors": 11,
+      "errors": 9,
       "warnings": 2
     },
     "packages/fleet-supervisor/src/node-probe.ts": {
-      "errors": 6,
+      "errors": 4,
       "warnings": 2
     },
     "packages/fleet-supervisor/src/peer-fetch.ts": {
       "errors": 1,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/fleet-supervisor/src/placement.ts": {
-      "errors": 4,
-      "warnings": 3
+      "errors": 1,
+      "warnings": 0
     },
     "packages/fleet-supervisor/src/policy.ts": {
       "errors": 7,
@@ -2272,115 +2188,115 @@
     },
     "packages/fleet-supervisor/src/snapshot-reader.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/fleet-supervisor/src/status-reader.ts": {
-      "errors": 5,
-      "warnings": 8
+      "errors": 3,
+      "warnings": 4
     },
     "packages/fleet-supervisor/src/types.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/fleet-supervisor/src/workload-probe.ts": {
-      "errors": 3,
+      "errors": 1,
       "warnings": 0
     },
     "packages/fleet-supervisor/test/admission-measured.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/fleet-supervisor/test/aggregator.test.ts": {
       "errors": 5,
-      "warnings": 14
+      "warnings": 12
     },
     "packages/fleet-supervisor/test/aggregatorDb.test.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 3
     },
     "packages/fleet-supervisor/test/arbitration-conflicts.test.ts": {
       "errors": 7,
-      "warnings": 7
+      "warnings": 5
     },
     "packages/fleet-supervisor/test/audit-reader.test.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 2
     },
     "packages/fleet-supervisor/test/executor.test.ts": {
       "errors": 12,
-      "warnings": 4
+      "warnings": 0
     },
     "packages/fleet-supervisor/test/fleetSnapshotRoute.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/fleet-supervisor/test/journal.test.ts": {
-      "errors": 6,
-      "warnings": 7
+      "errors": 5,
+      "warnings": 2
     },
     "packages/fleet-supervisor/test/journalSchema.test.ts": {
       "errors": 7,
-      "warnings": 6
+      "warnings": 4
     },
     "packages/fleet-supervisor/test/loop.test.ts": {
-      "errors": 60,
-      "warnings": 6
+      "errors": 54,
+      "warnings": 3
     },
     "packages/fleet-supervisor/test/measured-memory.test.ts": {
       "errors": 2,
-      "warnings": 10
+      "warnings": 5
     },
     "packages/fleet-supervisor/test/migration-controller.integration.test.ts": {
-      "errors": 9,
-      "warnings": 1
+      "errors": 8,
+      "warnings": 0
     },
     "packages/fleet-supervisor/test/migration-controller.test.ts": {
-      "errors": 22,
-      "warnings": 28
+      "errors": 19,
+      "warnings": 26
     },
     "packages/fleet-supervisor/test/migration-integration.test.ts": {
       "errors": 10,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/fleet-supervisor/test/migration-wiring.test.ts": {
       "errors": 4,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/fleet-supervisor/test/node-probe.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/fleet-supervisor/test/peer-fetch.test.ts": {
       "errors": 1,
-      "warnings": 8
+      "warnings": 5
     },
     "packages/fleet-supervisor/test/placement.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/fleet-supervisor/test/policy-degradation.test.ts": {
-      "errors": 1,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 0
     },
     "packages/fleet-supervisor/test/policy-pressure.test.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 0
     },
     "packages/fleet-supervisor/test/policy.test.ts": {
       "errors": 1,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/fleet-supervisor/test/status-reader.test.ts": {
-      "errors": 3,
-      "warnings": 6
+      "errors": 2,
+      "warnings": 3
     },
     "packages/fleet-supervisor/test/workload-probe-validation.test.ts": {
-      "errors": 14,
-      "warnings": 4
+      "errors": 1,
+      "warnings": 0
     },
     "packages/fleet-supervisor/test/workload-probe.test.ts": {
       "errors": 5,
-      "warnings": 7
+      "warnings": 5
     },
     "packages/mcp/bin/llamactl-mcp.ts": {
       "errors": 1,
@@ -2391,56 +2307,56 @@
       "warnings": 0
     },
     "packages/mcp/src/pipelines.ts": {
-      "errors": 5,
-      "warnings": 7
+      "errors": 2,
+      "warnings": 3
     },
     "packages/mcp/src/server.ts": {
       "errors": 25,
-      "warnings": 8
+      "warnings": 1
     },
     "packages/mcp/src/tools/fleet.ts": {
-      "errors": 28,
-      "warnings": 17
+      "errors": 20,
+      "warnings": 6
     },
     "packages/mcp/src/tools/models-leaderboard.ts": {
       "errors": 1,
-      "warnings": 6
+      "warnings": 1
     },
     "packages/mcp/test/fleet-tools.test.ts": {
-      "errors": 23,
-      "warnings": 15
+      "errors": 22,
+      "warnings": 9
     },
     "packages/mcp/test/fleet-write-tools.test.ts": {
-      "errors": 27,
-      "warnings": 12
+      "errors": 13,
+      "warnings": 7
     },
     "packages/mcp/test/server-composite.test.ts": {
       "errors": 2,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/mcp/test/server-rag.test.ts": {
       "errors": 2,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/mcp/test/smoke.test.ts": {
-      "errors": 7,
-      "warnings": 18
+      "errors": 3,
+      "warnings": 13
     },
     "packages/remote/src/bench/schedule.ts": {
       "errors": 1,
-      "warnings": 5
+      "warnings": 4
     },
     "packages/remote/src/bench/scheduleLoop.ts": {
-      "errors": 4,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 2
     },
     "packages/remote/src/cli/adapter.ts": {
-      "errors": 54,
-      "warnings": 10
+      "errors": 50,
+      "warnings": 6
     },
     "packages/remote/src/cli/index.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 0
     },
     "packages/remote/src/cli/journal.ts": {
       "errors": 1,
@@ -2451,24 +2367,24 @@
       "warnings": 0
     },
     "packages/remote/src/client/infra-client.ts": {
-      "errors": 3,
-      "warnings": 13
+      "errors": 1,
+      "warnings": 7
     },
     "packages/remote/src/client/links.ts": {
-      "errors": 6,
-      "warnings": 4
+      "errors": 3,
+      "warnings": 2
     },
     "packages/remote/src/client/node-client.ts": {
       "errors": 3,
-      "warnings": 5
+      "warnings": 2
     },
     "packages/remote/src/composite/apply.ts": {
-      "errors": 22,
-      "warnings": 32
+      "errors": 7,
+      "warnings": 8
     },
     "packages/remote/src/composite/dag.ts": {
-      "errors": 13,
-      "warnings": 4
+      "errors": 11,
+      "warnings": 1
     },
     "packages/remote/src/composite/event-bus.ts": {
       "errors": 5,
@@ -2476,15 +2392,15 @@
     },
     "packages/remote/src/composite/handlers/pipeline.ts": {
       "errors": 1,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/composite/schema.ts": {
-      "errors": 1,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 1
     },
     "packages/remote/src/composite/store.ts": {
       "errors": 2,
-      "warnings": 12
+      "warnings": 10
     },
     "packages/remote/src/composite/types.ts": {
       "errors": 0,
@@ -2492,35 +2408,35 @@
     },
     "packages/remote/src/config/agent-config.ts": {
       "errors": 2,
-      "warnings": 7
+      "warnings": 5
     },
     "packages/remote/src/config/bootstrap-tokens.ts": {
-      "errors": 2,
-      "warnings": 15
+      "errors": 0,
+      "warnings": 12
     },
     "packages/remote/src/config/embersynth.ts": {
-      "errors": 7,
-      "warnings": 12
+      "errors": 3,
+      "warnings": 7
     },
     "packages/remote/src/config/kubeconfig.ts": {
-      "errors": 4,
-      "warnings": 12
+      "errors": 3,
+      "warnings": 6
     },
     "packages/remote/src/config/peers.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/config/project-routing.ts": {
       "errors": 1,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/remote/src/config/projects.ts": {
       "errors": 1,
-      "warnings": 5
+      "warnings": 4
     },
     "packages/remote/src/config/provider-nodes.ts": {
-      "errors": 1,
-      "warnings": 6
+      "errors": 0,
+      "warnings": 3
     },
     "packages/remote/src/config/schema.ts": {
       "errors": 2,
@@ -2528,23 +2444,23 @@
     },
     "packages/remote/src/config/secret.ts": {
       "errors": 1,
-      "warnings": 5
+      "warnings": 4
     },
     "packages/remote/src/config/sirius-providers.ts": {
       "errors": 1,
-      "warnings": 6
+      "warnings": 4
     },
     "packages/remote/src/index.ts": {
       "errors": 0,
-      "warnings": 61
+      "warnings": 0
     },
     "packages/remote/src/infra/artifacts-fetch.ts": {
       "errors": 9,
-      "warnings": 23
+      "warnings": 19
     },
     "packages/remote/src/infra/install.ts": {
       "errors": 3,
-      "warnings": 6
+      "warnings": 5
     },
     "packages/remote/src/infra/layout.ts": {
       "errors": 3,
@@ -2552,111 +2468,111 @@
     },
     "packages/remote/src/infra/services.ts": {
       "errors": 2,
-      "warnings": 11
+      "warnings": 7
     },
     "packages/remote/src/infra/spec.ts": {
       "errors": 1,
-      "warnings": 6
+      "warnings": 5
     },
     "packages/remote/src/ops-chat/audit.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/src/ops-chat/dispatch.ts": {
-      "errors": 5,
+      "errors": 2,
       "warnings": 2
     },
     "packages/remote/src/ops-chat/loop-executor.ts": {
-      "errors": 12,
-      "warnings": 16
+      "errors": 8,
+      "warnings": 5
     },
     "packages/remote/src/ops-chat/loop-schema.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/ops-chat/paths.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/ops-chat/refusals.ts": {
-      "errors": 1,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/src/ops-chat/sessions/delete.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 1
     },
     "packages/remote/src/ops-chat/sessions/event-bus.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/ops-chat/sessions/journal-schema.ts": {
       "errors": 2,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/ops-chat/sessions/journal.ts": {
       "errors": 0,
-      "warnings": 8
+      "warnings": 4
     },
     "packages/remote/src/ops-chat/sessions/list.ts": {
-      "errors": 3,
-      "warnings": 6
+      "errors": 0,
+      "warnings": 2
     },
     "packages/remote/src/ops-chat/sessions/redaction.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/providers/factory.ts": {
-      "errors": 15,
-      "warnings": 10
+      "errors": 11,
+      "warnings": 4
     },
     "packages/remote/src/rag/bench.ts": {
-      "errors": 5,
-      "warnings": 1
+      "errors": 1,
+      "warnings": 0
     },
     "packages/remote/src/rag/chroma/adapter.ts": {
-      "errors": 23,
-      "warnings": 5
+      "errors": 9,
+      "warnings": 1
     },
     "packages/remote/src/rag/chroma/client.ts": {
-      "errors": 2,
-      "warnings": 2
+      "errors": 1,
+      "warnings": 0
     },
     "packages/remote/src/rag/chroma/http-client.ts": {
-      "errors": 14,
-      "warnings": 1
+      "errors": 3,
+      "warnings": 0
     },
     "packages/remote/src/rag/chroma/index.ts": {
       "errors": 2,
-      "warnings": 5
+      "warnings": 0
     },
     "packages/remote/src/rag/embedding.ts": {
-      "errors": 11,
-      "warnings": 1
+      "errors": 7,
+      "warnings": 0
     },
     "packages/remote/src/rag/errors.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/rag/index.ts": {
-      "errors": 3,
-      "warnings": 6
+      "errors": 1,
+      "warnings": 0
     },
     "packages/remote/src/rag/pgvector/adapter.ts": {
-      "errors": 15,
-      "warnings": 4
+      "errors": 11,
+      "warnings": 0
     },
     "packages/remote/src/rag/pgvector/client.ts": {
       "errors": 1,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/rag/pgvector/index.ts": {
       "errors": 2,
-      "warnings": 5
+      "warnings": 0
     },
     "packages/remote/src/rag/pipeline/draft.ts": {
-      "errors": 28,
-      "warnings": 8
+      "errors": 20,
+      "warnings": 2
     },
     "packages/remote/src/rag/pipeline/event-bus.ts": {
       "errors": 4,
@@ -2664,23 +2580,23 @@
     },
     "packages/remote/src/rag/pipeline/fetchers/filesystem.ts": {
       "errors": 2,
-      "warnings": 6
+      "warnings": 4
     },
     "packages/remote/src/rag/pipeline/fetchers/git.ts": {
-      "errors": 6,
-      "warnings": 7
+      "errors": 3,
+      "warnings": 4
     },
     "packages/remote/src/rag/pipeline/fetchers/http.ts": {
-      "errors": 10,
-      "warnings": 18
+      "errors": 4,
+      "warnings": 2
     },
     "packages/remote/src/rag/pipeline/fetchers/registry.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/rag/pipeline/index.ts": {
       "errors": 0,
-      "warnings": 17
+      "warnings": 0
     },
     "packages/remote/src/rag/pipeline/journal.ts": {
       "errors": 2,
@@ -2688,31 +2604,31 @@
     },
     "packages/remote/src/rag/pipeline/orphan.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 4
     },
     "packages/remote/src/rag/pipeline/runtime.ts": {
-      "errors": 9,
-      "warnings": 14
+      "errors": 6,
+      "warnings": 4
     },
     "packages/remote/src/rag/pipeline/scheduler.ts": {
-      "errors": 9,
-      "warnings": 11
+      "errors": 5,
+      "warnings": 7
     },
     "packages/remote/src/rag/pipeline/schema.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/rag/pipeline/store.ts": {
       "errors": 2,
-      "warnings": 18
+      "warnings": 12
     },
     "packages/remote/src/rag/pipeline/transforms/markdown-chunk.ts": {
-      "errors": 11,
-      "warnings": 4
+      "errors": 5,
+      "warnings": 2
     },
     "packages/remote/src/rag/pipeline/transforms/registry.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/rag/pipeline/types.ts": {
       "errors": 0,
@@ -2720,11 +2636,11 @@
     },
     "packages/remote/src/rag/resolve.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/router.ts": {
-      "errors": 76,
-      "warnings": 57
+      "errors": 44,
+      "warnings": 19
     },
     "packages/remote/src/routes/fleet.ts": {
       "errors": 1,
@@ -2735,11 +2651,11 @@
       "warnings": 0
     },
     "packages/remote/src/runtime/docker/backend.ts": {
-      "errors": 7,
-      "warnings": 4
+      "errors": 3,
+      "warnings": 2
     },
     "packages/remote/src/runtime/docker/client.ts": {
-      "errors": 7,
+      "errors": 4,
       "warnings": 2
     },
     "packages/remote/src/runtime/errors.ts": {
@@ -2748,15 +2664,15 @@
     },
     "packages/remote/src/runtime/factory.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/runtime/kubernetes/backend.ts": {
-      "errors": 41,
-      "warnings": 8
+      "errors": 38,
+      "warnings": 6
     },
     "packages/remote/src/runtime/kubernetes/client.ts": {
-      "errors": 28,
-      "warnings": 4
+      "errors": 25,
+      "warnings": 2
     },
     "packages/remote/src/runtime/kubernetes/labels.ts": {
       "errors": 0,
@@ -2764,11 +2680,11 @@
     },
     "packages/remote/src/runtime/kubernetes/translate-deployment.ts": {
       "errors": 4,
-      "warnings": 7
+      "warnings": 0
     },
     "packages/remote/src/runtime/kubernetes/translate-statefulset.ts": {
       "errors": 2,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/runtime/labels.ts": {
       "errors": 0,
@@ -2776,35 +2692,35 @@
     },
     "packages/remote/src/search/ingest/lifecycle.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 0
     },
     "packages/remote/src/search/ingest/logs.ts": {
       "errors": 2,
-      "warnings": 6
+      "warnings": 3
     },
     "packages/remote/src/search/ingest/sessions.ts": {
-      "errors": 9,
-      "warnings": 8
+      "errors": 8,
+      "warnings": 6
     },
     "packages/remote/src/search/knowledge.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/remote/src/search/logs.ts": {
-      "errors": 3,
-      "warnings": 9
+      "errors": 2,
+      "warnings": 4
     },
     "packages/remote/src/search/rag-bridge.ts": {
-      "errors": 46,
-      "warnings": 5
+      "errors": 43,
+      "warnings": 2
     },
     "packages/remote/src/search/rag-node.ts": {
       "errors": 5,
-      "warnings": 4
+      "warnings": 3
     },
     "packages/remote/src/search/sessions.ts": {
       "errors": 3,
-      "warnings": 7
+      "warnings": 4
     },
     "packages/remote/src/search/text-match.ts": {
       "errors": 0,
@@ -2816,71 +2732,71 @@
     },
     "packages/remote/src/server/agent-update.ts": {
       "errors": 1,
-      "warnings": 13
+      "warnings": 12
     },
     "packages/remote/src/server/artifacts.ts": {
-      "errors": 4,
-      "warnings": 5
+      "errors": 2,
+      "warnings": 4
     },
     "packages/remote/src/server/auth.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/server/install-script.ts": {
       "errors": 4,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/server/mdns.ts": {
-      "errors": 10,
-      "warnings": 2
+      "errors": 7,
+      "warnings": 1
     },
     "packages/remote/src/server/metrics.ts": {
       "errors": 1,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/server/modelhost.ts": {
-      "errors": 19,
-      "warnings": 12
+      "errors": 16,
+      "warnings": 6
     },
     "packages/remote/src/server/peer-snapshot-poller.ts": {
-      "errors": 6,
-      "warnings": 7
+      "errors": 4,
+      "warnings": 3
     },
     "packages/remote/src/server/rag-chat-endpoint.ts": {
-      "errors": 6,
-      "warnings": 7
+      "errors": 4,
+      "warnings": 6
     },
     "packages/remote/src/server/register.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/server/serve.ts": {
-      "errors": 12,
-      "warnings": 24
+      "errors": 11,
+      "warnings": 9
     },
     "packages/remote/src/server/service-templates.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/remote/src/server/tls.ts": {
-      "errors": 7,
-      "warnings": 9
+      "errors": 5,
+      "warnings": 8
     },
     "packages/remote/src/server/tunnel-relay.ts": {
-      "errors": 6,
-      "warnings": 6
+      "errors": 4,
+      "warnings": 4
     },
     "packages/remote/src/service/errors.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/service/handlers/chroma-handler.ts": {
-      "errors": 3,
-      "warnings": 6
+      "errors": 2,
+      "warnings": 1
     },
     "packages/remote/src/service/handlers/generic-handler.ts": {
-      "errors": 3,
-      "warnings": 5
+      "errors": 2,
+      "warnings": 0
     },
     "packages/remote/src/service/handlers/hash.ts": {
       "errors": 0,
@@ -2891,12 +2807,12 @@
       "warnings": 0
     },
     "packages/remote/src/service/handlers/pgvector-handler.ts": {
-      "errors": 2,
-      "warnings": 5
+      "errors": 1,
+      "warnings": 0
     },
     "packages/remote/src/service/handlers/registry.ts": {
-      "errors": 3,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/src/service/handlers/types.ts": {
       "errors": 0,
@@ -2904,7 +2820,7 @@
     },
     "packages/remote/src/service/index.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/service/schema.ts": {
       "errors": 1,
@@ -2912,7 +2828,7 @@
     },
     "packages/remote/src/tunnel/index.ts": {
       "errors": 0,
-      "warnings": 14
+      "warnings": 0
     },
     "packages/remote/src/tunnel/journal.ts": {
       "errors": 1,
@@ -2923,59 +2839,59 @@
       "warnings": 0
     },
     "packages/remote/src/tunnel/router-bridge.ts": {
-      "errors": 17,
-      "warnings": 4
+      "errors": 12,
+      "warnings": 2
     },
     "packages/remote/src/tunnel/tunnel-client.ts": {
-      "errors": 47,
+      "errors": 42,
       "warnings": 15
     },
     "packages/remote/src/tunnel/tunnel-server.ts": {
-      "errors": 45,
-      "warnings": 12
+      "errors": 42,
+      "warnings": 11
     },
     "packages/remote/src/workload/admission.test.ts": {
       "errors": 4,
-      "warnings": 10
+      "warnings": 7
     },
     "packages/remote/src/workload/admission.ts": {
-      "errors": 1,
-      "warnings": 6
+      "errors": 0,
+      "warnings": 3
     },
     "packages/remote/src/workload/apply.multi.test.ts": {
-      "errors": 49,
-      "warnings": 33
+      "errors": 41,
+      "warnings": 23
     },
     "packages/remote/src/workload/apply.ts": {
-      "errors": 36,
-      "warnings": 22
+      "errors": 22,
+      "warnings": 9
     },
     "packages/remote/src/workload/gateway-catalog/apply.ts": {
-      "errors": 5,
-      "warnings": 3
+      "errors": 3,
+      "warnings": 2
     },
     "packages/remote/src/workload/gateway-catalog/embersynth-entries.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/workload/gateway-catalog/hash.ts": {
-      "errors": 2,
+      "errors": 1,
       "warnings": 0
     },
     "packages/remote/src/workload/gateway-catalog/index.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 0
     },
     "packages/remote/src/workload/gateway-catalog/io.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/workload/gateway-catalog/reload.ts": {
-      "errors": 4,
-      "warnings": 2
+      "errors": 2,
+      "warnings": 1
     },
     "packages/remote/src/workload/gateway-catalog/remove.ts": {
-      "errors": 3,
+      "errors": 2,
       "warnings": 1
     },
     "packages/remote/src/workload/gateway-catalog/schema.ts": {
@@ -2988,27 +2904,27 @@
     },
     "packages/remote/src/workload/gateway-handlers/agent-gateway.ts": {
       "errors": 1,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/workload/gateway-handlers/embersynth.ts": {
       "errors": 2,
-      "warnings": 8
+      "warnings": 2
     },
     "packages/remote/src/workload/gateway-handlers/index.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 0
     },
     "packages/remote/src/workload/gateway-handlers/registry.ts": {
-      "errors": 1,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 1
     },
     "packages/remote/src/workload/gateway-handlers/sirius.ts": {
       "errors": 2,
-      "warnings": 9
+      "warnings": 2
     },
     "packages/remote/src/workload/gateway-handlers/types.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/workload/lock.ts": {
       "errors": 4,
@@ -3019,8 +2935,8 @@
       "warnings": 0
     },
     "packages/remote/src/workload/modelhost-store.ts": {
-      "errors": 2,
-      "warnings": 13
+      "errors": 1,
+      "warnings": 9
     },
     "packages/remote/src/workload/node-mutex.ts": {
       "errors": 0,
@@ -3028,11 +2944,11 @@
     },
     "packages/remote/src/workload/noderun-apply.ts": {
       "errors": 2,
-      "warnings": 4
+      "warnings": 3
     },
     "packages/remote/src/workload/noderun-reconciler.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/workload/noderun-schema.ts": {
       "errors": 2,
@@ -3040,67 +2956,67 @@
     },
     "packages/remote/src/workload/noderun-store.ts": {
       "errors": 1,
-      "warnings": 11
+      "warnings": 8
     },
     "packages/remote/src/workload/reconcileLoop.ts": {
-      "errors": 3,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/src/workload/reconciler.test.ts": {
       "errors": 9,
-      "warnings": 6
+      "warnings": 4
     },
     "packages/remote/src/workload/reconciler.ts": {
-      "errors": 2,
-      "warnings": 7
+      "errors": 0,
+      "warnings": 1
     },
     "packages/remote/src/workload/schema.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/workload/schema.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/workload/store.ts": {
-      "errors": 5,
-      "warnings": 26
+      "errors": 3,
+      "warnings": 18
     },
     "packages/remote/test/agent-dial-central.test.ts": {
       "errors": 4,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/remote/test/agent-update.test.ts": {
-      "errors": 5,
-      "warnings": 10
+      "errors": 3,
+      "warnings": 7
     },
     "packages/remote/test/artifacts-fetch.test.ts": {
-      "errors": 16,
-      "warnings": 41
+      "errors": 14,
+      "warnings": 37
     },
     "packages/remote/test/artifacts.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/remote/test/auth-noauth.test.ts": {
-      "errors": 1,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 1
     },
     "packages/remote/test/auth.test.ts": {
       "errors": 1,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/bench-schedule.test.ts": {
-      "errors": 1,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/bootstrap-tokens.test.ts": {
       "errors": 0,
-      "warnings": 7
+      "warnings": 6
     },
     "packages/remote/test/cli-adapter.test.ts": {
       "errors": 15,
-      "warnings": 3
+      "warnings": 1
     },
     "packages/remote/test/cli-schema.test.ts": {
       "errors": 0,
@@ -3108,323 +3024,323 @@
     },
     "packages/remote/test/cli-stream.test.ts": {
       "errors": 12,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/test/cli-synthesis.test.ts": {
-      "errors": 3,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/cluster-serverstart.test.ts": {
-      "errors": 5,
-      "warnings": 11
+      "errors": 3,
+      "warnings": 9
     },
     "packages/remote/test/cluster-streaming.test.ts": {
-      "errors": 5,
-      "warnings": 8
+      "errors": 2,
+      "warnings": 6
     },
     "packages/remote/test/cluster.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/test/composite-apply.test.ts": {
-      "errors": 41,
-      "warnings": 24
+      "errors": 27,
+      "warnings": 20
     },
     "packages/remote/test/composite-dag-pipeline.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/remote/test/composite-dag.test.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 2
     },
     "packages/remote/test/composite-destroy-catalog-cleanup.test.ts": {
       "errors": 19,
-      "warnings": 20
+      "warnings": 15
     },
     "packages/remote/test/composite-e2e.test.ts": {
-      "errors": 12,
-      "warnings": 3
+      "errors": 3,
+      "warnings": 0
     },
     "packages/remote/test/composite-event-bus.test.ts": {
-      "errors": 7,
-      "warnings": 1
+      "errors": 4,
+      "warnings": 0
     },
     "packages/remote/test/composite-pipeline-apply.test.ts": {
       "errors": 17,
-      "warnings": 6
+      "warnings": 3
     },
     "packages/remote/test/composite-pipeline-destroy.test.ts": {
-      "errors": 18,
-      "warnings": 6
+      "errors": 17,
+      "warnings": 3
     },
     "packages/remote/test/composite-router.test.ts": {
       "errors": 10,
-      "warnings": 6
+      "warnings": 1
     },
     "packages/remote/test/composite-schema-pipeline.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/composite-schema.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/remote/test/composite-store.test.ts": {
       "errors": 0,
-      "warnings": 10
+      "warnings": 6
     },
     "packages/remote/test/config-schema-rag.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/config-secret.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/test/config/peers.test.ts": {
       "errors": 6,
-      "warnings": 7
+      "warnings": 4
     },
     "packages/remote/test/cross-repo-seam.test.ts": {
-      "errors": 6,
-      "warnings": 3
+      "errors": 5,
+      "warnings": 0
     },
     "packages/remote/test/embersynth.test.ts": {
       "errors": 1,
-      "warnings": 8
+      "warnings": 2
     },
     "packages/remote/test/gateway-catalog-apply.test.ts": {
-      "errors": 13,
-      "warnings": 4
+      "errors": 8,
+      "warnings": 2
     },
     "packages/remote/test/gateway-catalog-derive-embersynth.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/test/gateway-catalog-derive-sirius.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/test/gateway-catalog-hash.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/gateway-catalog-io.test.ts": {
       "errors": 4,
-      "warnings": 7
+      "warnings": 4
     },
     "packages/remote/test/gateway-catalog-remove.test.ts": {
       "errors": 6,
-      "warnings": 8
+      "warnings": 7
     },
     "packages/remote/test/gateway-catalog-schema.test.ts": {
       "errors": 4,
-      "warnings": 10
+      "warnings": 6
     },
     "packages/remote/test/gateway-handler-embersynth-composite.test.ts": {
-      "errors": 19,
-      "warnings": 17
+      "errors": 18,
+      "warnings": 11
     },
     "packages/remote/test/gateway-handler-sirius-composite.test.ts": {
-      "errors": 19,
-      "warnings": 15
+      "errors": 18,
+      "warnings": 10
     },
     "packages/remote/test/gateway-handlers.test.ts": {
       "errors": 10,
-      "warnings": 6
+      "warnings": 0
     },
     "packages/remote/test/gateway-integration.test.ts": {
-      "errors": 8,
-      "warnings": 5
+      "errors": 6,
+      "warnings": 4
     },
     "packages/remote/test/gateway-reload.test.ts": {
       "errors": 6,
-      "warnings": 8
+      "warnings": 6
     },
     "packages/remote/test/helpers.ts": {
-      "errors": 6,
-      "warnings": 5
+      "errors": 3,
+      "warnings": 1
     },
     "packages/remote/test/infra-install.test.ts": {
       "errors": 10,
-      "warnings": 20
+      "warnings": 19
     },
     "packages/remote/test/infra-layout.test.ts": {
-      "errors": 1,
-      "warnings": 7
+      "errors": 0,
+      "warnings": 6
     },
     "packages/remote/test/infra-services.test.ts": {
       "errors": 6,
-      "warnings": 8
+      "warnings": 6
     },
     "packages/remote/test/infra-spec.test.ts": {
       "errors": 0,
-      "warnings": 9
+      "warnings": 7
     },
     "packages/remote/test/infraRolloutHealthGate.test.ts": {
       "errors": 5,
-      "warnings": 7
+      "warnings": 5
     },
     "packages/remote/test/install-script.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/test/kubeconfig.test.ts": {
-      "errors": 1,
-      "warnings": 5
+      "errors": 0,
+      "warnings": 3
     },
     "packages/remote/test/mdns.test.ts": {
-      "errors": 7,
-      "warnings": 9
+      "errors": 5,
+      "warnings": 8
     },
     "packages/remote/test/metrics.test.ts": {
-      "errors": 6,
-      "warnings": 5
+      "errors": 3,
+      "warnings": 3
     },
     "packages/remote/test/node-client.test.ts": {
-      "errors": 2,
-      "warnings": 6
+      "errors": 1,
+      "warnings": 2
     },
     "packages/remote/test/noderun-reconciler.test.ts": {
       "errors": 9,
-      "warnings": 15
+      "warnings": 10
     },
     "packages/remote/test/noderun.test.ts": {
-      "errors": 16,
-      "warnings": 7
+      "errors": 11,
+      "warnings": 1
     },
     "packages/remote/test/openai-proxy.test.ts": {
-      "errors": 8,
-      "warnings": 15
+      "errors": 4,
+      "warnings": 12
     },
     "packages/remote/test/ops-chat-audit-session.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/remote/test/ops-chat-dispatch.test.ts": {
-      "errors": 7,
-      "warnings": 6
+      "errors": 4,
+      "warnings": 2
     },
     "packages/remote/test/ops-chat-event-bus.test.ts": {
-      "errors": 1,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/ops-chat-journal.test.ts": {
       "errors": 3,
-      "warnings": 7
+      "warnings": 2
     },
     "packages/remote/test/ops-chat-loop-executor-journal.test.ts": {
       "errors": 4,
-      "warnings": 6
+      "warnings": 2
     },
     "packages/remote/test/ops-chat-loop.test.ts": {
-      "errors": 8,
-      "warnings": 7
+      "errors": 5,
+      "warnings": 3
     },
     "packages/remote/test/ops-chat-paths.test.ts": {
-      "errors": 6,
-      "warnings": 4
+      "errors": 4,
+      "warnings": 2
     },
     "packages/remote/test/ops-chat-redaction.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/ops-chat-refusals.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/ops-chat-sessions-list.test.ts": {
       "errors": 3,
-      "warnings": 10
+      "warnings": 3
     },
     "packages/remote/test/ops-session-router.test.ts": {
-      "errors": 6,
-      "warnings": 7
+      "errors": 4,
+      "warnings": 1
     },
     "packages/remote/test/peer-snapshot-poller.test.ts": {
       "errors": 4,
-      "warnings": 7
+      "warnings": 4
     },
     "packages/remote/test/pipeline-apply-ownership.test.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 0
     },
     "packages/remote/test/pipeline-export-mcp.test.ts": {
-      "errors": 4,
+      "errors": 3,
       "warnings": 3
     },
     "packages/remote/test/pipeline-remove-refcounted.test.ts": {
-      "errors": 2,
-      "warnings": 4
+      "errors": 1,
+      "warnings": 0
     },
     "packages/remote/test/planner-composite.test.ts": {
       "errors": 3,
-      "warnings": 5
+      "warnings": 2
     },
     "packages/remote/test/project-routing.test.ts": {
       "errors": 8,
-      "warnings": 5
+      "warnings": 2
     },
     "packages/remote/test/projects-schema.test.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/projects-store.test.ts": {
-      "errors": 2,
-      "warnings": 4
+      "errors": 1,
+      "warnings": 3
     },
     "packages/remote/test/provider-nodes.test.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 0
     },
     "packages/remote/test/rag-bench.test.ts": {
-      "errors": 5,
-      "warnings": 1
+      "errors": 4,
+      "warnings": 0
     },
     "packages/remote/test/rag-chat-endpoint.test.ts": {
-      "errors": 54,
-      "warnings": 6
+      "errors": 50,
+      "warnings": 2
     },
     "packages/remote/test/rag-chroma-adapter.test.ts": {
-      "errors": 6,
-      "warnings": 4
+      "errors": 5,
+      "warnings": 0
     },
     "packages/remote/test/rag-chroma-http.test.ts": {
-      "errors": 22,
-      "warnings": 7
+      "errors": 10,
+      "warnings": 4
     },
     "packages/remote/test/rag-e2e.test.ts": {
       "errors": 1,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/rag-embedding.test.ts": {
-      "errors": 29,
-      "warnings": 3
+      "errors": 25,
+      "warnings": 1
     },
     "packages/remote/test/rag-pgvector-adapter.test.ts": {
-      "errors": 13,
-      "warnings": 10
+      "errors": 9,
+      "warnings": 6
     },
     "packages/remote/test/rag-pipeline-draft.test.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/rag-pipeline-event-bus.test.ts": {
-      "errors": 2,
-      "warnings": 2
+      "errors": 1,
+      "warnings": 0
     },
     "packages/remote/test/rag-pipeline-filesystem.test.ts": {
-      "errors": 4,
-      "warnings": 13
+      "errors": 0,
+      "warnings": 11
     },
     "packages/remote/test/rag-pipeline-git.test.ts": {
-      "errors": 4,
-      "warnings": 9
+      "errors": 2,
+      "warnings": 7
     },
     "packages/remote/test/rag-pipeline-http.test.ts": {
-      "errors": 7,
-      "warnings": 3
+      "errors": 3,
+      "warnings": 2
     },
     "packages/remote/test/rag-pipeline-journal.test.ts": {
       "errors": 2,
@@ -3432,242 +3348,242 @@
     },
     "packages/remote/test/rag-pipeline-md-chunk.test.ts": {
       "errors": 5,
-      "warnings": 3
+      "warnings": 1
     },
     "packages/remote/test/rag-pipeline-orphan.test.ts": {
-      "errors": 2,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/rag-pipeline-runtime.test.ts": {
-      "errors": 15,
-      "warnings": 7
+      "errors": 7,
+      "warnings": 4
     },
     "packages/remote/test/rag-pipeline-scheduler.test.ts": {
-      "errors": 10,
-      "warnings": 9
+      "errors": 4,
+      "warnings": 7
     },
     "packages/remote/test/rag-pipeline-schema.test.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/rag-pipeline-store.test.ts": {
-      "errors": 4,
-      "warnings": 12
+      "errors": 3,
+      "warnings": 10
     },
     "packages/remote/test/register.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 1
     },
     "packages/remote/test/router-node-budget.test.ts": {
       "errors": 1,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/router-project.test.ts": {
-      "errors": 15,
-      "warnings": 5
+      "errors": 13,
+      "warnings": 4
     },
     "packages/remote/test/router-rag-pipeline.test.ts": {
-      "errors": 36,
-      "warnings": 19
+      "errors": 30,
+      "warnings": 15
     },
     "packages/remote/test/router-rag.test.ts": {
-      "errors": 24,
-      "warnings": 12
+      "errors": 17,
+      "warnings": 9
     },
     "packages/remote/test/router-workload.test.ts": {
       "errors": 2,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/runtime-docker-backend.test.ts": {
-      "errors": 23,
-      "warnings": 5
+      "errors": 21,
+      "warnings": 2
     },
     "packages/remote/test/runtime-k8s-backend.test.ts": {
-      "errors": 21,
-      "warnings": 5
+      "errors": 6,
+      "warnings": 1
     },
     "packages/remote/test/search-ingest-logs.test.ts": {
       "errors": 6,
-      "warnings": 9
+      "warnings": 5
     },
     "packages/remote/test/search-ingest-sessions.test.ts": {
       "errors": 6,
-      "warnings": 6
+      "warnings": 5
     },
     "packages/remote/test/search-knowledge.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/search-logs.test.ts": {
       "errors": 0,
-      "warnings": 7
+      "warnings": 4
     },
     "packages/remote/test/search-rag-bridge.test.ts": {
       "errors": 10,
-      "warnings": 8
+      "warnings": 7
     },
     "packages/remote/test/search-rag-node.test.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 2
     },
     "packages/remote/test/search-sessions.test.ts": {
       "errors": 3,
-      "warnings": 4
+      "warnings": 1
     },
     "packages/remote/test/search-text-match.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/serve.test.ts": {
       "errors": 5,
-      "warnings": 13
+      "warnings": 10
     },
     "packages/remote/test/server/modelhost.test.ts": {
       "errors": 31,
-      "warnings": 26
+      "warnings": 22
     },
     "packages/remote/test/service-handlers-chroma.test.ts": {
-      "errors": 5,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/service-handlers-generic.test.ts": {
-      "errors": 3,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/service-handlers-pgvector.test.ts": {
-      "errors": 10,
-      "warnings": 4
+      "errors": 4,
+      "warnings": 0
     },
     "packages/remote/test/service-schema.test.ts": {
-      "errors": 1,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/service-templates.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/tls.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/remote/test/translate-deployment.test.ts": {
       "errors": 1,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/test/translate-statefulset.test.ts": {
       "errors": 15,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/transport-spike.test.ts": {
-      "errors": 8,
-      "warnings": 5
+      "errors": 7,
+      "warnings": 3
     },
     "packages/remote/test/trpc-v11-spike.test.ts": {
-      "errors": 9,
-      "warnings": 6
+      "errors": 6,
+      "warnings": 3
     },
     "packages/remote/test/tunnel-client-subscribe.test.ts": {
-      "errors": 15,
-      "warnings": 6
+      "errors": 12,
+      "warnings": 4
     },
     "packages/remote/test/tunnel-integration.test.ts": {
-      "errors": 7,
-      "warnings": 6
+      "errors": 6,
+      "warnings": 3
     },
     "packages/remote/test/tunnel-journal.test.ts": {
-      "errors": 16,
-      "warnings": 9
+      "errors": 10,
+      "warnings": 5
     },
     "packages/remote/test/tunnel-messages.test.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/test/tunnel-relay-sse.test.ts": {
-      "errors": 20,
-      "warnings": 6
+      "errors": 19,
+      "warnings": 4
     },
     "packages/remote/test/tunnel-router-bridge-subscription.test.ts": {
       "errors": 9,
-      "warnings": 4
+      "warnings": 1
     },
     "packages/remote/test/tunnel-router-bridge.test.ts": {
-      "errors": 12,
-      "warnings": 5
+      "errors": 11,
+      "warnings": 4
     },
     "packages/remote/test/tunnel-server-subscribe.test.ts": {
-      "errors": 9,
-      "warnings": 5
-    },
-    "packages/remote/test/tunnel.test.ts": {
-      "errors": 45,
-      "warnings": 7
-    },
-    "packages/remote/test/tunneled-client.test.ts": {
-      "errors": 39,
+      "errors": 5,
       "warnings": 3
     },
+    "packages/remote/test/tunnel.test.ts": {
+      "errors": 42,
+      "warnings": 4
+    },
+    "packages/remote/test/tunneled-client.test.ts": {
+      "errors": 36,
+      "warnings": 1
+    },
     "packages/remote/test/workload-apply-preflight.test.ts": {
-      "errors": 19,
-      "warnings": 27
+      "errors": 18,
+      "warnings": 25
     },
     "packages/remote/test/workload-concurrency.test.ts": {
-      "errors": 12,
-      "warnings": 18
+      "errors": 11,
+      "warnings": 16
     },
     "packages/remote/test/workload-list.test.ts": {
       "errors": 1,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/workload-lock.test.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 4
     },
     "packages/remote/test/workload.test.ts": {
-      "errors": 7,
-      "warnings": 8
+      "errors": 2,
+      "warnings": 5
     },
     "packages/remote/test/workload/modelhost-apply-timeout.test.ts": {
       "errors": 8,
-      "warnings": 5
+      "warnings": 3
     },
     "packages/remote/test/workload/modelhost-apply.test.ts": {
-      "errors": 118,
-      "warnings": 49
+      "errors": 115,
+      "warnings": 43
     },
     "packages/remote/test/workload/modelhost-name-safety.test.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 1
     },
     "packages/remote/test/workload/modelhost-schema-dflash.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/workload/modelhost-schema.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/workload/modelhost-store.test.ts": {
       "errors": 0,
-      "warnings": 9
+      "warnings": 4
     },
     "packages/remote/test/workload/reconciler.test.ts": {
-      "errors": 22,
-      "warnings": 23
+      "errors": 19,
+      "warnings": 19
     },
     "packages/remote/test/workload/store-kind-filter.test.ts": {
       "errors": 0,
-      "warnings": 7
+      "warnings": 3
     },
     "prettier.config.mjs": {
       "errors": 0,
       "warnings": 0
     },
     "scripts/tooling/lint-baseline.test.ts": {
-      "errors": 4,
-      "warnings": 0
+      "errors": 0,
+      "warnings": 3
     },
     "scripts/tooling/lint-baseline.ts": {
-      "errors": 3,
+      "errors": 4,
       "warnings": 2
     },
     "scripts/tooling/strict-lint-rollout.test.ts": {

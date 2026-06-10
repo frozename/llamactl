@@ -6,6 +6,7 @@
  * trimmed YAML shape and get back fully-populated objects.
  */
 import { z } from "zod";
+
 import { CompositeOwnershipSchema } from "../../workload/gateway-catalog/schema.js";
 
 export const FilesystemSourceSpecSchema = z.object({

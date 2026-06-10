@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { runRunbook, type RunbookToolClient, type ToolCallInput } from "../src/index.js";
+
+import { type RunbookToolClient, runRunbook, type ToolCallInput } from "../src/index.js";
 
 /**
  * audit-fleet is read-only; this test uses a mock MCP tool client
@@ -82,11 +83,11 @@ describe("audit-fleet runbook", () => {
     const summary = result.summary as {
       context: string | null;
       cluster: string | null;
-      nodes: Array<{ name: string; kind: string }>;
-      promotions: Array<{ rel: string }>;
-      workloads: Array<unknown>;
+      nodes: { name: string; kind: string }[];
+      promotions: { rel: string }[];
+      workloads: unknown[];
       serverStatus: { state?: string };
-      installedAndBenched: Array<{ rel: string; genTps: string }>;
+      installedAndBenched: { rel: string; genTps: string }[];
     };
     expect(summary.context).toBe("default");
     expect(summary.nodes).toHaveLength(2);
@@ -113,7 +114,7 @@ describe("audit-fleet runbook", () => {
       if (input.name === "llamactl.server.status") {
         throw new Error("server unavailable");
       }
-      return original.call(client, input);
+      return await original.call(client, input);
     };
     const result = await runRunbook(
       "audit-fleet",

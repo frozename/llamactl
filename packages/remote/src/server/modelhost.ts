@@ -1,6 +1,10 @@
-import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
+
+import type { EngineBootEnv } from "../../../core/src/engines/types.js";
+import type { WorkloadKey } from "../../../core/src/workloadRuntime.js";
+
 import { ENGINES } from "../../../core/src/engines/index.js";
 import {
   computeModelHostSpecHash,
@@ -14,10 +18,8 @@ import {
   parseSlotSavePathFromCommand,
   resolveSlotSavePathArgs,
 } from "../../../core/src/kvstore/index.js";
+import { type ModelHostManifest, ModelHostManifestSchema } from "../workload/modelhost-schema.js";
 import { loadModelHostByName, saveModelHost } from "../workload/modelhost-store.js";
-import { ModelHostManifestSchema, type ModelHostManifest } from "../workload/modelhost-schema.js";
-import type { WorkloadKey } from "../../../core/src/workloadRuntime.js";
-import type { EngineBootEnv } from "../../../core/src/engines/types.js";
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -188,7 +190,9 @@ function defaultFindListenerPid(
       } catch {}
       resolve(value);
     };
-    const timer = setTimeout(() => finish(null), FIND_LISTENER_TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      finish(null);
+    }, FIND_LISTENER_TIMEOUT_MS);
     try {
       // Constrain to the exact bind address so a process listening on a
       // different address of the same port (e.g. 0.0.0.0 / ::1) is not matched.
@@ -201,7 +205,9 @@ function defaultFindListenerPid(
       child.stdout?.on("data", (chunk) => {
         out += String(chunk);
       });
-      child.on("error", () => finish(null));
+      child.on("error", () => {
+        finish(null);
+      });
       child.on("close", () => {
         const pid = out
           .split(/\s+/)
@@ -214,7 +220,14 @@ function defaultFindListenerPid(
     }
     if (signal) {
       if (signal.aborted) finish(null);
-      else signal.addEventListener("abort", () => finish(null), { once: true });
+      else
+        signal.addEventListener(
+          "abort",
+          () => {
+            finish(null);
+          },
+          { once: true },
+        );
     }
   });
 }

@@ -1,11 +1,12 @@
-import { describe, test, expect, afterAll } from "bun:test";
 import {
+  type ClusterNode,
   config as kubecfg,
   makePinnedFetch,
-  type ClusterNode,
   type PinnedFetch,
 } from "@llamactl/remote";
-import { makeCluster, type Cluster } from "../../remote/test/helpers";
+import { afterAll, describe, expect, test } from "bun:test";
+
+import { type Cluster, makeCluster } from "../../remote/test/helpers";
 
 let cluster: Cluster | null = null;
 
@@ -34,7 +35,7 @@ describe("Electron dispatcher router", () => {
       const inner = makePinnedFetch(node);
       return async (input, init) => {
         urls.push(typeof input === "string" ? input : String(input));
-        return inner(input, init);
+        return await inner(input, init);
       };
     };
   }
@@ -77,7 +78,7 @@ describe("Electron dispatcher router", () => {
       const inner = makePinnedFetch(node);
       return async (input, init) => {
         urls.push(typeof input === "string" ? input : String(input));
-        return inner(input, init);
+        return await inner(input, init);
       };
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -162,7 +163,7 @@ describe("Electron dispatcher router", () => {
       const inner = makePinnedFetch(node);
       return async (input, init) => {
         urls.push(typeof input === "string" ? input : String(input));
-        return inner(input, init);
+        return await inner(input, init);
       };
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

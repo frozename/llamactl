@@ -1,8 +1,10 @@
 import * as React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+
 import { APP_MODULES, type AppModule } from "@/modules/registry";
-import { useUIStore } from "@/stores/ui-store";
 import { useTabStore } from "@/stores/tab-store";
+import { useUIStore } from "@/stores/ui-store";
+
 import { useAppCommands } from "./commands";
 
 /**
@@ -161,7 +163,9 @@ export function CommandPalette({
       }
     };
     window.addEventListener("keydown", handler, { capture: true });
-    return () => window.removeEventListener("keydown", handler, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", handler, { capture: true });
+    };
   }, [open, filtered, highlight, onClose]);
 
   if (!open) return null;
@@ -175,7 +179,9 @@ export function CommandPalette({
       onClick={onClose}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+        }}
         className="w-[600px] max-w-[90vw] rounded-lg border shadow-2xl"
         style={{
           borderColor: "var(--color-border)",
@@ -187,7 +193,9 @@ export function CommandPalette({
             ref={inputRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+            }}
             placeholder="Type a command…"
             data-testid="command-palette-input"
             className="w-full bg-transparent px-2 py-1.5 text-sm text-[color:var(--color-text)] outline-none placeholder:text-[color:var(--color-text-secondary)]"
@@ -205,7 +213,9 @@ export function CommandPalette({
                 <button
                   key={cmd.id}
                   type="button"
-                  onMouseEnter={() => setHighlight(idx)}
+                  onMouseEnter={() => {
+                    setHighlight(idx);
+                  }}
                   onClick={() => {
                     cmd.run();
                     onClose();
@@ -283,8 +293,18 @@ export function CommandPaletteMount(): React.JSX.Element {
       }
     };
     window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    return () => {
+      window.removeEventListener("keydown", handler);
+    };
   }, [open, setOpen]);
 
-  return <CommandPalette open={open} onClose={() => setOpen(false)} extraCommands={extras} />;
+  return (
+    <CommandPalette
+      open={open}
+      onClose={() => {
+        setOpen(false);
+      }}
+      extraCommands={extras}
+    />
+  );
 }

@@ -9,7 +9,8 @@
  * topological-sort dependency would be far more surface than we
  * need.
  */
-import type { CompositeSpec, ComponentRef, DependencyEdge } from "./schema.js";
+import type { ComponentRef, CompositeSpec, DependencyEdge } from "./schema.js";
+
 import { workloadRefName } from "./schema.js";
 
 /**
@@ -117,8 +118,8 @@ export function topologicalOrder(spec: CompositeSpec): ComponentRef[] {
 
   // Index nodes + preserve declaration order for stable tie-breaks.
   const byKey = new Map<string, { ref: ComponentRef; order: number }>();
-  for (let i = 0; i < nodes.length; i++) {
-    byKey.set(refKey(nodes[i]!), { ref: nodes[i]!, order: i });
+  for (const [i, node] of nodes.entries()) {
+    byKey.set(refKey(node), { ref: node, order: i });
   }
 
   // Build: `from depends on to`.

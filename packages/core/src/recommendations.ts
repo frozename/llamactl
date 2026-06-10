@@ -1,10 +1,11 @@
+import type { MachineProfile, ModelClass } from "./types.js";
+
 import { findByRel } from "./catalog.js";
 import { resolveEnv } from "./env.js";
 import { summaryForRel } from "./hf.js";
+import { type PresetName, type PresetOverrideSource, resolvePreset } from "./presets.js";
 import { normalizeProfile } from "./profile.js";
-import { resolvePreset, type PresetOverrideSource, type PresetName } from "./presets.js";
 import { quantFromRel } from "./quant.js";
-import type { MachineProfile, ModelClass } from "./types.js";
 
 /** Recommendation row shape consumed by the CLI and (eventually) the UI. */
 export interface RecommendationRow {
@@ -93,7 +94,8 @@ const GEMMA_CTX_BY_PROFILE: Record<MachineProfile, string> = {
  * row even when the active machine differs from the profile displayed.
  */
 function ctxForRelUnderProfile(rel: string, profile: MachineProfile): string {
-  const isQwenFamily = /^Qwen3\.6-35B-A3B-GGUF\//.test(rel) || /^Qwen3\.5-27B-GGUF\//.test(rel);
+  const isQwenFamily =
+    rel.startsWith("Qwen3.6-35B-A3B-GGUF/") || rel.startsWith("Qwen3.5-27B-GGUF/");
   const table = isQwenFamily ? QWEN_CTX_BY_PROFILE : GEMMA_CTX_BY_PROFILE;
   return table[profile];
 }

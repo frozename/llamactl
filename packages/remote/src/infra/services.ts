@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, platform as nodePlatform } from "node:os";
 import { basename, dirname, join } from "node:path";
+
 import { infraCurrentSymlink } from "./layout.js";
 
 /**
@@ -62,7 +63,7 @@ export function defaultInfraLogsDir(env: NodeJS.ProcessEnv = process.env): strin
 }
 
 function xmlEscape(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 export interface RenderServiceUnitOptions {

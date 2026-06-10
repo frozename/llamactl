@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { runFleet } from "../src/commands/fleet.js";
+
 import type { FleetSnapshotEntry } from "../../fleet-supervisor/src/types.js";
+
+import { runFleet } from "../src/commands/fleet.js";
 
 const snap = (
   node: string,

@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
+
+import { hashToken } from "../src/server/auth.js";
 import {
   createTunnelClient,
   createTunnelServer,
   type TunnelReq,
   type TunnelSubscription,
 } from "../src/tunnel/index.js";
-import { hashToken } from "../src/server/auth.js";
 
 /**
  * B.3 coverage — verify the tunnel CLIENT ships stream frames in
@@ -15,7 +16,7 @@ import { hashToken } from "../src/server/auth.js";
  */
 
 describe("tunnel-client: handleSubscription", () => {
-  let stops: Array<() => Promise<void> | void> = [];
+  const stops: (() => Promise<void> | void)[] = [];
   afterEach(async () => {
     for (const s of stops.splice(0)) await s();
   });
@@ -189,6 +190,6 @@ describe("tunnel-client: handleSubscription", () => {
       caught = err as Error;
     }
     expect(caught).not.toBeNull();
-    expect((caught as Error).message).toContain("subscription handler");
+    expect(caught!.message).toContain("subscription handler");
   });
 });

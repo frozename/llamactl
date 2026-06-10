@@ -1,5 +1,7 @@
 import type { RetrievalProvider } from "@nova/contracts";
+
 import type { Config, RagBinding } from "../../config/schema.js";
+
 import { createEmbedderFromBinding, type Embedder } from "../embedding.js";
 import { ChromaRagAdapter } from "./adapter.js";
 import { connectChromaMcp } from "./client.js";
@@ -9,25 +11,25 @@ import {
   resolveChromaHttpToken,
 } from "./http-client.js";
 
-export { ChromaRagAdapter, extractQueryVector, type ChromaBackend } from "./adapter.js";
+export { type ChromaBackend, ChromaRagAdapter, extractQueryVector } from "./adapter.js";
 export {
-  connectChromaMcp,
   type ChromaMcpClient,
   type ChromaMcpConnection,
   type ChromaToolResult,
+  connectChromaMcp,
 } from "./client.js";
 export {
   CHROMA_DEFAULT_DATABASE,
   CHROMA_DEFAULT_TENANT,
-  HttpChromaClient,
-  parseHttpChromaEndpoint,
-  resolveChromaHttpToken,
   type ChromaCollection,
   type ChromaDeletePayload,
   type ChromaQueryPayload,
   type ChromaQueryResponse,
   type ChromaUpsertPayload,
+  HttpChromaClient,
   type HttpChromaClientOptions,
+  parseHttpChromaEndpoint,
+  resolveChromaHttpToken,
 } from "./http-client.js";
 
 export interface CreateChromaAdapterOptions {

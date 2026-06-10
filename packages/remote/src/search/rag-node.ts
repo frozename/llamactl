@@ -1,5 +1,5 @@
 // packages/remote/src/search/rag-node.ts
-import { loadConfig, currentContext } from "../config/kubeconfig.js";
+import { currentContext, loadConfig } from "../config/kubeconfig.js";
 
 export async function resolveDefaultRagNode(): Promise<string | null> {
   const cfg = loadConfig();

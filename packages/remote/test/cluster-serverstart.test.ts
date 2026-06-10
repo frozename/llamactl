@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { createRemoteNodeClient } from "../src/client/node-client.js";
 import { generateToken } from "../src/server/auth.js";
-import { startAgentServer, type RunningAgent } from "../src/server/serve.js";
+import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 import { generateSelfSignedCert } from "../src/server/tls.js";
 
 /**
@@ -158,11 +159,13 @@ describe("cluster-serverstart: remote serverStart over SSE", () => {
       certificateFingerprint: fingerprint,
     });
 
-    const events: Array<Record<string, unknown>> = [];
+    const events: Record<string, unknown>[] = [];
     let finalResult: Record<string, unknown> | null = null;
 
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("serverStart timed out")), 15_000);
+      const timer = setTimeout(() => {
+        reject(new Error("serverStart timed out"));
+      }, 15_000);
       const sub = client.serverStart.subscribe(
         { workload: "fake-model", target: "fake-repo/fake-model.gguf", timeoutSeconds: 8 },
         {
@@ -175,7 +178,7 @@ describe("cluster-serverstart: remote serverStart over SSE", () => {
           },
           onError: (err: unknown) => {
             clearTimeout(timer);
-            reject(err as Error);
+            reject(err);
           },
           onComplete: () => {
             clearTimeout(timer);

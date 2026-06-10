@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
 import {
   deletePresetOverride,
   readPresetOverrides,
@@ -24,7 +25,7 @@ describe("presets.readPresetOverrides", () => {
 
 describe("presets.resolvePreset", () => {
   test("builtin macbook-pro-48g:best", () => {
-    const res = resolvePreset("macbook-pro-48g", "best", {} as NodeJS.ProcessEnv);
+    const res = resolvePreset("macbook-pro-48g", "best", {});
     expect(res.rel).toBe("gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf");
     expect(res.source).toBeNull();
   });

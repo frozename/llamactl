@@ -66,9 +66,9 @@ export function loadCert(files: CertFiles): {
 }
 
 export function computeFingerprint(certPem: string): string {
-  const match = certPem.match(/-----BEGIN CERTIFICATE-----([\s\S]+?)-----END CERTIFICATE-----/);
-  if (!match || !match[1]) throw new Error("not a valid cert PEM");
-  const der = Buffer.from(match[1].replace(/\s+/g, ""), "base64");
+  const match = /-----BEGIN CERTIFICATE-----([\s\S]+?)-----END CERTIFICATE-----/.exec(certPem);
+  if (!match?.[1]) throw new Error("not a valid cert PEM");
+  const der = Buffer.from(match[1].replaceAll(/\s+/g, ""), "base64");
   const hex = createHash("sha256").update(der).digest("hex");
   return `sha256:${hex}`;
 }

@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
 import {
+  _resetPipelineEventsForTests,
   createPipelineEventBus,
   PIPELINE_RETENTION_MS,
   pipelineEvents,
-  _resetPipelineEventsForTests,
 } from "../src/rag/pipeline/event-bus.js";
 
 /**
@@ -51,7 +52,9 @@ describe("createPipelineEventBus", () => {
 
   test("endRun is a no-op for an unknown name", () => {
     const bus = createPipelineEventBus();
-    expect(() => bus.endRun("never-started")).not.toThrow();
+    expect(() => {
+      bus.endRun("never-started");
+    }).not.toThrow();
   });
 
   test("startRun after endRun resets the record + clears retention", () => {

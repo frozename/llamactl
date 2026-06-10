@@ -1,10 +1,12 @@
 import { execSync } from "node:child_process";
 import { hostname } from "node:os";
+
+import type { MachineProfile } from "./types.js";
+
+import { resolveBuildId } from "./build.js";
 import { resolveEnv } from "./env.js";
 import { detectMemoryBytes, resolveProfile } from "./profile.js";
-import { resolveBuildId } from "./build.js";
 import { advertisedEndpoint } from "./server.js";
-import type { MachineProfile } from "./types.js";
 
 export type GpuKind = "metal" | "cuda" | "rocm" | "cpu";
 
@@ -100,16 +102,16 @@ function detectMetal(): GpuInfo | null {
       timeout: 2000,
     }).trim();
     const parsed = JSON.parse(raw) as {
-      SPDisplaysDataType?: Array<Record<string, unknown>>;
+      SPDisplaysDataType?: Record<string, unknown>[];
     };
     const first = parsed.SPDisplaysDataType?.[0];
     if (!first) return { kind: "metal" };
-    const name = typeof first["_name"] === "string" ? (first["_name"] as string) : undefined;
+    const name = typeof first["_name"] === "string" ? first["_name"] : undefined;
     const vramRaw =
       typeof first["spdisplays_vram"] === "string"
-        ? (first["spdisplays_vram"] as string)
+        ? first["spdisplays_vram"]
         : typeof first["spdisplays_vram_shared"] === "string"
-          ? (first["spdisplays_vram_shared"] as string)
+          ? first["spdisplays_vram_shared"]
           : undefined;
     const memoryMB = vramRaw ? parseHumanToMB(vramRaw) : undefined;
     const info: GpuInfo = { kind: "metal" };
@@ -156,8 +158,8 @@ function detectRocm(): GpuInfo | null {
 }
 
 function parseHumanToMB(s: string): number | undefined {
-  const m = s.trim().match(/^(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)$/i);
-  if (!m || !m[1] || !m[2]) return undefined;
+  const m = /^(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)$/i.exec(s.trim());
+  if (!m?.[1] || !m[2]) return undefined;
   const num = Number.parseFloat(m[1]);
   const unit = m[2].toUpperCase();
   const factor =

@@ -1,3 +1,5 @@
+import type { ResolvedEnv } from "@llamactl/core";
+
 import {
   existsSync,
   mkdirSync,
@@ -8,12 +10,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join, basename } from "node:path";
+import { basename, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import type { ResolvedEnv } from "@llamactl/core";
-import { ModelRunSchema, type ModelRun } from "./schema.js";
-import { ModelHostManifestSchema, type ModelHostManifest } from "./modelhost-schema.js";
+
 import { estimateModelHostMemoryGiB } from "./admission.js";
+import { type ModelHostManifest, ModelHostManifestSchema } from "./modelhost-schema.js";
+import { type ModelRun, ModelRunSchema } from "./schema.js";
 
 export function defaultWorkloadsDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_WORKLOADS_DIR?.trim();
@@ -34,7 +36,7 @@ export function workloadPath(name: string, dir: string = defaultWorkloadsDir()):
  * `[A-Z_][A-Z0-9_]*` to avoid matching unrelated shell-style tokens.
  */
 export function interpolateEnvRefs(raw: string, env: NodeJS.ProcessEnv = process.env): string {
-  return raw.replace(/\$\{env:([A-Z_][A-Z0-9_]*)\}/g, (_match, name: string) => {
+  return raw.replaceAll(/\$\{env:([A-Z_][A-Z0-9_]*)\}/g, (_match, name: string) => {
     const value = env[name];
     if (value === undefined) {
       throw new Error(`workload manifest references env:${name} but it is not set`);
@@ -92,7 +94,7 @@ export function loadWorkloadByNameAny(
     kind?: string;
     apiVersion?: string;
   } | null;
-  if (parsed && parsed.apiVersion === "llamactl.io/v1") {
+  if (parsed?.apiVersion === "llamactl.io/v1") {
     parsed.apiVersion = "llamactl/v1";
   }
 
@@ -232,7 +234,7 @@ export function listAnyWorkloadsForAdmission(
         kind?: string;
         apiVersion?: string;
       } | null;
-      if (parsed && parsed.apiVersion === "llamactl.io/v1") {
+      if (parsed?.apiVersion === "llamactl.io/v1") {
         parsed.apiVersion = "llamactl/v1";
       }
       if (parsed?.kind === "ModelRun") {

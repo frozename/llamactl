@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useMemo, useState } from "react";
+
 import { trpc } from "@/lib/trpc";
 import { Badge, EditorialHero } from "@/ui";
 
@@ -293,7 +294,9 @@ function JournalPane(): React.JSX.Element {
               fontSize: 12,
             }}
             value={limit}
-            onChange={(e) => setLimit(Number(e.target.value))}
+            onChange={(e) => {
+              setLimit(Number(e.target.value));
+            }}
           >
             <option value={10}>10</option>
             <option value={25}>25</option>
@@ -344,7 +347,7 @@ function JournalRow({ entry }: { entry: unknown }): React.JSX.Element {
     message?: string;
   };
   if (e.kind === "tick") {
-    const tier = (e.decision?.tier ?? "noop") as Tier;
+    const tier = e.decision?.tier ?? "noop";
     return (
       <div
         style={{
@@ -418,10 +421,10 @@ export default function CostDashboard(): React.JSX.Element {
   const topN = 5;
 
   const providerRows = useMemo<CostGroup[]>(() => {
-    return (status.data?.weekly.byProvider ?? []) as CostGroup[];
+    return status.data?.weekly.byProvider ?? [];
   }, [status.data]);
   const modelRows = useMemo<CostGroup[]>(() => {
-    return (status.data?.weekly.byModel ?? []) as CostGroup[];
+    return status.data?.weekly.byModel ?? [];
   }, [status.data]);
 
   if (status.isLoading) {
@@ -446,7 +449,7 @@ export default function CostDashboard(): React.JSX.Element {
   }
 
   const d = status.data!;
-  const tier = d.decision.tier as Tier;
+  const tier = d.decision.tier;
 
   return (
     <div

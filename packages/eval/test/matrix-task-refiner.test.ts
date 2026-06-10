@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { taskRefinerRubricWorkload } from "../src/index.js";
 
 describe("task-refiner-rubric scorer", () => {

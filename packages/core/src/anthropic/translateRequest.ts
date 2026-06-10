@@ -1,5 +1,4 @@
 import type {
-  AnthropicContentBlock,
   AnthropicImageContentBlock,
   AnthropicImageSource,
   AnthropicMessage,
@@ -54,12 +53,12 @@ export interface OpenAISystemMessage {
 
 export interface OpenAIUserMessage {
   role: "user";
-  content: string | Array<OpenAITextPart | OpenAIImagePart>;
+  content: string | (OpenAITextPart | OpenAIImagePart)[];
 }
 
 export interface OpenAIAssistantMessage {
   role: "assistant";
-  content: string | Array<OpenAITextPart | OpenAIImagePart>;
+  content: string | (OpenAITextPart | OpenAIImagePart)[];
   tool_calls?: OpenAIAssistantToolCall[];
 }
 
@@ -247,7 +246,7 @@ function translateMessageContent(
   }
 
   const joinedText = textParts.join("");
-  const content: string | Array<OpenAITextPart | OpenAIImagePart> =
+  const content: string | (OpenAITextPart | OpenAIImagePart)[] =
     imageParts.length > 0
       ? [
           ...(joinedText.length > 0 ? [{ type: "text" as const, text: joinedText }] : []),

@@ -14,15 +14,15 @@
  * auth is per-user SSH config, not a token.
  */
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
-import { relative } from "node:path";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
 
 import type { Fetcher, FetcherContext } from "../types.js";
+
+import { resolveSecret } from "../../../config/secret.js";
 import { GitSourceSpecSchema } from "../schema.js";
 import { looksBinary } from "./filesystem.js";
-import { resolveSecret } from "../../../config/secret.js";
 
 export const gitFetcher: Fetcher = {
   kind: "git",
@@ -115,7 +115,7 @@ async function runGit(args: string[], opts: { cwd: string }): Promise<GitResult>
   }
   // Fallback for plain Node.
   const { spawn } = await import("node:child_process");
-  return new Promise<GitResult>((resolvePromise) => {
+  return await new Promise<GitResult>((resolvePromise) => {
     const child = spawn("git", args, { cwd: opts.cwd });
     let stdout = "";
     let stderr = "";

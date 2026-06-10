@@ -1,11 +1,13 @@
 import * as React from "react";
+
 import { useThemeStore } from "@/stores/theme-store";
 import { getTheme } from "@/themes";
+
 import { NodeMap } from "./NodeMap";
 import {
-  NodeMapTailscale,
   NodeMapCyberpunk,
   NodeMapDatadog,
+  NodeMapTailscale,
   useMockNodes,
 } from "./NodeMapVariants";
 

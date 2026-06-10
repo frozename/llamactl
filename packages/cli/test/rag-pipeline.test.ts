@@ -1,13 +1,15 @@
+import type { NodeClient } from "@llamactl/remote";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { NodeClient } from "@llamactl/remote";
-import { runRag } from "../src/commands/rag.js";
+
 import {
-  __setRagPipelineTestSeams,
   __resetRagPipelineTestSeams,
+  __setRagPipelineTestSeams,
 } from "../src/commands/rag-pipeline.js";
+import { runRag } from "../src/commands/rag.js";
 
 /**
  * CLI coverage for `llamactl rag pipeline ...`. Tests run against a

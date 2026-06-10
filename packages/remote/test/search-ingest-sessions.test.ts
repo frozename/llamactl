@@ -1,5 +1,6 @@
 // packages/remote/test/search-ingest-sessions.test.ts
 import { describe, expect, test } from "bun:test";
+
 import { sessionEventBus } from "../src/ops-chat/sessions/event-bus.js";
 import { startSessionsIngest } from "../src/search/ingest/sessions.js";
 

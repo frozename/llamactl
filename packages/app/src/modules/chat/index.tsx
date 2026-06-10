@@ -1,10 +1,11 @@
+import { skipToken } from "@tanstack/react-query";
 import * as React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { skipToken } from "@tanstack/react-query";
-import { trpc } from "@/lib/trpc";
+
 import { useActiveWorkload } from "@/hooks/useActiveWorkload";
+import { trpc } from "@/lib/trpc";
 import { useTabStore } from "@/stores/tab-store";
 import { Badge, Button } from "@/ui";
 
@@ -399,7 +400,9 @@ function Sidebar(props: {
           >
             <button
               type="button"
-              onClick={() => props.onSelect(c.id)}
+              onClick={() => {
+                props.onSelect(c.id);
+              }}
               style={{
                 flex: 1,
                 overflow: "hidden",
@@ -428,7 +431,9 @@ function Sidebar(props: {
               type="button"
               variant="ghost"
               size="sm"
-              onClick={() => props.onDelete(c.id)}
+              onClick={() => {
+                props.onDelete(c.id);
+              }}
               title="Delete conversation"
               aria-label="Delete conversation"
             >
@@ -501,7 +506,9 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
         >
           <button
             type="button"
-            onClick={() => setShowContext((v) => !v)}
+            onClick={() => {
+              setShowContext((v) => !v);
+            }}
             style={{
               display: "flex",
               alignItems: "center",
@@ -571,12 +578,14 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
           onStarted?.();
         }
       },
-      onError: () => setPicked(""),
+      onError: () => {
+        setPicked("");
+      },
     } as Parameters<typeof trpc.serverStart.useSubscription>[1],
   );
   void start;
   const rels = React.useMemo(() => {
-    const rows = (catalog.data ?? []) as Array<{ rel?: string }>;
+    const rows = (catalog.data ?? []) as { rel?: string }[];
     return rows.map((r) => r.rel).filter((r): r is string => typeof r === "string");
   }, [catalog.data]);
   const [choice, setChoice] = React.useState<string>("");
@@ -605,7 +614,9 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
           <select
             value={choice}
-            onChange={(e) => setChoice(e.target.value)}
+            onChange={(e) => {
+              setChoice(e.target.value);
+            }}
             disabled={isStarting}
             style={{
               borderRadius: "var(--r-md)",
@@ -636,7 +647,9 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
             type="button"
             variant="primary"
             size="sm"
-            onClick={() => setPicked(choice)}
+            onClick={() => {
+              setPicked(choice);
+            }}
             disabled={isStarting || !choice}
             loading={isStarting}
             data-testid="chat-empty-start-local"
@@ -647,14 +660,14 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
             or open{" "}
             <button
               type="button"
-              onClick={() =>
+              onClick={() => {
                 useTabStore.getState().open({
                   tabKey: "module:models.server",
                   title: "Local Server",
                   kind: "module",
                   openedAt: Date.now(),
-                })
-              }
+                });
+              }}
             >
               Models → Local Server
             </button>{" "}
@@ -672,7 +685,7 @@ function TranscriptColumn(props: {
   model: string;
   messages: Message[];
   capabilities: CapabilityTag[];
-  nodes: Array<{ name: string }>;
+  nodes: { name: string }[];
   models: string[];
   modelsLoading: boolean;
   onNodeChange: (node: string) => void;
@@ -717,7 +730,9 @@ function TranscriptColumn(props: {
         <span style={{ color: "var(--color-text-secondary)" }}>node</span>
         <select
           value={props.node}
-          onChange={(e) => props.onNodeChange(e.target.value)}
+          onChange={(e) => {
+            props.onNodeChange(e.target.value);
+          }}
           style={{
             borderRadius: "var(--r-md)",
             border: "1px solid var(--color-border)",
@@ -744,7 +759,9 @@ function TranscriptColumn(props: {
         ) : (
           <select
             value={props.model}
-            onChange={(e) => props.onModelChange(e.target.value)}
+            onChange={(e) => {
+              props.onModelChange(e.target.value);
+            }}
             style={{
               borderRadius: "var(--r-md)",
               border: "1px solid var(--color-border)",
@@ -827,7 +844,9 @@ function TranscriptColumn(props: {
             <button
               key={tag}
               type="button"
-              onClick={() => props.onToggleCapability(tag)}
+              onClick={() => {
+                props.onToggleCapability(tag);
+              }}
               style={{
                 borderRadius: 9999,
                 border: "1px solid",
@@ -863,7 +882,7 @@ function TranscriptColumn(props: {
 }
 
 function RagPicker(props: {
-  nodes: Array<{ name: string; effectiveKind?: string }>;
+  nodes: { name: string; effectiveKind?: string }[];
   ragNode: string | null;
   ragTopK: number;
   onChange: (node: string | null, topK: number) => void;
@@ -884,7 +903,9 @@ function RagPicker(props: {
       </span>
       <select
         value={props.ragNode ?? ""}
-        onChange={(e) => props.onChange(e.target.value || null, props.ragTopK)}
+        onChange={(e) => {
+          props.onChange(e.target.value || null, props.ragTopK);
+        }}
         style={{
           borderRadius: "var(--r-md)",
           border: "1px solid var(--color-border)",
@@ -915,12 +936,12 @@ function RagPicker(props: {
             min={1}
             max={20}
             value={props.ragTopK}
-            onChange={(e) =>
+            onChange={(e) => {
               props.onChange(
                 props.ragNode,
                 Number.parseInt(e.target.value, 10) || DEFAULT_RAG_TOP_K,
-              )
-            }
+              );
+            }}
             style={{
               borderRadius: "var(--r-md)",
               border: "1px solid var(--color-border)",
@@ -968,7 +989,9 @@ function ComposerBar(props: {
     >
       <textarea
         value={input}
-        onChange={(e) => setInput(e.target.value)}
+        onChange={(e) => {
+          setInput(e.target.value);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
@@ -1016,7 +1039,7 @@ export default function Chat(): React.JSX.Element {
   const [streamKeyB, setStreamKeyB] = useState(0);
   type StreamInput = {
     node: string;
-    request: { model: string; messages: Array<{ role: string; content: string }> };
+    request: { model: string; messages: { role: string; content: string }[] };
   };
   const [streamInputA, setStreamInputA] = useState<StreamInput | null>(null);
   const [streamInputB, setStreamInputB] = useState<StreamInput | null>(null);
@@ -1036,7 +1059,7 @@ export default function Chat(): React.JSX.Element {
   );
   const models = useMemo(
     () =>
-      (modelList.data?.models as Array<{ id?: string }> | undefined)
+      (modelList.data?.models as { id?: string }[] | undefined)
         ?.map((m) => m.id)
         .filter((id): id is string => typeof id === "string") ?? [],
     [modelList.data],
@@ -1060,7 +1083,7 @@ export default function Chat(): React.JSX.Element {
   );
   const modelsB = useMemo(
     () =>
-      (modelListB.data?.models as Array<{ id?: string }> | undefined)
+      (modelListB.data?.models as { id?: string }[] | undefined)
         ?.map((m) => m.id)
         .filter((id): id is string => typeof id === "string") ?? [],
     [modelListB.data],
@@ -1369,9 +1392,15 @@ export default function Chat(): React.JSX.Element {
               onStartedLocal={() => {
                 void modelList.refetch();
               }}
-              onNodeChange={(node) => store.updateMeta(active.id, { node, model: "" })}
-              onModelChange={(model) => store.updateMeta(active.id, { model })}
-              onToggleCapability={(tag) => store.toggleCapability(active.id, tag)}
+              onNodeChange={(node) => {
+                store.updateMeta(active.id, { node, model: "" });
+              }}
+              onModelChange={(model) => {
+                store.updateMeta(active.id, { model });
+              }}
+              onToggleCapability={(tag) => {
+                store.toggleCapability(active.id, tag);
+              }}
               headerExtras={
                 !active.compareWith ? (
                   <>
@@ -1379,19 +1408,21 @@ export default function Chat(): React.JSX.Element {
                       nodes={nodes}
                       ragNode={active.ragNode ?? null}
                       ragTopK={active.ragTopK ?? DEFAULT_RAG_TOP_K}
-                      onChange={(node, topK) => store.setRagBinding(active.id, node, topK)}
+                      onChange={(node, topK) => {
+                        store.setRagBinding(active.id, node, topK);
+                      }}
                     />
                     <Button
                       type="button"
                       variant="secondary"
                       size="sm"
-                      onClick={() =>
+                      onClick={() => {
                         store.setCompareWith(active.id, {
                           node: active.node,
                           model: active.model,
                           capabilities: active.capabilities,
-                        })
-                      }
+                        });
+                      }}
                       data-testid="chat-compare"
                       title="Compare against another node/model — both panes stream the same prompt"
                       leadingIcon="⇄"
@@ -1412,15 +1443,23 @@ export default function Chat(): React.JSX.Element {
                 nodes={nodes}
                 models={modelsB}
                 modelsLoading={modelListB.isLoading}
-                onNodeChange={(node) => store.updateCompareMeta(active.id, { node, model: "" })}
-                onModelChange={(model) => store.updateCompareMeta(active.id, { model })}
-                onToggleCapability={(tag) => store.toggleCompareCapability(active.id, tag)}
+                onNodeChange={(node) => {
+                  store.updateCompareMeta(active.id, { node, model: "" });
+                }}
+                onModelChange={(model) => {
+                  store.updateCompareMeta(active.id, { model });
+                }}
+                onToggleCapability={(tag) => {
+                  store.toggleCompareCapability(active.id, tag);
+                }}
                 headerExtras={
                   <Button
                     type="button"
                     variant="secondary"
                     size="sm"
-                    onClick={() => store.setCompareWith(active.id, null)}
+                    onClick={() => {
+                      store.setCompareWith(active.id, null);
+                    }}
                     data-testid="chat-compare-exit"
                     title="Exit compare mode — discards pane B transcript"
                     leadingIcon="×"

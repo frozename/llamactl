@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
 import type { ServiceInstance } from "../src/runtime/backend.js";
+
 import { LABEL_KEYS, MANAGED_BY_VALUE } from "../src/runtime/labels.js";
 import { ServiceError } from "../src/service/errors.js";
-import { DEFAULT_SERVICE_HANDLERS, findServiceHandler } from "../src/service/handlers/registry.js";
 import { pgvectorHandler } from "../src/service/handlers/pgvector-handler.js";
-import { PgvectorServiceSpecSchema, type PgvectorServiceSpec } from "../src/service/schema.js";
+import { DEFAULT_SERVICE_HANDLERS, findServiceHandler } from "../src/service/handlers/registry.js";
+import { type PgvectorServiceSpec, PgvectorServiceSpecSchema } from "../src/service/schema.js";
 
 const ENV_KEY = "SERVICE_TEST_PGVECTOR_PASSWORD";
 
@@ -39,13 +41,17 @@ describe("pgvectorHandler registry", () => {
 
 describe("pgvectorHandler.validate", () => {
   test("accepts default docker runtime (no passwordEnv)", () => {
-    expect(() => pgvectorHandler.validate(spec())).not.toThrow();
+    expect(() => {
+      pgvectorHandler.validate(spec());
+    }).not.toThrow();
   });
 
   test("accepts passwordEnv when env var is set", () => {
     process.env[ENV_KEY] = "supersecret";
     try {
-      expect(() => pgvectorHandler.validate(spec({ passwordEnv: ENV_KEY }))).not.toThrow();
+      expect(() => {
+        pgvectorHandler.validate(spec({ passwordEnv: ENV_KEY }));
+      }).not.toThrow();
     } finally {
       delete process.env[ENV_KEY];
     }
@@ -56,29 +62,33 @@ describe("pgvectorHandler.validate", () => {
     // backend's unified secret resolver at apply time; covered in
     // runtime-docker-backend.test.ts.
     delete process.env[ENV_KEY];
-    expect(() => pgvectorHandler.validate(spec({ passwordEnv: ENV_KEY }))).not.toThrow();
+    expect(() => {
+      pgvectorHandler.validate(spec({ passwordEnv: ENV_KEY }));
+    }).not.toThrow();
   });
 
   test("rejects external runtime without externalEndpoint", () => {
-    expect(() => pgvectorHandler.validate(spec({ runtime: "external" }))).toThrow(ServiceError);
+    expect(() => {
+      pgvectorHandler.validate(spec({ runtime: "external" }));
+    }).toThrow(ServiceError);
   });
 
   test("rejects external runtime with image override", () => {
-    expect(() =>
+    expect(() => {
       pgvectorHandler.validate(
         spec({
           runtime: "external",
           externalEndpoint: "postgres://pg.internal:5432/rag",
           image: { repository: "pgvector/pgvector", tag: "0.8.2-pg18-trixie" },
         }),
-      ),
-    ).toThrow(ServiceError);
+      );
+    }).toThrow(ServiceError);
   });
 
   test("rejects docker runtime with externalEndpoint", () => {
-    expect(() =>
-      pgvectorHandler.validate(spec({ externalEndpoint: "postgres://pg.internal:5432/rag" })),
-    ).toThrow(ServiceError);
+    expect(() => {
+      pgvectorHandler.validate(spec({ externalEndpoint: "postgres://pg.internal:5432/rag" }));
+    }).toThrow(ServiceError);
   });
 });
 

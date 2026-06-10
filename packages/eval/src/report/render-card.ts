@@ -1,5 +1,5 @@
-import type { LeaderboardRow } from "../store/sqlite.js";
 import type { SubBenchScores } from "../score/compose.js";
+import type { LeaderboardRow } from "../store/sqlite.js";
 
 export interface HardwareMatrixRow extends LeaderboardRow {}
 

@@ -1,10 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+
+import type { ModelHostSpecForEngine } from "../../src/engines/types.js";
+
 import { ENGINES } from "../../src/engines/index.js";
 import { gracefulShutdown } from "../../src/engines/lifecycle.js";
-import type { ModelHostSpecForEngine } from "../../src/engines/types.js";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
-import { tmpdir } from "node:os";
 
 function makeFakeBinary(): string {
   const dir = join(tmpdir(), `omlx-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
@@ -62,7 +64,7 @@ describe("omlx engine adapter", () => {
   test("buildBootCommand uses serve subcommand + --model-dir + --port", () => {
     const built = ENGINES.omlx.buildBootCommand(baseSpec, {
       LLAMA_CPP_MODELS: "/Volumes/WorkSSD/ai-models/llama.cpp/models",
-    } as any);
+    });
     expect(built.binary).toBe(goodBinary);
     expect(built.args[0]).toBe("serve");
     expect(built.args).toContain("--model-dir");
@@ -74,7 +76,7 @@ describe("omlx engine adapter", () => {
   });
 
   test("buildBootCommand passes --max-model-memory when resources set", () => {
-    const built = ENGINES.omlx.buildBootCommand(baseSpec, { LLAMA_CPP_MODELS: "/tmp" } as any);
+    const built = ENGINES.omlx.buildBootCommand(baseSpec, { LLAMA_CPP_MODELS: "/tmp" });
     expect(built.args).toContain("--max-model-memory");
     expect(built.args).toContain("12GB");
   });
@@ -106,7 +108,7 @@ describe("omlx engine adapter", () => {
   });
 
   test("buildBootCommand appends extraArgs verbatim", () => {
-    const built = ENGINES.omlx.buildBootCommand(baseSpec, { LLAMA_CPP_MODELS: "/tmp" } as any);
+    const built = ENGINES.omlx.buildBootCommand(baseSpec, { LLAMA_CPP_MODELS: "/tmp" });
     expect(built.args).toContain("--max-concurrent-requests");
     expect(built.args).toContain("4");
   });
@@ -115,7 +117,7 @@ describe("omlx engine adapter", () => {
     const built = ENGINES.omlx.buildBootCommand(baseSpec, {
       LLAMACTL_MODELS_DIR: "/neutral/models",
       LLAMA_CPP_MODELS: "/legacy/models",
-    } as any);
+    });
     expect(built.args).toContain("/neutral/models");
     expect(built.args).not.toContain("/legacy/models");
   });
@@ -139,7 +141,7 @@ describe("omlx engine adapter", () => {
       LLAMACTL_MODELS_DIR: "/neutral/models",
       LLAMACTL_RUNTIME_DIR: runtimeDir,
       workloadName: "iso-mlx-host",
-    } as any);
+    });
     // Should NOT pass the full models dir — instead the isolated per-workload dir.
     const modelDirIdx = built.args.indexOf("--model-dir");
     expect(modelDirIdx).toBeGreaterThanOrEqual(0);
@@ -168,7 +170,7 @@ describe("omlx engine adapter", () => {
       LLAMACTL_MODELS_DIR: modelsDir,
       LLAMACTL_RUNTIME_DIR: runtimeDir,
       workloadName: "iso-prep-host",
-    } as any);
+    });
 
     const isolatedDir = join(runtimeDir, "workloads", "iso-prep-host", ".omlx", "models");
     const linkTarget = join(isolatedDir, basename(hostedRel));
@@ -243,8 +245,10 @@ describe("omlx engine adapter", () => {
   test("probeReady times out cleanly without overrunning the deadline", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (_input: Request | URL | string, init?: RequestInit) =>
-      new Promise((_, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      await new Promise((_, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new Error("aborted"));
+        });
       })) as typeof fetch;
     const started = Date.now();
     const result = await ENGINES.omlx.probeReady({ host: "127.0.0.1", port: 54321 }, 300);
@@ -257,7 +261,7 @@ describe("omlx engine adapter", () => {
   test("teardown returns quickly when the process exits on its own", async () => {
     const proc = Bun.spawn(["sh", "-lc", "sleep 0.2"], { stderr: "pipe", stdout: "pipe" });
     const started = Date.now();
-    await ENGINES.omlx.teardown(proc.pid!);
+    await ENGINES.omlx.teardown(proc.pid);
     const elapsed = Date.now() - started;
     expect(elapsed).toBeLessThan(1000);
   });
@@ -272,10 +276,10 @@ describe("omlx engine adapter", () => {
       { stderr: "pipe", stdout: "pipe" },
     );
     const started = Date.now();
-    await gracefulShutdown(proc.pid!, 250);
+    await gracefulShutdown(proc.pid, 250);
     const elapsed = Date.now() - started;
     expect(elapsed).toBeLessThan(2000);
-    expect(() => process.kill(proc.pid!, 0)).toThrow();
+    expect(() => process.kill(proc.pid, 0)).toThrow();
   });
 
   afterAll(() => {

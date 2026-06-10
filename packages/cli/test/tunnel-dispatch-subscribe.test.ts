@@ -1,5 +1,6 @@
+import { auth, tunnel } from "@llamactl/remote";
 import { afterEach, describe, expect, test } from "bun:test";
-import { tunnel, auth } from "@llamactl/remote";
+
 import { handleTunnelRelay } from "../../remote/src/server/tunnel-relay.js";
 import { __resetInsecureTunnelWarning, buildTunnelSubscribe } from "../src/tunnel-dispatch.js";
 
@@ -46,7 +47,7 @@ async function startHarness(script: {
         return tunnelSrv.handleUpgrade(req, server) ?? new Response("no", { status: 400 });
       }
       if (url.pathname.startsWith("/tunnel-relay/")) {
-        return handleTunnelRelay(req, url, tunnelSrv, bearerHash);
+        return await handleTunnelRelay(req, url, tunnelSrv, bearerHash);
       }
       return new Response("404", { status: 404 });
     },

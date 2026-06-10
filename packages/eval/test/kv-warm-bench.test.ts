@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
+
 import {
-  buildFrontierPrompt,
   buildDeterministicPrompt,
-  formatKvWarmBenchCsvRow,
+  buildFrontierPrompt,
   createTokenizeClient,
-  renderKvWarmBenchMarkdown,
+  formatKvWarmBenchCsvRow,
   type KvWarmBenchRow,
+  renderKvWarmBenchMarkdown,
 } from "../src/matrix/workloads/kv-warm-bench.js";
 
 describe("buildDeterministicPrompt", () => {

@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { FetcherContext, RawDoc } from "../src/rag/pipeline/types.js";
+
 import { gitFetcher } from "../src/rag/pipeline/fetchers/git.js";
-import type { RawDoc, FetcherContext } from "../src/rag/pipeline/types.js";
 
 /**
  * The git fetcher shells out to the real `git` binary — Bun tests
@@ -113,7 +114,7 @@ describe("gitFetcher", () => {
   });
 
   test("unreachable repo emits an error event and yields nothing", async () => {
-    const events: Array<{ level: string; msg: string }> = [];
+    const events: { level: string; msg: string }[] = [];
     const ctx: FetcherContext = {
       spec: {
         kind: "git",
@@ -126,6 +127,8 @@ describe("gitFetcher", () => {
     };
     const docs = await collect(ctx);
     expect(docs).toEqual([]);
-    expect(events.some((e) => e.level === "error" && /git clone failed/.test(e.msg))).toBe(true);
+    expect(events.some((e) => e.level === "error" && e.msg.includes("git clone failed"))).toBe(
+      true,
+    );
   });
 });

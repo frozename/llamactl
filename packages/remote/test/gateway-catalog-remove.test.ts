@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { removeCompositeEntries } from "../src/workload/gateway-catalog/remove.js";
 
 const own = (names: string[]) => ({

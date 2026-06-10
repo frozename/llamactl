@@ -82,7 +82,7 @@ async function fetchModelIds(
   if (!response.ok) {
     return [];
   }
-  const body = (await response.json()) as { data?: Array<{ id?: string }> };
+  const body = (await response.json()) as { data?: { id?: string }[] };
   return (body.data ?? []).map((model) => model.id ?? "").filter(Boolean);
 }
 

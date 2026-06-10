@@ -4,9 +4,10 @@
  * s3, unstructured.io) can plug in without touching the orchestrator.
  */
 import type { Fetcher } from "../types.js";
+
 import { filesystemFetcher } from "./filesystem.js";
-import { httpFetcher } from "./http.js";
 import { gitFetcher } from "./git.js";
+import { httpFetcher } from "./http.js";
 
 export const FETCHERS: Record<string, Fetcher> = {
   filesystem: filesystemFetcher,

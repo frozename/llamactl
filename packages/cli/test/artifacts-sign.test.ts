@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, copyFileSync, rmSync, existsSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
-import { tmpdir, platform } from "node:os";
+
 import { codesignBinary } from "../src/commands/artifacts.js";
 
 /**

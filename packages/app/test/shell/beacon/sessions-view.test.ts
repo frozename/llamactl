@@ -1,6 +1,8 @@
-import { describe, test, expect } from "bun:test";
-import { bucketTabsByAge } from "../../../src/shell/beacon/session-buckets";
+import { describe, expect, test } from "bun:test";
+
 import type { TabEntry } from "../../../src/stores/tab-store";
+
+import { bucketTabsByAge } from "../../../src/shell/beacon/session-buckets";
 
 const NOW = 1_700_000_000_000;
 const HOUR = 3_600_000;

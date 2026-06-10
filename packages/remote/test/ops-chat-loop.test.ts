@@ -1,13 +1,15 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { PlannerExecutor, PlannerToolDescriptor } from "@nova/mcp";
 
-import {
-  runLoopExecutor,
-  submitOutcome,
-  sessionCount,
-  resetSessions,
-} from "../src/ops-chat/loop-executor.js";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
 import type { OpsChatStreamEvent } from "../src/ops-chat/loop-schema.js";
+
+import {
+  resetSessions,
+  runLoopExecutor,
+  sessionCount,
+  submitOutcome,
+} from "../src/ops-chat/loop-executor.js";
 
 /**
  * N.4 Phase 1 — loop executor. Verifies the streaming plan-step
@@ -38,7 +40,7 @@ const readTools: PlannerToolDescriptor[] = [
 ];
 
 function scriptedExecutor(
-  plans: Array<Array<{ tool: string; annotation: string; args?: Record<string, unknown> }>>,
+  plans: { tool: string; annotation: string; args?: Record<string, unknown> }[][],
   reasoning = "scripted",
 ): PlannerExecutor {
   let calls = 0;
@@ -362,7 +364,9 @@ describe("runLoopExecutor — cancellation + session cleanup", () => {
       for await (const ev of gen) {
         events.push(ev);
         if (ev.type === "plan_proposed") {
-          setTimeout(() => controller.abort(), 5);
+          setTimeout(() => {
+            controller.abort();
+          }, 5);
         }
       }
     })();

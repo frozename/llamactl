@@ -1,35 +1,32 @@
 export {
+  appendTunnelJournal,
+  defaultTunnelJournalPath,
+  type TunnelJournalConnect,
+  type TunnelJournalDisconnect,
+  type TunnelJournalEntry,
+  type TunnelJournalRelayCall,
+  type TunnelJournalRelayError,
+  type TunnelJournalReplaced,
+  type TunnelJournalUnauthorized,
+} from "./journal.js";
+export {
+  encodeTunnelMessage,
+  parseTunnelMessage,
   TUNNEL_CLOSE_BAD_HELLO,
   TUNNEL_CLOSE_HELLO_TIMEOUT,
   TUNNEL_CLOSE_UNAUTHORIZED,
-  TunnelMessageSchema,
-  parseTunnelMessage,
-  encodeTunnelMessage,
-  type TunnelMessage,
   type TunnelHello,
   type TunnelHelloAck,
-  type TunnelReq,
-  type TunnelRes,
+  type TunnelMessage,
+  TunnelMessageSchema,
   type TunnelPing,
   type TunnelPong,
-  type TunnelStreamEvent,
-  type TunnelStreamDone,
+  type TunnelReq,
+  type TunnelRes,
   type TunnelStreamCancel,
+  type TunnelStreamDone,
+  type TunnelStreamEvent,
 } from "./messages.js";
-export {
-  createTunnelServer,
-  type TunnelServer,
-  type TunnelServerOptions,
-  type TunnelRegistryEntry,
-} from "./tunnel-server.js";
-export {
-  createTunnelClient,
-  type TunnelClient,
-  type TunnelClientOptions,
-  type TunnelState,
-  type TunnelReconnectConfig,
-  type TunnelHeartbeatConfig,
-} from "./tunnel-client.js";
 export {
   createTunnelRouterHandler,
   createTunnelSubscriptionHandler,
@@ -37,13 +34,16 @@ export {
   type TunnelSubscription,
 } from "./router-bridge.js";
 export {
-  appendTunnelJournal,
-  defaultTunnelJournalPath,
-  type TunnelJournalEntry,
-  type TunnelJournalConnect,
-  type TunnelJournalDisconnect,
-  type TunnelJournalRelayCall,
-  type TunnelJournalRelayError,
-  type TunnelJournalUnauthorized,
-  type TunnelJournalReplaced,
-} from "./journal.js";
+  createTunnelClient,
+  type TunnelClient,
+  type TunnelClientOptions,
+  type TunnelHeartbeatConfig,
+  type TunnelReconnectConfig,
+  type TunnelState,
+} from "./tunnel-client.js";
+export {
+  createTunnelServer,
+  type TunnelRegistryEntry,
+  type TunnelServer,
+  type TunnelServerOptions,
+} from "./tunnel-server.js";

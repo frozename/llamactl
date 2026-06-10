@@ -1,9 +1,10 @@
 import * as React from "react";
-import { EditorialHero } from "../../ui";
+
 import { trpc } from "../../lib/trpc";
 import { useTabStore } from "../../stores/tab-store";
-import { SessionsTable } from "./sessions-table";
+import { EditorialHero } from "../../ui";
 import { DeleteConfirm } from "./delete-confirm";
+import { SessionsTable } from "./sessions-table";
 
 export default function OpsSessionsModule(): React.JSX.Element {
   const list = trpc.opsSessionList.useQuery({ limit: 100 });
@@ -40,7 +41,9 @@ export default function OpsSessionsModule(): React.JSX.Element {
               del.mutate({ sessionId: confirmId });
               setConfirmId(null);
             }}
-            onCancel={() => setConfirmId(null)}
+            onCancel={() => {
+              setConfirmId(null);
+            }}
           />
         ) : (
           <SessionsTable

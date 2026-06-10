@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { renderCard } from "../src/report/render-card.js";
 
 describe("renderCard", () => {

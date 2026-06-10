@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
+import type { RagBinding } from "../src/config/schema.js";
+
 import {
   CHROMA_DEFAULT_DATABASE,
   CHROMA_DEFAULT_TENANT,
-  ChromaRagAdapter,
+  type ChromaRagAdapter,
   createChromaAdapter,
   HttpChromaClient,
   parseHttpChromaEndpoint,
   resolveChromaHttpToken,
 } from "../src/rag/chroma/index.js";
 import { RagError } from "../src/rag/errors.js";
-import type { RagBinding } from "../src/config/schema.js";
 
 /**
  * HTTP-mode coverage of the chroma adapter (slice G1). The fixture
@@ -72,8 +74,8 @@ async function startFakeChroma(opts: FakeChromaOptions = {}): Promise<{
 
       // Explicit override wins.
       const key = `${req.method} ${url.pathname}`;
-      if (opts.overrides && opts.overrides[key]) {
-        return opts.overrides[key](body ? safeJson(body) : undefined);
+      if (opts.overrides?.[key]) {
+        return await opts.overrides[key](body ? safeJson(body) : undefined);
       }
 
       if (url.pathname === "/api/v2/heartbeat") {
@@ -213,7 +215,7 @@ function httpBinding(overrides: Partial<RagBinding> = {}): RagBinding {
     extraArgs: [],
     ...(overrides.embedder !== undefined && { embedder: overrides.embedder }),
     ...(overrides.auth !== undefined && { auth: overrides.auth }),
-  } as RagBinding;
+  };
 }
 
 // ---- parseHttpChromaEndpoint + token resolution ------------------------
@@ -252,30 +254,21 @@ describe("parseHttpChromaEndpoint", () => {
 
 describe("resolveChromaHttpToken", () => {
   test("returns undefined without auth block", () => {
-    expect(resolveChromaHttpToken({} as RagBinding, {})).toBeUndefined();
+    expect(resolveChromaHttpToken({}, {})).toBeUndefined();
   });
   test("reads tokenEnv when set", () => {
     const env = { CHROMA_TOKEN: "abc123" };
-    const got = resolveChromaHttpToken(
-      { auth: { tokenEnv: "CHROMA_TOKEN" } } as RagBinding,
-      env as NodeJS.ProcessEnv,
-    );
+    const got = resolveChromaHttpToken({ auth: { tokenEnv: "CHROMA_TOKEN" } }, env);
     expect(got).toBe("abc123");
   });
   test("reads env: scheme via tokenRef", () => {
     const env = { CT: "z" };
-    const got = resolveChromaHttpToken(
-      { auth: { tokenRef: "env:CT" } } as RagBinding,
-      env as NodeJS.ProcessEnv,
-    );
+    const got = resolveChromaHttpToken({ auth: { tokenRef: "env:CT" } }, env);
     expect(got).toBe("z");
   });
   test("wraps tokenRef failure in RagError", () => {
     try {
-      resolveChromaHttpToken(
-        { auth: { tokenRef: "env:MISSING_VAR" } } as RagBinding,
-        {} as NodeJS.ProcessEnv,
-      );
+      resolveChromaHttpToken({ auth: { tokenRef: "env:MISSING_VAR" } }, {});
       throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(RagError);
@@ -462,7 +455,7 @@ describe("ChromaRagAdapter (HTTP backend)", () => {
       ids: string[];
       embeddings: number[][];
       documents: string[];
-      metadatas: Array<Record<string, unknown> | null>;
+      metadatas: (Record<string, unknown> | null)[];
     };
     expect(upsertCall).toBeDefined();
     expect(upsertBody.ids).toEqual(["a", "b"]);
@@ -580,7 +573,7 @@ describe("ChromaRagAdapter (HTTP backend)", () => {
     // directly. Proves the override bypasses kubeconfig resolution end
     // to end — `freshConfig()` has no 'external-embedder' node, so
     // resolution would otherwise explode.
-    const embedderCalls: Array<{ auth: string | null; body: string }> = [];
+    const embedderCalls: { auth: string | null; body: string }[] = [];
     const embedFixture = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",

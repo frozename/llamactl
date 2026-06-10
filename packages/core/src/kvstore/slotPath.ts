@@ -55,7 +55,7 @@ export function parseAbsoluteSlotSavePath(extraArgs: readonly string[]): string 
 }
 
 export function parseSlotSavePathFromCommand(cmdline: string): string | null {
-  const match = cmdline.match(/(?:^|\s)--slot-save-path(?:=|\s+)(\S+)/);
+  const match = /(?:^|\s)--slot-save-path(?:=|\s+)(\S+)/.exec(cmdline);
   if (!match) return null;
   const value = match[1]!;
   return value.startsWith("/") ? value : null;

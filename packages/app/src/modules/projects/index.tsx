@@ -1,9 +1,10 @@
 import * as React from "react";
 import { useMemo, useState } from "react";
 import { stringify as stringifyYaml } from "yaml";
+
 import { trpc, trpcUIClient } from "@/lib/trpc";
-import { Badge, Button, EditorialHero } from "@/ui";
 import { getProjectScanRoots, useSettingsStore } from "@/modules/settings/project-scan-roots";
+import { Badge, Button, EditorialHero } from "@/ui";
 import type { BadgeVariant } from "@/ui";
 
 /**
@@ -337,7 +338,6 @@ function ProjectDetail(props: {
     },
   });
   const onRemove = (): void => {
-    // eslint-disable-next-line no-alert
     if (
       !confirm(`Remove project '${project.metadata.name}'? Indexed data stays in the rag node.`)
     ) {
@@ -597,7 +597,9 @@ function ProjectRow(props: {
       setIndexError(null);
       await utils.projectList.invalidate();
     },
-    onError: (err) => setIndexError(err.message),
+    onError: (err) => {
+      setIndexError(err.message);
+    },
   });
   const hasRag = !!project.spec.rag;
   return (
@@ -695,7 +697,9 @@ function ProjectRow(props: {
             type="button"
             variant="primary"
             size="sm"
-            onClick={() => indexMut.mutate({ name: project.metadata.name })}
+            onClick={() => {
+              indexMut.mutate({ name: project.metadata.name });
+            }}
             disabled={indexMut.isPending || !hasRag}
             loading={indexMut.isPending}
             data-testid={`projects-index-${project.metadata.name}`}
@@ -760,7 +764,9 @@ function GitRepoSuggestions({
     const handle = window.setTimeout(() => {
       setDebouncedProjectScanRootsText(projectScanRootsText);
     }, 300);
-    return () => window.clearTimeout(handle);
+    return () => {
+      window.clearTimeout(handle);
+    };
   }, [projectScanRootsText]);
 
   React.useEffect(() => {
@@ -843,14 +849,23 @@ function GitRepoSuggestions({
             type="button"
             variant="secondary"
             size="sm"
-            onClick={() => onPick(repo)}
+            onClick={() => {
+              onPick(repo);
+            }}
             title={repo.path}
           >
             {repo.name}
           </Button>
         ))}
         {!expanded && state.repos.length > visible.length && (
-          <Button type="button" variant="ghost" size="sm" onClick={() => setExpanded(true)}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setExpanded(true);
+            }}
+          >
             +{state.repos.length - visible.length} more
           </Button>
         )}
@@ -875,7 +890,9 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
       setPath("");
       setStatus({ kind: "ok", message: "project created" });
     },
-    onError: (err) => setStatus({ kind: "error", message: err.message }),
+    onError: (err) => {
+      setStatus({ kind: "error", message: err.message });
+    },
   });
   const [name, setName] = React.useState("");
   const [path, setPath] = React.useState("");
@@ -954,7 +971,9 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
           <input
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+            }}
             placeholder="novaflow"
             data-testid="projects-create-name"
             required
@@ -979,7 +998,9 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
             <input
               type="text"
               value={path}
-              onChange={(e) => setPath(e.target.value)}
+              onChange={(e) => {
+                setPath(e.target.value);
+              }}
               placeholder="/Users/you/repos/novaflow"
               data-testid="projects-create-path"
               required
@@ -1028,7 +1049,9 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
               <input
                 type="text"
                 value={purpose}
-                onChange={(e) => setPurpose(e.target.value)}
+                onChange={(e) => {
+                  setPurpose(e.target.value);
+                }}
                 placeholder="e.g. at-home diagnostic services platform"
                 style={{
                   width: "100%",
@@ -1048,7 +1071,9 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
             <Field label="RAG node (optional)">
               <select
                 value={ragNode}
-                onChange={(e) => setRagNode(e.target.value)}
+                onChange={(e) => {
+                  setRagNode(e.target.value);
+                }}
                 style={{
                   width: "100%",
                   borderRadius: "var(--r-md)",
@@ -1076,7 +1101,9 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
                 <input
                   type="text"
                   value={ragCollection}
-                  onChange={(e) => setRagCollection(e.target.value)}
+                  onChange={(e) => {
+                    setRagCollection(e.target.value);
+                  }}
                   placeholder="novaflow_docs"
                   style={{
                     width: "100%",
@@ -1358,7 +1385,9 @@ export default function Projects(): React.JSX.Element {
                 <ProjectRow
                   key={p.metadata.name}
                   project={p}
-                  onOpenDetail={() => setSelected(p.metadata.name)}
+                  onOpenDetail={() => {
+                    setSelected(p.metadata.name);
+                  }}
                 />
               ))}
             </tbody>
@@ -1370,8 +1399,12 @@ export default function Projects(): React.JSX.Element {
         <div>
           <ProjectDetail
             project={selectedProject}
-            onClose={() => setSelected(null)}
-            onRemoved={() => setSelected(null)}
+            onClose={() => {
+              setSelected(null);
+            }}
+            onRemoved={() => {
+              setSelected(null);
+            }}
           />
         </div>
       )}

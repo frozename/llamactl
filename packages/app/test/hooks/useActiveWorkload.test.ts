@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+
 import {
   getLiveWorkloads,
-  selectActiveWorkload,
   type LiveWorkload,
+  selectActiveWorkload,
 } from "../../src/hooks/workload-selection";
 
 describe("useActiveWorkload helpers", () => {

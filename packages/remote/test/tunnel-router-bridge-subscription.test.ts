@@ -1,8 +1,10 @@
-import { describe, expect, test } from "bun:test";
 import { initTRPC } from "@trpc/server";
+import { describe, expect, test } from "bun:test";
 import { z } from "zod";
-import { createTunnelSubscriptionHandler } from "../src/tunnel/router-bridge.js";
+
 import type { TunnelReq } from "../src/tunnel/messages.js";
+
+import { createTunnelSubscriptionHandler } from "../src/tunnel/router-bridge.js";
 
 /**
  * B.2 coverage — `createTunnelSubscriptionHandler` must resolve

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { collectNodeFacts, resolveNodeName, resolveVersions, detectGpu } from "../src/nodeFacts.js";
+
+import { collectNodeFacts, detectGpu, resolveNodeName, resolveVersions } from "../src/nodeFacts.js";
 import { detectMemoryBytes } from "../src/profile.js";
 
 const originalEnv = { ...process.env };

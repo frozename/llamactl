@@ -1,9 +1,11 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyPipeline, loadPipeline, removePipeline } from "../src/rag/pipeline/store";
+
 import type { RagPipelineManifest } from "../src/rag/pipeline/schema";
+
+import { applyPipeline, loadPipeline, removePipeline } from "../src/rag/pipeline/store";
 
 const baseManifest: RagPipelineManifest = {
   apiVersion: "llamactl/v1",
@@ -16,7 +18,7 @@ const baseManifest: RagPipelineManifest = {
     concurrency: 4,
     on_duplicate: "skip",
   },
-} as RagPipelineManifest;
+};
 
 describe("removePipeline ref-counted", () => {
   let tmp: string;

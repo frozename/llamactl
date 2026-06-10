@@ -1,25 +1,24 @@
-import { describe, expect, test } from "bun:test";
 import {
-  CollectionInfoSchema,
-  DeleteRequestSchema,
-  DocumentSchema,
-  ListCollectionsResponseSchema,
-  SearchRequestSchema,
-  SearchResponseSchema,
-  StoreRequestSchema,
-  StoreResponseSchema,
-  UnifiedAiRequestSchema,
-  createOpenAICompatProvider,
   type AiProvider,
+  CollectionInfoSchema,
+  createOpenAICompatProvider,
   type DeleteRequest,
+  DeleteRequestSchema,
   type DeleteResponse,
+  DocumentSchema,
   type ListCollectionsResponse,
+  ListCollectionsResponseSchema,
   type RetrievalProvider,
   type SearchRequest,
+  SearchRequestSchema,
   type SearchResponse,
+  SearchResponseSchema,
   type StoreRequest,
+  StoreRequestSchema,
   type StoreResponse,
+  UnifiedAiRequestSchema,
 } from "@nova/contracts";
+import { describe, expect, test } from "bun:test";
 
 /**
  * Cross-repo seam test — proves llamactl can resolve every

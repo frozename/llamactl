@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { projectAdmissionHeadroom } from "../src/policy.js";
 
 describe("projectAdmissionHeadroom", () => {

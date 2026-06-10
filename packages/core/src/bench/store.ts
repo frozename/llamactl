@@ -1,13 +1,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+
 import { resolveEnv } from "../env.js";
 import {
   BenchHistoryEntry,
+  benchHistoryFields,
   BenchProfile,
+  benchProfileFields,
   BenchProfileLegacy,
   BenchVision,
-  benchHistoryFields,
-  benchProfileFields,
   benchVisionFields,
   splitTsvRow,
 } from "../schemas.js";
@@ -72,8 +73,7 @@ export function readBenchProfiles(file: string): BenchProfileRows {
     const cols = splitTsvRow(line);
     if (cols.length >= benchProfileFields.length) {
       const record: Record<string, string> = {};
-      for (let i = 0; i < benchProfileFields.length; i += 1) {
-        const field = benchProfileFields[i];
+      for (const [i, field] of benchProfileFields.entries()) {
         if (field === undefined) continue;
         record[field] = cols[i] ?? "";
       }
@@ -147,8 +147,7 @@ export function readBenchVision(file: string): BenchVision[] {
     const cols = splitTsvRow(line);
     if (cols.length < benchVisionFields.length) continue;
     const record: Record<string, string> = {};
-    for (let i = 0; i < benchVisionFields.length; i += 1) {
-      const field = benchVisionFields[i];
+    for (const [i, field] of benchVisionFields.entries()) {
       if (field === undefined) continue;
       record[field] = cols[i] ?? "";
     }
@@ -190,8 +189,7 @@ export function readBenchHistory(file: string): BenchHistoryRows {
     const cols = splitTsvRow(line);
     if (cols.length >= benchHistoryFields.length) {
       const record: Record<string, string> = {};
-      for (let i = 0; i < benchHistoryFields.length; i += 1) {
-        const field = benchHistoryFields[i];
+      for (const [i, field] of benchHistoryFields.entries()) {
         if (field === undefined) continue;
         record[field] = cols[i] ?? "";
       }

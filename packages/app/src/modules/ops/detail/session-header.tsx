@@ -1,6 +1,7 @@
 import * as React from "react";
-import { EditorialHero, Button } from "@/ui";
+
 import type { SessionView } from "@/lib/use-ops-session";
+import { Button, EditorialHero } from "@/ui";
 
 interface Props {
   view: SessionView;

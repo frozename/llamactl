@@ -3,6 +3,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { RunSummary } from "../src/rag/pipeline/runtime.js";
+import type { RagPipelineManifest } from "../src/rag/pipeline/schema.js";
+
 import {
   applyPipeline,
   defaultPipelinesDir,
@@ -13,8 +16,6 @@ import {
   removePipeline,
   writeLastRun,
 } from "../src/rag/pipeline/store.js";
-import type { RagPipelineManifest } from "../src/rag/pipeline/schema.js";
-import type { RunSummary } from "../src/rag/pipeline/runtime.js";
 
 /**
  * On-disk persistence for RagPipeline manifests. Uses a tmpdir root
@@ -50,7 +51,7 @@ function makeManifest(
       on_duplicate: "skip",
       ...overrides,
     },
-  } as RagPipelineManifest;
+  };
 }
 
 describe("defaultPipelinesDir / pipelineDir / journalPathFor", () => {

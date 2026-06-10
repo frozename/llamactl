@@ -1,9 +1,10 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadSiriusProviders, saveSiriusProviders } from "../src/config/sirius-providers.js";
+
 import { loadEmbersynthConfig, saveEmbersynthConfig } from "../src/config/embersynth.js";
+import { loadSiriusProviders, saveSiriusProviders } from "../src/config/sirius-providers.js";
 import { CompositeOwnershipSchema } from "../src/workload/gateway-catalog/schema.js";
 
 describe("CompositeOwnership schema", () => {

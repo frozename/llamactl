@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { runRunbook, type RunbookToolClient, type ToolCallInput } from "../src/index.js";
+
+import { type RunbookToolClient, runRunbook, type ToolCallInput } from "../src/index.js";
 
 interface Call {
   name: string;

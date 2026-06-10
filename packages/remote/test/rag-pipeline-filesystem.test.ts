@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { filesystemFetcher } from "../src/rag/pipeline/fetchers/filesystem.js";
-import { looksBinary } from "../src/rag/pipeline/fetchers/filesystem.js";
 import type { RawDoc } from "../src/rag/pipeline/types.js";
+
+import { filesystemFetcher, looksBinary } from "../src/rag/pipeline/fetchers/filesystem.js";
 
 let tmp = "";
 
@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 async function collect(spec: unknown): Promise<RawDoc[]> {
-  const logs: Array<{ level: string; msg: string }> = [];
+  const logs: { level: string; msg: string }[] = [];
   const ctx = {
     spec,
     log: (e: { level: "info" | "warn" | "error"; msg: string; data?: unknown }) =>
@@ -64,7 +64,7 @@ describe("filesystemFetcher", () => {
     const docs = await collect({ kind: "filesystem", root: tmp });
     const ids = docs.map((d) => d.id).sort();
     expect(ids).toEqual(["text.md"]);
-    const logs = (docs as unknown as { logs: Array<{ level: string; msg: string }> }).logs;
+    const logs = (docs as unknown as { logs: { level: string; msg: string }[] }).logs;
     expect(logs.some((l) => l.level === "warn" && l.msg.includes("binary"))).toBe(true);
   });
 

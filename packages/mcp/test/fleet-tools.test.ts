@@ -1,19 +1,21 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type {
+  FleetExecutionEntry,
+  FleetHeartbeatEntry,
+  FleetJournalEntry,
+  FleetProposalEntry,
+  FleetSnapshotEntry,
+  FleetTransitionEntry,
+} from "@llamactl/fleet-supervisor";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+
 import { registerFleetTools } from "../src/tools/fleet.js";
-import type {
-  FleetJournalEntry,
-  FleetSnapshotEntry,
-  FleetHeartbeatEntry,
-  FleetTransitionEntry,
-  FleetProposalEntry,
-  FleetExecutionEntry,
-} from "@llamactl/fleet-supervisor";
 
 let tmpDir = "";
 
@@ -47,7 +49,7 @@ async function connected() {
 }
 
 function textOf(result: unknown): string {
-  const c = (result as { content?: Array<{ type: string; text: string }> }).content ?? [];
+  const c = (result as { content?: { type: string; text: string }[] }).content ?? [];
   return c[0]?.text ?? "";
 }
 

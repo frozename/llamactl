@@ -1,5 +1,6 @@
-import { infraSpec } from "@llamactl/remote";
 import type { NodeClient } from "@llamactl/remote";
+
+import { infraSpec } from "@llamactl/remote";
 
 export type InfraPlatformKind = infraSpec.InfraPlatformKind;
 
@@ -53,7 +54,7 @@ export function makeSpecArtifactResolver(opts: {
         return p;
       });
     }
-    return platformPromise;
+    return await platformPromise;
   }
 
   return async ({ pkg, version }) => {

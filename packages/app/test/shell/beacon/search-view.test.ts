@@ -1,6 +1,7 @@
-import { describe, test, expect } from "bun:test";
-import { searchModules } from "../../../src/shell/beacon/search-modules";
+import { describe, expect, test } from "bun:test";
+
 import { APP_MODULES, type AppModule } from "../../../src/modules/registry";
+import { searchModules } from "../../../src/shell/beacon/search-modules";
 
 describe("searchModules", () => {
   test("empty / whitespace query returns no results", () => {

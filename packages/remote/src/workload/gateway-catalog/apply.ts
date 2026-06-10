@@ -1,5 +1,6 @@
-import { entrySpecHash } from "./hash.js";
 import type { ApplyConflict, CompositeOwnership } from "./schema.js";
+
+import { entrySpecHash } from "./hash.js";
 
 type AnyEntry = Record<string, unknown> & { ownership?: CompositeOwnership };
 
@@ -41,7 +42,7 @@ export function applyCompositeEntries<T extends AnyEntry>(opts: ApplyOpts<T>): A
           specHash: newHash,
         },
       };
-      map.set(k, next as T);
+      map.set(k, next);
       changed = true;
       continue;
     }
@@ -74,7 +75,7 @@ export function applyCompositeEntries<T extends AnyEntry>(opts: ApplyOpts<T>): A
         specHash: newHash,
       },
     };
-    map.set(k, next as T);
+    map.set(k, next);
     changed = true;
   }
 

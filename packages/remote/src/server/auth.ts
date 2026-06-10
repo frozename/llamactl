@@ -41,7 +41,7 @@ export function verifyBearer(req: Request, expectedHashHex: string): boolean {
  * a bare-string body. Shape is stable so client-side recognizers can
  * key off `error.code === 'UNAUTHORIZED'`.
  */
-export function unauthorizedResponse(message: string = "invalid bearer token"): Response {
+export function unauthorizedResponse(message = "invalid bearer token"): Response {
   return new Response(JSON.stringify({ error: { code: "UNAUTHORIZED", message } }), {
     status: 401,
     headers: {

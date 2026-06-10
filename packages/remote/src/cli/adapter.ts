@@ -1,3 +1,12 @@
+import type {
+  AiProvider,
+  ChatMessage,
+  ProviderHealth,
+  UnifiedAiRequest,
+  UnifiedAiResponse,
+  UnifiedStreamEvent,
+} from "@nova/contracts";
+
 /**
  * Subprocess-backed `AiProvider` for CLI subscription tools
  * (`claude -p`, `codex exec`, `gemini -p`). Spawns the declared
@@ -21,18 +30,11 @@
  *     Phase 5 adds it for presets that can line-buffer.
  */
 import { randomUUID } from "node:crypto";
-import type {
-  AiProvider,
-  ChatMessage,
-  ProviderHealth,
-  UnifiedAiRequest,
-  UnifiedAiResponse,
-  UnifiedStreamEvent,
-} from "@nova/contracts";
 
 import type { CliBinding } from "../config/schema.js";
-import { resolvePreset, expandArgs } from "./presets.js";
+
 import { appendCliJournal, type CliJournalEntry } from "./journal.js";
+import { expandArgs, resolvePreset } from "./presets.js";
 
 export interface CliProviderOptions {
   /** The agent node's name — used for the virtual provider id +
@@ -125,7 +127,9 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
       const env = mergeEnv(opts.env ?? process.env, opts.binding.env);
 
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), opts.binding.timeoutMs);
+      const timer = setTimeout(() => {
+        ctrl.abort();
+      }, opts.binding.timeoutMs);
       const startedAt = Date.now();
       let spawnResult: SpawnResult;
       try {
@@ -250,8 +254,12 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
             // flip it. The caller's AbortSignal (from tRPC) takes
             // precedence — if the UI cancels, kill the child.
             const ctrl = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), opts.binding.timeoutMs);
-            const onCallerAbort = (): void => ctrl.abort();
+            const timer = setTimeout(() => {
+              ctrl.abort();
+            }, opts.binding.timeoutMs);
+            const onCallerAbort = (): void => {
+              ctrl.abort();
+            };
             if (callerSignal) {
               if (callerSignal.aborted) ctrl.abort();
               else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
@@ -401,7 +409,9 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
       // Short window — version probes should come back instantly. If
       // the binary hangs on --version we'd rather fail fast than
       // burn through the call timeout.
-      const timer = setTimeout(() => ctrl.abort(), 10_000);
+      const timer = setTimeout(() => {
+        ctrl.abort();
+      }, 10_000);
       try {
         const result = await spawn([resolved.command, ...resolved.versionProbe], {
           env: mergeEnv(opts.env ?? process.env, opts.binding.env),

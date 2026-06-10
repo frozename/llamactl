@@ -1,11 +1,11 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
-import { embersynthHandler } from "../src/workload/gateway-handlers/embersynth.js";
+
 import { readGatewayCatalog } from "../src/workload/gateway-catalog/io.js";
-import type { ApplyResult } from "../src/workload/apply.js";
+import { embersynthHandler } from "../src/workload/gateway-handlers/embersynth.js";
 
 const node = {
   name: "em-1",
@@ -111,12 +111,12 @@ server:
 `,
       "utf8",
     );
-    const r = (await embersynthHandler.apply({
+    const r = await embersynthHandler.apply({
       manifest,
       node,
       getClient: (() => null) as any,
       composite,
-    })) as ApplyResult;
+    });
     expect(r.action).toBe("pending");
     expect(r.statusSection.conditions[0]!.reason).toBe("EmbersynthUpstreamNameCollision");
   });

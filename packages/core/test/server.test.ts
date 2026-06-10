@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import * as childProcess from "node:child_process";
+
+import { resolveEnv } from "../src/env.js";
 import {
   advertisedEndpoint,
   endpoint,
@@ -14,7 +16,6 @@ import {
   stopServer,
 } from "../src/server.js";
 import { ensureWorkloadRuntimeDir, workloadRuntimeDir } from "../src/workloadRuntime.js";
-import { resolveEnv } from "../src/env.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 
 const TEST_KEY = { name: "test-wl" };
@@ -154,7 +155,7 @@ describe("server.startServer (error paths)", () => {
     const port = 29143;
     process.env.LLAMA_CPP_PORT = String(port);
     const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("nope", { status: 401 }) as any,
+      new Response("nope", { status: 401 }),
     );
     try {
       const result = await startServer({ key: TEST_KEY, target: "Demo/demo.gguf" });
@@ -456,7 +457,7 @@ describe("server.startServer (error paths)", () => {
         key: TEST_KEY,
         target: "Demo/demo.gguf",
         binary: customBin,
-      } as any);
+      });
       expect(spawnSpy).toHaveBeenCalledWith(
         customBin,
         expect.arrayContaining(["--host", "127.0.0.1", "--port", "8080"]),

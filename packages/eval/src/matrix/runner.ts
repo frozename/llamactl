@@ -1,12 +1,15 @@
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
+
 import { randomUUID } from "node:crypto";
 import os from "node:os";
-import { aggregateMetrics, percentile } from "./scoring.js";
+
+import type { ModelSpec, WorkloadEval } from "./types.js";
+
+import { buildCompletionRequest, completeChat } from "../client.js";
 import { ensureModelServing, teardownIfOwned } from "./lifecycle.js";
 import { resolveCorpusPath } from "./repo-root.js";
+import { aggregateMetrics, percentile } from "./scoring.js";
 import { ensureMatrixSchema, insertCellRow, insertCellRowDetail } from "./store.js";
-import { buildCompletionRequest, completeChat } from "../client.js";
-import type { ModelSpec, WorkloadEval } from "./types.js";
 
 interface RunMatrixOpts {
   models: ModelSpec[];
@@ -73,8 +76,8 @@ export async function runMatrix(
           judgeBoot = await ensureModelServing(workload.judge_model);
         }
         const started = new Date().toISOString();
-        const predictions: Array<{ pred: string; gold: string }> = [];
-        const rowMetrics: Array<Record<string, number>> = [];
+        const predictions: { pred: string; gold: string }[] = [];
+        const rowMetrics: Record<string, number>[] = [];
         const wallMsArr: number[] = [];
         let totalCompletionTokens = 0;
         let totalWallMs = 0;

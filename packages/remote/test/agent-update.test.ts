@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { createHash, createHash as cryptoHash } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -9,9 +9,9 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createHash as cryptoHash } from "node:crypto";
+import { join } from "node:path";
+
 import { handleAgentUpdate } from "../src/server/agent-update.js";
 
 /**

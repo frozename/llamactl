@@ -1,5 +1,5 @@
-import type { ProbeReport, ProbeResult, ProbeState } from "./probe.js";
 import type { RunbookToolClient } from "../types.js";
+import type { ProbeReport, ProbeResult, ProbeState } from "./probe.js";
 
 /**
  * Facade probe — calls `nova.ops.healthcheck` through the in-proc MCP
@@ -57,14 +57,14 @@ interface NovaHealthcheckEnvelope {
 
 interface McpCallResult {
   isError?: boolean;
-  content?: Array<{ type: string; text?: string }>;
+  content?: { type: string; text?: string }[];
 }
 
 function firstTextBlock(result: McpCallResult): string | undefined {
   const content = result.content;
   if (!Array.isArray(content) || content.length === 0) return undefined;
   const first = content[0];
-  if (!first || first.type !== "text" || typeof first.text !== "string") return undefined;
+  if (first?.type !== "text" || typeof first.text !== "string") return undefined;
   return first.text;
 }
 
@@ -82,7 +82,7 @@ function parseEnvelope(result: McpCallResult): NovaHealthcheckEnvelope {
   if (!parsed || typeof parsed !== "object") {
     throw new Error("nova.ops.healthcheck: envelope is not an object");
   }
-  return parsed as NovaHealthcheckEnvelope;
+  return parsed;
 }
 
 function stateFromOk(ok: boolean): ProbeState {

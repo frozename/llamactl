@@ -1,3 +1,5 @@
+import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:child_process";
+
 import { describe, expect, test } from "bun:test";
 import {
   chmodSync,
@@ -10,16 +12,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:child_process";
+
 import {
   assemblePlistOptions,
   currentBunTarget,
+  type FsLike,
+  type InstallLaunchdDeps,
   parseInstallLaunchdFlags,
   pollLaunchctlHealthy,
   resolveBinary,
   runAgentInstallLaunchd,
-  type FsLike,
-  type InstallLaunchdDeps,
   type SpawnSyncLike,
 } from "../src/commands/agent-install/index.js";
 
@@ -41,12 +43,12 @@ const accessFromDisk: FsLike["accessSync"] = (path, mode) => {
 };
 
 const writeFileFromDisk: FsLike["writeFileSync"] = (file, data): void => {
-  writeFileSync(file as string, data as string | NodeJS.ArrayBufferView);
+  writeFileSync(file, data);
 };
 
 const copyFileThrough: FsLike["copyFileSync"] = (src, dest): void => {
   mkdirSync(join(dest as string, ".."), { recursive: true });
-  writeFileSync(dest as string, readFileSync(src as string));
+  writeFileSync(dest, readFileSync(src));
 };
 
 /**
@@ -70,10 +72,10 @@ interface SpawnCall {
 
 interface SpawnStubConfig {
   /** Ordered queue of responses; consumed per command+args prefix match. */
-  responses?: Array<{
+  responses?: {
     match: (command: string, args: string[]) => boolean;
     response: SpawnSyncReturns<string>;
-  }>;
+  }[];
   /** Fallback response returned when no matcher fires. */
   fallback?: SpawnSyncReturns<string>;
 }
@@ -150,14 +152,14 @@ function makeTestDeps(over: Partial<InstallLaunchdDeps> = {}): {
   const stdoutChunks: string[] = [];
   const stderrChunks: string[] = [];
   const defaults: InstallLaunchdDeps = {
-    spawnSync: ((_c, _a, _o): SpawnSyncReturns<string> => ({
+    spawnSync: (_c, _a, _o): SpawnSyncReturns<string> => ({
       pid: 0,
       output: ["", "", ""],
       stdout: "",
       stderr: "",
       status: 0,
       signal: null,
-    })) as SpawnSyncLike,
+    }),
     fs: defaultFs(),
     fetchAgentRelease: async () => ({
       ok: true,
@@ -311,7 +313,7 @@ describe("resolveBinary --binary", () => {
           chmodSync,
           accessSync: accessFromDisk,
           copyFileSync: copyFileThrough,
-        } as unknown as FsLike,
+        },
       });
 
       const resolved = await resolveBinary({
@@ -696,7 +698,7 @@ describe("runAgentInstallLaunchd", () => {
           accessSync: accessFromDisk,
           writeFileSync: writeFileFromDisk,
           copyFileSync: copyFileThrough,
-        } as unknown as FsLike,
+        },
       });
 
       const code = await runAgentInstallLaunchd(
@@ -888,7 +890,7 @@ describe("runAgentInstallLaunchd", () => {
           accessSync: accessFromDisk,
           writeFileSync: writeFileFromDisk,
           copyFileSync: copyFileThrough,
-        } as unknown as FsLike,
+        },
       });
 
       const code = await runAgentInstallLaunchd(

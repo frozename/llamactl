@@ -1,6 +1,7 @@
+import type { JournalEvent } from "../../ops-chat/sessions/journal-schema.js";
+
 // packages/remote/src/search/ingest/sessions.ts
 import { sessionEventBus } from "../../ops-chat/sessions/event-bus.js";
-import type { JournalEvent } from "../../ops-chat/sessions/journal-schema.js";
 
 export interface IngestRecord {
   id: string;
@@ -80,7 +81,7 @@ export function startSessionsIngest(opts: SessionsIngestOpts): () => void {
   return () => {
     if (timer !== null) clearTimeout(timer);
     void flush();
-    subs.forEach((off) => off());
+    for (const off of subs) off();
     subs.clear();
     (sessionEventBus as any).create = originalCreate;
   };

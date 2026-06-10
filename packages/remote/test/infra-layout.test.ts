@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   activateInfraVersion,
   defaultInfraDir,
@@ -105,7 +106,9 @@ describe("activateInfraVersion", () => {
   });
 
   test("throws when the version is not installed", () => {
-    expect(() => activateInfraVersion("llama-cpp", "b9999", dir)).toThrow(/not installed/);
+    expect(() => {
+      activateInfraVersion("llama-cpp", "b9999", dir);
+    }).toThrow(/not installed/);
   });
 });
 

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+
 import { makeTempRuntime, runCli } from "./helpers.js";
 
 describe("llamactl bench preset / vision (usage + binary-missing paths)", () => {
@@ -11,7 +12,9 @@ describe("llamactl bench preset / vision (usage + binary-missing paths)", () => 
     // deterministic regardless of the developer's real llama.cpp install.
     temp.env.LLAMA_CPP_BIN = join(temp.devStorage, "nonexistent-bin");
   });
-  afterEach(() => temp.cleanup());
+  afterEach(() => {
+    temp.cleanup();
+  });
 
   test("bench preset without a valid target errors cleanly", () => {
     const r = runCli(["bench", "preset", "not-a-real-alias"], temp.env);

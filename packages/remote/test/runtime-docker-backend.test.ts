@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { DockerBackend, createDockerBackend } from "../src/runtime/docker/backend.js";
+
+import type { ServiceDeployment } from "../src/runtime/backend.js";
+
+import { createDockerBackend, DockerBackend } from "../src/runtime/docker/backend.js";
 import { RuntimeError } from "../src/runtime/errors.js";
 import { LABEL_KEYS, MANAGED_BY_VALUE } from "../src/runtime/labels.js";
-import type { ServiceDeployment } from "../src/runtime/backend.js";
 
 /**
  * Phase 1 runtime-docker-backend tests — mock fetch at the transport
@@ -153,7 +155,7 @@ describe("DockerBackend.ensureService — happy path (create fresh)", () => {
       if (req.url.includes("/containers/create") && req.method === "POST") {
         return { status: 201, body: jsonBody({ Id: "c123" }) };
       }
-      if (req.url.match(/\/containers\/c123\/start/) && req.method === "POST") {
+      if (/\/containers\/c123\/start/.exec(req.url) && req.method === "POST") {
         return { status: 204, body: "" };
       }
       throw new Error(`unexpected request: ${req.method} ${req.url}`);
@@ -212,10 +214,7 @@ describe("DockerBackend.ensureService — hash drift (recreate)", () => {
       if (req.url.includes("/stop") && req.method === "POST") {
         return { status: 204, body: "" };
       }
-      if (
-        req.url.match(/DELETE/) ||
-        (req.method === "DELETE" && req.url.includes("/containers/"))
-      ) {
+      if (/DELETE/.exec(req.url) || (req.method === "DELETE" && req.url.includes("/containers/"))) {
         return { status: 204, body: "" };
       }
       if (req.url.includes("/images/") && req.url.endsWith("/json")) {

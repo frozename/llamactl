@@ -1,7 +1,8 @@
-import { resolveEnv } from "./env.js";
-import { normalizeProfile } from "./profile.js";
-import { resolvePreset } from "./presets.js";
 import type { MachineProfile } from "./types.js";
+
+import { resolveEnv } from "./env.js";
+import { resolvePreset } from "./presets.js";
+import { normalizeProfile } from "./profile.js";
 
 /**
  * Recommended Qwen 3.6 35B-A3B quant for a given profile. Matches

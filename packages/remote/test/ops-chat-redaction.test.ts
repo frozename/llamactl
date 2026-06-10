@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { redactResult } from "../src/ops-chat/sessions/redaction";
 
 describe("redactResult", () => {

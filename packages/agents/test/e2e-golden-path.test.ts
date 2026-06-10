@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+
 import { runRunbook } from "../src/index.js";
 
 /**
@@ -80,7 +81,7 @@ describe("golden-path: audit-fleet against real @llamactl/mcp", () => {
     ]);
     const summary = result.summary as {
       cluster: string | null;
-      nodes: Array<{ name: string; kind: string }>;
+      nodes: { name: string; kind: string }[];
       promotions: unknown[];
       workloads: unknown[];
       installedAndBenched: unknown[];

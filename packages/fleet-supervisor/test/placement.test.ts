@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { chooseBestNode, scoreNodes } from "../src/placement.js";
+
 import type { SnapshotRow } from "../src/aggregator-db.js";
 import type { WorkloadSnapshot } from "../src/types.js";
+
+import { chooseBestNode, scoreNodes } from "../src/placement.js";
 
 const BASE_TS = "2026-05-25T12:00:00Z";
 

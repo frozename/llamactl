@@ -4,16 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
+import type { Project } from "../src/config/projects.js";
+
 import {
   appendProjectRoutingJournal,
+  type BudgetSnapshot,
   defaultProjectRoutingJournalPath,
   packRouteForUsage,
   parseProjectNodeName,
-  resolveProjectNodeTarget,
-  type BudgetSnapshot,
   type ProjectRoutingDecision,
+  resolveProjectNodeTarget,
 } from "../src/config/project-routing.js";
-import type { Project } from "../src/config/projects.js";
 import { ProjectSchema } from "../src/config/projects.js";
 
 function makeProject(overrides: Partial<Project["spec"]> = {}): Project {

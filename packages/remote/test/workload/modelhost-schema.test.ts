@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { ModelHostManifestSchema } from "../../src/workload/modelhost-schema.js";
 
 const valid = {

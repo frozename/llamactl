@@ -1,4 +1,5 @@
 import { unlinkSync } from "node:fs";
+
 import type { KvStorage } from "./storage.js";
 
 export type KvEntryReason = "cold" | "continued" | "evict" | "shutdown" | "agentSession";
@@ -199,7 +200,7 @@ export class KvRegistry {
       RETURNING upstream_slot_file
     `,
       )
-      .all(workload, currentEpoch) as Array<{ upstream_slot_file: string }>;
+      .all(workload, currentEpoch) as { upstream_slot_file: string }[];
     for (const row of rows) unlinkSlotArtifacts(row.upstream_slot_file);
     return rows.length > 0;
   }
@@ -255,7 +256,7 @@ function unlinkSlotArtifacts(path: string): void {
 }
 
 function deleteReturning(storage: KvStorage, sql: string, sha: string): boolean {
-  const rows = storage.db.query(sql).all(sha) as Array<{ upstream_slot_file: string }>;
+  const rows = storage.db.query(sql).all(sha) as { upstream_slot_file: string }[];
   for (const row of rows) unlinkSlotArtifacts(row.upstream_slot_file);
   return rows.length > 0;
 }

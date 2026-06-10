@@ -1,8 +1,11 @@
+import type { HFModelInfo } from "./schemas.js";
+import type { MachineProfile, ModelClass } from "./types.js";
+
 import {
+  type CuratedStatus,
   curatedStatusForRepoFile,
   relFromRepoAndFile,
   repoKnown,
-  type CuratedStatus,
 } from "./catalog.js";
 import { resolveEnv } from "./env.js";
 import {
@@ -15,8 +18,6 @@ import {
 } from "./hf.js";
 import { normalizeProfile } from "./profile.js";
 import { quantFromRel } from "./quant.js";
-import type { HFModelInfo } from "./schemas.js";
-import type { MachineProfile, ModelClass } from "./types.js";
 
 export type DiscoveryFilter =
   | "all"
@@ -248,7 +249,7 @@ function quantFallbackFit(file: string): DiscoveryFit {
   if (/Q2|Q3_K_S|Q3_K_M/.test(f)) return "good";
   if (/Q4_K_M|UD-Q4_K_M|UD-Q4_K_XL/.test(f)) return "excellent";
   if (/Q5|Q6/.test(f)) return "good";
-  if (/Q8_0/.test(f)) return "fair";
+  if (f.includes("Q8_0")) return "fair";
   return "fair";
 }
 
@@ -270,7 +271,7 @@ function applyRepoQuantOverrides(
     case "mac-mini-16g": {
       if (/Q2|Q3_K_S|Q3_K_M/.test(file)) fit = "excellent";
       else if (/Q4_K_M|UD-Q4_K_M|UD-Q4_K_XL/.test(file)) fit = "good";
-      else if (/Q8_0/.test(file)) fit = "fair";
+      else if (file.includes("Q8_0")) fit = "fair";
       if (/35b-a3b|31b|27b|26b/.test(repoL)) {
         fit = /Q2|Q3_K_S|Q3_K_M/.test(file) ? "good" : "poor";
       } else if (/671b|405b|123b|120b|72b|70b|v3|v4/.test(repoL)) {
@@ -279,7 +280,7 @@ function applyRepoQuantOverrides(
       break;
     }
     case "balanced": {
-      if (/Q2/.test(file)) fit = "fair";
+      if (file.includes("Q2")) fit = "fair";
       else if (/Q3_K_S|Q3_K_M/.test(file)) fit = "good";
       else if (/Q4_K_M|UD-Q4_K_M|UD-Q4_K_XL/.test(file)) fit = "excellent";
       if (/671b|405b|123b|120b|72b|70b/.test(repoL)) fit = "poor";
@@ -319,8 +320,8 @@ export async function discoveryFit(
   fit = applyRepoQuantOverrides(fit, profile, repoL, file);
 
   if (
-    (klass === "reasoning" && (/deepseek-v3/.test(repoL) || /deepseek-v4/.test(repoL))) ||
-    (klass === "multimodal" && (/72b/.test(repoL) || /70b/.test(repoL)))
+    (klass === "reasoning" && (repoL.includes("deepseek-v3") || repoL.includes("deepseek-v4"))) ||
+    (klass === "multimodal" && (repoL.includes("72b") || repoL.includes("70b")))
   ) {
     fit = "poor";
   }

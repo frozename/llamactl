@@ -1,10 +1,11 @@
-import * as React from "react";
-import { CommandBar, Lockup, ThemeOrbs } from "@/ui";
-import { useThemeStore } from "@/stores/theme-store";
-import { useTabStore } from "@/stores/tab-store";
-import { NodeSelector } from "@/shell/node-selector";
-import { useCommandPaletteOpen } from "@/shell/command-palette";
 import { Bell } from "lucide-react";
+import * as React from "react";
+
+import { useCommandPaletteOpen } from "@/shell/command-palette";
+import { NodeSelector } from "@/shell/node-selector";
+import { useTabStore } from "@/stores/tab-store";
+import { useThemeStore } from "@/stores/theme-store";
+import { CommandBar, Lockup, ThemeOrbs } from "@/ui";
 
 /**
  * Layout B — macOS traffic lights (handled by main process), a
@@ -51,7 +52,12 @@ export function TitleBar(): React.JSX.Element {
       </div>
 
       <div style={{ justifySelf: "center", WebkitAppRegion: "no-drag" } as React.CSSProperties}>
-        <CommandBar crumbs={crumbs} onClick={() => setPaletteOpen(true)} />
+        <CommandBar
+          crumbs={crumbs}
+          onClick={() => {
+            setPaletteOpen(true);
+          }}
+        />
       </div>
 
       <div style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>

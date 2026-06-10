@@ -1,7 +1,9 @@
 import { useMemo } from "react";
+
 import { useTabStore } from "@/stores/tab-store";
 import { useThemeStore } from "@/stores/theme-store";
-import { THEMES, type ThemeId } from "@/themes";
+import { THEMES } from "@/themes";
+
 import type { Command } from "./command-palette";
 
 /**
@@ -34,7 +36,9 @@ export function useAppCommands(): Command[] {
         group: "Preferences",
         hint: themeId === t.id ? "current" : undefined,
         keywords: ["theme", "color", "palette", t.id, ...t.tagline.split(/\W+/)],
-        run: () => setThemeId(t.id as ThemeId),
+        run: () => {
+          setThemeId(t.id);
+        },
       });
     }
     out.push({
@@ -45,7 +49,7 @@ export function useAppCommands(): Command[] {
       run: () => {
         const idx = THEMES.findIndex((t) => t.id === themeId);
         const next = THEMES[(idx + 1) % THEMES.length]!;
-        setThemeId(next.id as ThemeId);
+        setThemeId(next.id);
       },
     });
 
@@ -55,70 +59,90 @@ export function useAppCommands(): Command[] {
         label: "View: Cluster map",
         group: "View",
         keywords: ["nodes", "map", "topology", "cluster"],
-        run: () => openTab("dashboard", "Dashboard"),
+        run: () => {
+          openTab("dashboard", "Dashboard");
+        },
       },
       {
         id: "view:models:catalog",
         label: "View: Model catalog",
         group: "View",
         keywords: ["models", "catalog"],
-        run: () => openTab("models.catalog", "Catalog"),
+        run: () => {
+          openTab("models.catalog", "Catalog");
+        },
       },
       {
         id: "view:models:pulls",
         label: "View: Pulls",
         group: "View",
         keywords: ["huggingface", "download", "pulls"],
-        run: () => openTab("models.pulls", "Pulls"),
+        run: () => {
+          openTab("models.pulls", "Pulls");
+        },
       },
       {
         id: "view:models:bench",
         label: "View: Benchmarks",
         group: "View",
         keywords: ["bench", "benchmark", "tokens/sec"],
-        run: () => openTab("models.bench", "Bench"),
+        run: () => {
+          openTab("models.bench", "Bench");
+        },
       },
       {
         id: "view:models:presets",
         label: "View: Preset promotions",
         group: "View",
         keywords: ["presets", "promote"],
-        run: () => openTab("models.presets", "Presets"),
+        run: () => {
+          openTab("models.presets", "Presets");
+        },
       },
       {
         id: "view:knowledge:retrieval",
         label: "View: Retrieval",
         group: "View",
         keywords: ["rag", "retrieval", "knowledge"],
-        run: () => openTab("knowledge.retrieval", "Retrieval"),
+        run: () => {
+          openTab("knowledge.retrieval", "Retrieval");
+        },
       },
       {
         id: "view:knowledge:pipelines",
         label: "View: RAG pipelines",
         group: "View",
         keywords: ["rag", "pipelines", "ingestion", "crawl"],
-        run: () => openTab("knowledge.pipelines", "Pipelines"),
+        run: () => {
+          openTab("knowledge.pipelines", "Pipelines");
+        },
       },
       {
         id: "view:workloads:modelruns",
         label: "View: Model runs",
         group: "View",
         keywords: ["workloads", "modelruns", "apply"],
-        run: () => openTab("workloads.model-runs", "Model Runs"),
+        run: () => {
+          openTab("workloads.model-runs", "Model Runs");
+        },
       },
       {
         id: "view:workloads:composites",
         label: "View: Composites",
         group: "View",
         keywords: ["composite", "compose", "multi-workload"],
-        run: () => openTab("workloads.composites", "Composites"),
+        run: () => {
+          openTab("workloads.composites", "Composites");
+        },
       },
       {
         id: "view:ops:plan",
         label: "View: Planner",
         group: "View",
         keywords: ["plan", "planner", "operator plan"],
-        run: () => openTab("plan", "Planner"),
+        run: () => {
+          openTab("plan", "Planner");
+        },
       },
     );
 
@@ -128,35 +152,45 @@ export function useAppCommands(): Command[] {
         label: "New: Project",
         group: "New",
         keywords: ["project", "add", "create"],
-        run: () => openTab("projects", "Projects"),
+        run: () => {
+          openTab("projects", "Projects");
+        },
       },
       {
         id: "new:workload",
         label: "New: Workload",
         group: "New",
         keywords: ["workload", "modelrun", "apply", "start server"],
-        run: () => openTab("workloads.model-runs", "Model Runs"),
+        run: () => {
+          openTab("workloads.model-runs", "Model Runs");
+        },
       },
       {
         id: "new:chat",
         label: "New: Chat",
         group: "New",
         keywords: ["chat", "conversation"],
-        run: () => openTab("chat", "Chat"),
+        run: () => {
+          openTab("chat", "Chat");
+        },
       },
       {
         id: "new:ops-chat",
         label: "New: Ops Chat session",
         group: "New",
         keywords: ["ops", "operator", "tool calling"],
-        run: () => openTab("ops-chat", "Ops Chat"),
+        run: () => {
+          openTab("ops-chat", "Ops Chat");
+        },
       },
       {
         id: "new:pipeline",
         label: "New: RAG pipeline",
         group: "New",
         keywords: ["pipeline", "ingestion", "crawl", "index"],
-        run: () => openTab("knowledge.pipelines", "Pipelines"),
+        run: () => {
+          openTab("knowledge.pipelines", "Pipelines");
+        },
       },
     );
 
@@ -166,7 +200,9 @@ export function useAppCommands(): Command[] {
         label: "Developer: Reload window",
         group: "Developer",
         keywords: ["reload", "refresh"],
-        run: () => window.location.reload(),
+        run: () => {
+          window.location.reload();
+        },
       },
       {
         id: "dev:devtools",

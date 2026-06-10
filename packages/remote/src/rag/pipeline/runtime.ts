@@ -1,3 +1,5 @@
+import type { DeleteRequest, RetrievalProvider, StoreRequest } from "@nova/contracts";
+
 /**
  * RAG ingestion pipeline orchestrator. Walks a validated manifest
  * source-by-source, feeds the fetched RawDocs through the declared
@@ -12,16 +14,15 @@
  */
 import { createHash } from "node:crypto";
 
-import type { DeleteRequest, StoreRequest, RetrievalProvider } from "@nova/contracts";
-
-import { RagPipelineManifestSchema, type RagPipelineManifest } from "./schema.js";
-import { openJournal, type Journal, type JournalEntry } from "./journal.js";
-import { FETCHERS } from "./fetchers/registry.js";
-import { TRANSFORMS } from "./transforms/registry.js";
-import { pipelineEvents } from "./event-bus.js";
 import type { RawDoc } from "./types.js";
-import { loadConfig, resolveNode, defaultConfigPath } from "../../config/kubeconfig.js";
+
+import { defaultConfigPath, loadConfig, resolveNode } from "../../config/kubeconfig.js";
 import { createRagAdapter } from "../index.js";
+import { pipelineEvents } from "./event-bus.js";
+import { FETCHERS } from "./fetchers/registry.js";
+import { type Journal, type JournalEntry, openJournal } from "./journal.js";
+import { type RagPipelineManifest, RagPipelineManifestSchema } from "./schema.js";
+import { TRANSFORMS } from "./transforms/registry.js";
 
 export interface OpenAdapterResult {
   store: RetrievalProvider["store"];
@@ -63,12 +64,12 @@ export interface RunSummary {
   skipped_docs: number;
   errors: number;
   elapsed_ms: number;
-  per_source: Array<{
+  per_source: {
     source: string;
     docs: number;
     chunks: number;
     errors: number;
-  }>;
+  }[];
   /**
    * Operator-declared cost estimate. Present only when the manifest
    * supplies `spec.cost.{per_chunk_usd, per_doc_usd}`. Best-effort —
@@ -276,7 +277,7 @@ async function runSource(args: {
   // doc pipelines within a source. Work is submitted as an async
   // task per doc; the semaphore caps in-flight tasks.
   const sem = new Semaphore(Math.max(1, args.concurrency));
-  const inflight: Array<Promise<void>> = [];
+  const inflight: Promise<void>[] = [];
 
   try {
     for await (const rawDoc of source) {
@@ -589,7 +590,7 @@ function defaultOpenAdapter(
 
 class Semaphore {
   private active = 0;
-  private readonly waiters: Array<() => void> = [];
+  private readonly waiters: (() => void)[] = [];
   constructor(private readonly max: number) {}
 
   async acquire(): Promise<void> {

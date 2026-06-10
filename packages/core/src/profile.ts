@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+
 import type { MachineProfile } from "./types.js";
 
 const OMLX_MAX_MODEL_MEMORY_GIB_BY_PROFILE: Record<MachineProfile, number> = {
@@ -25,7 +26,7 @@ export function detectMemoryBytes(): number | null {
   if (process.platform === "linux") {
     try {
       const meminfo = readFileSync("/proc/meminfo", "utf8");
-      const m = meminfo.match(/^MemTotal:\s+(\d+)\s+kB/m);
+      const m = /^MemTotal:\s+(\d+)\s+kB/m.exec(meminfo);
       if (m?.[1]) {
         const kb = Number.parseInt(m[1], 10);
         if (Number.isFinite(kb) && kb > 0) return kb * 1024;

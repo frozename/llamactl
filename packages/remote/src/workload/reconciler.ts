@@ -1,10 +1,5 @@
-import {
-  applyOne,
-  applyOneModelHost,
-  type ApplyEvent,
-  type ApplyResult,
-  type WorkloadClient,
-} from "./apply.js";
+import type { ModelRun } from "./schema.js";
+
 import {
   computeModelHostSpecHash,
   readModelHostState,
@@ -12,11 +7,17 @@ import {
 } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
 import { defaultNodeBudgetGiB } from "./admission.js";
-import { listWorkloads, loadWorkloadByName, saveWorkload, defaultWorkloadsDir } from "./store.js";
+import {
+  type ApplyEvent,
+  applyOne,
+  applyOneModelHost,
+  type ApplyResult,
+  type WorkloadClient,
+} from "./apply.js";
+import { LOCAL_NODE_ID, type ModelHostManifest } from "./modelhost-schema.js";
 import { listModelHosts, saveModelHost } from "./modelhost-store.js";
 import { listNodeRuns } from "./noderun-store.js";
-import type { ModelRun } from "./schema.js";
-import { LOCAL_NODE_ID, type ModelHostManifest } from "./modelhost-schema.js";
+import { defaultWorkloadsDir, listWorkloads, loadWorkloadByName, saveWorkload } from "./store.js";
 
 export interface ReconcileNodeReport {
   name: string;
@@ -77,7 +78,7 @@ function liveHostSpecSnapshot(current: Record<string, unknown>): Record<string, 
 // Retained for future use when modelHostStatus surfaces launch args
 // and reconcile can detect spec drift on-tick rather than only on the
 // explicit `apply -f` path.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+
 function hostSpecsEqual(manifest: ModelHostManifest, current: Record<string, unknown>): boolean {
   return (
     JSON.stringify(hostSpecSnapshot(manifest)) === JSON.stringify(liveHostSpecSnapshot(current))
@@ -156,7 +157,7 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
     try {
       const client = opts.getClient(spec.node);
       const current = await client.modelHostStatus.query({ workload: name });
-      if (spec.enabled === false && current.state !== "Running") {
+      if (!spec.enabled && current.state !== "Running") {
         // A disabled host that isn't Running may still have a stale sidecar
         // (e.g. a dead-pid sidecar left by an out-of-band exit). statusModelHost
         // reports Stopped for a dead pid, so this short-circuit now runs before

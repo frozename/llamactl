@@ -1,7 +1,8 @@
-import { runRunbook } from "../harness.js";
-import { RUNBOOKS } from "../runbooks/index.js";
 import type { RunbookToolClient } from "../types.js";
 import type { PlanLike, PlanStepLike } from "./severity.js";
+
+import { runRunbook } from "../harness.js";
+import { RUNBOOKS } from "../runbooks/index.js";
 
 /**
  * Plan execution for the healer loop. Dispatches each step to either
@@ -26,7 +27,7 @@ export interface ExecuteStepOptions {
 }
 
 export interface ExecutePlanResult {
-  steps: Array<{ index: number; tool: string; outcome: StepOutcome }>;
+  steps: { index: number; tool: string; outcome: StepOutcome }[];
   /** Index of the step that stopped the run, if any. Undefined when
    *  every step returned `ok: true`. */
   stoppedAt?: number;
@@ -66,12 +67,12 @@ export async function executePlanStep(
     });
     const envelope = raw as {
       isError?: boolean;
-      content?: Array<{ type: string; text?: string }>;
+      content?: { type: string; text?: string }[];
     };
     if (envelope?.isError === true) {
       const first = envelope.content?.[0];
       const msg =
-        first && first.type === "text" && typeof first.text === "string"
+        first?.type === "text" && typeof first.text === "string"
           ? first.text
           : `${step.tool}: tool returned isError`;
       return { ok: false, error: msg.slice(0, 500) };

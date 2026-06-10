@@ -1,5 +1,6 @@
-import { describe, test, expect } from "bun:test";
-import { buttonClasses, type ButtonVariant, type ButtonSize } from "../../src/ui/button";
+import { describe, expect, test } from "bun:test";
+
+import { buttonClasses, type ButtonSize, type ButtonVariant } from "../../src/ui/button";
 
 describe("buttonClasses", () => {
   const variants: ButtonVariant[] = ["primary", "secondary", "ghost", "outline", "destructive"];

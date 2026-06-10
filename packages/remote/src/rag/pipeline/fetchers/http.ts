@@ -15,8 +15,9 @@
  * don't replace a real search-engine extractor.
  */
 import type { Fetcher, RawDoc } from "../types.js";
-import { HttpSourceSpecSchema } from "../schema.js";
+
 import { resolveSecret } from "../../../config/secret.js";
+import { HttpSourceSpecSchema } from "../schema.js";
 
 export const httpFetcher: Fetcher = {
   kind: "http",
@@ -41,9 +42,7 @@ export const httpFetcher: Fetcher = {
       }
     }
 
-    const queue: Array<{ url: string; depth: number }> = [
-      { url: canonicalize(spec.url), depth: 0 },
-    ];
+    const queue: { url: string; depth: number }[] = [{ url: canonicalize(spec.url), depth: 0 }];
     const visited = new Set<string>([canonicalize(spec.url)]);
 
     while (queue.length > 0) {
@@ -152,12 +151,16 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const outer = init.signal;
-  const onAbort = () => controller.abort();
+  const onAbort = () => {
+    controller.abort();
+  };
   if (outer) {
     if (outer.aborted) controller.abort();
     else outer.addEventListener("abort", onAbort, { once: true });
   }
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
@@ -173,27 +176,27 @@ async function fetchWithTimeout(
  */
 export function extractReadableText(html: string): string {
   let h = html;
-  h = h.replace(/<!--[\s\S]*?-->/g, "");
-  h = h.replace(/<script[\s\S]*?<\/script>/gi, "");
-  h = h.replace(/<style[\s\S]*?<\/style>/gi, "");
-  h = h.replace(/<nav[\s\S]*?<\/nav>/gi, "");
-  h = h.replace(/<footer[\s\S]*?<\/footer>/gi, "");
-  h = h.replace(/<header[\s\S]*?<\/header>/gi, "");
+  h = h.replaceAll(/<!--[\s\S]*?-->/g, "");
+  h = h.replaceAll(/<script[\s\S]*?<\/script>/gi, "");
+  h = h.replaceAll(/<style[\s\S]*?<\/style>/gi, "");
+  h = h.replaceAll(/<nav[\s\S]*?<\/nav>/gi, "");
+  h = h.replaceAll(/<footer[\s\S]*?<\/footer>/gi, "");
+  h = h.replaceAll(/<header[\s\S]*?<\/header>/gi, "");
 
-  const main = h.match(/<main[\s\S]*?<\/main>/i);
-  const article = h.match(/<article[\s\S]*?<\/article>/i);
-  const body = h.match(/<body[\s\S]*?<\/body>/i);
+  const main = /<main[\s\S]*?<\/main>/i.exec(h);
+  const article = /<article[\s\S]*?<\/article>/i.exec(h);
+  const body = /<body[\s\S]*?<\/body>/i.exec(h);
   const chosen = main?.[0] ?? article?.[0] ?? body?.[0] ?? h;
 
   return chosen
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, " ")
+    .replaceAll(/<[^>]+>/g, " ")
+    .replaceAll("&nbsp;", " ")
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll(/\s+/g, " ")
     .trim();
 }
 

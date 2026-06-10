@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
+
 import type { KvEntry } from "../src/kvstore/index.js";
+
 import { evictionScore } from "../src/kvstore/index.js";
 
 function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {

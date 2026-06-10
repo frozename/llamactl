@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { createRemoteNodeClient } from "../src/client/node-client.js";
 import { generateToken } from "../src/server/auth.js";
-import { startAgentServer, type RunningAgent } from "../src/server/serve.js";
+import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 import { generateSelfSignedCert } from "../src/server/tls.js";
 
 /**
@@ -116,11 +117,13 @@ describe("cluster-streaming: pullFile subscription over SSE", () => {
       certificateFingerprint: fingerprint,
     });
 
-    const events: Array<Record<string, unknown>> = [];
+    const events: Record<string, unknown>[] = [];
     let doneResult: Record<string, unknown> | null = null;
 
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("pullFile timed out")), 5000);
+      const timer = setTimeout(() => {
+        reject(new Error("pullFile timed out"));
+      }, 5000);
       const sub = client.pullFile.subscribe(
         { repo: "fake-org/fake-repo", file: "model-q4.gguf" },
         {
@@ -131,7 +134,7 @@ describe("cluster-streaming: pullFile subscription over SSE", () => {
           },
           onError: (err: unknown) => {
             clearTimeout(timer);
-            reject(err as Error);
+            reject(err);
           },
           onComplete: () => {
             clearTimeout(timer);
@@ -198,7 +201,9 @@ exit 0
               settled.value = true;
               sub.unsubscribe();
               // Give the agent a tick to propagate the abort + resolve.
-              setTimeout(() => resolve(), 200);
+              setTimeout(() => {
+                resolve();
+              }, 200);
             }
           },
           onError: () => {

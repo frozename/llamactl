@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+
 import type { FleetSnapshotEntry } from "./types.js";
 
 export function readLatestFleetSnapshotFromJournal(journalPath: string): FleetSnapshotEntry | null {

@@ -1,7 +1,9 @@
 // packages/app/src/shell/beacon/search-results-tree.tsx
 import * as React from "react";
-import { TreeItem, Badge } from "../../ui";
+
 import type { GroupedResults, Hit, SurfaceGroup, SurfaceKind } from "../../lib/global-search/types";
+
+import { Badge, TreeItem } from "../../ui";
 import { MatchSnippet } from "../match-snippet";
 
 interface Props {
@@ -79,7 +81,9 @@ export function SearchResultsTree({
               <div key={p.parentId} data-testid={`search-parent-${g.surface}-${p.parentId}`}>
                 <TreeItem
                   label={p.parentTitle}
-                  onClick={() => onActivate(p.topHit)}
+                  onClick={() => {
+                    onActivate(p.topHit);
+                  }}
                   trailing={
                     <div style={{ display: "flex", alignItems: "center" }}>
                       {p.hits.some((h) => h.matchKind === "semantic") ? (
@@ -106,7 +110,9 @@ export function SearchResultsTree({
                       <div
                         key={i}
                         style={{ padding: "0 14px 6px 28px", cursor: "pointer" }}
-                        onClick={() => onActivate(h)}
+                        onClick={() => {
+                          onActivate(h);
+                        }}
                       >
                         <div
                           style={{

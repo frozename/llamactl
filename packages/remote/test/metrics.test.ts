@@ -2,8 +2,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { generateToken } from "../src/server/auth.js";
-import { startAgentServer, type RunningAgent } from "../src/server/serve.js";
+import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 import { generateSelfSignedCert } from "../src/server/tls.js";
 
 /**
@@ -93,14 +94,14 @@ function pinnedFetch(path: string, init?: RequestInit): Promise<Response> {
       authorization: `Bearer ${agentToken}`,
     },
     ...({ tls: { ca: caPem } } as Record<string, unknown>),
-  } as RequestInit);
+  });
 }
 
 describe("agent /metrics endpoint", () => {
   test("requires bearer auth", async () => {
     const res = await fetch(`${agent!.url}/metrics`, {
       ...({ tls: { ca: caPem } } as Record<string, unknown>),
-    } as RequestInit);
+    });
     expect(res.status).toBe(401);
   });
 
@@ -132,7 +133,7 @@ describe("agent /metrics endpoint", () => {
     // Scrape twice — before and after — and diff the counter values.
     async function scrape(): Promise<string> {
       const r = await pinnedFetch("/metrics");
-      return r.text();
+      return await r.text();
     }
 
     function countChatSeries(text: string): number {

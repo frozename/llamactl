@@ -1,11 +1,12 @@
+import { env as envMod, serverLogs as serverLogsMod } from "@llamactl/core";
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+
 import { createNodeClient } from "../src/client/node-client.js";
-import { freshConfig } from "../src/config/schema.js";
 import { upsertNode as upsertNodeInConfig } from "../src/config/kubeconfig.js";
-import { env as envMod, serverLogs as serverLogsMod } from "@llamactl/core";
+import { freshConfig } from "../src/config/schema.js";
 
 describe("createNodeClient (local sentinel path)", () => {
   test("local node dispatches in-process via router.createCaller", async () => {
@@ -55,10 +56,9 @@ describe("createNodeClient (local sentinel path)", () => {
       const got: string[] = [];
       let started = false;
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(
-          () => reject(new Error("serverLogs subscription timed out")),
-          2000,
-        );
+        const timer = setTimeout(() => {
+          reject(new Error("serverLogs subscription timed out"));
+        }, 2000);
         client.serverLogs.subscribe(
           { workload, lines: 10, follow: false },
           {

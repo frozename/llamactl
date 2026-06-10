@@ -1,17 +1,18 @@
-import { randomUUID } from "node:crypto";
-import { appendJournalEvent } from "./sessions/journal.js";
-import { sessionEventBus } from "./sessions/event-bus.js";
-import { redactResult } from "./sessions/redaction.js";
-import type { JournalEvent } from "./sessions/journal-schema.js";
 import {
-  runPlanner,
+  type AllowlistConfig,
   type PlannerExecutor,
   type PlannerToolDescriptor,
-  type AllowlistConfig,
+  runPlanner,
 } from "@nova/mcp";
-import { toolTier, type ToolTier, KNOWN_OPS_CHAT_TOOLS } from "./dispatch.js";
-import type { OpsChatStreamEvent, OpsChatStepOutcome } from "./loop-schema.js";
+import { randomUUID } from "node:crypto";
+
+import type { OpsChatStepOutcome, OpsChatStreamEvent } from "./loop-schema.js";
+import type { JournalEvent } from "./sessions/journal-schema.js";
+
+import { KNOWN_OPS_CHAT_TOOLS, toolTier, type ToolTier } from "./dispatch.js";
 import { checkRefusal } from "./refusals.js";
+import { sessionEventBus } from "./sessions/event-bus.js";
+import { appendJournalEvent } from "./sessions/journal.js";
 
 /**
  * N.4 Phase 1 — server-side loop executor for Ops Chat.
@@ -35,7 +36,7 @@ import { checkRefusal } from "./refusals.js";
 export interface LoopExecutorOptions {
   goal: string;
   context?: string;
-  history?: Array<{ role: "user" | "assistant"; text: string }>;
+  history?: { role: "user" | "assistant"; text: string }[];
   tools: PlannerToolDescriptor[];
   executor: PlannerExecutor;
   allowlist?: AllowlistConfig;
@@ -113,7 +114,7 @@ function resolveTier(toolName: string): ToolTier {
 
 function buildTranscript(
   history: LoopExecutorOptions["history"],
-  outcomes: Array<{ step: string; ok: boolean; summary: string }>,
+  outcomes: { step: string; ok: boolean; summary: string }[],
 ): string {
   const lines: string[] = [];
   for (const turn of history ?? []) {
@@ -158,7 +159,7 @@ export async function* runLoopExecutor(
   };
   sessionRegistry.set(sessionId, record);
 
-  const outcomes: Array<{ step: string; ok: boolean; summary: string }> = [];
+  const outcomes: { step: string; ok: boolean; summary: string }[] = [];
   const seenSteps = new Set<string>();
 
   const abortHandler = () => {

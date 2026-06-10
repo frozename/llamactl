@@ -32,15 +32,16 @@ import type {
   ServiceInstance,
   ServiceRef,
 } from "../backend.js";
+
 import { RuntimeError } from "../errors.js";
 import { LABEL_KEYS, MANAGED_BY_VALUE } from "../labels.js";
 import {
   createDockerClient,
+  type DockerClient,
+  type DockerClientOptions,
   drainNdjson,
   failWith,
   parseJsonOrThrow,
-  type DockerClient,
-  type DockerClientOptions,
 } from "./client.js";
 
 const STOP_TIMEOUT_SECONDS = 10;
@@ -121,7 +122,7 @@ export class DockerBackend implements RuntimeBackend {
     }
 
     const existing = await this.inspectService({ name: spec.name });
-    if (existing && existing.specHash === spec.specHash && existing.running) {
+    if (existing?.specHash === spec.specHash && existing.running) {
       return existing;
     }
     if (existing) {
@@ -249,7 +250,7 @@ export class DockerBackend implements RuntimeBackend {
     const name = `${ref.repository}:${ref.tag}`;
     const res = await this.client.request(`/images/${encodeURIComponent(name)}/json`);
     if (res.status === 404) return null;
-    return parseJsonOrThrow<ImageInspectResponse>(
+    return await parseJsonOrThrow<ImageInspectResponse>(
       res,
       "backend-unreachable",
       `inspect image ${name}`,
@@ -342,7 +343,7 @@ interface DockerCreateBody {
   HostConfig: {
     Binds?: string[];
     Mounts?: DockerMount[];
-    PortBindings?: Record<string, Array<{ HostPort?: string }>>;
+    PortBindings?: Record<string, { HostPort?: string }[]>;
     RestartPolicy?: { Name: string };
   };
 }
@@ -452,7 +453,7 @@ interface ContainerInspectResponse {
     Labels: Record<string, string> | null;
   };
   NetworkSettings: {
-    Ports: Record<string, Array<{ HostIp: string; HostPort: string }> | null> | null;
+    Ports: Record<string, { HostIp: string; HostPort: string }[] | null> | null;
   };
 }
 
