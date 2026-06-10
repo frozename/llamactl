@@ -12,6 +12,7 @@
     "cli": "bun run --cwd packages/cli src/bin.ts",
     "build:agent": "bun run packages/cli/src/bin.ts artifacts build-agent",
     "build:agent:all": "scripts/build-all-targets.sh",
+    "prepare": "husky",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier . --write",
@@ -42,8 +43,13 @@
     "eslint-plugin-unicorn": "^64.0.0",
     "eslint-plugin-unused-imports": "^4.4.1",
     "globals": "^17.6.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.7",
     "prettier": "^3.8.3",
     "typescript": "5.9.3",
     "typescript-eslint": "^8.60.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,mjs,json,md,yml,yaml}": "prettier --check"
   }
 }

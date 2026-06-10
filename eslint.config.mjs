@@ -207,7 +207,11 @@ export default tseslint.config(
     },
   },
   {
-    files: ["packages/app/src/**/*.ts", "packages/app/electron/**/*.ts"],
+    files: [
+      "packages/app/electron/**/*.ts",
+      "packages/app/electron.vite.config.ts",
+      "packages/app/vite.config.ts",
+    ],
     languageOptions: {
       globals: { ...globals.node, Bun: "readonly" },
     },

@@ -1,0 +1,2 @@
+# Pre-push stays deferred until lint is green.
+bunx lint-staged

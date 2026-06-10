@@ -1,0 +1,98 @@
+name: check
+
+# Mainline PR gate for typecheck, package tests, formatting, and the
+# advisory lint baseline burn-down. Mirrors the sibling checkout layout
+# used by the other CI workflows because this repo depends on
+# `file:../../../nova/packages/*`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout llamactl
+        uses: actions/checkout@v4
+        with:
+          path: llamactl
+
+      - name: Checkout nova
+        uses: actions/checkout@v4
+        with:
+          repository: frozename/nova
+          ref: main
+          path: nova
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install nova
+        working-directory: nova
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Install llamactl
+        working-directory: llamactl
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: llamactl
+        run: bun run typecheck
+
+      - name: Test packages/core
+        working-directory: llamactl
+        run: bun run --cwd packages/core test
+
+      - name: Test packages/cli
+        working-directory: llamactl
+        run: bun run --cwd packages/cli test
+
+      - name: Test packages/app
+        working-directory: llamactl/packages/app
+        run: bun test
+
+      - name: Test packages/remote
+        working-directory: llamactl
+        run: bun run --cwd packages/remote test
+
+      - name: Test packages/eval
+        working-directory: llamactl
+        run: bun run --cwd packages/eval test
+
+      - name: Test packages/agents
+        working-directory: llamactl
+        run: bun run --cwd packages/agents test
+
+      - name: Test packages/fleet-supervisor
+        working-directory: llamactl
+        run: bun run --cwd packages/fleet-supervisor test
+
+      - name: Test packages/mcp
+        working-directory: llamactl
+        run: bun run --cwd packages/mcp test
+
+      - name: Test train syntax
+        working-directory: llamactl/packages/train
+        run: bash scripts/check-syntax.sh
+
+      - name: Format check
+        working-directory: llamactl
+        run: bun run format:check
+
+      - name: Lint advisory
+        working-directory: llamactl
+        continue-on-error: true
+        # Baseline: docs/quality/lint-baseline-2026-06-10.json
+        # (4249 errors / 2644 warnings). Flips to blocking after the
+        # burn-down lands.
+        run: bun run lint || true

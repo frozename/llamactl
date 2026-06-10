@@ -1,12 +1,12 @@
 {
   "totals": {
     "errors": 4249,
-    "warnings": 2642
+    "warnings": 2644
   },
   "byRule": {
     "security/detect-non-literal-fs-filename": {
       "errors": 0,
-      "warnings": 1365
+      "warnings": 1367
     },
     "@typescript-eslint/no-dynamic-delete": {
       "errors": 63,
@@ -3588,7 +3588,7 @@
     },
     "scripts/tooling/strict-lint-rollout.test.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 7
     },
     "tests/ui-audit-setup.js": {
       "errors": 0,
