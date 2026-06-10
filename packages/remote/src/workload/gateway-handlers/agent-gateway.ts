@@ -26,9 +26,11 @@ export const agentGatewayHandler: GatewayHandler = {
   // Never actually called by the dispatcher — matched-by-kind short-
   // circuits first. Kept for interface uniformity and as a defensive
   // fallback if someone invokes it directly in a test.
-  async apply(_opts: GatewayApplyOptions): Promise<ApplyResult> {
-    throw new Error(
-      "agentGatewayHandler.apply() should not be called; dispatcher detects this handler and falls back to serverStart",
+  apply(_opts: GatewayApplyOptions): Promise<ApplyResult> {
+    return Promise.reject(
+      new Error(
+        "agentGatewayHandler.apply() should not be called; dispatcher detects this handler and falls back to serverStart",
+      ),
     );
   },
 };

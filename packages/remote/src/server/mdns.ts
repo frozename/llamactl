@@ -51,9 +51,9 @@ export function publishAgentMdns(opts: PublishAgentOptions): PublishedAgent {
   // collision as best-effort: log + carry on.
 
   const eventEmitter = service as unknown as {
-    on?: (evt: string, cb: (err: unknown) => void) => void;
+    on: (evt: "error", cb: (err: unknown) => void) => void;
   };
-  eventEmitter.on?.("error", (err) => {
+  eventEmitter.on("error", (err) => {
     process.stderr.write(
       `mdns: ${err instanceof Error ? err.message : String(err)} (continuing without LAN advertisement)\n`,
     );
@@ -62,8 +62,9 @@ export function publishAgentMdns(opts: PublishAgentOptions): PublishedAgent {
     host: synthHost,
     stop: async () => {
       await new Promise<void>((resolve) => {
-        if (typeof service.stop === "function") {
-          service.stop(() => {
+        const stopService = service.stop as (cb: () => void) => void;
+        if (typeof stopService === "function") {
+          stopService(() => {
             resolve();
           });
         } else {
@@ -95,19 +96,19 @@ export async function discoverAgents(timeoutMs = 2500): Promise<DiscoveredAgent[
   const seen = new Map<string, DiscoveredAgent>();
   return await new Promise<DiscoveredAgent[]>((resolve) => {
     const browser = bonjour.find({ type: LLAMACTL_SERVICE_TYPE }, (svc: Service) => {
-      const host = svc.host ?? svc.referer?.address ?? "";
-      const port = svc.port ?? 0;
-      const key = `${host}:${port}`;
+      const host = svc.host;
+      const port = svc.port;
+      const key = `${host}:${String(port)}`;
       if (seen.has(key)) return;
-      const txt = (svc.txt ?? {}) as Record<string, string | undefined>;
+      const txt = svc.txt as Record<string, string | undefined>;
       seen.set(key, {
-        name: svc.name ?? key,
+        name: svc.name,
         host,
         port,
-        nodeName: txt.node ?? svc.name ?? key,
+        nodeName: txt.node ?? svc.name,
         version: txt.version ?? null,
         fingerprint: txt.fp ?? null,
-        addresses: svc.addresses ?? [],
+        addresses: Array.isArray(svc.addresses) ? svc.addresses : [],
       });
     });
     setTimeout(() => {

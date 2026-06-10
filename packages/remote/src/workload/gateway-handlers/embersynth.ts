@@ -51,7 +51,8 @@ export const embersynthHandler: GatewayHandler = {
         current,
       });
       if (result.conflicts.length > 0) {
-        const c = result.conflicts[0]!;
+        const [c] = result.conflicts;
+        if (!c) throw new Error("gateway conflict list unexpectedly empty");
         const reason =
           c.kind === "name" ? "EmbersynthUpstreamNameCollision" : "EmbersynthUpstreamShapeMismatch";
         const message =
@@ -165,7 +166,7 @@ export const embersynthHandler: GatewayHandler = {
           return failure(
             opts,
             "EmbersynthReloadFailed",
-            `POST ${reloadUrl} returned ${res.status}${body ? `: ${body}` : ""}`,
+            `POST ${reloadUrl} returned ${String(res.status)}${body ? `: ${body}` : ""}`,
             now,
           );
         }

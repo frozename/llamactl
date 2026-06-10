@@ -17,19 +17,19 @@ export interface ApplyResult<T> {
   conflicts: ApplyConflict[];
 }
 
-const KEY_OF: Record<string, string> = { sirius: "name", embersynth: "id" };
+const KEY_OF: Record<ApplyOpts<unknown>["kind"], string> = { sirius: "name", embersynth: "id" };
 
 export function applyCompositeEntries<T extends AnyEntry>(opts: ApplyOpts<T>): ApplyResult<T> {
-  const key = KEY_OF[opts.kind]!;
+  const key = KEY_OF[opts.kind];
   const map = new Map<string, T>();
   for (const e of opts.current) {
-    map.set(String((e as any)[key]), e);
+    map.set(String(e[key]), e);
   }
   const conflicts: ApplyConflict[] = [];
   let changed = false;
 
   for (const d of opts.derived) {
-    const k = String((d as any)[key]);
+    const k = String(d[key]);
     const existing = map.get(k);
     const newHash = entrySpecHash(d);
 

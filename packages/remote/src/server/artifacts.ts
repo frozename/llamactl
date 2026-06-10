@@ -23,7 +23,7 @@ const ALLOWED_PLATFORMS = new Set(["darwin-arm64", "darwin-x64", "linux-x64", "l
 export function defaultArtifactsDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_ARTIFACTS_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const base = env.DEV_STORAGE?.trim() ?? join(homedir(), ".llamactl");
   return join(base, "artifacts");
 }
 
@@ -50,7 +50,7 @@ export function handleArtifact(
   if (parts.length !== 3 || parts[0] !== "artifacts" || parts[1] !== "agent") {
     return new Response("not found", { status: 404 });
   }
-  const platform = parts[2]!;
+  const platform = parts[2] ?? "";
   if (!ALLOWED_PLATFORMS.has(platform)) {
     return new Response(`unsupported platform: ${platform}`, { status: 404 });
   }

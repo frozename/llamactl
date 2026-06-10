@@ -86,7 +86,7 @@ describe("server/modelhost", () => {
         runtimeDir,
         env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: true, modelIds: [] }),
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       });
 
       expect(result.ok).toBe(true);
@@ -110,7 +110,7 @@ describe("server/modelhost", () => {
         runtimeDir,
         env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: true, modelIds: [] }),
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       });
 
       expect(result.ok).toBe(true);
@@ -134,7 +134,7 @@ describe("server/modelhost", () => {
         runtimeDir,
         env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: true, modelIds: [] }),
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       });
 
       expect(result.ok).toBe(true);
@@ -150,15 +150,22 @@ describe("server/modelhost", () => {
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
     const order: string[] = [];
     const engine = ENGINES.omlx;
-    const originalPrepareLaunch = engine.prepareLaunch;
-    const originalBuildBootCommand = engine.buildBootCommand;
-    const prepareLaunch = mock(async () => {
+    const originalPrepareLaunch = engine.prepareLaunch?.bind(engine);
+    if (!originalPrepareLaunch) throw new Error("omlx engine missing prepareLaunch");
+    const originalBuildBootCommand = engine.buildBootCommand.bind(engine);
+    const prepareLaunch = mock(() => {
       order.push("prepareLaunch");
+      return Promise.resolve();
     });
-    const buildBootCommand = mock((spec: Parameters<typeof engine.buildBootCommand>[0], env) => {
-      order.push(`buildBootCommand:${spec.binary}`);
-      return originalBuildBootCommand(spec, env);
-    });
+    const buildBootCommand = mock(
+      (
+        spec: Parameters<typeof engine.buildBootCommand>[0],
+        env: Parameters<typeof engine.buildBootCommand>[1],
+      ) => {
+        order.push(`buildBootCommand:${spec.binary}`);
+        return originalBuildBootCommand(spec, env);
+      },
+    );
     const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
     try {
       engine.prepareLaunch = prepareLaunch;
@@ -169,7 +176,7 @@ describe("server/modelhost", () => {
         runtimeDir,
         env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: true, modelIds: [] }),
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       });
 
       expect(result.ok).toBe(true);
@@ -188,11 +195,12 @@ describe("server/modelhost", () => {
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
     const tornDown: number[] = [];
     const engine = ENGINES.omlx;
-    const originalTeardown = engine.teardown;
+    const originalTeardown = engine.teardown.bind(engine);
     const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
     try {
-      engine.teardown = mock(async (pid: number) => {
+      engine.teardown = mock((pid: number) => {
         tornDown.push(pid);
+        return Promise.resolve();
       });
       const result = await startModelHost({
         key: { name: "mlx-host-server" },
@@ -200,7 +208,7 @@ describe("server/modelhost", () => {
         runtimeDir,
         env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: false, modelIds: [] }),
+        probeReady: () => Promise.resolve({ ready: false, modelIds: [] }),
       });
 
       expect(result.ok).toBe(false);
@@ -234,7 +242,7 @@ describe("server/modelhost", () => {
         runtimeDir,
         env,
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: true, modelIds: [] }),
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       });
 
       expect(result.ok).toBe(true);
@@ -263,7 +271,7 @@ describe("server/modelhost", () => {
         runtimeDir,
         env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: true, modelIds: [] }),
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       });
 
       expect(result.ok).toBe(true);
@@ -291,7 +299,7 @@ describe("server/modelhost", () => {
         runtimeDir,
         env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: true, modelIds: [] }),
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       });
 
       expect(result.ok).toBe(true);
@@ -316,14 +324,15 @@ describe("server/modelhost", () => {
         runtimeDir,
         env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: true, modelIds: [] }),
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       });
 
       const result = await stopModelHost({
         key: { name: "mlx-host-server" },
         runtimeDir,
-        teardown: async (pid) => {
+        teardown: (pid) => {
           tornDown.push(pid);
+          return Promise.resolve();
         },
       });
 
@@ -378,7 +387,7 @@ describe("server/modelhost", () => {
         runtimeDir,
         env,
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: true, modelIds: [] }),
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       });
 
       expect(result.ok).toBe(true);
@@ -414,7 +423,7 @@ describe("server/modelhost", () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-reap-"));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
     const engine = ENGINES.omlx;
-    const originalTeardown = engine.teardown;
+    const originalTeardown = engine.teardown.bind(engine);
     const tornDown: number[] = [];
     const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
     try {
@@ -435,8 +444,9 @@ describe("server/modelhost", () => {
         }),
       );
       // Mock teardown so the reap does NOT actually signal this test process.
-      engine.teardown = mock(async (pid: number) => {
+      engine.teardown = mock((pid: number) => {
         tornDown.push(pid);
+        return Promise.resolve();
       });
 
       const result = await startModelHost({
@@ -445,7 +455,7 @@ describe("server/modelhost", () => {
         runtimeDir,
         env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: true, modelIds: [] }),
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       });
 
       expect(result.ok).toBe(true);
@@ -463,21 +473,21 @@ describe("server/modelhost", () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-stalepid-"));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
     const engine = ENGINES.omlx;
-    const originalTeardown = engine.teardown;
+    const originalTeardown = engine.teardown.bind(engine);
     // The new child fails to bind the still-held port and has already exited;
     // probeReady is satisfied by the OLD listener that still owns the port.
     const spawn = mock(
       (..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321, exitCode: 1 }) as const,
     );
     try {
-      engine.teardown = mock(async () => {});
+      engine.teardown = mock(() => Promise.resolve());
       const result = await startModelHost({
         key: { name: "mlx-host-server" },
         workloadsDir,
         runtimeDir,
         env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: true, modelIds: [] }),
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
       });
 
       expect(result.ok).toBe(false);
@@ -509,7 +519,7 @@ describe("server/modelhost", () => {
       startedAt: new Date().toISOString(),
     };
     writeFileSync(join(hostDir, "modelhost.state"), JSON.stringify(state));
-    writeFileSync(join(hostDir, "modelhost.pid"), `${DEAD_PID}\n`);
+    writeFileSync(join(hostDir, "modelhost.pid"), `${String(DEAD_PID)}\n`);
     return hostDir;
   }
 
@@ -538,9 +548,10 @@ describe("server/modelhost", () => {
         runtimeDir,
         env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: true, modelIds: ["mlx-community/Qwen3-8B-MLX-4bit"] }),
+        probeReady: () =>
+          Promise.resolve({ ready: true, modelIds: ["mlx-community/Qwen3-8B-MLX-4bit"] }),
         // A genuinely-alive pid serving the endpoint out-of-band.
-        findListenerPid: async () => process.pid,
+        findListenerPid: () => Promise.resolve(process.pid),
       });
 
       expect(result.ok).toBe(true);
@@ -549,7 +560,7 @@ describe("server/modelhost", () => {
       expect(spawn).not.toHaveBeenCalled();
       // The live pid is re-recorded so listLocalRoutes restores the route.
       expect(readFileSync(join(hostDir, "modelhost.state"), "utf8")).toContain(
-        `"pid": ${process.pid}`,
+        `"pid": ${String(process.pid)}`,
       );
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -569,8 +580,8 @@ describe("server/modelhost", () => {
         env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
         // A live process owns the port but is still loading (not ready).
-        probeReady: async () => ({ ready: false, modelIds: [] }),
-        findListenerPid: async () => process.pid,
+        probeReady: () => Promise.resolve({ ready: false, modelIds: [] }),
+        findListenerPid: () => Promise.resolve(process.pid),
       });
 
       expect(result.ok).toBe(false);
@@ -594,9 +605,9 @@ describe("server/modelhost", () => {
         runtimeDir,
         env: modelHostEnv(tmp),
         spawn: spawn as unknown as typeof nodeSpawn,
-        probeReady: async () => ({ ready: true, modelIds: [] }),
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
         // Port is free — nothing to adopt.
-        findListenerPid: async () => null,
+        findListenerPid: () => Promise.resolve(null),
       });
 
       expect(result.ok).toBe(true);

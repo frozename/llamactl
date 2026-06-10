@@ -27,15 +27,15 @@ function stripOwnership(value: unknown): unknown {
   return value;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function stableStringify(value: any): string {
+function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return "[" + value.map(stableStringify).join(",") + "]";
   }
   if (value && typeof value === "object") {
-    const keys = Object.keys(value as Record<string, unknown>).sort();
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
     return (
-      "{" + keys.map((k) => JSON.stringify(k) + ":" + stableStringify(value[k])).join(",") + "}"
+      "{" + keys.map((k) => JSON.stringify(k) + ":" + stableStringify(record[k])).join(",") + "}"
     );
   }
   return JSON.stringify(value);

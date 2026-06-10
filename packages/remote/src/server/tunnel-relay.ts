@@ -160,10 +160,8 @@ function handleStream(
   const onReqAbort = (): void => {
     abort.abort();
   };
-  if (req.signal) {
-    if (req.signal.aborted) abort.abort();
-    else req.signal.addEventListener("abort", onReqAbort, { once: true });
-  }
+  if (req.signal.aborted) abort.abort();
+  else req.signal.addEventListener("abort", onReqAbort, { once: true });
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
       const iter = tunnelServer.sendSubscribe(nodeName, {
@@ -201,7 +199,7 @@ function handleStream(
         // Race each next() against the abort signal so a mid-stream
         // client disconnect terminates the read loop without waiting
         // for the next event from the node.
-        while (true) {
+        for (;;) {
           if (abort.signal.aborted) {
             try {
               await iterator.return?.();
@@ -253,8 +251,10 @@ function handleStream(
         finish(true);
       } catch (err) {
         const message = (err as Error).message;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const code = ((err as any).code as string | undefined) ?? "tunnel-send-failed";
+        const code =
+          typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"
+            ? err.code
+            : "tunnel-send-failed";
         try {
           controller.enqueue(
             encoder.encode(
@@ -269,7 +269,7 @@ function handleStream(
         }
         finish(false, code, message);
       } finally {
-        if (req.signal) req.signal.removeEventListener("abort", onReqAbort);
+        req.signal.removeEventListener("abort", onReqAbort);
         try {
           controller.close();
         } catch {

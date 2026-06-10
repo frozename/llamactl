@@ -49,6 +49,7 @@ export function generateInstallScript(opts: GenerateInstallScriptOptions): strin
   const token = sanitizeSingleLine(opts.token);
   const centralUrl = sanitizeSingleLine(opts.centralUrl.replace(/\/$/, ""));
   const nodeName = sanitizeSingleLine(opts.nodeName);
+  const shell = "$";
   // The templates are rendered at install-time on the target host so
   // $INSTALL_DIR / $AGENT_BIN / $LOG_DIR come out correct per-host.
   // Rendering on central and baking the paths in would mis-template
@@ -73,11 +74,11 @@ TOKEN='${token}'
 CENTRAL_URL='${centralUrl}'
 NODE_NAME='${nodeName}'
 
-INSTALL_DIR="\${LLAMACTL_INSTALL_DIR:-\$HOME/.llamactl}"
+INSTALL_DIR="${shell}{LLAMACTL_INSTALL_DIR:-${shell}HOME/.llamactl}"
 mkdir -p "$INSTALL_DIR/bin"
 
 # Resolve a sensible --host SAN for the self-signed cert.
-RESOLVED_HOST="\${LLAMACTL_AGENT_HOST:-\$(hostname)}"
+RESOLVED_HOST="${shell}{LLAMACTL_AGENT_HOST:-${shell}(hostname)}"
 if [ -z "$RESOLVED_HOST" ]; then RESOLVED_HOST="127.0.0.1"; fi
 
 case "$(uname -sm)" in
@@ -152,7 +153,7 @@ ${systemdTemplate}__LLAMACTL_UNIT_EOF__
       systemctl --user daemon-reload
       systemctl --user enable --now llamactl-agent.service
       echo "llamactl install-agent: systemd user service enabled + started."
-      echo "Hint: headless hosts want 'loginctl enable-linger \$USER' so the service"
+      echo "Hint: headless hosts want 'loginctl enable-linger ${shell}USER' so the service"
       echo "      survives logout."
     else
       echo "llamactl install-agent: systemctl not found — enable the unit manually." >&2
@@ -173,10 +174,10 @@ export interface InstallScriptHandlerOptions {
   bootstrapTokensDir?: string;
 }
 
-export async function handleInstallScript(
+export function handleInstallScript(
   req: Request,
   opts: InstallScriptHandlerOptions = {},
-): Promise<Response> {
+): Response {
   if (req.method !== "GET") {
     return new Response("method not allowed", { status: 405 });
   }

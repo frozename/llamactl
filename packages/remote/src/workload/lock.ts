@@ -35,12 +35,14 @@ export function acquireLock(workloadsDir: string): LockHandle | { error: string 
   if (existsSync(path)) {
     const holder = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
     if (Number.isFinite(holder) && holder > 0 && isProcessAlive(holder)) {
-      return { error: `lock held by pid=${holder} (${path})` };
+      return { error: `lock held by pid=${String(holder)} (${path})` };
     }
     // Stale lock — previous controller crashed without releasing.
     try {
       unlinkSync(path);
-    } catch {}
+    } catch {
+      // Another controller may have removed the stale lock first.
+    }
   }
   mkdirSync(dirname(path), { recursive: true });
   try {
@@ -59,10 +61,14 @@ export function acquireLock(workloadsDir: string): LockHandle | { error: string 
 export function releaseLock(handle: LockHandle): void {
   try {
     closeSync(handle.fd);
-  } catch {}
+  } catch {
+    // Release is best-effort; unlink below is the authoritative cleanup.
+  }
   try {
     unlinkSync(handle.path);
-  } catch {}
+  } catch {
+    // A concurrent stale-lock cleanup may already have removed it.
+  }
 }
 
 function isProcessAlive(pid: number): boolean {

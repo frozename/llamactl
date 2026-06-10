@@ -14,10 +14,10 @@ export interface RemoveResult<T> {
   removedNames: string[];
 }
 
-const KEY_OF: Record<string, string> = { sirius: "name", embersynth: "id" };
+const KEY_OF: Record<RemoveOpts<unknown>["kind"], string> = { sirius: "name", embersynth: "id" };
 
 export function removeCompositeEntries<T extends AnyEntry>(opts: RemoveOpts<T>): RemoveResult<T> {
-  const key = KEY_OF[opts.kind]!;
+  const key = KEY_OF[opts.kind];
   const next: T[] = [];
   const removedNames: string[] = [];
   let changed = false;
@@ -34,7 +34,7 @@ export function removeCompositeEntries<T extends AnyEntry>(opts: RemoveOpts<T>):
     const remaining = e.ownership.compositeNames.filter((n) => n !== opts.compositeName);
     changed = true;
     if (remaining.length === 0) {
-      removedNames.push(String((e as any)[key]));
+      removedNames.push(String(e[key]));
       continue;
     }
     next.push({ ...e, ownership: { ...e.ownership, compositeNames: remaining } });

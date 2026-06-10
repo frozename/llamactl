@@ -10,19 +10,20 @@ describe("applyManifest — ModelHost timeout cleanup", () => {
     let unsubscribed = false;
     const client: WorkloadClient = {
       serverStatus: {
-        query: async () => ({
-          state: "down",
-          rel: null,
-          extraArgs: [],
-          pid: null,
-          host: null,
-          port: null,
-          binary: null,
-          endpoint: "",
-        }),
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
       },
-      serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
       modelHostStart: {
         subscribe: () => ({
           unsubscribe: () => {
@@ -30,11 +31,13 @@ describe("applyManifest — ModelHost timeout cleanup", () => {
           },
         }),
       },
-      modelHostStop: { mutate: async () => ({ ok: true }) },
-      modelHostStatus: { query: async () => ({ state: "Running" }) },
-      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
-      rpcServerStop: { mutate: async () => ({ ok: true }) },
-      rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+      modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Running" }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
     };
 
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-timeout-test-"));

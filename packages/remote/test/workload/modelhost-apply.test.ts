@@ -1,3 +1,5 @@
+import type { spawn as nodeSpawn } from "node:child_process";
+
 import { openAggregatorDb, writeSnapshot } from "@llamactl/fleet-supervisor";
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
@@ -16,21 +18,44 @@ import { applyManifest, applyOneModelHost, type WorkloadClient } from "../../src
 import { listModelHosts, saveModelHost } from "../../src/workload/modelhost-store.js";
 import { reconcileOnce } from "../../src/workload/reconciler.js";
 
+type JournalEntry = {
+  kind: string;
+  subject?: string;
+  to?: string;
+  signal?: string;
+  decision?: {
+    chosenNode?: string;
+    scores?: unknown[];
+  };
+};
+
+function parseJournalEntry(line: string): JournalEntry {
+  return JSON.parse(line) as JournalEntry;
+}
+
+const spawnStub = ((..._args: Parameters<typeof nodeSpawn>) =>
+  ({ pid: 99999 }) as ReturnType<typeof nodeSpawn>) as unknown as typeof nodeSpawn;
+
+function spawnResult(): ReturnType<typeof nodeSpawn> {
+  return { pid: 99999 } as ReturnType<typeof nodeSpawn>;
+}
+
 function makeModelRunClient(): WorkloadClient {
   return {
     serverStatus: {
-      query: async () => ({
-        state: "down",
-        rel: null,
-        extraArgs: [],
-        pid: null,
-        host: null,
-        port: null,
-        binary: null,
-        endpoint: "",
-      }),
+      query: () =>
+        Promise.resolve({
+          state: "down",
+          rel: null,
+          extraArgs: [],
+          pid: null,
+          host: null,
+          port: null,
+          binary: null,
+          endpoint: "",
+        }),
     },
-    serverStop: { mutate: async () => ({ ok: true }) },
+    serverStop: { mutate: () => Promise.resolve({ ok: true }) },
     serverStart: {
       subscribe: (_input, callbacks) => {
         queueMicrotask(() => {
@@ -40,33 +65,34 @@ function makeModelRunClient(): WorkloadClient {
           });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return { unsubscribe: () => undefined };
       },
     },
-    modelHostStart: { subscribe: () => ({ unsubscribe() {} }) },
-    modelHostStop: { mutate: async () => ({ ok: true }) },
-    modelHostStatus: { query: async () => ({ state: "Running" }) },
-    rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
-    rpcServerStop: { mutate: async () => ({ ok: true }) },
-    rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+    modelHostStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+    modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
+    modelHostStatus: { query: () => Promise.resolve({ state: "Running" }) },
+    rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+    rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+    rpcServerDoctor: { query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }) },
   };
 }
 
 function makePlacementClient(): WorkloadClient {
   return {
     serverStatus: {
-      query: async () => ({
-        state: "down",
-        rel: null,
-        extraArgs: [],
-        pid: null,
-        host: null,
-        port: null,
-        binary: null,
-        endpoint: "",
-      }),
+      query: () =>
+        Promise.resolve({
+          state: "down",
+          rel: null,
+          extraArgs: [],
+          pid: null,
+          host: null,
+          port: null,
+          binary: null,
+          endpoint: "",
+        }),
     },
-    serverStop: { mutate: async () => ({ ok: true }) },
+    serverStop: { mutate: () => Promise.resolve({ ok: true }) },
     serverStart: {
       subscribe: (_input, callbacks) => {
         queueMicrotask(() => {
@@ -76,15 +102,15 @@ function makePlacementClient(): WorkloadClient {
           });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return { unsubscribe: () => undefined };
       },
     },
-    modelHostStart: { subscribe: () => ({ unsubscribe() {} }) },
-    modelHostStop: { mutate: async () => ({ ok: true }) },
-    modelHostStatus: { query: async () => ({ state: "Stopped", pid: null }) },
-    rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
-    rpcServerStop: { mutate: async () => ({ ok: true }) },
-    rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+    modelHostStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+    modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
+    modelHostStatus: { query: () => Promise.resolve({ state: "Stopped", pid: null }) },
+    rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+    rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+    rpcServerDoctor: { query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }) },
   };
 }
 
@@ -180,19 +206,20 @@ describe("applyManifest — kind dispatch", () => {
     };
     const client: WorkloadClient = {
       serverStatus: {
-        query: async () => ({
-          state: "down",
-          rel: null,
-          extraArgs: [],
-          pid: null,
-          host: null,
-          port: null,
-          binary: null,
-          endpoint: "",
-        }),
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
       },
-      serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
       modelHostStart: {
         subscribe: (input, callbacks) => {
           captured.startInput = input;
@@ -200,24 +227,26 @@ describe("applyManifest — kind dispatch", () => {
             callbacks.onData({ type: "done", result: { ok: true } });
             callbacks.onComplete();
           });
-          return { unsubscribe() {} };
+          return { unsubscribe: () => undefined };
         },
       },
-      modelHostStop: { mutate: async () => ({ ok: true }) },
+      modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
       modelHostStatus: {
-        query: async () => {
+        query: () => {
           captured.statusCalls += 1;
-          return { state: "Running", pid: 3333 };
+          return Promise.resolve({ state: "Running", pid: 3333 });
         },
       },
-      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
-      rpcServerStop: { mutate: async () => ({ ok: true }) },
-      rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
     };
-    const fakeSpawn = mock(() => {
+    const fakeSpawn = mock((): ReturnType<typeof nodeSpawn> => {
       captured.spawnCalls += 1;
-      return { pid: 99999 } as any;
-    });
+      return spawnResult();
+    }) as unknown as typeof nodeSpawn;
 
     const manifest: ModelHostManifest = {
       apiVersion: "llamactl/v1",
@@ -240,12 +269,12 @@ describe("applyManifest — kind dispatch", () => {
       const result = await applyManifest({
         manifest,
         getClient: () => client,
-        spawn: fakeSpawn as any,
+        spawn: fakeSpawn,
         env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
       });
 
       expect(fakeSpawn).not.toHaveBeenCalled();
-      if (!result.ok) console.log("ERROR:", result);
+      if (!result.ok) console.error("ERROR:", result);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.kind).toBe("ModelHost");
@@ -278,33 +307,36 @@ describe("applyManifest — kind dispatch", () => {
     const readdirSpy = spyOn(fs, "readdirSync");
     const client: WorkloadClient = {
       serverStatus: {
-        query: async () => ({
-          state: "down",
-          rel: null,
-          extraArgs: [],
-          pid: null,
-          host: null,
-          port: null,
-          binary: null,
-          endpoint: "",
-        }),
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
       },
-      serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
       modelHostStart: {
         subscribe: (_input, callbacks) => {
           queueMicrotask(() => {
             callbacks.onData({ type: "done", result: { ok: true, pid: 123, state: "Running" } });
             callbacks.onComplete();
           });
-          return { unsubscribe() {} };
+          return { unsubscribe: () => undefined };
         },
       },
-      modelHostStop: { mutate: async () => ({ ok: true }) },
-      modelHostStatus: { query: async () => ({ state: "Running", pid: 123 }) },
-      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
-      rpcServerStop: { mutate: async () => ({ ok: true }) },
-      rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+      modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 123 }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
     };
 
     try {
@@ -313,11 +345,11 @@ describe("applyManifest — kind dispatch", () => {
         workloadsDir,
         getNodeBudgetGiB: () => 16,
         getClient: () => client,
-        spawn: mock(() => ({ pid: 99999 }) as any) as any,
+        spawn: spawnStub,
         env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
       });
 
-      if (!result.ok) console.log("ERROR:", result);
+      if (!result.ok) console.error("ERROR:", result);
       expect(result.ok).toBe(true);
       expect(readdirSpy).toHaveBeenCalledTimes(1);
     } finally {
@@ -333,33 +365,36 @@ describe("applyManifest — kind dispatch", () => {
     saveModelHost(makeModelHostManifest("mlx-host-b", 6), workloadsDir);
     const client: WorkloadClient = {
       serverStatus: {
-        query: async () => ({
-          state: "down",
-          rel: null,
-          extraArgs: [],
-          pid: null,
-          host: null,
-          port: null,
-          binary: null,
-          endpoint: "",
-        }),
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
       },
-      serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
       modelHostStart: {
         subscribe: (_input, callbacks) => {
           queueMicrotask(() => {
             callbacks.onData({ type: "done", result: { ok: true, pid: 123, state: "Running" } });
             callbacks.onComplete();
           });
-          return { unsubscribe() {} };
+          return { unsubscribe: () => undefined };
         },
       },
-      modelHostStop: { mutate: async () => ({ ok: true }) },
-      modelHostStatus: { query: async () => ({ state: "Running", pid: 123 }) },
-      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
-      rpcServerStop: { mutate: async () => ({ ok: true }) },
-      rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+      modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 123 }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
     };
 
     const result = await applyManifest({
@@ -367,7 +402,7 @@ describe("applyManifest — kind dispatch", () => {
       workloadsDir,
       getNodeBudgetGiB: () => 16,
       getClient: () => client,
-      spawn: mock(() => ({ pid: 99999 }) as any) as any,
+      spawn: spawnStub,
       env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
     });
 
@@ -385,29 +420,30 @@ describe("applyManifest — kind dispatch", () => {
     const removeSpy = spyOn(modelHostState, "removeModelHostState");
     const client: WorkloadClient = {
       serverStatus: {
-        query: async () => ({
-          state: "down",
-          rel: null,
-          extraArgs: [],
-          pid: null,
-          host: null,
-          port: null,
-          binary: null,
-          endpoint: "",
-        }),
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
       },
-      serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
-      modelHostStart: { subscribe: () => ({ unsubscribe() {} }) },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
       modelHostStop: {
-        mutate: async () => {
-          throw new Error("upstream unavailable");
-        },
+        mutate: () => Promise.reject(new Error("upstream unavailable")),
       },
-      modelHostStatus: { query: async () => ({ state: "Running", pid: 123 }) },
-      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
-      rpcServerStop: { mutate: async () => ({ ok: true }) },
-      rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 123 }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
     };
 
     try {
@@ -421,7 +457,7 @@ describe("applyManifest — kind dispatch", () => {
         },
         workloadsDir,
         getClient: () => client,
-        spawn: mock(() => ({ pid: 99999 }) as any) as any,
+        spawn: spawnStub,
         env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
       });
 
@@ -440,25 +476,28 @@ describe("applyManifest — kind dispatch", () => {
     const workloadsDir = join(tmp, "workloads");
     const client: WorkloadClient = {
       serverStatus: {
-        query: async () => ({
-          state: "down",
-          rel: null,
-          extraArgs: [],
-          pid: null,
-          host: null,
-          port: null,
-          binary: null,
-          endpoint: "",
-        }),
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
       },
-      serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
-      modelHostStart: { subscribe: () => ({ unsubscribe() {} }) },
-      modelHostStop: { mutate: async () => ({ ok: true }) },
-      modelHostStatus: { query: async () => ({ state: "Stopped", pid: null }) },
-      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
-      rpcServerStop: { mutate: async () => ({ ok: true }) },
-      rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Stopped", pid: null }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
     };
 
     try {
@@ -472,11 +511,11 @@ describe("applyManifest — kind dispatch", () => {
         },
         workloadsDir,
         getClient: () => client,
-        spawn: mock(() => ({ pid: 99999 }) as any) as any,
+        spawn: spawnStub,
         env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
       });
 
-      if (!result.ok) console.log("ERROR:", result);
+      if (!result.ok) console.error("ERROR:", result);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.kind).toBe("ModelHost");
@@ -499,50 +538,53 @@ describe("applyManifest — kind dispatch", () => {
     const captured = { statusCalls: 0 };
     const client: WorkloadClient = {
       serverStatus: {
-        query: async () => ({
-          state: "down",
-          rel: null,
-          extraArgs: [],
-          pid: null,
-          host: null,
-          port: null,
-          binary: null,
-          endpoint: "",
-        }),
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
       },
-      serverStop: { mutate: async () => ({ ok: true }) },
-      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
       modelHostStart: {
         subscribe: (_input, callbacks) => {
           queueMicrotask(() => {
             callbacks.onData({ type: "done", result: { ok: true, pid: 99, state: "Running" } });
             callbacks.onComplete();
           });
-          return { unsubscribe() {} };
+          return { unsubscribe: () => undefined };
         },
       },
-      modelHostStop: { mutate: async () => ({ ok: true }) },
+      modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
       modelHostStatus: {
-        query: async () => {
+        query: () => {
           captured.statusCalls += 1;
-          return { state: "Running", pid: 123 };
+          return Promise.resolve({ state: "Running", pid: 123 });
         },
       },
-      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
-      rpcServerStop: { mutate: async () => ({ ok: true }) },
-      rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
     };
 
     try {
       const result = await applyManifest({
         manifest: makeModelHostManifest("mlx-host-pid", 4),
         getClient: () => client,
-        spawn: mock(() => ({ pid: 99999 }) as any) as any,
+        spawn: spawnStub,
         env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
         workloadsDir: tmp,
       });
 
-      if (!result.ok) console.log("ERROR:", result);
+      if (!result.ok) console.error("ERROR:", result);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       if (result.kind !== "ModelHost") return;
@@ -579,7 +621,7 @@ describe("applyManifest — kind dispatch", () => {
       getClient: () => makeModelRunClient(),
       spawn: fakeSpawn,
     });
-    if (!result.ok) console.log("ERROR:", result);
+    if (!result.ok) console.error("ERROR:", result);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.kind).toBe("ModelRun");
@@ -601,24 +643,27 @@ describe("applyManifest — kind dispatch", () => {
     let pid = 4242;
     const client: WorkloadClient = {
       serverStatus: {
-        query: async () => ({
-          state: readModelHostState({ name: "mlx-host-smoke" }, resolvedRuntimeEnv) ? "up" : "down",
-          rel: null,
-          extraArgs: [],
-          pid: readModelHostState({ name: "mlx-host-smoke" }, resolvedRuntimeEnv)?.pid ?? null,
-          host: "127.0.0.1",
-          port: 8094,
-          binary: "/tmp/omlx",
-          endpoint: "http://127.0.0.1:8094",
-        }),
+        query: () =>
+          Promise.resolve({
+            state: readModelHostState({ name: "mlx-host-smoke" }, resolvedRuntimeEnv)
+              ? "up"
+              : "down",
+            rel: null,
+            extraArgs: [],
+            pid: readModelHostState({ name: "mlx-host-smoke" }, resolvedRuntimeEnv)?.pid ?? null,
+            host: "127.0.0.1",
+            port: 8094,
+            binary: "/tmp/omlx",
+            endpoint: "http://127.0.0.1:8094",
+          }),
       },
       serverStop: {
-        mutate: async () => {
+        mutate: () => {
           removeModelHostState({ name: "mlx-host-smoke" }, resolvedRuntimeEnv);
-          return { ok: true };
+          return Promise.resolve({ ok: true });
         },
       },
-      serverStart: { subscribe: () => ({ unsubscribe() {} }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
       modelHostStart: {
         subscribe: (_input, callbacks) => {
           queueMicrotask(() => {
@@ -628,26 +673,29 @@ describe("applyManifest — kind dispatch", () => {
             });
             callbacks.onComplete();
           });
-          return { unsubscribe() {} };
+          return { unsubscribe: () => undefined };
         },
       },
       modelHostStop: {
-        mutate: async () => {
+        mutate: () => {
           removeModelHostState({ name: "mlx-host-smoke" }, resolvedRuntimeEnv);
-          return { ok: true };
+          return Promise.resolve({ ok: true });
         },
       },
       modelHostStatus: {
-        query: async () => ({
-          state: readModelHostState({ name: "mlx-host-smoke" }, resolvedRuntimeEnv)
-            ? "Running"
-            : "Stopped",
-          pid: readModelHostState({ name: "mlx-host-smoke" }, resolvedRuntimeEnv)?.pid ?? null,
-        }),
+        query: () =>
+          Promise.resolve({
+            state: readModelHostState({ name: "mlx-host-smoke" }, resolvedRuntimeEnv)
+              ? "Running"
+              : "Stopped",
+            pid: readModelHostState({ name: "mlx-host-smoke" }, resolvedRuntimeEnv)?.pid ?? null,
+          }),
       },
-      rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
-      rpcServerStop: { mutate: async () => ({ ok: true }) },
-      rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
     };
 
     const manifest: ModelHostManifest = {
@@ -748,7 +796,7 @@ describe("applyManifest — kind dispatch", () => {
             queueMicrotask(() => {
               callbacks.onComplete();
             });
-            return { unsubscribe() {} };
+            return { unsubscribe: () => undefined };
           },
         },
       };
@@ -784,7 +832,7 @@ describe("applyManifest — kind dispatch", () => {
       placement: { dbPath, journalPath, headroomMinMb: 512 },
     });
 
-    if (!result.ok) console.log("ERROR:", result);
+    if (!result.ok) console.error("ERROR:", result);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.kind).toBe("ModelRun");
@@ -796,7 +844,7 @@ describe("applyManifest — kind dispatch", () => {
       .trim()
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line));
+      .map(parseJournalEntry);
     const placement = lines.find((entry) => entry.kind === "fleet-placement");
     const transition = lines.find((entry) => entry.kind === "fleet-transition");
     expect(placement).toBeDefined();
@@ -822,7 +870,7 @@ describe("applyManifest — kind dispatch", () => {
       placement: { dbPath: join(tmp, "does-not-exist.db") },
     });
 
-    if (!result.ok) console.log("ERROR:", result);
+    if (!result.ok) console.error("ERROR:", result);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.kind).toBe("ModelRun");
@@ -843,7 +891,7 @@ describe("applyManifest — kind dispatch", () => {
       placement: { dbPath: join(tmp, "does-not-exist.db") },
     });
 
-    if (!result.ok) console.log("ERROR:", result);
+    if (!result.ok) console.error("ERROR:", result);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.kind).toBe("ModelRun");
@@ -864,7 +912,7 @@ describe("applyManifest — kind dispatch", () => {
       placement: { dbPath: join(tmp, "does-not-exist.db") },
     });
 
-    if (!result.ok) console.log("ERROR:", result);
+    if (!result.ok) console.error("ERROR:", result);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.kind).toBe("ModelRun");

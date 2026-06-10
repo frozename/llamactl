@@ -52,7 +52,8 @@ export const siriusHandler: GatewayHandler = {
         current,
       });
       if (result.conflicts.length > 0) {
-        const c = result.conflicts[0]!;
+        const [c] = result.conflicts;
+        if (!c) throw new Error("gateway conflict list unexpectedly empty");
         const reason =
           c.kind === "name" ? "SiriusUpstreamNameCollision" : "SiriusUpstreamShapeMismatch";
         const message =
@@ -171,7 +172,7 @@ export const siriusHandler: GatewayHandler = {
           return failure(
             opts,
             "SiriusReloadFailed",
-            `POST ${reloadUrl} returned ${res.status}${body ? `: ${body}` : ""}`,
+            `POST ${reloadUrl} returned ${String(res.status)}${body ? `: ${body}` : ""}`,
             now,
           );
         }

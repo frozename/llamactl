@@ -43,7 +43,7 @@ export const NodeRunInfraItemSchema = z
      *  v1 treats anything > 1 as an error at apply time. */
     replicas: z.number().int().positive().default(1),
   })
-  .refine((item) => (item.tarballUrl == null) === (item.sha256 == null), {
+  .refine((item) => (item.tarballUrl === undefined) === (item.sha256 === undefined), {
     message: "tarballUrl + sha256 must be set together or both omitted",
   });
 export type NodeRunInfraItem = z.infer<typeof NodeRunInfraItemSchema>;

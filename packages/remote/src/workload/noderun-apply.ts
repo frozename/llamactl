@@ -235,15 +235,12 @@ export async function applyNodeRun(
         outcomes.push({ action, ok: result.ok, detail: result });
         continue;
       }
-      if (action.type === "uninstall-pkg") {
-        const result = await client.infraUninstall.mutate({ pkg: action.pkg });
-        outcomes.push({ action, ok: result.ok, detail: result });
-        continue;
-      }
+      const result = await client.infraUninstall.mutate({ pkg: action.pkg });
+      outcomes.push({ action, ok: result.ok, detail: result });
     } catch (err) {
       const message = (err as Error).message;
       outcomes.push({ action, ok: false, error: message });
-      if (!firstError) firstError = message;
+      firstError ??= message;
     }
   }
 

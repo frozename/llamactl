@@ -11,51 +11,47 @@ import { resolveEnv } from "../../../core/src/env.js";
 import { applyOne, applyOneModelHost, type WorkloadClient } from "./apply.js";
 import { saveWorkload } from "./store.js";
 
-function makeClient(
-  state: Map<string, { up: boolean; rel: string; args: string[] }>,
-): WorkloadClient {
+type WorkloadState = { up: boolean; rel: string; args: string[] };
+type WorkloadStateMap = Map<string, WorkloadState>;
+
+function makeClient(state: WorkloadStateMap): WorkloadClient {
   return {
     serverStatus: {
-      query: async ({ workload }: { workload: string }) => {
+      query: ({ workload }) => {
         const s = state.get(workload);
-        return s
-          ? {
-              state: "up",
-              pid: 1,
-              rel: s.rel,
-              extraArgs: s.args,
-              host: "127.0.0.1",
-              port: 8181,
-              binary: null,
-              endpoint: "http://127.0.0.1:8181",
-            }
-          : {
-              state: "down",
-              pid: null,
-              rel: null,
-              extraArgs: [],
-              host: null,
-              port: null,
-              binary: null,
-              endpoint: "http://127.0.0.1:8181",
-            };
+        return Promise.resolve(
+          s
+            ? {
+                state: "up",
+                pid: 1,
+                rel: s.rel,
+                extraArgs: s.args,
+                host: "127.0.0.1",
+                port: 8181,
+                binary: null,
+                endpoint: "http://127.0.0.1:8181",
+              }
+            : {
+                state: "down",
+                pid: null,
+                rel: null,
+                extraArgs: [],
+                host: null,
+                port: null,
+                binary: null,
+                endpoint: "http://127.0.0.1:8181",
+              },
+        );
       },
-    } as any,
+    },
     serverStop: {
-      mutate: async ({ workload }: { workload: string }) => {
+      mutate: ({ workload }) => {
         state.delete(workload);
-        return { stopped: true };
+        return Promise.resolve({ stopped: true });
       },
-    } as any,
+    },
     serverStart: {
-      subscribe: async (
-        { workload, target, extraArgs }: { workload: string; target: string; extraArgs?: string[] },
-        callbacks: {
-          onData: (e: unknown) => void;
-          onError: (err: unknown) => void;
-          onComplete: () => void;
-        },
-      ) => {
+      subscribe: ({ workload, target, extraArgs }, callbacks) => {
         state.set(workload, { up: true, rel: target, args: extraArgs ?? [] });
         queueMicrotask(() => {
           callbacks.onData({
@@ -64,13 +60,16 @@ function makeClient(
           });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return { unsubscribe: () => undefined };
       },
-    } as any,
-    rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) } as any,
-    rpcServerStop: { mutate: async () => ({ stopped: true }) } as any,
-    rpcServerDoctor: { query: async () => ({ ok: true, path: "", llamaCppBin: "" }) } as any,
-  } as any;
+    },
+    modelHostStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+    modelHostStop: { mutate: () => Promise.resolve({ stopped: true }) },
+    modelHostStatus: { query: () => Promise.resolve({ state: "Stopped", pid: null }) },
+    rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+    rpcServerStop: { mutate: () => Promise.resolve({ stopped: true }) },
+    rpcServerDoctor: { query: () => Promise.resolve({ ok: true, path: "", llamaCppBin: "" }) },
+  };
 }
 
 const mkManifest = (
@@ -127,40 +126,34 @@ function mkModelHostManifest(
 function makeModelHostClient(): WorkloadClient {
   return {
     serverStatus: {
-      query: async () => ({
-        state: "down",
-        pid: null,
-        rel: null,
-        extraArgs: [],
-        host: null,
-        port: null,
-        binary: null,
-        endpoint: "",
-      }),
+      query: () =>
+        Promise.resolve({
+          state: "down",
+          pid: null,
+          rel: null,
+          extraArgs: [],
+          host: null,
+          port: null,
+          binary: null,
+          endpoint: "",
+        }),
     },
-    serverStop: { mutate: async () => ({ stopped: true }) },
-    serverStart: { subscribe: async () => ({ unsubscribe() {} }) } as any,
+    serverStop: { mutate: () => Promise.resolve({ stopped: true }) },
+    serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
     modelHostStart: {
-      subscribe: async (
-        _input: unknown,
-        callbacks: {
-          onData: (e: unknown) => void;
-          onError: (err: unknown) => void;
-          onComplete: () => void;
-        },
-      ) => {
+      subscribe: (_input, callbacks) => {
         queueMicrotask(() => {
           callbacks.onData({ type: "done", result: { ok: true, pid: 12345, state: "Running" } });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return { unsubscribe: () => undefined };
       },
-    } as any,
-    modelHostStop: { mutate: async () => ({ stopped: true }) },
-    modelHostStatus: { query: async () => ({ state: "Running", pid: 12345 }) },
-    rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) } as any,
-    rpcServerStop: { mutate: async () => ({ stopped: true }) },
-    rpcServerDoctor: { query: async () => ({ ok: true, path: "", llamaCppBin: "" }) },
+    },
+    modelHostStop: { mutate: () => Promise.resolve({ stopped: true }) },
+    modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 12345 }) },
+    rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+    rpcServerStop: { mutate: () => Promise.resolve({ stopped: true }) },
+    rpcServerDoctor: { query: () => Promise.resolve({ ok: true, path: "", llamaCppBin: "" }) },
   };
 }
 
@@ -216,7 +209,7 @@ test("budget overflow returns pending with BudgetExceeded unless force-admit", a
 });
 
 test("force-admit annotation bypasses the budget check", async () => {
-  const state = new Map();
+  const state: WorkloadStateMap = new Map();
   const result = await applyOne(
     mkManifest("b", { annotations: { "llamactl.io/force-admit": "true" }, ram: 30, port: 8090 }),
     () => makeClient(state),
@@ -229,10 +222,10 @@ test("force-admit annotation bypasses the budget check", async () => {
 
 test("concurrent applies on the same node serialize through the mutex", async () => {
   const callOrder: string[] = [];
-  const slowClient = () =>
-    ({
-      serverStatus: {
-        query: async () => ({
+  const slowClient = (): WorkloadClient => ({
+    serverStatus: {
+      query: () =>
+        Promise.resolve({
           state: "down",
           pid: null,
           rel: null,
@@ -242,35 +235,31 @@ test("concurrent applies on the same node serialize through the mutex", async ()
           binary: null,
           endpoint: "",
         }),
+    },
+    serverStop: { mutate: () => Promise.resolve({ stopped: true }) },
+    serverStart: {
+      subscribe: ({ workload }, callbacks) => {
+        callOrder.push(`start:${workload}`);
+        setTimeout(() => {
+          callOrder.push(`done:${workload}`);
+          callbacks.onData({ type: "done", result: { ok: true, pid: 1, endpoint: "" } });
+          callbacks.onComplete();
+        }, 50);
+        return { unsubscribe: () => undefined };
       },
-      serverStop: { mutate: async () => ({ stopped: true }) },
-      serverStart: {
-        subscribe: async (
-          { workload }: { workload: string },
-          callbacks: {
-            onData: (e: unknown) => void;
-            onError: (err: unknown) => void;
-            onComplete: () => void;
-          },
-        ) => {
-          callOrder.push(`start:${workload}`);
-          setTimeout(() => {
-            callOrder.push(`done:${workload}`);
-            callbacks.onData({ type: "done", result: { ok: true, pid: 1, endpoint: "" } });
-            callbacks.onComplete();
-          }, 50);
-          return { unsubscribe() {} };
-        },
-      },
-      rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
-      rpcServerStop: { mutate: async () => ({ stopped: true }) },
-      rpcServerDoctor: { query: async () => ({ ok: true, path: "", llamaCppBin: "" }) },
-    }) as unknown as WorkloadClient;
+    },
+    modelHostStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+    modelHostStop: { mutate: () => Promise.resolve({ stopped: true }) },
+    modelHostStatus: { query: () => Promise.resolve({ state: "Stopped", pid: null }) },
+    rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+    rpcServerStop: { mutate: () => Promise.resolve({ stopped: true }) },
+    rpcServerDoctor: { query: () => Promise.resolve({ ok: true, path: "", llamaCppBin: "" }) },
+  });
   const mfA = mkManifest("a", { port: 8181, node: "same" });
   const mfB = mkManifest("b", { port: 8090, node: "same" });
   await Promise.all([
-    applyOne(mfA, slowClient as any, undefined, undefined, { listManifests: () => [] }),
-    applyOne(mfB, slowClient as any, undefined, undefined, { listManifests: () => [] }),
+    applyOne(mfA, slowClient, undefined, undefined, { listManifests: () => [] }),
+    applyOne(mfB, slowClient, undefined, undefined, { listManifests: () => [] }),
   ]);
   expect(callOrder[0]?.startsWith("start:")).toBe(true);
   expect(callOrder[1]).toBe(callOrder[0]!.replace("start:", "done:"));

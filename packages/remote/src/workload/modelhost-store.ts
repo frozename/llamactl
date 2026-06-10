@@ -68,7 +68,7 @@ export function listModelHosts(
     if (!entry.endsWith(".yaml")) continue;
     const file = join(dir, entry);
     try {
-      const parsed = parseYaml(readFileSync(file, "utf8")) as { kind?: string };
+      const parsed = parseYaml(readFileSync(file, "utf8")) as { kind?: string } | null;
       if (parsed?.kind !== "ModelHost") continue;
       out.push(ModelHostManifestSchema.parse(parsed));
     } catch (err) {

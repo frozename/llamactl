@@ -58,7 +58,7 @@ export const agentInfo = new Gauge({
 /** Bin a numeric HTTP status into 2xx/3xx/4xx/5xx for low-cardinality labels. */
 export function statusClass(code: number): string {
   if (code < 100 || code >= 600) return "unknown";
-  return `${Math.floor(code / 100)}xx`;
+  return `${String(Math.floor(code / 100))}xx`;
 }
 
 /**

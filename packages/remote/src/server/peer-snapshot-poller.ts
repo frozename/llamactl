@@ -77,11 +77,13 @@ async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSna
     }
   }
   if (workloads.length === 0) return null;
-  const nm = snap.node_mem;
-  const availableMb =
-    typeof nm?.free_mb === "number" || typeof nm?.inactive_mb === "number"
-      ? (nm?.free_mb ?? 0) + (nm?.inactive_mb ?? 0)
-      : null;
+  let availableMb: number | null = null;
+  if (
+    snap.node_mem &&
+    (typeof snap.node_mem.free_mb === "number" || typeof snap.node_mem.inactive_mb === "number")
+  ) {
+    availableMb = (snap.node_mem.free_mb ?? 0) + (snap.node_mem.inactive_mb ?? 0);
+  }
   const pressure: PeerSnapshot["pressure"] =
     availableMb !== null && availableMb < HIGH_PRESSURE_AVAILABLE_MB ? "HIGH" : "NORMAL";
   return { workloads, pressure, fetchedAt: nowMs };
@@ -111,6 +113,7 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
   let stopped = false;
   let inflight = false;
   let lastPublished = new Map<string, PeerSnapshot>();
+  const isStopped = (): boolean => stopped;
 
   const tick = async (): Promise<void> => {
     if (stopped || inflight) return;
@@ -126,7 +129,7 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
       const next = new Map<string, PeerSnapshot>();
       for (const peer of peers) {
         const prev = lastPublished.get(peer.id);
-        if (prev) next.set(peer.id, prev);
+        if (prev !== undefined) next.set(peer.id, prev);
       }
       await Promise.all(
         peers.map(async (peer) => {
@@ -134,7 +137,7 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
           if (snap) next.set(peer.id, snap);
         }),
       );
-      if (!stopped) {
+      if (!isStopped()) {
         const before = [...lastPublished.values()]
           .flatMap((s) => s.workloads.map((w) => w.modelId))
           .sort()
@@ -146,7 +149,9 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
         lastPublished = next;
         publish(next);
         if (before !== after) {
-          process.stderr.write(`[peer-poll] published ${next.size} peer(s); models=[${after}]\n`);
+          process.stderr.write(
+            `[peer-poll] published ${String(next.size)} peer(s); models=[${after}]\n`,
+          );
         }
       }
     } catch {

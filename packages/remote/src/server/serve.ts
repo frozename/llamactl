@@ -119,8 +119,7 @@ export interface StartAgentOptions {
     /** Pass through to createTunnelClient; omit for production defaults. */
     initialAttemptTimeoutMs?: number;
     /** Test-only WebSocket constructor override. */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    WebSocketCtor?: any;
+    WebSocketCtor?: unknown;
   };
 }
 
@@ -187,7 +186,9 @@ interface ClientAddress {
 
 function formatClientAddress(address: ClientAddress | null | undefined): string {
   if (!address) return "unknown";
-  return typeof address.port === "number" ? `${address.address}:${address.port}` : address.address;
+  return typeof address.port === "number"
+    ? `${address.address}:${String(address.port)}`
+    : address.address;
 }
 
 function isLoopbackAddress(address: string | null | undefined): boolean {
@@ -205,10 +206,12 @@ export function runStartupMigration(): void {
     const resolved = resolveEnv();
     const migration = migrateLegacySingletonRuntime(resolved, listWorkloads());
     if (migration.kind === "migrated") {
-      console.log(`[migration] re-homed legacy runtime under workload '${migration.workload}'`);
+      process.stderr.write(
+        `[migration] re-homed legacy runtime under workload '${migration.workload}'\n`,
+      );
     } else if (migration.kind === "synthesized") {
-      console.log(
-        `[migration] no manifest matched legacy state; synthesized '${migration.workload}'`,
+      process.stderr.write(
+        `[migration] no manifest matched legacy state; synthesized '${migration.workload}'\n`,
       );
       synthesizeTransientWorkload(
         migration.workload,
@@ -258,7 +261,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     );
   }
 
-  startSearchIngest().catch(() => {});
+  startSearchIngest().catch(() => undefined);
   const stopPeerSnapshotPoller = opts.peerSnapshotPoll
     ? startPeerSnapshotPoller(
         opts.peerSnapshotPollIntervalMs ? { intervalMs: opts.peerSnapshotPollIntervalMs } : {},
@@ -334,13 +337,10 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
 
   const fetchHandler = (
     req: Request,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    server: any,
+    server: { requestIP?: (req: Request) => ClientAddress | null },
   ): Response | Promise<Response> => {
     const url = new URL(req.url);
-    const clientAddress = (
-      typeof server?.requestIP === "function" ? server.requestIP(req) : null
-    ) as ClientAddress | null;
+    const clientAddress = typeof server.requestIP === "function" ? server.requestIP(req) : null;
     opts.onRequest?.(url);
     if (url.pathname === "/health" || url.pathname === "/healthz") {
       return new Response("ok", { status: 200 });
@@ -569,7 +569,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   }
 
   return {
-    url: `${scheme}://${bindHost}:${listenPort}`,
+    url: `${scheme}://${bindHost}:${String(listenPort)}`,
     port: listenPort,
     fingerprint,
     handleRequest: async (req: Request, address: ClientAddress | null = null) => {
@@ -589,8 +589,8 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
           /* ignore */
         }
       }
-      await mdns?.stop().catch(() => {});
-      server.stop(true);
+      if (mdns) await mdns.stop().catch(() => undefined);
+      await server.stop(true);
     },
     ...(tunnelServer ? { tunnelServer } : {}),
     ...(tunnelClient ? { tunnelClient } : {}),

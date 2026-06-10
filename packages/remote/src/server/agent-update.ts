@@ -179,10 +179,7 @@ export interface AgentRollbackResult {
  * symmetry makes "I pushed a bad build, fix it" a single repeated
  * command if the network blips.
  */
-export async function handleAgentRollback(
-  req: Request,
-  opts: AgentRollbackOptions,
-): Promise<Response> {
+export function handleAgentRollback(req: Request, opts: AgentRollbackOptions): Response {
   if (req.method !== "POST") {
     return new Response("method not allowed", { status: 405 });
   }

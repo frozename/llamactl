@@ -93,12 +93,15 @@ function runOpenssl(args: string[]): Promise<void> {
     const child = spawn("openssl", args, { stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
     child.stderr.on("data", (c) => {
-      stderr += c.toString();
+      stderr += String(c);
     });
     child.on("error", reject);
     child.on("exit", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`openssl ${args[0]} exited ${code}: ${stderr.trim()}`));
+      else
+        reject(
+          new Error(`openssl ${args[0] ?? "command"} exited ${String(code)}: ${stderr.trim()}`),
+        );
     });
   });
 }

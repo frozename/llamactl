@@ -43,23 +43,25 @@ test("reconcile uses remote modelHostStatus.specHash to avoid restarts and detec
 
   const client: WorkloadClient = {
     serverStatus: {
-      query: async () => ({
-        state: "down",
-        rel: null,
-        extraArgs: [],
-        pid: null,
-        host: null,
-        port: null,
-        binary: null,
-        endpoint: "",
-      }),
+      query: () =>
+        Promise.resolve({
+          state: "down",
+          rel: null,
+          extraArgs: [],
+          pid: null,
+          host: null,
+          port: null,
+          binary: null,
+          endpoint: "",
+        }),
     },
-    serverStop: { mutate: async () => ({ stopped: true }) },
-    serverStart: { subscribe: () => ({ unsubscribe() {} }) },
+    serverStop: { mutate: () => Promise.resolve({ stopped: true }) },
+    serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
     modelHostStatus: {
-      query: async () => ({ state: "Running", pid: remoteState.pid, specHash: remoteState.hash }),
+      query: () =>
+        Promise.resolve({ state: "Running", pid: remoteState.pid, specHash: remoteState.hash }),
     },
-    modelHostStop: { mutate: async () => ({ stopped: true }) },
+    modelHostStop: { mutate: () => Promise.resolve({ stopped: true }) },
     modelHostStart: {
       subscribe: (_input, callbacks) => {
         remoteState.starts += 1;
@@ -70,12 +72,12 @@ test("reconcile uses remote modelHostStatus.specHash to avoid restarts and detec
           });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return { unsubscribe: () => undefined };
       },
     },
-    rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
-    rpcServerStop: { mutate: async () => ({ stopped: true }) },
-    rpcServerDoctor: { query: async () => ({ ok: true, path: "", llamaCppBin: "" }) },
+    rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+    rpcServerStop: { mutate: () => Promise.resolve({ stopped: true }) },
+    rpcServerDoctor: { query: () => Promise.resolve({ ok: true, path: "", llamaCppBin: "" }) },
   };
 
   const getClient = () => client;

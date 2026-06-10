@@ -192,11 +192,9 @@ function shouldAutoPlace(manifest: ModelRun): boolean {
   return manifest.spec.node === "auto" && manifest.spec.placement !== "pinned";
 }
 
-async function runPlacement(
+function runPlacement(
   context: PlacementContext,
-): Promise<
-  { ok: true; manifest: ModelRun; decision: FleetPlacementEntry } | { ok: false; error: string }
-> {
+): { ok: true; manifest: ModelRun; decision: FleetPlacementEntry } | { ok: false; error: string } {
   let db;
   try {
     db = openAggregatorDb(context.dbPath);
@@ -340,19 +338,17 @@ async function applyModelHostManifest(
   }
 
   const resolved = resolveEnv(opts.env);
-  const client = opts.getClient?.(manifest.spec.node);
-  if (!client?.modelHostStart || !client.modelHostStatus) {
-    return { ok: false, error: `missing modelHostStart on node ${manifest.spec.node}` };
+  if (!opts.getClient) {
+    return { ok: false, error: `missing getClient for node ${manifest.spec.node}` };
   }
+  const client = opts.getClient(manifest.spec.node);
 
   if (!manifest.spec.enabled) {
-    if (client.modelHostStop) {
-      try {
-        await client.modelHostStop.mutate({ workload: manifest.metadata.name });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return { ok: false, error: `modelHostStop failed: ${message}` };
-      }
+    try {
+      await client.modelHostStop.mutate({ workload: manifest.metadata.name });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `modelHostStop failed: ${message}` };
     }
     // Idempotent cleanup: sweep any local sidecar (including pre-a6cab9e
     // leaks for remote workloads) before signaling disable.
@@ -362,10 +358,14 @@ async function applyModelHostManifest(
       kind: "ModelHost",
       manifest,
       pid: null,
-      endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${manifest.spec.endpoint.port}`,
+      endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${String(manifest.spec.endpoint.port)}`,
     };
   }
 
+  const firstHostedModel = manifest.spec.hostedModels[0];
+  if (!firstHostedModel) {
+    return { ok: false, error: `ModelHost ${manifest.metadata.name} has no hosted models` };
+  }
   const budget = opts.getNodeBudgetGiB?.(manifest.spec.node) ?? defaultNodeBudgetGiB();
   const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir();
   const livingManifests = listAnyWorkloadsForAdmission(workloadsDir, resolved)
@@ -384,7 +384,7 @@ async function applyModelHostManifest(
       spec: {
         node: manifest.spec.node,
         enabled: manifest.spec.enabled,
-        target: { kind: "rel", value: manifest.spec.hostedModels[0]!.rel },
+        target: { kind: "rel", value: firstHostedModel.rel },
         extraArgs: manifest.spec.extraArgs,
         workers: [],
         restartPolicy: manifest.spec.restartPolicy,
@@ -400,7 +400,7 @@ async function applyModelHostManifest(
     return { ok: false, error: admit.reason };
   }
 
-  const timeoutMs = (manifest.spec.timeoutSeconds ?? 60) * 1000;
+  const timeoutMs = manifest.spec.timeoutSeconds * 1000;
   let sub: Unsubscribable | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let status: { state: string; pid?: number | null };
@@ -426,7 +426,7 @@ async function applyModelHostManifest(
           },
           onError: (err: unknown) => {
             if (timer) clearTimeout(timer);
-            reject(err);
+            reject(err instanceof Error ? err : new Error(String(err)));
           },
           onComplete: () => {
             if (timer) clearTimeout(timer);
@@ -458,7 +458,7 @@ async function applyModelHostManifest(
     sub?.unsubscribe?.();
   }
 
-  const rel = manifest.spec.hostedModels[0]!.rel;
+  const rel = firstHostedModel.rel;
   const modelAliases = Array.from(new Set([rel, basename(rel)]));
   const existing = readModelHostState({ name: manifest.metadata.name }, resolved);
   // Only write the local sidecar when this controller owns the process
@@ -489,7 +489,7 @@ async function applyModelHostManifest(
     kind: "ModelHost",
     manifest,
     pid: status.pid ?? null,
-    endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${manifest.spec.endpoint.port}`,
+    endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${String(manifest.spec.endpoint.port)}`,
   };
 }
 
@@ -552,7 +552,7 @@ async function preflightWorkers(
   if (workers.length === 0) return { ok: true };
   onEvent?.({
     type: "worker-preflight",
-    message: `preflight: checking rpc-server on ${workers.length} worker node(s)`,
+    message: `preflight: checking rpc-server on ${String(workers.length)} worker node(s)`,
   });
   const results = await Promise.all(
     workers.map(async (w) => {
@@ -588,7 +588,8 @@ async function preflightWorkers(
   });
   return {
     ok: false,
-    error: `rpc-server not available on ${failures.length} worker node(s):\n` + lines.join("\n"),
+    error:
+      `rpc-server not available on ${String(failures.length)} worker node(s):\n` + lines.join("\n"),
   };
 }
 
@@ -611,13 +612,15 @@ async function startWorkers(
   for (const worker of workers) {
     onEvent?.({
       type: "worker-start",
-      message: `worker ${worker.node}: starting rpc-server on ${worker.rpcHost}:${worker.rpcPort}`,
+      message: `worker ${worker.node}: starting rpc-server on ${worker.rpcHost}:${String(worker.rpcPort)}`,
     });
     const wc = getClient(worker.node);
     // Stop any prior rpc-server on that node; ignore errors.
     try {
       await wc.rpcServerStop.mutate({ graceSeconds: 2 });
-    } catch {}
+    } catch {
+      // Best-effort cleanup before starting the requested worker.
+    }
     const started = await new Promise<{ ok: boolean; endpoint: string; error?: string } | null>(
       (resolve, reject) => {
         const timer = setTimeout(
@@ -641,7 +644,7 @@ async function startWorkers(
             },
             onError: (err: unknown) => {
               clearTimeout(timer);
-              reject(err);
+              reject(err instanceof Error ? err : new Error(String(err)));
             },
             onComplete: () => {
               clearTimeout(timer);
@@ -660,9 +663,9 @@ async function startWorkers(
     }
     onEvent?.({
       type: "worker-ready",
-      message: `worker ${worker.node}: ready on ${worker.rpcHost}:${worker.rpcPort}`,
+      message: `worker ${worker.node}: ready on ${worker.rpcHost}:${String(worker.rpcPort)}`,
     });
-    endpoints.push(`${worker.rpcHost}:${worker.rpcPort}`);
+    endpoints.push(`${worker.rpcHost}:${String(worker.rpcPort)}`);
   }
   return { rpcList: endpoints.join(",") };
 }
@@ -804,7 +807,7 @@ export async function applyOne(
         const now = new Date().toISOString();
         return {
           action: "pending",
-          error: `port collision: ${other.metadata.name} already claims ${oHost}:${o.port} on node ${manifest.spec.node}`,
+          error: `port collision: ${other.metadata.name} already claims ${oHost}:${String(o.port)} on node ${manifest.spec.node}`,
           statusSection: {
             phase: "Failed",
             serverPid: null,
@@ -815,7 +818,7 @@ export async function applyOne(
                 type: "Applied",
                 status: "False",
                 reason: "PortCollision",
-                message: `port ${desired.port} already claimed by ${other.metadata.name}`,
+                message: `port ${String(desired.port)} already claimed by ${other.metadata.name}`,
                 lastTransitionTime: now,
               },
             ],
@@ -837,12 +840,12 @@ export async function applyOne(
 
   let rpcFlag: string[] = [];
   if (workers.length > 0) {
-    rpcFlag = ["--rpc", workers.map((w) => `${w.rpcHost}:${w.rpcPort}`).join(",")];
+    rpcFlag = ["--rpc", workers.map((w) => `${w.rpcHost}:${String(w.rpcPort)}`).join(",")];
     effectiveExtraArgs = [...manifest.spec.extraArgs, ...rpcFlag];
   }
   const desiredArgs = effectiveExtraArgs;
   const liveRel = status.rel;
-  const liveArgs = status.extraArgs ?? [];
+  const liveArgs = status.extraArgs;
   const running = status.state === "up";
   const endpointMatches =
     !desiredEndpoint ||
@@ -1002,7 +1005,7 @@ export async function applyOne(
           },
           onError: (err: unknown) => {
             clearTimeout(timer);
-            reject(err);
+            reject(err instanceof Error ? err : new Error(String(err)));
           },
           onComplete: () => {
             clearTimeout(timer);
@@ -1039,7 +1042,7 @@ export async function applyOne(
 
     onEvent?.({
       type: "started",
-      message: `${manifest.metadata.name}: ready at ${startResult.endpoint} pid=${startResult.pid ?? "?"}`,
+      message: `${manifest.metadata.name}: ready at ${startResult.endpoint} pid=${String(startResult.pid ?? "?")}`,
     });
 
     return {
@@ -1072,7 +1075,7 @@ export async function applyManifest(opts: ApplyManifestOptions): Promise<ApplyMa
     }
     let manifest = parsed.data;
     if (shouldAutoPlace(manifest)) {
-      const placement = await runPlacement({
+      const placement = runPlacement({
         manifest,
         dbPath: opts.placement?.dbPath ?? defaultAggregatorDbPath(),
         journalPath: opts.placement?.journalPath ?? defaultFleetJournalPath(),

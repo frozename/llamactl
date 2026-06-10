@@ -54,7 +54,7 @@ export function listNodeRuns(dir: string = defaultNodeRunsDir()): NodeRun[] {
     const path = join(dir, entry);
     try {
       const raw = readFileSync(path, "utf8");
-      const parsed = parseYaml(raw) as { kind?: string };
+      const parsed = parseYaml(raw) as { kind?: string } | null;
       if (parsed?.kind !== "NodeRun") continue;
       out.push(NodeRunSchema.parse(parsed));
     } catch {

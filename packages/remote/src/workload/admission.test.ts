@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { ModelHostManifest } from "./modelhost-schema.js";
 import type { ModelRun } from "./schema.js";
 
+import { resolveEnv } from "../../../core/src/env.js";
 import {
   type AdmissionInput,
   computeNodeBudget,
@@ -122,12 +123,12 @@ test("defaultNodeBudgetGiB returns the manifest value when present, else 75% of 
 test("estimateWorkloadMemoryGiB returns null for gateway workloads", () => {
   const m = mkManifest("a");
   m.spec.gateway = true;
-  expect(estimateWorkloadMemoryGiB(m, { LLAMA_CPP_MODELS: "/nonexistent" } as any)).toBe(null);
+  expect(estimateWorkloadMemoryGiB(m, resolveEnv({ LLAMA_CPP_MODELS: "/nonexistent" }))).toBe(null);
 });
 
 test("estimateWorkloadMemoryGiB returns null when file is missing", () => {
   expect(
-    estimateWorkloadMemoryGiB(mkManifest("a"), { LLAMA_CPP_MODELS: "/nonexistent" } as any),
+    estimateWorkloadMemoryGiB(mkManifest("a"), resolveEnv({ LLAMA_CPP_MODELS: "/nonexistent" })),
   ).toBe(null);
 });
 
@@ -143,13 +144,13 @@ test("estimateModelHostMemoryGiB uses expectedMemoryGiB before model-size fallba
     truncateSync(weights, 23 * 1024 ** 3);
     expect(
       estimateModelHostMemoryGiB(mkModelHost("declared", { expectedMemoryGiB: 24, rel }), {
-        LLAMA_CPP_MODELS: modelsDir,
-      } as any),
+        ...resolveEnv({ LLAMA_CPP_MODELS: modelsDir }),
+      }),
     ).toBe(24);
     expect(
       estimateModelHostMemoryGiB(mkModelHost("fallback", { rel }), {
-        LLAMA_CPP_MODELS: modelsDir,
-      } as any),
+        ...resolveEnv({ LLAMA_CPP_MODELS: modelsDir }),
+      }),
     ).toBe(46);
   } finally {
     rmSync(tmp, { recursive: true, force: true });

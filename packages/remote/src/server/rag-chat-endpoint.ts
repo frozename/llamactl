@@ -174,14 +174,14 @@ export function lastUserMessageContent(messages: ChatMessage[]): string | null {
  * the retrieval.
  */
 export function buildRagSystemMessage(results: RagSearchResult[], prefix: string): string {
-  const blocks = results.map((r, i) => `[${i + 1}] ${r.document.content}`).join("\n");
+  const blocks = results.map((r, i) => `[${String(i + 1)}] ${r.document.content}`).join("\n");
   return `${prefix}\n\nContext:\n${blocks}`;
 }
 
 function parseRagField(
   raw: unknown,
 ): { ok: true; rag: RagExtensionField } | { ok: false; error: string } {
-  if (raw == null) return { ok: false, error: "rag is null" };
+  if (raw === null || raw === undefined) return { ok: false, error: "rag is null" };
   if (typeof raw !== "object") return { ok: false, error: "rag must be an object" };
   const r = raw as Record<string, unknown>;
   if (typeof r["node"] !== "string" || r["node"].trim() === "") {
@@ -364,7 +364,7 @@ export async function handleRagChatCompletions(
     }
     const rag = parsed.rag;
     const query = lastUserMessageContent(messages);
-    if (query == null) {
+    if (query === null) {
       return jsonError(
         400,
         "no user message found in messages (rag retrieval needs a user query)",
@@ -471,7 +471,7 @@ export async function handleRagChatCompletions(
     "content-type": "application/json",
   };
   if (hasRag) {
-    headers["x-llamactl-rag"] = `retrieved=${retrievedCount}`;
+    headers["x-llamactl-rag"] = `retrieved=${String(retrievedCount)}`;
   }
   return new Response(JSON.stringify(chatResult), {
     status: 200,

@@ -5,11 +5,11 @@ import { resolveNodeKind } from "../../config/schema.js";
 export async function reloadAllGatewayNodesOfKind(kind: "sirius" | "embersynth"): Promise<void> {
   const cfg = loadConfig();
   for (const cluster of cfg.clusters) {
-    for (const node of cluster.nodes ?? []) {
+    for (const node of cluster.nodes) {
       if (
         resolveNodeKind(node) === "gateway" &&
         node.cloud?.provider === kind &&
-        node.cloud?.baseUrl
+        node.cloud.baseUrl
       ) {
         const url = `${node.cloud.baseUrl}${kind === "sirius" ? "/providers/reload" : "/config/reload"}`;
         const bearer = node.cloud.apiKeyRef

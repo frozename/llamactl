@@ -187,7 +187,9 @@ function defaultFindListenerPid(
       clearTimeout(timer);
       try {
         child?.kill("SIGKILL");
-      } catch {}
+      } catch {
+        // The listener probe process may have already exited.
+      }
       resolve(value);
     };
     const timer = setTimeout(() => {
@@ -198,7 +200,7 @@ function defaultFindListenerPid(
       // different address of the same port (e.g. 0.0.0.0 / ::1) is not matched.
       child = nodeSpawn(
         resolveLsofPath(),
-        ["-nP", `-iTCP@${endpoint.host}:${endpoint.port}`, "-sTCP:LISTEN", "-t"],
+        ["-nP", `-iTCP@${endpoint.host}:${String(endpoint.port)}`, "-sTCP:LISTEN", "-t"],
         { stdio: ["ignore", "pipe", "ignore"] },
       );
       let out = "";
@@ -250,7 +252,9 @@ async function tryAdoptLiveHost(
     modelIds: [] as string[],
   }));
   if (!readiness.ready) return null;
-  const rel = manifest.spec.hostedModels[0]!.rel;
+  const firstHostedModel = manifest.spec.hostedModels[0];
+  if (!firstHostedModel) return null;
+  const rel = firstHostedModel.rel;
   const aliases = new Set([rel, basename(rel)]);
   // Only adopt a process that advertises OUR model. Empty modelIds means we
   // cannot confirm ownership — refuse (the caller defers) rather than adopt an
@@ -318,7 +322,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   // child's already-dead pid — which listLocalRoutes then drops from routing.
   const priorState = readModelHostState(opts.key, resolved);
   if (priorState && isProcessAlive(priorState.pid)) {
-    await engine.teardown(priorState.pid).catch(() => {});
+    await engine.teardown(priorState.pid).catch(() => undefined);
   } else if (priorState) {
     // Recorded pid is dead but a sidecar exists. Decide adopt-vs-spawn on
     // listener PRESENCE, not on the short readiness window: if a live process
@@ -328,12 +332,12 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     const findListenerPid =
       opts.findListenerPid ?? ((endpoint) => defaultFindListenerPid(endpoint, opts.signal));
     const livePid = await findListenerPid(manifest.spec.endpoint).catch(() => null);
-    if (livePid != null && isProcessAlive(livePid)) {
+    if (livePid !== null && isProcessAlive(livePid)) {
       const adopted = await tryAdoptLiveHost(
         manifest,
         opts,
         resolved,
-        opts.probeReady ?? engine.probeReady,
+        opts.probeReady ?? ((endpoint, timeoutMs) => engine.probeReady(endpoint, timeoutMs)),
         livePid,
       );
       if (adopted) {
@@ -346,7 +350,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
       const deferred: StartModelHostResult = {
         ok: false,
         pid: null,
-        error: `endpoint ${manifest.spec.endpoint.host}:${manifest.spec.endpoint.port} is held by live pid ${livePid} that is not yet adoptable (readiness/model unconfirmed); deferring restart`,
+        error: `endpoint ${manifest.spec.endpoint.host}:${String(manifest.spec.endpoint.port)} is held by live pid ${String(livePid)} that is not yet adoptable (readiness/model unconfirmed); deferring restart`,
       };
       opts.onEvent?.({ type: "done", result: deferred });
       return deferred;
@@ -386,8 +390,8 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     // teardown / generator cleanup cannot propagate a signal back
     // to the engine process. Mirrors core/src/server.ts:startServer
     // which uses the same detached + unref pattern for llama-server.
-    // Optional chain: test mocks may return a plain {pid} stub.
-    child.unref?.();
+    const maybeUnref = (child as { unref?: () => void }).unref;
+    if (maybeUnref) maybeUnref.call(child);
 
     const endpoint = manifest.spec.endpoint;
     const readiness = await (opts.probeReady ?? engine.probeReady)(
@@ -403,14 +407,18 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     // has already exited, refuse to record its dead pid — recording it would make
     // listLocalRoutes drop the ModelHost from routing. exitCode is null while the
     // child runs and a number once it exits (undefined for test stubs → running).
-    if (child.exitCode != null) {
+    if (typeof child.exitCode === "number") {
       throw new Error(
-        `modelhost child pid ${pid} exited before readiness (endpoint ${endpoint.host}:${endpoint.port} likely served by another process); refusing to record a stale pid`,
+        `modelhost child pid ${String(pid)} exited before readiness (endpoint ${endpoint.host}:${String(endpoint.port)} likely served by another process); refusing to record a stale pid`,
       );
     }
 
+    const firstHostedModel = manifest.spec.hostedModels[0];
+    if (!firstHostedModel) {
+      throw new Error(`ModelHost ${manifest.metadata.name} has no hosted models`);
+    }
     const modelAliases = Array.from(
-      new Set([manifest.spec.hostedModels[0]!.rel, basename(manifest.spec.hostedModels[0]!.rel)]),
+      new Set([firstHostedModel.rel, basename(firstHostedModel.rel)]),
     );
     writeModelHostState(
       {
@@ -433,7 +441,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   } catch (error) {
     const pid = child?.pid ?? null;
     if (pid !== null) {
-      await engine.teardown(pid).catch(() => {});
+      await engine.teardown(pid).catch(() => undefined);
     }
     const message = error instanceof Error ? error.message : "modelhost start failed";
     const result = { ok: false, pid: null, error: message };
@@ -446,7 +454,8 @@ export async function stopModelHost(opts: StopModelHostOptions): Promise<StopMod
   const resolved = resolveEnv(withRuntimeDir(toRuntimeEnv(opts.env), opts.runtimeDir));
   const state = readModelHostState(opts.key, resolved);
   if (!state) return { ok: true, pid: null };
-  const teardown = opts.teardown ?? ENGINES[state.engine].teardown;
+  const teardown =
+    opts.teardown ?? ((pid: number, _graceSeconds?: number) => ENGINES[state.engine].teardown(pid));
   await teardown(state.pid, opts.graceSeconds);
   removeModelHostState(opts.key, resolved);
   return { ok: true, pid: state.pid };

@@ -20,7 +20,7 @@ import { type ModelRun, ModelRunSchema } from "./schema.js";
 export function defaultWorkloadsDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_WORKLOADS_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const base = env.DEV_STORAGE?.trim() ?? join(homedir(), ".llamactl");
   return join(base, "workloads");
 }
 
@@ -112,7 +112,7 @@ export function saveWorkload(workload: ModelRun, dir: string = defaultWorkloadsD
   // concurrent reader (or a second writer for the same name) and leave
   // truncated YAML on disk. Write to a sibling tmp file and rename over
   // the target — POSIX rename on the same filesystem is atomic.
-  const tmp = `${path}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 10)}`;
+  const tmp = `${path}.tmp.${String(process.pid)}.${Math.random().toString(36).slice(2, 10)}`;
   writeFileSync(tmp, stringifyYaml(validated), "utf8");
   renameSync(tmp, path);
   return path;
@@ -195,6 +195,10 @@ function projectModelHostToModelRun(manifest: ModelHostManifest, resolved?: Reso
   const expectedMemoryGiB = resolved
     ? estimateModelHostMemoryGiB(manifest, resolved)
     : (manifest.spec.resources?.expectedMemoryGiB ?? null);
+  const firstHostedModel = manifest.spec.hostedModels[0];
+  if (!firstHostedModel) {
+    throw new Error(`ModelHost ${manifest.metadata.name} must declare at least one hosted model`);
+  }
   return {
     apiVersion: manifest.apiVersion,
     kind: "ModelRun",
@@ -206,7 +210,7 @@ function projectModelHostToModelRun(manifest: ModelHostManifest, resolved?: Reso
     spec: {
       node: manifest.spec.node,
       enabled: manifest.spec.enabled,
-      target: { kind: "rel", value: manifest.spec.hostedModels[0]!.rel },
+      target: { kind: "rel", value: firstHostedModel.rel },
       extraArgs: manifest.spec.extraArgs,
       workers: [],
       restartPolicy: manifest.spec.restartPolicy,

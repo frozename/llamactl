@@ -36,18 +36,19 @@ function seedRunningSidecar(dir: string, manifest: ReturnType<typeof makeHostMan
 function makeClient(): WorkloadClient {
   return {
     serverStatus: {
-      query: async () => ({
-        state: "down",
-        rel: null,
-        extraArgs: [],
-        pid: null,
-        host: null,
-        port: null,
-        binary: null,
-        endpoint: "",
-      }),
+      query: () =>
+        Promise.resolve({
+          state: "down",
+          rel: null,
+          extraArgs: [],
+          pid: null,
+          host: null,
+          port: null,
+          binary: null,
+          endpoint: "",
+        }),
     },
-    serverStop: { mutate: async () => ({ ok: true }) },
+    serverStop: { mutate: () => Promise.resolve({ ok: true }) },
     serverStart: {
       subscribe: (_input, callbacks) => {
         queueMicrotask(() => {
@@ -57,7 +58,7 @@ function makeClient(): WorkloadClient {
           });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return { unsubscribe: () => undefined };
       },
     },
     modelHostStart: {
@@ -66,26 +67,27 @@ function makeClient(): WorkloadClient {
           callbacks.onData({ type: "done", result: { ok: true } });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return { unsubscribe: () => undefined };
       },
     },
-    modelHostStop: { mutate: async () => ({ ok: true }) },
+    modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
     modelHostStatus: {
-      query: async () => ({
-        state: "Running",
-        engine: "omlx",
-        binary: "/usr/bin/true",
-        endpoint: { host: "127.0.0.1", port: 18094 },
-        hostedModels: [{ rel: "mlx-community/host-a" }],
-        extraArgs: [],
-        resources: undefined,
-        restartPolicy: "Always",
-        timeoutSeconds: 60,
-      }),
+      query: () =>
+        Promise.resolve({
+          state: "Running",
+          engine: "omlx",
+          binary: "/usr/bin/true",
+          endpoint: { host: "127.0.0.1", port: 18094 },
+          hostedModels: [{ rel: "mlx-community/host-a" }],
+          extraArgs: [],
+          resources: undefined,
+          restartPolicy: "Always",
+          timeoutSeconds: 60,
+        }),
     },
-    rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
-    rpcServerStop: { mutate: async () => ({ ok: true }) },
-    rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+    rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+    rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+    rpcServerDoctor: { query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }) },
   };
 }
 
@@ -168,7 +170,7 @@ describe("reconcileOnce", () => {
         workloadsDir: dir,
         getClient: () => ({
           ...makeClient(),
-          modelHostStatus: { query: async () => ({ state: "Running", pid: 1234 }) },
+          modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 1234 }) },
         }),
       });
 
@@ -203,7 +205,7 @@ describe("reconcileOnce", () => {
         workloadsDir: dir,
         getClient: () => ({
           ...makeClient(),
-          modelHostStatus: { query: async () => ({ state: "Stopped" }) },
+          modelHostStatus: { query: () => Promise.resolve({ state: "Stopped" }) },
         }),
       });
 
@@ -235,23 +237,24 @@ describe("reconcileOnce", () => {
         getClient: () => ({
           ...makeClient(),
           modelHostStatus: {
-            query: async () => ({
-              state: "Running",
-              pid: 1234,
-              engine: "omlx",
-              binary: "/usr/bin/true",
-              endpoint: { host: "127.0.0.1", port: 18094 },
-              hostedModels: [{ rel: "mlx-community/host-a" }],
-              extraArgs: [],
-              resources: undefined,
-              restartPolicy: "Always",
-              timeoutSeconds: 60,
-            }),
+            query: () =>
+              Promise.resolve({
+                state: "Running",
+                pid: 1234,
+                engine: "omlx",
+                binary: "/usr/bin/true",
+                endpoint: { host: "127.0.0.1", port: 18094 },
+                hostedModels: [{ rel: "mlx-community/host-a" }],
+                extraArgs: [],
+                resources: undefined,
+                restartPolicy: "Always",
+                timeoutSeconds: 60,
+              }),
           },
           modelHostStart: {
             subscribe: mock((_input, _callbacks) => {
               startCalls.push(_input);
-              return { unsubscribe() {} };
+              return { unsubscribe: () => undefined };
             }),
           },
         }),
@@ -281,7 +284,7 @@ describe("reconcileOnce", () => {
         getClient: () => ({
           ...makeClient(),
           modelHostStatus: {
-            query: async () => {
+            query: () => {
               saveModelHost(
                 {
                   ...currentManifest,
@@ -292,7 +295,7 @@ describe("reconcileOnce", () => {
                 },
                 dir,
               );
-              return {
+              return Promise.resolve({
                 state: "Running",
                 pid: 1234,
                 engine: "omlx",
@@ -303,7 +306,7 @@ describe("reconcileOnce", () => {
                 resources: undefined,
                 restartPolicy: "Always",
                 timeoutSeconds: 60,
-              };
+              });
             },
           },
           modelHostStart: {
@@ -316,7 +319,7 @@ describe("reconcileOnce", () => {
                 });
                 callbacks.onComplete();
               });
-              return { unsubscribe() {} };
+              return { unsubscribe: () => undefined };
             },
           },
         }),
@@ -355,18 +358,19 @@ describe("reconcileOnce", () => {
         getClient: () => ({
           ...makeClient(),
           modelHostStatus: {
-            query: async () => ({
-              state: "Running",
-              pid: 1234,
-              engine: "omlx",
-              binary: "/usr/bin/true",
-              endpoint: { host: "127.0.0.1", port: 18094 },
-              hostedModels: [{ rel: "mlx-community/host-a" }],
-              extraArgs: [],
-              resources: undefined,
-              restartPolicy: "OnFailure",
-              timeoutSeconds: 60,
-            }),
+            query: () =>
+              Promise.resolve({
+                state: "Running",
+                pid: 1234,
+                engine: "omlx",
+                binary: "/usr/bin/true",
+                endpoint: { host: "127.0.0.1", port: 18094 },
+                hostedModels: [{ rel: "mlx-community/host-a" }],
+                extraArgs: [],
+                resources: undefined,
+                restartPolicy: "OnFailure",
+                timeoutSeconds: 60,
+              }),
           },
           modelHostStart: {
             subscribe: (_input, callbacks) => {
@@ -378,7 +382,7 @@ describe("reconcileOnce", () => {
                 });
                 callbacks.onComplete();
               });
-              return { unsubscribe() {} };
+              return { unsubscribe: () => undefined };
             },
           },
         }),
@@ -416,12 +420,12 @@ describe("reconcileOnce", () => {
         getClient: () => ({
           ...makeClient(),
           modelHostStatus: {
-            query: async () => ({ state: "Stopped", pid: null }),
+            query: () => Promise.resolve({ state: "Stopped", pid: null }),
           },
           modelHostStop: {
-            mutate: async (input) => {
+            mutate: (input) => {
               stopCalls.push(input);
-              return { ok: true };
+              return Promise.resolve({ ok: true });
             },
           },
         }),
