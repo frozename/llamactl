@@ -1,0 +1,35 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "exactOptionalPropertyTypes": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["packages/app/src/*"]
+    },
+    "types": ["vite/client", "react", "react-dom"]
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/src/**/*.tsx",
+    "packages/*/test/**/*.ts",
+    "packages/*/test/**/*.tsx",
+    "scripts/**/*.ts",
+    "packages/agents/demos/**/*.ts",
+    "tools/**/*.ts",
+    "tests/**/*.ts",
+    "eslint.config.mjs"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/dist",
+    "**/out",
+    "coverage",
+    "packages/train/vendor",
+    "packages/app/release"
+  ]
+}

@@ -1,0 +1,8 @@
+**/node_modules/**
+**/dist
+**/out
+**/coverage/**
+bun.lock
+docs/notes/**
+packages/train/vendor/**
+packages/app/release/**

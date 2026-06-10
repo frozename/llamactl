@@ -12,6 +12,10 @@
     "cli": "bun run --cwd packages/cli src/bin.ts",
     "build:agent": "bun run packages/cli/src/bin.ts artifacts build-agent",
     "build:agent:all": "scripts/build-all-targets.sh",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
     "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd packages/cli typecheck && bun run --cwd packages/app typecheck && bun run --cwd packages/remote typecheck && bun run --cwd packages/eval typecheck && bun run --cwd packages/agents typecheck && bun run --cwd packages/fleet-supervisor typecheck && bun run --cwd packages/mcp typecheck",
     "test": "zsh test/run-all.zsh",
     "test:core": "bun run --cwd packages/core test",
@@ -21,8 +25,25 @@
     "audit:update": "scripts/audit.sh update"
   },
   "devDependencies": {
+    "@eslint/js": "^9",
     "@types/bun": "1.3.12",
     "@types/node": "25.6.0",
-    "typescript": "5.9.3"
+    "eslint": "^9",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-typescript": "^4.4.4",
+    "eslint-plugin-import-x": "^4.16.2",
+    "eslint-plugin-perfectionist": "^5.9.0",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "eslint-plugin-regexp": "^3.1.0",
+    "eslint-plugin-security": "^4.0.0",
+    "eslint-plugin-sonarjs": "^4.0.3",
+    "eslint-plugin-unicorn": "^64.0.0",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.3",
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.60.0"
   }
 }
