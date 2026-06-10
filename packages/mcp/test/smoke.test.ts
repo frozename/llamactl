@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildMcpServer } from '../src/server.js';
 import { saveNodeRun } from '../../remote/src/workload/noderun-store.js';
+import { saveModelHost } from '../../remote/src/workload/modelhost-store.js';
 import { saveWorkload } from '../../remote/src/workload/store.js';
 
 /**
@@ -74,6 +75,29 @@ function seedNodeBudgetFixtures(): void {
         timeoutSeconds: 60,
         gateway: false,
         allowExternalBind: false,
+      },
+    },
+    workloadsDir,
+  );
+}
+
+function seedModelHostFixture(): void {
+  const workloadsDir = join(runtimeDir, 'workloads');
+  saveModelHost(
+    {
+      apiVersion: 'llamactl/v1',
+      kind: 'ModelHost',
+      metadata: { name: 'mlx-host-a', labels: {} },
+      spec: {
+        engine: 'omlx',
+        node: 'local',
+        enabled: true,
+        binary: '/usr/local/bin/omlx',
+        endpoint: { host: '127.0.0.1', port: 8182 },
+        hostedModels: [{ rel: 'acme/model.gguf' }],
+        extraArgs: [],
+        restartPolicy: 'Always',
+        timeoutSeconds: 60,
       },
     },
     workloadsDir,
@@ -342,6 +366,27 @@ describe('@llamactl/mcp read surface', () => {
     expect(parsed.dryRun).toBe(true);
     expect(parsed.found).toBe(false);
     expect(parsed.message).toMatch(/no manifest named/);
+  });
+
+  test('llamactl.workload.delete dry-run resolves a ModelHost manifest', async () => {
+    seedModelHostFixture();
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: 'llamactl.workload.delete',
+      arguments: { name: 'mlx-host-a', dryRun: true },
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      dryRun: boolean;
+      found: boolean;
+      node: string | null;
+      rel: string | null;
+      message: string;
+    };
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.found).toBe(true);
+    expect(parsed.node).toBe('local');
+    expect(parsed.rel).toBe('acme/model.gguf');
+    expect(parsed.message).toContain('mlx-host-a');
   });
 });
 

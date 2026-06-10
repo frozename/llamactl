@@ -345,9 +345,9 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   server.registerTool(
     'llamactl.workload.delete',
     {
-      title: 'Remove a ModelRun manifest',
+      title: 'Remove a workload manifest',
       description:
-        'Delete the persisted ModelRun file under ~/.llamactl/workloads/. Does NOT stop the server — that\'s a separate imperative operation. Dry-run reports what the wet-run would have removed.',
+        'Delete the persisted workload manifest under ~/.llamactl/workloads/ (ModelRun or ModelHost). Does NOT stop the server — that\'s a separate imperative operation. Dry-run reports what the wet-run would have removed.',
       inputSchema: {
         name: z.string().min(1).describe('metadata.name of the manifest'),
         dryRun: z.boolean().default(false),
@@ -355,7 +355,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
     },
     async (input) => {
       const { name, dryRun } = input;
-      const manifests = workloadStore.listWorkloads();
+      const manifests = workloadStore.listAnyWorkloadsForAdmission();
       const match = manifests.find((m) => m.metadata.name === name);
       if (dryRun) {
         appendAudit({ server: SERVER_SLUG, tool: 'llamactl.workload.delete', input, dryRun: true });
