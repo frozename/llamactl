@@ -23,7 +23,8 @@
     "test:cli": "bun run --cwd packages/cli test",
     "test:shell": "zsh test/shell-smoke.zsh",
     "audit": "scripts/audit.sh diff",
-    "audit:update": "scripts/audit.sh update"
+    "audit:update": "scripts/audit.sh update",
+    "audit:functional": "scripts/audit.sh functional"
   },
   "devDependencies": {
     "@eslint/js": "^9",

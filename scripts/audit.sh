@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Hermetic UI-regression gate runner.
 #
-# MODE=diff  (default) — compare each module's screenshot against the
-#                        committed baseline at tests/ui-audit-baselines/
-#                        and exit non-zero if any breaches the threshold.
-# MODE=update           — reseed the committed baselines from the current
-#                        built UI. Use after intentional UI changes.
+# MODE=diff       (default) — compare each module's screenshot against the
+#                             committed baseline at tests/ui-audit-baselines/
+#                             and exit non-zero if any breaches the threshold.
+# MODE=update               — reseed the committed baselines from the current
+#                             built UI. Use after intentional UI changes.
+# MODE=functional           — drive every module and gate on boot/render,
+#                             console, and network health only.
 #
 # Usage:
-#   scripts/audit.sh [diff|update]
+#   scripts/audit.sh [diff|update|functional]
 #
 # Env:
 #   ELECTRON_MCP_DIR   Path to the electron-mcp-server checkout (the
@@ -17,8 +19,10 @@
 #                      In CI the workflow clones the repo and sets this.
 #
 # Exit codes (from tests/ui-audit-driver-v2.ts):
-#   0 — all modules match (diff mode) OR baselines reseeded (update mode)
-#   1 — at least one module breached the pixel threshold
+#   0 — all modules match (diff mode), baselines reseeded (update mode),
+#       OR functional signals are clean (functional mode)
+#   1 — at least one module breached the pixel threshold OR functional
+#       report validation failed
 #   2 — driver/setup error
 
 set -euo pipefail
@@ -55,7 +59,18 @@ mkdir -p "$DIFF_DIR"
 cd "$REPO_ROOT/packages/app"
 bun run build
 
-ELECTRON_BIN="$REPO_ROOT/packages/app/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+case "$(uname -s)" in
+  Darwin)
+    ELECTRON_BIN="$REPO_ROOT/packages/app/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+    ;;
+  Linux)
+    ELECTRON_BIN="$REPO_ROOT/packages/app/node_modules/electron/dist/electron"
+    ;;
+  *)
+    echo "Unsupported platform for UI audit: $(uname -s)" >&2
+    exit 2
+    ;;
+esac
 if [ ! -x "$ELECTRON_BIN" ]; then
   echo "Electron binary not found at $ELECTRON_BIN" >&2
   echo "Run \`bun install\` at the repo root first." >&2
@@ -178,8 +193,24 @@ case "$MODE" in
   update)
     bun run tests/ui-audit-driver-v2.ts "${DRIVER_ARGS[@]}" --updateBaselines
     ;;
+  functional)
+    FUNCTIONAL_ARGS=()
+    for arg in "${DRIVER_ARGS[@]}"; do
+      case "$arg" in
+        --baselines=*|--diffDir=*|--threshold=*|--pixelThreshold=*)
+          ;;
+        *)
+          FUNCTIONAL_ARGS+=("$arg")
+          ;;
+      esac
+    done
+    bun run tests/ui-audit-driver-v2.ts "${FUNCTIONAL_ARGS[@]}"
+    bun run "$REPO_ROOT/scripts/check-ui-audit-functional-report.ts" \
+      "$OUT_DIR/report.json" \
+      "$MODULES_JSON"
+    ;;
   *)
-    echo "Usage: $0 [diff|update]" >&2
+    echo "Usage: $0 [diff|update|functional]" >&2
     exit 2
     ;;
 esac
