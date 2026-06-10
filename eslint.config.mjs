@@ -17,6 +17,9 @@ const typedFiles = ["packages/**/*.ts", "packages/**/*.tsx", "scripts/**/*.ts"];
 const appRendererFiles = ["packages/app/src/**/*.{ts,tsx}"];
 
 export default tseslint.config(
+  // Global ignores: this object must contain ONLY the ignores key — adding any
+  // other key (linterOptions, files, ...) silently demotes it to object-scoped
+  // ignores that exclude nothing globally.
   {
     ignores: [
       "**/dist/**",
@@ -28,6 +31,8 @@ export default tseslint.config(
       "packages/train/vendor/**",
       "packages/app/release/**",
     ],
+  },
+  {
     linterOptions: {
       reportUnusedDisableDirectives: "error",
       reportUnusedInlineConfigs: "error",
