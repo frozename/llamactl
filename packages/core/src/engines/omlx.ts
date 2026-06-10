@@ -12,6 +12,7 @@ import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from './typ
 import { gracefulShutdown, pollUntilModelIds } from './lifecycle.js';
 import { ensureWorkloadRuntimeDir } from '../workloadRuntime.js';
 import { resolveEnv } from '../env.js';
+import { defaultOmlxMemoryGiBForProfile } from '../profile.js';
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost', '0.0.0.0']);
 
@@ -172,9 +173,9 @@ export const omlxEngine: EngineAdapter = {
       '--port',
       String(spec.endpoint.port),
     ];
-    if (spec.resources?.expectedMemoryGiB !== undefined) {
-      args.push('--max-model-memory', `${spec.resources.expectedMemoryGiB}GB`);
-    }
+    const maxModelMemoryGiB =
+      spec.resources?.expectedMemoryGiB ?? defaultOmlxMemoryGiBForProfile(env.machineProfile ?? 'macbook-pro-48g');
+    args.push('--max-model-memory', `${maxModelMemoryGiB}GB`);
     const modelSettings = workloadName ? buildDflashModelSettings(spec) : null;
     if (workloadName && modelSettings) {
       const basePath = omxBasePath(env, workloadName);

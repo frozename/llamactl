@@ -341,6 +341,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     LLAMA_CPP_MODELS: env.LLAMA_CPP_MODELS,
     LLAMACTL_RUNTIME_DIR: env.LLAMACTL_RUNTIME_DIR,
     workloadName: opts.key.name,
+    machineProfile: resolved.LLAMA_CPP_MACHINE_PROFILE,
   };
 
   const spawn = opts.spawn ?? nodeSpawn;

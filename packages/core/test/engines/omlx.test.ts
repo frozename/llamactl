@@ -79,6 +79,32 @@ describe('omlx engine adapter', () => {
     expect(built.args).toContain('12GB');
   });
 
+  test('buildBootCommand keeps an explicit expectedMemoryGiB unchanged', () => {
+    const built = ENGINES.omlx.buildBootCommand(baseSpec, {
+      LLAMA_CPP_MODELS: '/tmp',
+      machineProfile: 'balanced',
+    } as any);
+    const idx = built.args.indexOf('--max-model-memory');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(built.args[idx + 1]).toBe('12GB');
+  });
+
+  test('buildBootCommand still emits --max-model-memory when resources are omitted', () => {
+    const built = ENGINES.omlx.buildBootCommand(
+      {
+        ...baseSpec,
+        resources: undefined,
+      },
+      {
+        LLAMA_CPP_MODELS: '/tmp',
+        machineProfile: 'balanced',
+      } as any,
+    );
+    const idx = built.args.indexOf('--max-model-memory');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(built.args[idx + 1]).toBe('24GB');
+  });
+
   test('buildBootCommand appends extraArgs verbatim', () => {
     const built = ENGINES.omlx.buildBootCommand(baseSpec, { LLAMA_CPP_MODELS: '/tmp' } as any);
     expect(built.args).toContain('--max-concurrent-requests');

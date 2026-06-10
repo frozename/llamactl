@@ -2,6 +2,12 @@ import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import type { MachineProfile } from './types.js';
 
+const OMLX_MAX_MODEL_MEMORY_GIB_BY_PROFILE: Record<MachineProfile, number> = {
+  'mac-mini-16g': 12,
+  balanced: 24,
+  'macbook-pro-48g': 32,
+};
+
 /** Total physical memory in bytes, detected per platform. */
 export function detectMemoryBytes(): number | null {
   if (process.platform === 'darwin') {
@@ -83,4 +89,9 @@ export function resolveProfile(env: NodeJS.ProcessEnv = process.env): MachinePro
   const override = normalizeProfile(env.LLAMA_CPP_MACHINE_PROFILE);
   if (override) return override;
   return profileFromMemory(detectMemoryBytes());
+}
+
+/** Default oMLX max-model-memory cap by machine profile, in GiB. */
+export function defaultOmlxMemoryGiBForProfile(profile: MachineProfile): number {
+  return OMLX_MAX_MODEL_MEMORY_GIB_BY_PROFILE[profile];
 }

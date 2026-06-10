@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { normalizeProfile, profileFromMemory, resolveProfile } from '../src/profile.js';
+import {
+  defaultOmlxMemoryGiBForProfile,
+  normalizeProfile,
+  profileFromMemory,
+  resolveProfile,
+} from '../src/profile.js';
 
 describe('profile.normalizeProfile', () => {
   test('canonicalises the three primary names', () => {
@@ -51,5 +56,13 @@ describe('profile.resolveProfile', () => {
     expect(
       resolveProfile({ LLAMA_CPP_MACHINE_PROFILE: 'mini' } as NodeJS.ProcessEnv),
     ).toBe('mac-mini-16g');
+  });
+});
+
+describe('profile.defaultOmlxMemoryGiBForProfile', () => {
+  test('maps the three primary profiles to explicit oMLX caps', () => {
+    expect(defaultOmlxMemoryGiBForProfile('mac-mini-16g')).toBe(12);
+    expect(defaultOmlxMemoryGiBForProfile('balanced')).toBe(24);
+    expect(defaultOmlxMemoryGiBForProfile('macbook-pro-48g')).toBe(32);
   });
 });

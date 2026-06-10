@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
 import { ENGINES } from '../../../core/src/engines/index.js';
 import type { EngineBootEnv, ModelHostSpecForEngine } from '../../../core/src/engines/index.js';
+import { resolveProfile } from '../../../core/src/profile.js';
 import type { ModelSpec } from './types.js';
 
 const HEALTH_POLL_INTERVAL_MS = 1000;
@@ -154,6 +155,7 @@ export function buildBootCommandForModelSpec(model: ModelSpec): { binary: string
     const env: EngineBootEnv = { ...process.env } as EngineBootEnv;
     if (model.mlx_model_dir) env.LLAMACTL_MODELS_DIR = model.mlx_model_dir;
     env.workloadName = model.name;
+    env.machineProfile = resolveProfile(process.env);
     return ENGINES.omlx.buildBootCommand(spec, env);
   }
   return buildLlamaCppBootCommand(model);
@@ -183,6 +185,7 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
     const env: EngineBootEnv = { ...process.env } as EngineBootEnv;
     if (model.mlx_model_dir) env.LLAMACTL_MODELS_DIR = model.mlx_model_dir;
     env.workloadName = model.name;
+    env.machineProfile = resolveProfile(process.env);
     await ENGINES.omlx.prepareLaunch?.(spec, env);
   }
   const boot = buildBootCommandForModelSpec(model);

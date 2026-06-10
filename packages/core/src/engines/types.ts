@@ -7,6 +7,7 @@ export interface EngineBootEnv {
   LLAMA_CPP_MODELS?: string;
   LLAMACTL_RUNTIME_DIR?: string;
   workloadName?: string;
+  machineProfile?: ResolvedEnv['LLAMA_CPP_MACHINE_PROFILE'];
 }
 
 export interface ModelHostHostedModel {
