@@ -8,6 +8,7 @@ import { EventEmitter } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 
 import { registerFleetTools } from "../src/tools/fleet.js";
 
@@ -22,16 +23,19 @@ type SpawnMockOptions = {
 function mockSpawn(opts: SpawnMockOptions, calls: { cmd: string; args: string[] }[] = []): SpawnFn {
   return ((cmd: string, args: string[], _options?: SpawnOptions) => {
     calls.push({ cmd, args });
-    const proc = new EventEmitter() as any;
-    proc.stdout = new EventEmitter();
-    proc.stderr = new EventEmitter();
-    proc.kill = () => {};
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const proc = Object.assign(new EventEmitter(), {
+      stdout,
+      stderr,
+      kill: () => true,
+    }) as unknown as ChildProcess;
     setTimeout(() => {
-      if (opts.stdout) proc.stdout.emit("data", Buffer.from(opts.stdout));
-      if (opts.stderr) proc.stderr.emit("data", Buffer.from(opts.stderr));
+      if (opts.stdout) stdout.emit("data", Buffer.from(opts.stdout));
+      if (opts.stderr) stderr.emit("data", Buffer.from(opts.stderr));
       proc.emit("close", opts.code);
     }, opts.holdOpenMs ?? 0);
-    return proc as unknown as ChildProcess;
+    return proc;
   }) as unknown as SpawnFn;
 }
 
@@ -42,7 +46,8 @@ async function connected(deps?: {
   const server = new McpServer({ name: "test", version: "0.0.0" });
   registerFleetTools(server, {
     ...deps,
-    detectExistingSupervisor: deps?.detectExistingSupervisor ?? (async () => ({ running: false })),
+    detectExistingSupervisor:
+      deps?.detectExistingSupervisor ?? (() => Promise.resolve({ running: false })),
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -199,7 +204,7 @@ describe("llamactl_supervisor_execute", () => {
     const spawnFn = mockSpawn({ code: 0 }, calls);
     const { client } = await connected({
       spawn: spawnFn,
-      detectExistingSupervisor: async () => ({ running: true, pid: 99 }),
+      detectExistingSupervisor: () => Promise.resolve({ running: true, pid: 99 }),
     });
 
     const result = await call(client, "llamactl_supervisor_execute", {

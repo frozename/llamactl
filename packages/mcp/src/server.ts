@@ -84,7 +84,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
           .describe("Which catalog tier to include."),
       },
     },
-    async ({ scope }) => toTextContent(catalog.listCatalog(scope ?? "all")),
+    ({ scope }) => toTextContent(catalog.listCatalog(scope)),
   );
 
   server.registerTool(
@@ -95,7 +95,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         "Read the kubeconfig (`~/.llamactl/config`) and return every node in the current cluster with its resolved kind (agent | gateway | provider).",
       inputSchema: {},
     },
-    async () => {
+    () => {
       const cfg = kubecfg.loadConfig();
       const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
       const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
@@ -131,13 +131,13 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
           .describe("Catalog scope (all | builtin | custom | candidate | …)."),
       },
     },
-    async ({ classFilter, scopeFilter }) => {
+    ({ classFilter, scopeFilter }) => {
       const resolved = envMod.resolveEnv();
       void resolved;
       return toTextContent(
         bench.benchCompare({
-          classFilter: classFilter ?? "all",
-          scopeFilter: scopeFilter ?? "all",
+          classFilter,
+          scopeFilter,
         }),
       );
     },
@@ -164,7 +164,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         "Return every ModelRun and ModelHost manifest under ~/.llamactl/workloads/, each tagged with `kind` and its last-recorded status field. ModelHosts (oMLX etc.) are charged against the same node budget as ModelRuns, so they are listed here too. Live runtime phase (per-node server probing) is a CLI-only operation — callers chaining several steps should cross-reference llamactl.server.status for the control plane's node.",
       inputSchema: {},
     },
-    async () => {
+    () => {
       const rows = workloadStore.listWorkloads().map((m) => ({
         name: m.metadata.name,
         kind: "ModelRun" as const,
@@ -178,7 +178,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         name: h.metadata.name,
         kind: "ModelHost" as const,
         node: h.spec.node,
-        rel: h.spec.hostedModels[0]!.rel,
+        rel: h.spec.hostedModels[0]?.rel ?? "",
         gateway: false,
         restartPolicy: h.spec.restartPolicy,
         status: null,
@@ -196,7 +196,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         "Return the control plane's own hardware inventory — profile (mac-mini-16g | balanced | macbook-pro-48g), memory bytes, OS/arch, GPU kind, llama.cpp build id, versions. Remote-node facts need the dispatcher; this tool covers the control-plane case.",
       inputSchema: {},
     },
-    async () => toTextContent(nodeFactsMod.collectNodeFacts()),
+    () => toTextContent(nodeFactsMod.collectNodeFacts()),
   );
 
   server.registerTool(
@@ -227,7 +227,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         dryRun: z.boolean().default(false),
       },
     },
-    async (input) => {
+    (input) => {
       const { name, bootstrap, dryRun } = input;
       let decoded: ReturnType<typeof agentConfig.decodeBootstrap>;
       try {
@@ -306,7 +306,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         dryRun: z.boolean().default(false),
       },
     },
-    async (input) => {
+    (input) => {
       const { name, dryRun } = input;
       const cfg = kubecfg.loadConfig();
       const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
@@ -357,7 +357,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         dryRun: z.boolean().default(false),
       },
     },
-    async (input) => {
+    (input) => {
       const { name, dryRun } = input;
       const manifests = workloadStore.listAnyWorkloadsForAdmission();
       const match = manifests.find((m) => m.metadata.name === name);
@@ -396,7 +396,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         "Read the current preset-overrides.tsv rows — the active (profile, preset) → rel bindings the control plane will resolve.",
       inputSchema: {},
     },
-    async () => {
+    () => {
       const resolved = envMod.resolveEnv();
       return toTextContent(presets.readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE));
     },
@@ -417,7 +417,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         dryRun: z.boolean().default(false),
       },
     },
-    async (input) => {
+    (input) => {
       const { profile, preset, rel, dryRun } = input;
       const resolved = envMod.resolveEnv();
       const file = resolved.LOCAL_AI_PRESET_OVERRIDES_FILE;
@@ -461,7 +461,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         dryRun: z.boolean().default(false),
       },
     },
-    async (input) => {
+    (input) => {
       const { profile, preset, dryRun } = input;
       const resolved = envMod.resolveEnv();
       const file = resolved.LOCAL_AI_PRESET_OVERRIDES_FILE;
@@ -506,7 +506,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         dryRun: z.boolean().default(false),
       },
     },
-    async (input) => {
+    (input) => {
       const { dryRun } = input;
       const path = input.path ?? embersynth.defaultEmbersynthConfigPath();
       const existing = embersynth.loadEmbersynthConfig(path);
@@ -560,9 +560,9 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         path: z.string().optional().describe("Override the default embersynth.yaml path."),
       },
     },
-    async (input) => {
-      const dryRun = input.dryRun ?? true;
-      const syntheticModel = input.syntheticModel ?? "fusion-auto";
+    (input) => {
+      const dryRun = input.dryRun;
+      const syntheticModel = input.syntheticModel;
       const path = input.path ?? embersynth.defaultEmbersynthConfigPath();
       const existing = embersynth.loadEmbersynthConfig(path);
       if (!existing) {
@@ -662,7 +662,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         "Return the shell environment llamactl is running under — paths, machine profile, provider config. Shows which values are explicitly set vs defaulted. Read-only.",
       inputSchema: {},
     },
-    async () => toTextContent(envMod.resolveEnv()),
+    () => toTextContent(envMod.resolveEnv()),
   );
 
   server.registerTool(
@@ -682,7 +682,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
           .describe("Max rows to return, newest first."),
       },
     },
-    async ({ rel, limit }) => {
+    ({ rel, limit }) => {
       const resolved = envMod.resolveEnv();
       const rows = bench.readBenchHistory(bench.benchHistoryFile(resolved));
       const current = rows.current.map((r) => ({
@@ -697,7 +697,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       }));
       const filtered = rel ? current.filter((r) => r.rel === rel) : current;
       const sorted = [...filtered].sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
-      const head = sorted.slice(0, limit ?? 50);
+      const head = sorted.slice(0, limit);
       return toTextContent({
         count: head.length,
         total: filtered.length,
@@ -723,7 +723,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
           .describe("Window size in days (max 90)."),
       },
     },
-    async ({ days }) => toTextContent(computeCostSnapshot({ days: days ?? 7 })),
+    ({ days }) => toTextContent(computeCostSnapshot({ days })),
   );
 
   server.registerTool(
@@ -762,7 +762,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       },
     },
     async (input) => {
-      const mode = input.mode ?? "stub";
+      const mode = input.mode;
       let executor: PlannerExecutor = stubPlannerExecutor;
       if (mode === "llm") {
         if (!input.model) {

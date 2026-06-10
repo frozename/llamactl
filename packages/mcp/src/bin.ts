@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { buildMcpServer } from "../src/server.js";
+
+import { buildMcpServer } from "./server.js";
 
 /**
  * Stdio MCP server entry. Claude Code, Claude Desktop and similar
@@ -16,7 +17,7 @@ async function main(): Promise<void> {
   process.stderr.write("llamactl-mcp: ready (stdio)\n");
 }
 
-main().catch((err) => {
+main().catch((err: unknown) => {
   process.stderr.write(`llamactl-mcp: fatal ${(err as Error).message}\n`);
   process.exit(1);
 });

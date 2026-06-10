@@ -31,7 +31,7 @@ const PipelineToolSchema = z.object({
       properties: z.record(z.string(), z.unknown()).default({}),
       required: z.array(z.string()).default([]),
     })
-    .passthrough(),
+    .loose(),
   stages: z
     .array(
       z.object({
@@ -163,7 +163,7 @@ export function registerPipelineTools(
         title: tool.title,
         description:
           tool.description ||
-          `Multi-stage pipeline with ${tool.stages.length} stage${tool.stages.length === 1 ? "" : "s"}.`,
+          `Multi-stage pipeline with ${String(tool.stages.length)} stage${tool.stages.length === 1 ? "" : "s"}.`,
         inputSchema: {
           input: z.string().min(1).describe("Initial user content."),
         },

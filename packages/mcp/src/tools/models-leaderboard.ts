@@ -40,7 +40,7 @@ export function registerModelsLeaderboardTool(server: McpServer): void {
           .optional(),
       },
     },
-    async (input) => {
+    (input) => {
       const dbPath = leaderboardDbPath();
       if (!existsSync(dbPath)) {
         return toTextContent([]);

@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "bin": {
-    "llamactl-mcp": "./bin/llamactl-mcp.ts"
+    "llamactl-mcp": "./src/bin.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

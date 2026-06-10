@@ -46,7 +46,7 @@ function readProcessOutput(chunks: Buffer[]): string {
 
   const suffix = Buffer.from(`\\n${OUTPUT_TRUNCATION_SENTINEL}`);
   const trimTo = Math.max(0, MAX_OUTPUT_BYTES - suffix.length);
-  return Buffer.concat([merged.slice(0, trimTo), suffix]).toString();
+  return Buffer.concat([merged.subarray(0, trimTo), suffix]).toString();
 }
 
 function warnDeprecatedToolAlias(oldName: string, newName: string): void {
@@ -73,7 +73,9 @@ function appendAudit(
       } as unknown as FleetJournalEntry,
       defaultFleetAuditPath(),
     );
-  } catch {}
+  } catch {
+    // Best-effort audit write.
+  }
 }
 
 interface RunProcessResult {
@@ -107,7 +109,7 @@ function getRunProcessFailureMessage(result: RunProcessResult): string {
   if (result.timedOut) return "command timed out";
   if (result.stderr) return result.stderr.trim();
   if (result.stdout) return result.stdout.trim();
-  return `command failed with code ${result.code ?? -1}`;
+  return `command failed with code ${String(result.code ?? -1)}`;
 }
 
 function runProcess(
@@ -147,10 +149,10 @@ function runProcess(
       }, KILL_TIMEOUT_MS);
     }, timeoutMs);
 
-    proc.stdout?.on("data", (chunk: Buffer) => {
+    proc.stdout.on("data", (chunk: Buffer) => {
       stdoutChunks.push(chunk);
     });
-    proc.stderr?.on("data", (chunk: Buffer) => {
+    proc.stderr.on("data", (chunk: Buffer) => {
       stderrChunks.push(chunk);
     });
 
@@ -204,7 +206,7 @@ async function detectExistingSupervisorDefault(
     MAX_TIMEOUT_FOLLOWUP_MS,
   );
   if (!result.ok) return { running: false };
-  const first = result.stdout.trim().split("\\n")[0];
+  const first = result.stdout.trim().split("\n")[0];
   if (!first) return { running: false };
   const pid = Number.parseInt(first, 10);
   if (Number.isNaN(pid)) return { running: false };
@@ -285,7 +287,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         const peers = listPeers();
         const aggregator = new FleetAggregator({
           peers,
-          fetchSnapshot: async (peer) => await createPeerFetch(peer)(),
+          fetchSnapshot: (peer) => createPeerFetch(peer)(),
         });
         await aggregator.pollNow();
         return toTextContent({ snapshots: aggregator.getAll() });
@@ -307,7 +309,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         journalPath: z.string().optional(),
       },
     },
-    async ({ node, journalPath }) => {
+    ({ node, journalPath }) => {
       const path = journalPath ?? defaultFleetJournalPath();
       const entries = readJournal(path);
 
@@ -363,9 +365,9 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         "[DEPRECATED — use llamactl_fleet_audit] Backward-compatible alias for llamactl_fleet_audit.",
       inputSchema: auditInputSchema,
     },
-    async (input) => {
+    (input) => {
       warnDeprecatedToolAlias("llamactl_fleet_supervisor_audit", "llamactl_fleet_audit");
-      return await handleFleetAudit(input);
+      return handleFleetAudit(input);
     },
   );
 
@@ -388,9 +390,9 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         "[DEPRECATED — use llamactl_fleet_pressure_status] Backward-compatible alias for llamactl_fleet_pressure_status.",
       inputSchema: pressureStatusInputSchema,
     },
-    async (input) => {
+    (input) => {
       warnDeprecatedToolAlias("llamactl_fleet_supervisor_status", "llamactl_fleet_pressure_status");
-      return await handleFleetPressureStatus(input);
+      return handleFleetPressureStatus(input);
     },
   );
 
@@ -408,7 +410,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         journalPath: z.string().optional(),
       },
     },
-    async ({ node, pendingOnly = true, limit = 50, sinceIsoTs, journalPath }) => {
+    ({ node, pendingOnly = true, limit = 50, sinceIsoTs, journalPath }) => {
       const path = journalPath ?? defaultFleetJournalPath();
       const entries = readJournal(path);
       const proposals = collectProposals(entries, { node, pendingOnly, sinceIsoTs });
@@ -430,7 +432,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         journalPath: z.string().optional(),
       },
     },
-    async ({ node, sinceIsoTs, limit = 50, journalPath }) => {
+    ({ node, sinceIsoTs, limit = 50, journalPath }) => {
       const path = journalPath ?? defaultFleetJournalPath();
       const entries = readJournal(path);
 
@@ -475,7 +477,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         journalPath: z.string().optional(),
       },
     },
-    async ({ node, kinds, limit = 20, journalPath }) => {
+    ({ node, kinds, limit = 20, journalPath }) => {
       const path = journalPath ?? defaultFleetJournalPath();
       const entries = readJournal(path);
       const kindSet = kinds ? new Set(kinds) : null;
@@ -549,7 +551,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
       },
     },
     async ({ proposalId, auto, severityThreshold, node, confirm, timeoutMs }) => {
-      const hasProposalId = proposalId != null;
+      const hasProposalId = proposalId !== undefined;
       const hasAuto = auto === true;
       if (hasProposalId === hasAuto) {
         const outcome = {
@@ -593,9 +595,11 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
       if (node) args.push(`--node=${node}`);
       if (hasAuto) {
         args.push("--auto");
-        if (severityThreshold != null) args.push(`--severity-threshold=${severityThreshold}`);
+        if (severityThreshold !== undefined) {
+          args.push("--severity-threshold=" + severityThreshold.toString());
+        }
       } else {
-        args.push(`--execute=${proposalId}`);
+        args.push("--execute=" + (proposalId ?? ""));
       }
       const boundedTimeoutMs = toTimeoutMs(timeoutMs, MAX_TIMEOUT_MS_EXECUTE);
       const result = await runProcess(spawnFn, "bun", args, boundedTimeoutMs);

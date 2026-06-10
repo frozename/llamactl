@@ -25,7 +25,7 @@ beforeEach(() => {
   auditDir = mkdtempSync(join(tmpdir(), "llamactl-mcp-audit-"));
   // Scope llamactl state (preset-overrides.tsv etc.) + audit writes
   // into the sandbox so no test touches the real `~/.llamactl`.
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv, {
     DEV_STORAGE: runtimeDir,
     LOCAL_AI_RUNTIME_DIR: runtimeDir,
@@ -42,7 +42,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
   rmSync(runtimeDir, { recursive: true, force: true });
   rmSync(auditDir, { recursive: true, force: true });
@@ -151,7 +151,7 @@ function auditLines(server: string): Record<string, unknown>[] {
   for (const f of files) {
     const body = readFileSync(join(auditDir, f), "utf8");
     for (const line of body.trim().split("\n")) {
-      if (line) out.push(JSON.parse(line));
+      if (line) out.push(JSON.parse(line) as Record<string, unknown>);
     }
   }
   return out;
@@ -260,7 +260,7 @@ describe("@llamactl/mcp read surface", () => {
       name: "llamactl.env",
       arguments: {},
     });
-    const parsed = JSON.parse(textOf(result)) as Record<string, unknown>;
+    const parsed = JSON.parse(textOf(result)) as { LOCAL_AI_RUNTIME_DIR: string };
     expect(parsed.LOCAL_AI_RUNTIME_DIR).toBe(runtimeDir);
   });
 
@@ -343,6 +343,25 @@ describe("@llamactl/mcp read surface", () => {
     const parsed = JSON.parse(textOf(result)) as unknown[];
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed.length).toBeGreaterThan(0);
+  });
+
+  test("llamactl.server.status serializes the resolved status, not a pending promise", async () => {
+    // Regression: the handler must await the async serverStatus()
+    // before handing it to toTextContent — JSON.stringify on a
+    // pending Promise silently yields "{}" on the wire.
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: "llamactl.server.status",
+      arguments: { workload: "gemma4-run-a" },
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      state: "up" | "down";
+      endpoint: string;
+      health: { httpCode: number | null; reachable: boolean };
+    };
+    expect(["up", "down"]).toContain(parsed.state);
+    expect(typeof parsed.endpoint).toBe("string");
+    expect(typeof parsed.health.reachable).toBe("boolean");
   });
 
   test("llamactl.workload.list returns the empty shape when no manifests exist", async () => {
