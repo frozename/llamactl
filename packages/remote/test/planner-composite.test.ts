@@ -64,6 +64,7 @@ function stubEmittingComposite(): PlannerExecutor {
   return {
     name: "stub-composite",
     async generate() {
+      await Promise.resolve();
       return {
         ok: true,
         rawPlan: {
@@ -91,6 +92,7 @@ function stubEmittingSingleReadStep(): PlannerExecutor {
   return {
     name: "stub-single-read",
     async generate() {
+      await Promise.resolve();
       return {
         ok: true,
         rawPlan: {
@@ -236,6 +238,7 @@ describe("runPlanner + composite.apply", () => {
     const multiStep: PlannerExecutor = {
       name: "stub-multi",
       async generate() {
+        await Promise.resolve();
         return {
           ok: true,
           rawPlan: {

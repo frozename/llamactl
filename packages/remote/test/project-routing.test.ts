@@ -103,11 +103,11 @@ describe("resolveProjectNodeTarget — budget check", () => {
     const project = makeProject({ budget: { usd_per_day: 1.0 } });
     const out = await resolveProjectNodeTarget("project:novaflow/code_review", {
       loadProjects: () => [project],
-      checkBudget: async () =>
-        ({
+      checkBudget: () =>
+        Promise.resolve({
           usdToday: 1.25,
           usdLimit: 1.0,
-        }) satisfies BudgetSnapshot,
+        } satisfies BudgetSnapshot),
     });
     expect(out.node).toBe("private-first");
     expect(out.decision!.reason).toBe("over-budget");
@@ -121,7 +121,7 @@ describe("resolveProjectNodeTarget — budget check", () => {
     const project = makeProject({ budget: { usd_per_day: 1.0 } });
     const out = await resolveProjectNodeTarget("project:novaflow/code_review", {
       loadProjects: () => [project],
-      checkBudget: async () => ({ usdToday: 0.5, usdLimit: 1.0 }),
+      checkBudget: () => Promise.resolve({ usdToday: 0.5, usdLimit: 1.0 }),
     });
     expect(out.node).toBe("mac-mini.claude-pro");
     expect(out.decision!.reason).toBe("matched");
@@ -131,6 +131,7 @@ describe("resolveProjectNodeTarget — budget check", () => {
     const out = await resolveProjectNodeTarget("project:novaflow/code_review", {
       loadProjects: () => [project],
       checkBudget: async () => {
+        await Promise.resolve();
         throw new Error("cost-guardian unreachable");
       },
     });
@@ -147,6 +148,7 @@ describe("resolveProjectNodeTarget — budget check", () => {
     const out = await resolveProjectNodeTarget("project:novaflow/code_review", {
       loadProjects: () => [project],
       checkBudget: async () => {
+        await Promise.resolve();
         called = true;
         return { usdToday: 999, usdLimit: 1 };
       },
@@ -183,7 +185,7 @@ describe("decision journal", () => {
     await appendProjectRoutingJournal(decision);
     const path = defaultProjectRoutingJournalPath();
     const raw = readFileSync(path, "utf8").trim();
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as { project: string; target: string; reason: string };
     expect(parsed.project).toBe("novaflow");
     expect(parsed.target).toBe("mac-mini.claude-pro");
     expect(parsed.reason).toBe("matched");

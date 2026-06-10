@@ -47,6 +47,7 @@ function scriptedExecutor(
   return {
     name: "scripted",
     async generate() {
+      await Promise.resolve();
       const idx = Math.min(calls, plans.length - 1);
       calls += 1;
       return {
@@ -69,6 +70,7 @@ function failingExecutor(message = "simulated model failure"): PlannerExecutor {
   return {
     name: "failing",
     async generate() {
+      await Promise.resolve();
       return { ok: false, reason: "model-error", message };
     },
   };
@@ -110,6 +112,7 @@ describe("runLoopExecutor — proposal/outcome loop", () => {
       executor,
     });
     const events = await collect(gen, async (proposal) => {
+      await Promise.resolve();
       submitOutcome({
         sessionId: proposal.sessionId,
         stepId: proposal.stepId,
@@ -230,6 +233,7 @@ describe("runLoopExecutor — proposal/outcome loop", () => {
     const executor: PlannerExecutor = {
       name: "context-aware",
       async generate(input) {
+        await Promise.resolve();
         const sawFailure = input.userMessage.includes("err ");
         const tool = sawFailure ? "llamactl.env" : "llamactl.node.ls";
         return {
@@ -287,6 +291,7 @@ describe("runLoopExecutor — refusal + safety", () => {
     const counter: PlannerExecutor = {
       name: "counter",
       async generate() {
+        await Promise.resolve();
         plannerCalls += 1;
         return {
           ok: true,

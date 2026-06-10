@@ -42,7 +42,7 @@ function bootCentralAgent(): CentralHandle {
     tunnelBearer,
     baseUrl: agent.url,
     port: agent.port,
-    wsUrl: `ws://127.0.0.1:${agent.port}/tunnel`,
+    wsUrl: `ws://127.0.0.1:${String(agent.port)}/tunnel`,
   };
 }
 
@@ -76,7 +76,7 @@ async function waitFor(check: () => boolean, timeoutMs = 3000, intervalMs = 10):
   for (;;) {
     if (check()) return;
     if (Date.now() - start > timeoutMs) {
-      throw new Error(`waitFor timed out after ${timeoutMs}ms`);
+      throw new Error(`waitFor timed out after ${String(timeoutMs)}ms`);
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
@@ -91,10 +91,10 @@ beforeEach(() => {
 });
 afterEach(async () => {
   for (const d of dialers) {
-    await d.agent.stop().catch(() => {});
+    await d.agent.stop().catch(() => undefined);
   }
   for (const c of centrals) {
-    await c.agent.stop().catch(() => {});
+    await c.agent.stop().catch(() => undefined);
   }
   centrals = [];
   dialers = [];

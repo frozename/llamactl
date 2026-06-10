@@ -49,7 +49,16 @@ describe("ops-session router", () => {
       historyLen: 0,
       toolCount: 0,
     });
-    await expect(caller.opsSessionDelete({ sessionId: "s-live" })).rejects.toThrow();
+    await caller.opsSessionDelete({ sessionId: "s-live" }).then(
+      () => {
+        throw new Error("expected opsSessionDelete to reject");
+      },
+      (error: unknown) => {
+        expect(() => {
+          throw error;
+        }).toThrow();
+      },
+    );
     sessionEventBus.close("s-live");
   });
 
@@ -67,7 +76,7 @@ describe("ops-session router", () => {
       ts: "2026-04-25T00:00:01.000Z",
       iterations: 0,
     });
-    const events: any[] = [];
+    const events: { type: string }[] = [];
     const stream = await caller.opsSessionWatch({ sessionId: "s-old" });
     for await (const e of stream) {
       events.push(e);

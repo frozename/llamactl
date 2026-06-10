@@ -42,6 +42,7 @@ function makeClient(handler: (call: ToolCall) => ChromaToolResult | Promise<Chro
       return await handler({ name: params.name, arguments: params.arguments });
     },
     async close() {
+      await Promise.resolve();
       closed.value = true;
     },
   };
@@ -209,9 +210,12 @@ describe("ChromaRagAdapter error paths", () => {
   test("SDK method-not-found maps to tool-missing", async () => {
     const client: ChromaMcpClient = {
       async callTool() {
+        await Promise.resolve();
         throw new Error("Method not found: -32601");
       },
-      async close() {},
+      async close() {
+        await Promise.resolve();
+      },
     };
     const adapter = makeAdapter(client);
 
@@ -240,9 +244,12 @@ describe("ChromaRagAdapter error paths", () => {
   test("response with no text content → invalid-response", async () => {
     const client: ChromaMcpClient = {
       async callTool() {
+        await Promise.resolve();
         return { content: [] };
       },
-      async close() {},
+      async close() {
+        await Promise.resolve();
+      },
     };
     const adapter = makeAdapter(client);
 

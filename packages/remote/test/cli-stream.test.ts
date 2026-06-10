@@ -51,6 +51,7 @@ function fakeStreamSpawn(
   } = {},
 ): SpawnStreamFn {
   return async (_argv, opts): Promise<SpawnStreamResult> => {
+    await Promise.resolve();
     const stderr = result.stderr ?? "";
     let observedAbort = false;
     let resolveExited: (v: { exitCode: number; aborted: boolean }) => void = () => {
@@ -117,7 +118,7 @@ describe("streamResponse — preset gating", () => {
       agentName: "mac-mini",
       binding: claudeBinding(),
       spawnStream: fakeStreamSpawn([]),
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     expect(typeof provider.streamResponse).toBe("function");
   });
@@ -126,9 +127,9 @@ describe("streamResponse — preset gating", () => {
       agentName: "mac-mini",
       binding: codexBinding(),
       spawnStream: fakeStreamSpawn([]),
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
-    expect(provider.streamResponse).toBeUndefined();
+    expect("streamResponse" in provider).toBe(false);
   });
 });
 
@@ -138,7 +139,7 @@ describe("streamResponse — chunk sequencing", () => {
       agentName: "mac-mini",
       binding: claudeBinding(),
       spawnStream: fakeStreamSpawn(["hello", "world", "bye"]),
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     const events = await collect(provider.streamResponse!(minimalReq));
     const chunks = events.filter(
@@ -156,7 +157,7 @@ describe("streamResponse — chunk sequencing", () => {
       agentName: "mac-mini",
       binding: claudeBinding(),
       spawnStream: fakeStreamSpawn(["a", "b"]),
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     const events = await collect(provider.streamResponse!(minimalReq));
     const chunks = events.filter(
@@ -172,7 +173,7 @@ describe("streamResponse — chunk sequencing", () => {
       agentName: "mac-mini",
       binding: claudeBinding({ defaultModel: "claude-sonnet-4-5" }),
       spawnStream: fakeStreamSpawn(["one", "two"]),
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     const events = await collect(provider.streamResponse!(minimalReq));
     const chunks = events.filter(
@@ -191,6 +192,7 @@ describe("streamResponse — journal write", () => {
       binding: claudeBinding(),
       spawnStream: fakeStreamSpawn(["hello", "there"]),
       journalWrite: async (e) => {
+        await Promise.resolve();
         entries.push(e);
       },
     });
@@ -215,6 +217,7 @@ describe("streamResponse — journal write", () => {
         exitCode: 2,
       }),
       journalWrite: async (e) => {
+        await Promise.resolve();
         entries.push(e);
       },
     });
@@ -250,7 +253,7 @@ describe("streamResponse — cancellation", () => {
         // After the caller aborts the fake releases hangPromise
         // from the test; the generator then returns naturally.
       }),
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     const caller = new AbortController();
     // Consume via for-await so we stay within the AsyncIterable
@@ -280,9 +283,10 @@ describe("streamResponse — spawn failure", () => {
       agentName: "mac-mini",
       binding: claudeBinding(),
       spawnStream: async () => {
+        await Promise.resolve();
         throw new Error("ENOENT: claude not in PATH");
       },
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     const events = await collect(provider.streamResponse!(minimalReq));
     const errors = events.filter(

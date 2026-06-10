@@ -70,7 +70,7 @@ describe("list + delete", () => {
       iteration: 0,
       tier: "read",
       reasoning: "try",
-      step: { tool: "t", annotation: "a" } as any,
+      step: { tool: "t", args: {}, annotation: "a" },
     });
     const s = await getSessionSummary("s-it");
     expect(s.iterations).toBe(1);
@@ -86,7 +86,16 @@ describe("list + delete", () => {
       historyLen: 0,
       toolCount: 0,
     });
-    await expect(deleteSession("s-live")).rejects.toThrow(/in-flight/);
+    await deleteSession("s-live").then(
+      () => {
+        throw new Error("expected deleteSession to reject");
+      },
+      (error: unknown) => {
+        expect(() => {
+          throw error;
+        }).toThrow(/in-flight/);
+      },
+    );
     sessionEventBus.close("s-live");
   });
 

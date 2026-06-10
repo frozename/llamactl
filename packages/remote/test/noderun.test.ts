@@ -145,7 +145,7 @@ describe("planNodeRun (pure diff)", () => {
     const installs = actions.filter((a) => a.type === "install");
     expect(installs.map((a) => a.pkg).sort()).toEqual(["embersynth", "llama-cpp"]);
     for (const a of installs) {
-      if (a.type === "install") expect(a.reason).toBe("missing");
+      expect(a.reason).toBe("missing");
     }
     expect(actions.some((a) => a.type === "uninstall-pkg")).toBe(false);
   });
@@ -215,6 +215,7 @@ describe("applyNodeRun (end-to-end against a mock client)", () => {
     const client: NodeRunInfraClient = {
       infraList: {
         async query() {
+          await Promise.resolve();
           calls.push("infraList");
           const current = postApply ? after : live;
           if (!postApply) postApply = true;
@@ -223,6 +224,7 @@ describe("applyNodeRun (end-to-end against a mock client)", () => {
       },
       infraInstall: {
         async mutate(input) {
+          await Promise.resolve();
           calls.push(`infraInstall:${input.pkg}@${input.version}`);
           return {
             ok: true,
@@ -234,12 +236,14 @@ describe("applyNodeRun (end-to-end against a mock client)", () => {
       },
       infraActivate: {
         async mutate(input) {
+          await Promise.resolve();
           calls.push(`infraActivate:${input.pkg}@${input.version}`);
           return { ok: true as const };
         },
       },
       infraUninstall: {
         async mutate(input) {
+          await Promise.resolve();
           const suffix = input.version ? `@${input.version}` : "";
           calls.push(`infraUninstall:${input.pkg}${suffix}`);
           return {
@@ -268,7 +272,7 @@ describe("applyNodeRun (end-to-end against a mock client)", () => {
     );
     const result = await applyNodeRun(manifest, {
       client,
-      resolveArtifact: async () => FAKE_ARTIFACT,
+      resolveArtifact: () => Promise.resolve(FAKE_ARTIFACT),
     });
     expect(result.outcomes.map((o) => o.ok)).toEqual([true, true]);
     expect(result.status.phase).toBe("Converged");
@@ -283,7 +287,7 @@ describe("applyNodeRun (end-to-end against a mock client)", () => {
     const { client, calls } = makeClient();
     const result = await applyNodeRun(manifest, {
       client,
-      resolveArtifact: async () => FAKE_ARTIFACT,
+      resolveArtifact: () => Promise.resolve(FAKE_ARTIFACT),
       dryRun: true,
     });
     expect(result.status.phase).toBe("Drift");
@@ -300,7 +304,7 @@ describe("applyNodeRun (end-to-end against a mock client)", () => {
     ]);
     const result = await applyNodeRun(manifest, {
       client,
-      resolveArtifact: async () => FAKE_ARTIFACT,
+      resolveArtifact: () => Promise.resolve(FAKE_ARTIFACT),
     });
     expect(result.status.phase).toBe("Converged");
     expect(result.actions.every((a) => a.type === "skip")).toBe(true);
@@ -313,6 +317,7 @@ describe("applyNodeRun (end-to-end against a mock client)", () => {
     const { client } = makeClient({
       infraInstall: {
         async mutate() {
+          await Promise.resolve();
           return {
             ok: false,
             reason: "fetch-failed",
@@ -323,7 +328,7 @@ describe("applyNodeRun (end-to-end against a mock client)", () => {
     });
     const result = await applyNodeRun(manifest, {
       client,
-      resolveArtifact: async () => FAKE_ARTIFACT,
+      resolveArtifact: () => Promise.resolve(FAKE_ARTIFACT),
     });
     expect(result.status.phase).toBe("Failed");
     expect(result.error).toContain("DNS fail");
@@ -341,7 +346,7 @@ describe("applyNodeRun (end-to-end against a mock client)", () => {
     ]);
     const result = await applyNodeRun(manifest, {
       client,
-      resolveArtifact: async () => FAKE_ARTIFACT,
+      resolveArtifact: () => Promise.resolve(FAKE_ARTIFACT),
     });
     expect(result.status.phase).toBe("Converged");
     expect(calls).toContain("infraUninstall:ghost-pkg");

@@ -28,6 +28,7 @@ async function startFakeGateway(
   path: string,
   options: { status?: number; bodyOnFailure?: string } = {},
 ): Promise<{ url: string; calls: ReloadRequest[]; stop: () => Promise<void> }> {
+  await Promise.resolve();
   const calls: ReloadRequest[] = [];
   const { status = 200, bodyOnFailure = "faked gateway failure" } = options;
   const server = Bun.serve({
@@ -53,10 +54,11 @@ async function startFakeGateway(
     },
   });
   return {
-    url: `http://127.0.0.1:${server.port}`,
+    url: `http://127.0.0.1:${String(server.port)}`,
     calls,
     stop: async () => {
-      server.stop(true);
+      await Promise.resolve();
+      await server.stop(true);
     },
   };
 }
@@ -66,7 +68,7 @@ const originalEnv = { ...process.env };
 
 beforeEach(() => {
   runtimeDir = mkdtempSync(join(tmpdir(), "llamactl-gateway-reload-"));
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv, {
     DEV_STORAGE: runtimeDir,
     LOCAL_AI_RUNTIME_DIR: runtimeDir,
@@ -78,7 +80,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(runtimeDir, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
 });
 

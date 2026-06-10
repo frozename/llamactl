@@ -47,7 +47,7 @@ const FAKE_LLAMA_SERVER = [
   "  const stop = () => { s.stop(true); process.exit(0); };",
   "  process.on('SIGTERM', stop);",
   "  process.on('SIGINT', stop);",
-  "  await new Promise(() => {});",
+  "  await new Promise(() => undefined);",
   '"',
   "",
 ].join("\n");
@@ -143,7 +143,9 @@ afterEach(async () => {
     if (Number.isFinite(pid) && pid > 0) {
       try {
         process.kill(pid, "SIGTERM");
-      } catch {}
+      } catch {
+        return undefined;
+      }
     }
   }
   process.env = { ...originalEnv };
@@ -178,7 +180,7 @@ describe("cluster-serverstart: remote serverStart over SSE", () => {
           },
           onError: (err: unknown) => {
             clearTimeout(timer);
-            reject(err);
+            reject(err instanceof Error ? err : new Error(String(err)));
           },
           onComplete: () => {
             clearTimeout(timer);
@@ -197,7 +199,7 @@ describe("cluster-serverstart: remote serverStart over SSE", () => {
     expect(finalResult).not.toBeNull();
     expect((finalResult as unknown as { ok: boolean }).ok).toBe(true);
     expect((finalResult as unknown as { endpoint: string }).endpoint).toBe(
-      `http://127.0.0.1:${fakePort}`,
+      `http://127.0.0.1:${String(fakePort)}`,
     );
 
     // Bring it down cleanly through the normal mutation path.

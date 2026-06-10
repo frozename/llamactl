@@ -27,12 +27,13 @@ function makeBinding(overrides: Partial<CliBinding> = {}): CliBinding {
 }
 
 function fakeSpawn(result: Partial<SpawnResult> & { stdout?: string }): SpawnFn {
-  return async () => ({
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    exitCode: result.exitCode ?? 0,
-    aborted: result.aborted ?? false,
-  });
+  return () =>
+    Promise.resolve({
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+      exitCode: result.exitCode ?? 0,
+      aborted: result.aborted ?? false,
+    });
 }
 
 let tmp = "";
@@ -76,7 +77,7 @@ describe("createCliSubprocessProvider — createResponse happy path", () => {
       agentName: "mac-mini",
       binding: makeBinding({ defaultModel: "claude-sonnet-4-5" }),
       spawn: fakeSpawn({ stdout: "hello\n" }),
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     const res = await provider.createResponse(minimalReq);
     expect(res.object).toBe("chat.completion");
@@ -93,7 +94,7 @@ describe("createCliSubprocessProvider — createResponse happy path", () => {
       agentName: "mac-mini",
       binding: makeBinding({ format: "json" }),
       spawn: fakeSpawn({ stdout: '{"response":"json extracted"}' }),
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     const res = await provider.createResponse(minimalReq);
     expect(res.choices[0]!.message.content).toBe("json extracted");
@@ -108,7 +109,7 @@ describe("createCliSubprocessProvider — createResponse happy path", () => {
           choices: [{ message: { content: "nested content" } }],
         }),
       }),
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     const res = await provider.createResponse(minimalReq);
     expect(res.choices[0]!.message.content).toBe("nested content");
@@ -119,7 +120,7 @@ describe("createCliSubprocessProvider — createResponse happy path", () => {
       agentName: "mac-mini",
       binding: makeBinding(),
       spawn: fakeSpawn({ stdout: "", stderr: "boom", exitCode: 2 }),
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     try {
       await provider.createResponse(minimalReq);
@@ -140,7 +141,7 @@ describe("createCliSubprocessProvider — createResponse happy path", () => {
         exitCode: -1,
         aborted: true,
       }),
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     try {
       await provider.createResponse(minimalReq);
@@ -157,6 +158,7 @@ describe("createCliSubprocessProvider — createResponse happy path", () => {
       binding: makeBinding({ subscription: "pro-alex" }),
       spawn: fakeSpawn({ stdout: "ok" }),
       journalWrite: async (e) => {
+        await Promise.resolve();
         entries.push(e);
       },
     });
@@ -181,6 +183,7 @@ describe("createCliSubprocessProvider — createResponse happy path", () => {
       binding: makeBinding(),
       spawn: fakeSpawn({ stdout: "", stderr: "err", exitCode: 1 }),
       journalWrite: async (e) => {
+        await Promise.resolve();
         entries.push(e);
       },
     });
@@ -202,7 +205,7 @@ describe("createCliSubprocessProvider — healthCheck", () => {
       agentName: "mac-mini",
       binding: makeBinding(),
       spawn: fakeSpawn({ stdout: "claude v1.0.0\n" }),
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     const h = await provider.healthCheck!();
     expect(h.state).toBe("healthy");
@@ -218,7 +221,7 @@ describe("createCliSubprocessProvider — healthCheck", () => {
         stderr: "command not found",
         exitCode: 127,
       }),
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     const h = await provider.healthCheck!();
     expect(h.state).toBe("unhealthy");
@@ -230,9 +233,10 @@ describe("createCliSubprocessProvider — healthCheck", () => {
       agentName: "mac-mini",
       binding: makeBinding(),
       spawn: async () => {
+        await Promise.resolve();
         throw new Error("ENOENT: claude not in PATH");
       },
-      journalWrite: async () => {},
+      journalWrite: () => Promise.resolve(),
     });
     const h = await provider.healthCheck!();
     expect(h.state).toBe("unhealthy");
@@ -252,7 +256,7 @@ describe("adapter journal file integration", () => {
     await provider.createResponse(minimalReq);
     const day = new Date().toISOString().slice(0, 10);
     const raw = readFileSync(join(tmp, `${day}.jsonl`), "utf8").trim();
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as { agent: string; ok: boolean };
     expect(parsed.agent).toBe("mac-mini");
     expect(parsed.ok).toBe(true);
   });

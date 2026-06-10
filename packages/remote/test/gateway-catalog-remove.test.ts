@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import type { SiriusProvider } from "../src/config/sirius-providers.js";
+
 import { removeCompositeEntries } from "../src/workload/gateway-catalog/remove.js";
 
 const own = (names: string[]) => ({
@@ -15,7 +17,7 @@ describe("removeCompositeEntries", () => {
       compositeName: "mc",
       current: [
         { name: "a", kind: "openai-compatible", baseUrl: "http://h/v1", ownership: own(["mc"]) },
-      ] as any,
+      ] satisfies SiriusProvider[],
     });
     expect(r.changed).toBe(true);
     expect(r.removedNames).toEqual(["a"]);
@@ -33,12 +35,12 @@ describe("removeCompositeEntries", () => {
           baseUrl: "http://h/v1",
           ownership: own(["mc", "other"]),
         },
-      ] as any,
+      ] satisfies SiriusProvider[],
     });
     expect(r.changed).toBe(true);
     expect(r.removedNames).toEqual([]);
     expect(r.next.length).toBe(1);
-    expect((r.next[0] as any).ownership.compositeNames).toEqual(["other"]);
+    expect(r.next[0]!.ownership.compositeNames).toEqual(["other"]);
   });
 
   test("leaves operator-owned entries untouched", () => {
@@ -48,10 +50,10 @@ describe("removeCompositeEntries", () => {
       current: [
         { name: "op", kind: "openai", apiKeyRef: "$X" },
         { name: "cm", kind: "openai-compatible", baseUrl: "http://h/v1", ownership: own(["mc"]) },
-      ] as any,
+      ] satisfies SiriusProvider[],
     });
     expect(r.next.length).toBe(1);
-    expect((r.next[0] as any).name).toBe("op");
+    expect(r.next[0]!.name).toBe("op");
     expect(r.removedNames).toEqual(["cm"]);
   });
 
@@ -61,7 +63,7 @@ describe("removeCompositeEntries", () => {
       compositeName: "mc",
       current: [
         { name: "a", kind: "openai-compatible", baseUrl: "http://h/v1", ownership: own(["other"]) },
-      ] as any,
+      ] satisfies SiriusProvider[],
     });
     expect(r.changed).toBe(false);
     expect(r.next.length).toBe(1);

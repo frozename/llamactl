@@ -4,33 +4,44 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
+import type { ClusterNode } from "../src/config/schema.js";
+import type { ModelRun } from "../src/workload/schema.js";
+import type { GatewayApplyOptions } from "../src/workload/gateway-handlers/types.js";
+
 import { readGatewayCatalog } from "../src/workload/gateway-catalog/io.js";
 import { siriusHandler } from "../src/workload/gateway-handlers/sirius.js";
 
 const node = {
   name: "sirius-1",
+  endpoint: "http://sirius.test",
   kind: "gateway",
   cloud: { provider: "sirius", baseUrl: "http://sirius.test" },
-} as any;
+} as unknown as ClusterNode;
 
 const manifest = {
   apiVersion: "llamactl/v1",
   kind: "ModelRun",
-  metadata: { name: "m", labels: {} },
+  metadata: { name: "m", labels: {}, annotations: {} },
   spec: {
     node: "sirius-1",
+    enabled: true,
     target: { kind: "rel" as const, value: "mc-llama/x" },
     extraArgs: [],
     timeoutSeconds: 60,
     workers: [],
     gateway: true,
+    restartPolicy: "manual",
+    allowExternalBind: false,
   },
-} as any;
+} as unknown as ModelRun;
 
-const composite = {
+const composite: NonNullable<GatewayApplyOptions["composite"]> = {
   compositeName: "mc",
   upstreams: [{ name: "llama", endpoint: "http://h:1/v1", nodeName: "mac" }],
   providerConfig: {},
+};
+const unusedGetClient: GatewayApplyOptions["getClient"] = () => {
+  throw new Error("unused test client");
 };
 
 describe("siriusHandler with composite context", () => {
@@ -60,7 +71,10 @@ describe("siriusHandler with composite context", () => {
     );
 
     origFetch = globalThis.fetch;
-    globalThis.fetch = (async () => new Response('{"ok":true}', { status: 200 })) as any;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response('{"ok":true}', { status: 200 }),
+      )) as unknown as typeof globalThis.fetch;
   });
 
   afterEach(() => {
@@ -78,7 +92,7 @@ describe("siriusHandler with composite context", () => {
     await siriusHandler.apply({
       manifest,
       node,
-      getClient: (() => null) as any,
+      getClient: unusedGetClient,
       composite,
     });
     const out = readGatewayCatalog("sirius");
@@ -95,7 +109,7 @@ describe("siriusHandler with composite context", () => {
     const r = await siriusHandler.apply({
       manifest,
       node,
-      getClient: (() => null) as any,
+      getClient: unusedGetClient,
       composite,
     });
     expect(r.action).toBe("pending");
@@ -104,13 +118,13 @@ describe("siriusHandler with composite context", () => {
 
   test("idempotent re-apply skips reload", async () => {
     const calls: string[] = [];
-    globalThis.fetch = (async (url: string) => {
-      calls.push(url);
-      return new Response('{"ok":true}', { status: 200 });
-    }) as any;
-    await siriusHandler.apply({ manifest, node, getClient: (() => null) as any, composite });
+    globalThis.fetch = ((url: Parameters<typeof globalThis.fetch>[0]) => {
+      calls.push(url instanceof Request ? url.url : url instanceof URL ? url.href : url);
+      return Promise.resolve(new Response('{"ok":true}', { status: 200 }));
+    }) as unknown as typeof globalThis.fetch;
+    await siriusHandler.apply({ manifest, node, getClient: unusedGetClient, composite });
     const before = calls.length;
-    await siriusHandler.apply({ manifest, node, getClient: (() => null) as any, composite });
+    await siriusHandler.apply({ manifest, node, getClient: unusedGetClient, composite });
     expect(calls.length).toBe(before); // no new reload on second apply
   });
 });

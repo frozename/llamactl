@@ -21,7 +21,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
 });
 
@@ -104,12 +104,21 @@ describe("pipelineExportMcp", () => {
 
   test("rejects empty pipelines", async () => {
     const caller = router.createCaller({});
-    await expect(
-      caller.pipelineExportMcp({
+    await caller
+      .pipelineExportMcp({
         name: "empty",
         stages: [],
         overwrite: false,
-      }),
-    ).rejects.toThrow(/at least one stage/i);
+      })
+      .then(
+        () => {
+          throw new Error("expected pipelineExportMcp to reject");
+        },
+        (error: unknown) => {
+          expect(() => {
+            throw error;
+          }).toThrow(/at least one stage/i);
+        },
+      );
   });
 });

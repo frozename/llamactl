@@ -3,6 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { EmbersynthNode } from "../src/config/embersynth.js";
+import type { SiriusProvider } from "../src/config/sirius-providers.js";
+
 import { readGatewayCatalog, writeGatewayCatalog } from "../src/workload/gateway-catalog/io.js";
 
 describe("gateway-catalog io", () => {
@@ -28,11 +31,11 @@ describe("gateway-catalog io", () => {
 
   test("sirius round-trip", () => {
     writeGatewayCatalog("sirius", [
-      { name: "a", kind: "openai-compatible", baseUrl: "http://h/v1" } as any,
+      { name: "a", kind: "openai-compatible", baseUrl: "http://h/v1" } satisfies SiriusProvider,
     ]);
     const out = readGatewayCatalog("sirius");
     expect(out.length).toBe(1);
-    expect((out[0] as any).name).toBe("a");
+    expect(out[0]!.name).toBe("a");
   });
 
   test("embersynth round-trip — preserves nodes", () => {
@@ -48,11 +51,11 @@ describe("gateway-catalog io", () => {
         providerType: "openai-compatible",
         modelId: "default",
         priority: 5,
-      } as any,
+      } satisfies EmbersynthNode,
     ]);
     const out = readGatewayCatalog("embersynth");
     expect(out.length).toBe(1);
-    expect((out[0] as any).id).toBe("a");
+    expect(out[0]!.id).toBe("a");
   });
 
   test("reading missing sirius file returns empty array", () => {

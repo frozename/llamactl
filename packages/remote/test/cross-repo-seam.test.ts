@@ -143,18 +143,22 @@ describe("cross-repo seam: @nova/contracts imports + schema shapes", () => {
     const stubRag: RetrievalProvider = {
       kind: "fake",
       async search(req: SearchRequest): Promise<SearchResponse> {
+        await Promise.resolve();
         return { results: [], collection: req.collection ?? "docs" };
       },
       async store(req: StoreRequest): Promise<StoreResponse> {
+        await Promise.resolve();
         return {
           ids: req.documents.map((d) => d.id),
           collection: req.collection ?? "docs",
         };
       },
       async delete(req: DeleteRequest): Promise<DeleteResponse> {
+        await Promise.resolve();
         return { deleted: req.ids.length, collection: req.collection ?? "docs" };
       },
       async listCollections(): Promise<ListCollectionsResponse> {
+        await Promise.resolve();
         return { collections: [] };
       },
       async close() {
@@ -166,6 +170,7 @@ describe("cross-repo seam: @nova/contracts imports + schema shapes", () => {
     const stubChat: AiProvider = {
       name: "stub",
       async createResponse(req) {
+        await Promise.resolve();
         return {
           id: "test",
           object: "chat.completion",

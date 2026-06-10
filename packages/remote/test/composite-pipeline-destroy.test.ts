@@ -47,14 +47,17 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
 });
 
 class FakeRuntimeBackend implements RuntimeBackend {
   readonly kind = "fake";
-  async ping(): Promise<void> {}
+  async ping(): Promise<void> {
+    await Promise.resolve();
+  }
   async ensureService(spec: ServiceDeployment): Promise<ServiceInstance> {
+    await Promise.resolve();
     return {
       ref: { name: spec.name },
       running: true,
@@ -64,19 +67,26 @@ class FakeRuntimeBackend implements RuntimeBackend {
       endpoint: { host: "127.0.0.1", port: 8000 },
     };
   }
-  async removeService(_ref: ServiceRef, _opts?: RemoveServiceOptions): Promise<void> {}
+  async removeService(_ref: ServiceRef, _opts?: RemoveServiceOptions): Promise<void> {
+    await Promise.resolve();
+  }
   async inspectService(_ref: ServiceRef): Promise<ServiceInstance | null> {
+    await Promise.resolve();
     return null;
   }
   async listServices(_filter?: ServiceFilter): Promise<ServiceInstance[]> {
+    await Promise.resolve();
     return [];
   }
-  async pullImage(_ref: ImageRef): Promise<void> {}
+  async pullImage(_ref: ImageRef): Promise<void> {
+    await Promise.resolve();
+  }
 }
 
 const stubClient: WorkloadClient = {
   serverStatus: {
     async query() {
+      await Promise.resolve();
       return {
         state: "stopped",
         rel: null,
@@ -91,44 +101,49 @@ const stubClient: WorkloadClient = {
   },
   serverStop: {
     async mutate() {
+      await Promise.resolve();
       return {};
     },
   },
   serverStart: {
     subscribe(_input, callbacks) {
       queueMicrotask(() => {
-        callbacks.onComplete?.();
+        callbacks.onComplete();
       });
-      return { unsubscribe: () => {} };
+      return { unsubscribe: () => undefined };
     },
   },
   modelHostStart: {
     subscribe() {
-      return { unsubscribe: () => {} };
+      return { unsubscribe: () => undefined };
     },
   },
   modelHostStop: {
     async mutate() {
+      await Promise.resolve();
       return {};
     },
   },
   modelHostStatus: {
     async query() {
+      await Promise.resolve();
       return { state: "Stopped", pid: null };
     },
   },
   rpcServerStart: {
     subscribe() {
-      return { unsubscribe: () => {} };
+      return { unsubscribe: () => undefined };
     },
   },
   rpcServerStop: {
     async mutate() {
+      await Promise.resolve();
       return {};
     },
   },
   rpcServerDoctor: {
     async query() {
+      await Promise.resolve();
       return { ok: true, path: "/fake", llamaCppBin: "/fake" };
     },
   },

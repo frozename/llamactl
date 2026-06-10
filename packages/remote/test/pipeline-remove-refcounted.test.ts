@@ -65,7 +65,7 @@ describe("removePipeline ref-counted", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.conflict.kind).toBe("name");
-      if (r.conflict.kind === "name") expect(r.conflict.existingOwner).toBe("operator");
+      expect(r.conflict.existingOwner).toBe("operator");
     }
     expect(loadPipeline("docs-ingest")).not.toBeNull();
   });

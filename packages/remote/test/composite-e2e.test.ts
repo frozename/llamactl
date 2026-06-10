@@ -64,7 +64,7 @@ beforeAll(async () => {
 afterAll(() => {
   if (!RUN_GATE) return;
   if (tmp) rmSync(tmp, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
 });
 
@@ -333,7 +333,7 @@ describe.skipIf(!K8S_RUN_GATE)("Composite E2E — kubernetes round-trip", () => 
         name: "chroma-secret",
         namespace,
       });
-      const env = dep.spec?.template?.spec?.containers?.[0]?.env ?? [];
+      const env = dep.spec?.template.spec?.containers[0]?.env ?? [];
       const secretEnv = env.find((e: { name: string }) => e.name === "SIDEBAND_TOKEN");
       expect(secretEnv).toBeDefined();
       // Important: the plain `value` field must NOT be set — we want

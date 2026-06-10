@@ -21,7 +21,7 @@ describe("applyCompositeEntries — sirius", () => {
     expect(r.changed).toBe(true);
     expect(r.conflicts).toEqual([]);
     expect(r.next.length).toBe(1);
-    const o = (r.next[0] as any).ownership;
+    const o = r.next[0]!.ownership!;
     expect(o.compositeNames).toEqual(["mc"]);
     expect(o.specHash).toBeTruthy();
   });
@@ -56,7 +56,7 @@ describe("applyCompositeEntries — sirius", () => {
       current: first.next,
     });
     expect(second.changed).toBe(true);
-    const o = (second.next[0] as any).ownership;
+    const o = second.next[0]!.ownership!;
     expect(o.compositeNames.sort()).toEqual(["mc", "other"]);
   });
 

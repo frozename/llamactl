@@ -59,7 +59,7 @@ export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
   try {
     for (const [i, spec_] of specs.entries()) {
       const spec = spec_;
-      const name = spec.name ?? `node${i + 1}`;
+      const name = spec.name ?? `node${String(i + 1)}`;
       const devStorage = mkdtempSync(join(tmpdir(), `llamactl-cluster-${name}-`));
       const runtimeDir = join(devStorage, "ai-models", "local-ai");
       const agentDir = join(devStorage, "agent");
@@ -110,7 +110,7 @@ export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
     }
   } catch (err) {
     // Partial failure cleanup so tests don't leak Bun servers.
-    for (const h of handles) await h.stop().catch(() => {});
+    for (const h of handles) await h.stop().catch(() => undefined);
     throw err;
   }
 
@@ -121,7 +121,7 @@ export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
     nodes: handles,
     clusterConfigPath,
     cleanup: async () => {
-      for (const h of handles) await h.stop().catch(() => {});
+      for (const h of handles) await h.stop().catch(() => undefined);
       rmSync(clusterConfigPath, { force: true });
     },
   };

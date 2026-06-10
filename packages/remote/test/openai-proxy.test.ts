@@ -198,9 +198,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await agent?.stop();
-  for (const upstream of fakeUpstreams) upstream.server.stop(true);
+  for (const upstream of fakeUpstreams) await upstream.server.stop(true);
   rmSync(devStorage, { recursive: true, force: true });
-  for (const key of Object.keys(process.env)) delete process.env[key];
+  for (const key of Object.keys(process.env)) Reflect.deleteProperty(process.env, key);
   Object.assign(process.env, originalEnv);
 });
 
@@ -210,12 +210,11 @@ afterEach(() => {
 
 function pinnedFetch(path: string, init?: RequestInit): Promise<Response> {
   const url = `${agent!.url}${path}`;
+  const headers = new Headers(init?.headers);
+  headers.set("authorization", `Bearer ${agentToken}`);
   return fetch(url, {
     ...init,
-    headers: {
-      ...(init?.headers ?? {}),
-      authorization: `Bearer ${agentToken}`,
-    },
+    headers,
     ...({ tls: { ca: caPem } } as Record<string, unknown>),
   });
 }
@@ -320,12 +319,9 @@ describe("agent OpenAI proxy", () => {
     };
     expect(body.object).toBe("list");
     expect(body.data).toHaveLength(2);
-    expect(body.data.map((entry) => entry.id)).toEqual(
-      expect.arrayContaining([
-        "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
-        "qwen3-8b-GGUF/qwen3-8b-Q8_0.gguf",
-      ]),
-    );
+    const ids = body.data.map((entry) => entry.id);
+    expect(ids).toContain("granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf");
+    expect(ids).toContain("qwen3-8b-GGUF/qwen3-8b-Q8_0.gguf");
     expect(body.data.every((entry) => entry.owned_by === "llamactl-agent")).toBe(true);
   });
 

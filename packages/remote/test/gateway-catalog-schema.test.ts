@@ -55,21 +55,21 @@ describe("SiriusProvider schema with ownership", () => {
           compositeNames: ["mc"],
           specHash: "abc",
         },
-      } as any,
+      },
     ]);
     const out = loadSiriusProviders();
     expect(out[0]!.ownership).toEqual({
       source: "composite",
       compositeNames: ["mc"],
       specHash: "abc",
-    } as any);
+    });
   });
 
   test("parses operator entry without ownership marker", () => {
-    saveSiriusProviders([{ name: "openai", kind: "openai", apiKeyRef: "$OPENAI" } as any]);
+    saveSiriusProviders([{ name: "openai", kind: "openai", apiKeyRef: "$OPENAI" }]);
     const out = loadSiriusProviders();
     expect(out[0]!.name).toBe("openai");
-    expect((out[0] as any).ownership).toBeUndefined();
+    expect(out[0]!.ownership).toBeUndefined();
   });
 });
 
@@ -109,13 +109,13 @@ describe("EmbersynthNode schema with ownership", () => {
             compositeNames: ["mc"],
             specHash: "abc",
           },
-        } as any,
+        },
       ],
       profiles: [],
       syntheticModels: {},
       server: { host: "127.0.0.1", port: 7777 },
     });
     const out = loadEmbersynthConfig();
-    expect((out!.nodes[0] as any).ownership.compositeNames).toEqual(["mc"]);
+    expect(out!.nodes[0]!.ownership?.compositeNames).toEqual(["mc"]);
   });
 });

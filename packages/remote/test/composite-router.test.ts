@@ -33,7 +33,7 @@ beforeEach(() => {
   runtimeDir = mkdtempSync(join(tmpdir(), "llamactl-composite-router-"));
   compositesDir = join(runtimeDir, "composites");
   configPath = join(runtimeDir, "config");
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv, {
     DEV_STORAGE: runtimeDir,
     LLAMACTL_COMPOSITES_DIR: compositesDir,
@@ -43,7 +43,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
   rmSync(runtimeDir, { recursive: true, force: true });
 });
@@ -110,9 +110,16 @@ describe("router compositeApply — dry-run", () => {
 
   test("invalid YAML surfaces BAD_REQUEST", async () => {
     const caller = router.createCaller({});
-    await expect(
-      caller.compositeApply({ manifestYaml: "not: [valid: yaml", dryRun: true }),
-    ).rejects.toThrow(/invalid composite manifest/);
+    await caller.compositeApply({ manifestYaml: "not: [valid: yaml", dryRun: true }).then(
+      () => {
+        throw new Error("expected compositeApply to reject");
+      },
+      (error: unknown) => {
+        expect(() => {
+          throw error;
+        }).toThrow(/invalid composite manifest/);
+      },
+    );
   });
 
   test("manifest missing required fields surfaces BAD_REQUEST", async () => {
@@ -123,8 +130,15 @@ describe("router compositeApply — dry-run", () => {
       metadata: { name: "x" },
       spec: { services: [], workloads: [], ragNodes: [], gateways: [] },
     });
-    await expect(caller.compositeApply({ manifestYaml: bad, dryRun: true })).rejects.toThrow(
-      /invalid composite manifest/,
+    await caller.compositeApply({ manifestYaml: bad, dryRun: true }).then(
+      () => {
+        throw new Error("expected compositeApply to reject");
+      },
+      (error: unknown) => {
+        expect(() => {
+          throw error;
+        }).toThrow(/invalid composite manifest/);
+      },
     );
   });
 });
@@ -186,8 +200,15 @@ describe("router compositeDestroy — dry-run", () => {
 
   test("destroy of missing composite surfaces NOT_FOUND", async () => {
     const caller = router.createCaller({});
-    await expect(caller.compositeDestroy({ name: "never-existed", dryRun: true })).rejects.toThrow(
-      /not found/,
+    await caller.compositeDestroy({ name: "never-existed", dryRun: true }).then(
+      () => {
+        throw new Error("expected compositeDestroy to reject");
+      },
+      (error: unknown) => {
+        expect(() => {
+          throw error;
+        }).toThrow(/not found/);
+      },
     );
   });
 
@@ -336,12 +357,19 @@ describe("router compositeStatus — live event streaming", () => {
     const iter = (await caller.compositeStatus({
       name: "ghost",
     })) as AsyncIterable<CompositeApplyEvent>;
-    await expect(
-      (async () => {
-        for await (const _e of iter) {
-          // drain — should throw before first yield
-        }
-      })(),
-    ).rejects.toThrow(/not found/);
+    await (async (): Promise<void> => {
+      for await (const _e of iter) {
+        // drain — should throw before first yield
+      }
+    })().then(
+      () => {
+        throw new Error("expected compositeStatus iterator to reject");
+      },
+      (error: unknown) => {
+        expect(() => {
+          throw error;
+        }).toThrow(/not found/);
+      },
+    );
   });
 });

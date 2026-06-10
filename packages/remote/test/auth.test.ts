@@ -54,7 +54,7 @@ describe("unauthorizedResponse", () => {
     expect(res.status).toBe(401);
     expect(res.headers.get("content-type")).toBe("application/json");
     expect(res.headers.get("www-authenticate")).toBe('Bearer realm="llamactl-agent"');
-    const body = await res.json();
+    const body = (await res.json()) as { error: { code: string; message: string } };
     expect(body).toEqual({
       error: { code: "UNAUTHORIZED", message: "invalid bearer token" },
     });

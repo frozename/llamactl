@@ -48,7 +48,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
 });
 
@@ -62,9 +62,11 @@ class FakeRuntimeBackend implements RuntimeBackend {
   failNextEnsure: string | null = null;
 
   async ping(): Promise<void> {
+    await Promise.resolve();
     this.calls.push({ op: "ping", arg: null });
   }
   async ensureService(spec: ServiceDeployment): Promise<ServiceInstance> {
+    await Promise.resolve();
     this.calls.push({ op: "ensureService", arg: spec });
     if (this.failNextEnsure) {
       const msg = this.failNextEnsure;
@@ -83,18 +85,22 @@ class FakeRuntimeBackend implements RuntimeBackend {
     return instance;
   }
   async removeService(ref: ServiceRef, opts?: RemoveServiceOptions): Promise<void> {
+    await Promise.resolve();
     this.calls.push({ op: "removeService", arg: { ref, opts: opts ?? {} } });
     this.services.delete(ref.name);
   }
   async inspectService(ref: ServiceRef): Promise<ServiceInstance | null> {
+    await Promise.resolve();
     this.calls.push({ op: "inspectService", arg: ref });
     return this.services.get(ref.name) ?? null;
   }
   async listServices(filter?: ServiceFilter): Promise<ServiceInstance[]> {
+    await Promise.resolve();
     this.calls.push({ op: "listServices", arg: filter });
     return Array.from(this.services.values());
   }
   async pullImage(ref: ImageRef): Promise<void> {
+    await Promise.resolve();
     this.calls.push({ op: "pullImage", arg: ref });
   }
 }
@@ -109,6 +115,7 @@ function makeFakeWorkloadClient(): {
   const c: WorkloadClient = {
     serverStatus: {
       async query() {
+        await Promise.resolve();
         return {
           state: "stopped",
           rel: null,
@@ -123,6 +130,7 @@ function makeFakeWorkloadClient(): {
     },
     serverStop: {
       async mutate() {
+        await Promise.resolve();
         stopped++;
         return {};
       },
@@ -133,7 +141,7 @@ function makeFakeWorkloadClient(): {
         // Emit a quick `started` event + `done` — the applier
         // interprets `done.ok=true` as success.
         queueMicrotask(() => {
-          callbacks.onData?.({
+          callbacks.onData({
             type: "started",
             pid: 12345,
             endpoint: "http://127.0.0.1:8080",
@@ -141,7 +149,7 @@ function makeFakeWorkloadClient(): {
           });
           // applyOne extracts StartDone from `e.result` on the done
           // event — not the event itself. Mirror the real shape.
-          callbacks.onData?.({
+          callbacks.onData({
             type: "done",
             result: {
               ok: true,
@@ -149,38 +157,42 @@ function makeFakeWorkloadClient(): {
               endpoint: "http://127.0.0.1:8080",
             },
           });
-          callbacks.onComplete?.();
+          callbacks.onComplete();
         });
-        return { unsubscribe: () => {} };
+        return { unsubscribe: () => undefined };
       },
     },
     modelHostStart: {
       subscribe() {
-        return { unsubscribe: () => {} };
+        return { unsubscribe: () => undefined };
       },
     },
     modelHostStop: {
       async mutate() {
+        await Promise.resolve();
         return {};
       },
     },
     modelHostStatus: {
       async query() {
+        await Promise.resolve();
         return { state: "Stopped", pid: null };
       },
     },
     rpcServerStart: {
       subscribe() {
-        return { unsubscribe: () => {} };
+        return { unsubscribe: () => undefined };
       },
     },
     rpcServerStop: {
       async mutate() {
+        await Promise.resolve();
         return {};
       },
     },
     rpcServerDoctor: {
       async query() {
+        await Promise.resolve();
         return { ok: true, path: "/fake", llamaCppBin: "/fake" };
       },
     },
@@ -329,6 +341,7 @@ describe("applyComposite — happy path with rag + backingService", () => {
         ) => Promise<string | null>;
       }
     ).resolveExternalServiceEndpoint = async (_ref, opts) => {
+      await Promise.resolve();
       if (opts.serviceType === "NodePort") return "http://localhost:31234";
       return null;
     };
@@ -385,6 +398,7 @@ describe("applyComposite — happy path with rag + backingService", () => {
         resolveExternalServiceEndpoint: () => Promise<string | null>;
       }
     ).resolveExternalServiceEndpoint = async () => {
+      await Promise.resolve();
       externalCalls++;
       return "http://should-not-be-used";
     };
@@ -864,6 +878,7 @@ describe("destroyComposite — boundary-based destroy (k8s cascade)", () => {
         destroyCompositeBoundary?: (name: string, opts?: unknown) => Promise<void>;
       }
     ).destroyCompositeBoundary = async (compositeName, opts) => {
+      await Promise.resolve();
       boundaryCalls.push({ compositeName, opts });
     };
 
@@ -929,6 +944,7 @@ describe("destroyComposite — boundary-based destroy (k8s cascade)", () => {
         destroyCompositeBoundary?: (name: string) => Promise<void>;
       }
     ).destroyCompositeBoundary = async () => {
+      await Promise.resolve();
       throw new Error("cluster unreachable");
     };
     const { client } = makeFakeWorkloadClient();
@@ -1022,6 +1038,7 @@ describe("applyComposite — gateway upstream threading", () => {
           providerConfig: Readonly<Record<string, unknown>>;
         };
       }) => {
+        await Promise.resolve();
         if (o.composite) recorded.push({ ...o.composite });
         const now = new Date().toISOString();
         return {
@@ -1128,6 +1145,7 @@ describe("applyComposite — gateway upstream threading", () => {
           upstreams: readonly { endpoint: string }[];
         };
       }) => {
+        await Promise.resolve();
         if (o.composite) recorded.push(o.composite);
         const now = new Date().toISOString();
         return {
@@ -1227,6 +1245,7 @@ describe("applyComposite — gateway upstream threading", () => {
           upstreams: readonly { endpoint: string }[];
         };
       }) => {
+        await Promise.resolve();
         if (o.composite) recorded.push(o.composite);
         const now = new Date().toISOString();
         return {
@@ -1320,6 +1339,7 @@ describe("applyComposite — gateway upstream threading", () => {
       kind: "embersynth",
       canHandle: (node: { cloud?: { provider: string } }) => node.cloud?.provider === "embersynth",
       apply: async (o: { composite?: { upstreams: unknown; providerConfig: unknown } }) => {
+        await Promise.resolve();
         ctxSeen = o.composite ?? null;
         const now = new Date().toISOString();
         return {

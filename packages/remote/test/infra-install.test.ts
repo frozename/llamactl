@@ -28,6 +28,7 @@ function stubFetcher(
   bytes: Uint8Array = FAKE_PAYLOAD,
 ): import("../src/infra/install.js").InfraFetcher {
   return async (reqUrl: string) => {
+    await Promise.resolve();
     if (reqUrl !== url) throw new Error(`unexpected fetch url: ${reqUrl}`);
     return bytes;
   };
@@ -37,6 +38,7 @@ function stubExtractor(
   contents: Record<string, string>,
 ): import("../src/infra/install.js").InfraExtractor {
   return async (_tarballPath: string, destDir: string) => {
+    await Promise.resolve();
     for (const [rel, body] of Object.entries(contents)) {
       const full = join(destDir, rel);
       mkdirSync(join(full, ".."), { recursive: true });
@@ -110,8 +112,10 @@ describe("installInfraPackage", () => {
   test("re-install skips extraction when version already present + still flips symlink", async () => {
     const url = "https://pkgs.example.com/x";
     let extractCalls = 0;
-    const fetcher: import("../src/infra/install.js").InfraFetcher = async () => FAKE_PAYLOAD;
+    const fetcher: import("../src/infra/install.js").InfraFetcher = () =>
+      Promise.resolve(FAKE_PAYLOAD);
     const extractor: import("../src/infra/install.js").InfraExtractor = async (_t, dest) => {
+      await Promise.resolve();
       extractCalls++;
       writeFileSync(join(dest, "marker"), "a", "utf8");
     };
@@ -149,10 +153,12 @@ describe("installInfraPackage", () => {
   test("skipIfPresent:false + re-install forces a fresh extract", async () => {
     const url = "https://pkgs.example.com/x";
     let extractCalls = 0;
-    const fetcher: import("../src/infra/install.js").InfraFetcher = async () => FAKE_PAYLOAD;
+    const fetcher: import("../src/infra/install.js").InfraFetcher = () =>
+      Promise.resolve(FAKE_PAYLOAD);
     const extractor: import("../src/infra/install.js").InfraExtractor = async (_t, dest) => {
+      await Promise.resolve();
       extractCalls++;
-      writeFileSync(join(dest, `v${extractCalls}`), "x", "utf8");
+      writeFileSync(join(dest, `v${String(extractCalls)}`), "x", "utf8");
     };
     await installInfraPackage({
       pkg: "llama-cpp",
@@ -206,6 +212,7 @@ describe("installInfraPackage", () => {
       sha256: FAKE_SHA,
       base,
       fetcher: async () => {
+        await Promise.resolve();
         throw new Error("DNS fail");
       },
     });
@@ -225,6 +232,7 @@ describe("installInfraPackage", () => {
       base,
       fetcher: stubFetcher(url),
       extractor: async () => {
+        await Promise.resolve();
         throw new Error("corrupt tarball");
       },
     });
@@ -236,7 +244,8 @@ describe("installInfraPackage", () => {
 
   test("two versions installed side-by-side + final activation pins the chosen one", async () => {
     const url = "https://pkgs.example.com/x";
-    const fetcher: import("../src/infra/install.js").InfraFetcher = async () => FAKE_PAYLOAD;
+    const fetcher: import("../src/infra/install.js").InfraFetcher = () =>
+      Promise.resolve(FAKE_PAYLOAD);
     await installInfraPackage({
       pkg: "llama-cpp",
       version: "b4500",

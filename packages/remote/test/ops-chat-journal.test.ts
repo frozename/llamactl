@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -58,7 +58,7 @@ describe("journal append + read", () => {
     const path = journalPath("s1");
     const body = readFileSync(path, "utf8");
     const corrupted = body + "{not-json}\n";
-    require("node:fs").writeFileSync(path, corrupted, "utf8");
+    writeFileSync(path, corrupted, "utf8");
     const events = await readJournal("s1");
     expect(events.length).toBe(1);
   });

@@ -33,7 +33,7 @@ afterEach(() => {
 function ev(n: number): CompositeApplyEvent {
   return {
     type: "component-start",
-    ref: { kind: "service", name: `svc-${n}` },
+    ref: { kind: "service", name: `svc-${String(n)}` },
   };
 }
 
@@ -117,7 +117,7 @@ describe("composite event bus — subscribe semantics", () => {
   });
 
   test("subscribing before startRun returns a no-op unsubscriber", () => {
-    const unsub = bus.subscribe("never-started", () => {});
+    const unsub = bus.subscribe("never-started", () => undefined);
     expect(typeof unsub).toBe("function");
     expect(() => {
       unsub();
@@ -140,6 +140,7 @@ describe("composite event bus — subscribe semantics", () => {
 
 describe("composite event bus — retention + restart", () => {
   test("after endRun, currentRun still returns for the retention window", async () => {
+    await Promise.resolve();
     bus.startRun("stack-a");
     bus.emit("stack-a", ev(1));
     bus.endRun("stack-a");
@@ -173,6 +174,7 @@ describe("composite event bus — retention + restart", () => {
   });
 
   test("retention evicts the run after the window elapses", async () => {
+    await Promise.resolve();
     // Use a fresh bus with a fake timer window by leaning on the real
     // timer — 30s is too long to wait in a unit test, so we verify
     // eviction logic via the timer directly. Jump straight to the

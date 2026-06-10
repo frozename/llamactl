@@ -80,19 +80,18 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await agent?.stop();
-  fakeServer?.stop(true);
+  await fakeServer?.stop(true);
   rmSync(devStorage, { recursive: true, force: true });
-  for (const key of Object.keys(process.env)) delete process.env[key];
+  for (const key of Object.keys(process.env)) Reflect.deleteProperty(process.env, key);
   Object.assign(process.env, originalEnv);
 });
 
 function pinnedFetch(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  headers.set("authorization", `Bearer ${agentToken}`);
   return fetch(`${agent!.url}${path}`, {
     ...init,
-    headers: {
-      ...(init?.headers ?? {}),
-      authorization: `Bearer ${agentToken}`,
-    },
+    headers,
     ...({ tls: { ca: caPem } } as Record<string, unknown>),
   });
 }

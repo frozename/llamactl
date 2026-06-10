@@ -75,7 +75,7 @@ beforeEach(async () => {
   process.env.DEV_STORAGE = devStorage;
   process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
   process.env.LLAMA_CPP_MODELS = modelsDir;
-  process.env.PATH = `${fakeBinDir}:${originalEnv.PATH}`;
+  process.env.PATH = `${fakeBinDir}:${originalEnv.PATH ?? ""}`;
   // The pull procedure may call HF for mmproj resolution. Disable the
   // network fetch so this test runs offline.
   process.env.LOCAL_AI_HF_MMPROJ_FETCH = "off";
@@ -134,7 +134,7 @@ describe("cluster-streaming: pullFile subscription over SSE", () => {
           },
           onError: (err: unknown) => {
             clearTimeout(timer);
-            reject(err);
+            reject(err instanceof Error ? err : new Error(String(err)));
           },
           onComplete: () => {
             clearTimeout(timer);

@@ -8,6 +8,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync as writeFileSyncNode,
 } from "node:fs";
@@ -41,6 +42,7 @@ function stubFetcher(
 ): { fetcher: ArtifactFetcher; calls: string[] } {
   const calls: string[] = [];
   const fetcher: ArtifactFetcher = async (url) => {
+    await Promise.resolve();
     calls.push(url);
     const r = responses[url];
     if (!r) {
@@ -326,6 +328,7 @@ describe("fetchAgentRelease — cosign signature verification (I.5.3)", () => {
       artifactsDir: dir,
       fetcher,
       cosignVerifier: async () => {
+        await Promise.resolve();
         cosignCalls++;
         return { ok: true };
       },
@@ -351,7 +354,7 @@ describe("fetchAgentRelease — cosign signature verification (I.5.3)", () => {
       artifactsDir: dir,
       fetcher,
       verifySig: "best-effort",
-      cosignVerifier: async () => ({ ok: true }),
+      cosignVerifier: () => Promise.resolve({ ok: true }),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -373,6 +376,7 @@ describe("fetchAgentRelease — cosign signature verification (I.5.3)", () => {
       fetcher,
       verifySig: "best-effort",
       cosignVerifier: async (input) => {
+        await Promise.resolve();
         cosignCalls.push(input);
         return { ok: true };
       },
@@ -401,7 +405,7 @@ describe("fetchAgentRelease — cosign signature verification (I.5.3)", () => {
       artifactsDir: dir,
       fetcher,
       verifySig: "best-effort",
-      cosignVerifier: async () => ({ ok: false, message: "fake cosign mismatch" }),
+      cosignVerifier: () => Promise.resolve({ ok: false, message: "fake cosign mismatch" }),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -421,7 +425,7 @@ describe("fetchAgentRelease — cosign signature verification (I.5.3)", () => {
       artifactsDir: dir,
       fetcher,
       verifySig: "require",
-      cosignVerifier: async () => ({ ok: true }),
+      cosignVerifier: () => Promise.resolve({ ok: true }),
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -441,7 +445,7 @@ describe("fetchAgentRelease — cosign signature verification (I.5.3)", () => {
       artifactsDir: dir,
       fetcher,
       verifySig: "require",
-      cosignVerifier: async () => ({ ok: false, message: "bad cert" }),
+      cosignVerifier: () => Promise.resolve({ ok: false, message: "bad cert" }),
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -461,7 +465,7 @@ describe("fetchAgentRelease — cosign signature verification (I.5.3)", () => {
       artifactsDir: dir,
       fetcher,
       verifySig: "require",
-      cosignVerifier: async () => ({ ok: true }),
+      cosignVerifier: () => Promise.resolve({ ok: true }),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -600,8 +604,7 @@ describe("listAgentVersions + pruneAgentArtifacts (I.5.4)", () => {
     const topLevel = agentBinaryPath(TARGET, dir);
     mkdirSync(join(dir, "agent", TARGET), { recursive: true });
     void a;
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require("node:fs").symlinkSync(b, topLevel);
+    symlinkSync(b, topLevel);
 
     const versions = listAgentVersions({ artifactsDir: dir });
     expect(versions.map((v) => v.tag).sort()).toEqual(["v0.4.0", "v0.5.0", "v0.6.0"]);
@@ -652,8 +655,7 @@ describe("listAgentVersions + pruneAgentArtifacts (I.5.4)", () => {
     seedVersion("v0.3.0", Date.now() - 1 * 86400_000);
     const topLevel = agentBinaryPath(TARGET, dir);
     mkdirSync(join(dir, "agent", TARGET), { recursive: true });
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require("node:fs").symlinkSync(oldest, topLevel);
+    symlinkSync(oldest, topLevel);
 
     const result = pruneAgentArtifacts({
       artifactsDir: dir,
@@ -693,8 +695,7 @@ describe("listAgentVersions + pruneAgentArtifacts (I.5.4)", () => {
     // Link v0.1.0 as active.
     const topLevel = agentBinaryPath(TARGET, dir);
     mkdirSync(join(dir, "agent", TARGET), { recursive: true });
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require("node:fs").symlinkSync(a, topLevel);
+    symlinkSync(a, topLevel);
 
     const result = pruneAgentArtifacts({
       artifactsDir: dir,

@@ -22,11 +22,11 @@ const originalEnv = { ...process.env };
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-opschat-paths-"));
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
 });
 
 afterEach(() => {
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
   rmSync(tmp, { recursive: true, force: true });
 });
@@ -70,9 +70,7 @@ describe("defaultOpsChatAuditPath", () => {
 
 describe("ops-chat paths — sessions", () => {
   test("defaultSessionsDir uses DEV_STORAGE when set", () => {
-    expect(defaultSessionsDir({ DEV_STORAGE: "/tmp/abc" } as any)).toBe(
-      "/tmp/abc/ops-chat/sessions",
-    );
+    expect(defaultSessionsDir({ DEV_STORAGE: "/tmp/abc" })).toBe("/tmp/abc/ops-chat/sessions");
   });
 
   test("defaultSessionsDir falls back to homedir/.llamactl when DEV_STORAGE missing", () => {
@@ -81,7 +79,7 @@ describe("ops-chat paths — sessions", () => {
   });
 
   test("defaultSessionDir joins sessionId", () => {
-    expect(defaultSessionDir({ DEV_STORAGE: "/tmp/abc" } as any, "sess-1")).toBe(
+    expect(defaultSessionDir({ DEV_STORAGE: "/tmp/abc" }, "sess-1")).toBe(
       "/tmp/abc/ops-chat/sessions/sess-1",
     );
   });

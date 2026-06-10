@@ -178,6 +178,7 @@ describe("dispatchGatewayApply", () => {
       kind: "sirius",
       canHandle: (n) => n.cloud?.provider === "sirius",
       async apply() {
+        await Promise.resolve();
         const now = new Date().toISOString();
         return {
           action: "pending",
@@ -212,11 +213,13 @@ describe("applyOne + gatewayDispatch integration", () => {
   const noopClient: WorkloadClient = {
     serverStatus: {
       async query() {
+        await Promise.resolve();
         throw new Error("serverStatus should not be called on a gateway workload");
       },
     },
     serverStop: {
       async mutate() {
+        await Promise.resolve();
         throw new Error("serverStop should not be called on a gateway workload");
       },
     },
@@ -232,11 +235,13 @@ describe("applyOne + gatewayDispatch integration", () => {
     },
     modelHostStop: {
       async mutate() {
+        await Promise.resolve();
         throw new Error("modelHostStop should not be called on a gateway workload");
       },
     },
     modelHostStatus: {
       async query() {
+        await Promise.resolve();
         throw new Error("modelHostStatus should not be called on a gateway workload");
       },
     },
@@ -247,11 +252,13 @@ describe("applyOne + gatewayDispatch integration", () => {
     },
     rpcServerStop: {
       async mutate() {
+        await Promise.resolve();
         throw new Error("rpcServerStop should not be called");
       },
     },
     rpcServerDoctor: {
       async query() {
+        await Promise.resolve();
         throw new Error("rpcServerDoctor should not be called on a gateway workload");
       },
     },
@@ -265,6 +272,7 @@ describe("applyOne + gatewayDispatch integration", () => {
       () => noopClient,
       undefined,
       async () => {
+        await Promise.resolve();
         dispatchCalled++;
         const now = new Date().toISOString();
         return {
@@ -311,6 +319,7 @@ describe("applyOne + gatewayDispatch integration", () => {
     const liveClient: WorkloadClient = {
       serverStatus: {
         async query() {
+          await Promise.resolve();
           return {
             state: "up",
             rel: "some/model.gguf",
@@ -336,7 +345,7 @@ describe("applyOne + gatewayDispatch integration", () => {
       manifest,
       () => liveClient,
       undefined,
-      async () => null, // fallthrough sentinel
+      () => Promise.resolve(null), // fallthrough sentinel
     );
     expect(result.action).toBe("unchanged");
     expect(result.statusSection.phase).toBe("Running");

@@ -25,6 +25,7 @@ async function startFakeGateway(
   calls: { method: string; url: string; auth: string | null; body: string }[];
   stop: () => Promise<void>;
 }> {
+  await Promise.resolve();
   const calls: {
     method: string;
     url: string;
@@ -51,10 +52,11 @@ async function startFakeGateway(
     },
   });
   return {
-    url: `http://127.0.0.1:${server.port}`,
+    url: `http://127.0.0.1:${String(server.port)}`,
     calls,
     stop: async () => {
-      server.stop(true);
+      await Promise.resolve();
+      await server.stop(true);
     },
   };
 }
@@ -64,7 +66,7 @@ const originalEnv = { ...process.env };
 
 beforeEach(() => {
   runtimeDir = mkdtempSync(join(tmpdir(), "llamactl-gateway-int-"));
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv, {
     DEV_STORAGE: runtimeDir,
     LOCAL_AI_RUNTIME_DIR: runtimeDir,
@@ -76,7 +78,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(runtimeDir, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
 });
 

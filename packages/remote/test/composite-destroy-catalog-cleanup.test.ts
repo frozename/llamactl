@@ -4,8 +4,34 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { Composite } from "../src/composite/schema.js";
+import type { RuntimeBackend } from "../src/runtime/backend.js";
+import type { SiriusProvider } from "../src/config/sirius-providers.js";
+import type { WorkloadClient } from "../src/workload/apply.js";
+
 import { destroyComposite } from "../src/composite/apply.js";
 import { readGatewayCatalog, writeGatewayCatalog } from "../src/workload/gateway-catalog/io.js";
+
+const manifest: Composite = {
+  apiVersion: "llamactl/v1",
+  kind: "Composite",
+  metadata: { name: "mc", labels: {} },
+  spec: {
+    services: [],
+    workloads: [],
+    ragNodes: [],
+    gateways: [],
+    pipelines: [],
+    dependencies: [],
+    onFailure: "rollback",
+  },
+};
+const boundaryBackend = {
+  destroyCompositeBoundary: () => Promise.resolve(),
+} as unknown as RuntimeBackend;
+const unusedWorkloadClient = (): WorkloadClient => {
+  throw new Error("unused workload client");
+};
 
 describe("destroyComposite catalog cleanup", () => {
   let tmp: string;
@@ -20,7 +46,8 @@ describe("destroyComposite catalog cleanup", () => {
     process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, "sp.yaml");
     process.env.LLAMACTL_EMBERSYNTH_CONFIG = join(tmp, "em.yaml");
     origFetch = globalThis.fetch;
-    globalThis.fetch = (async () => new Response("ok", { status: 200 })) as any;
+    globalThis.fetch = (() =>
+      Promise.resolve(new Response("ok", { status: 200 }))) as unknown as typeof globalThis.fetch;
   });
 
   afterEach(() => {
@@ -45,17 +72,12 @@ describe("destroyComposite catalog cleanup", () => {
         kind: "openai-compatible",
         baseUrl: "http://h/v1",
         ownership: own(["mc"]),
-      } as any,
+      } satisfies SiriusProvider,
     ]);
     await destroyComposite({
-      manifest: {
-        apiVersion: "llamactl/v1",
-        kind: "Composite",
-        metadata: { name: "mc", labels: {} },
-        spec: { services: [], workloads: [], ragNodes: [], gateways: [], dependencies: [] },
-      } as any,
-      backend: { destroyCompositeBoundary: async () => {} } as any,
-      getWorkloadClient: () => ({}) as any,
+      manifest,
+      backend: boundaryBackend,
+      getWorkloadClient: unusedWorkloadClient,
     });
     const after = readGatewayCatalog("sirius");
     expect(after.find((e) => e.name === "mc-llama")).toBeUndefined();
@@ -68,38 +90,28 @@ describe("destroyComposite catalog cleanup", () => {
         kind: "openai-compatible",
         baseUrl: "http://h/v1",
         ownership: own(["mc", "other"]),
-      } as any,
+      } satisfies SiriusProvider,
     ]);
     await destroyComposite({
-      manifest: {
-        apiVersion: "llamactl/v1",
-        kind: "Composite",
-        metadata: { name: "mc", labels: {} },
-        spec: { services: [], workloads: [], ragNodes: [], gateways: [], dependencies: [] },
-      } as any,
-      backend: { destroyCompositeBoundary: async () => {} } as any,
-      getWorkloadClient: () => ({}) as any,
+      manifest,
+      backend: boundaryBackend,
+      getWorkloadClient: unusedWorkloadClient,
     });
     const after = readGatewayCatalog("sirius");
     expect(after[0]!.name).toBe("mc-llama");
-    expect((after[0] as any).ownership.compositeNames).toEqual(["other"]);
+    expect(after[0]!.ownership?.compositeNames).toEqual(["other"]);
   });
 
   test("triggers reload only when changed", async () => {
     const calls: string[] = [];
-    globalThis.fetch = (async (url: string) => {
-      calls.push(url);
-      return new Response("ok", { status: 200 });
-    }) as any;
+    globalThis.fetch = ((url: Parameters<typeof globalThis.fetch>[0]) => {
+      calls.push(url instanceof Request ? url.url : url instanceof URL ? url.href : url);
+      return Promise.resolve(new Response("ok", { status: 200 }));
+    }) as unknown as typeof globalThis.fetch;
     await destroyComposite({
-      manifest: {
-        apiVersion: "llamactl/v1",
-        kind: "Composite",
-        metadata: { name: "mc", labels: {} },
-        spec: { services: [], workloads: [], ragNodes: [], gateways: [], dependencies: [] },
-      } as any,
-      backend: { destroyCompositeBoundary: async () => {} } as any,
-      getWorkloadClient: () => ({}) as any,
+      manifest,
+      backend: boundaryBackend,
+      getWorkloadClient: unusedWorkloadClient,
     });
     expect(calls.filter((c) => c.includes("/providers/reload")).length).toBe(0);
     expect(calls.filter((c) => c.includes("/config/reload")).length).toBe(0);

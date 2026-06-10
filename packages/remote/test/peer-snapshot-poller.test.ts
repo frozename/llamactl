@@ -34,11 +34,12 @@ describe("startPeerSnapshotPoller", () => {
       intervalMs: 1_000_000,
       nowFn: () => 1000,
       listPeersFn: () => [peer("mac-mini")],
-      fetchFn: async () => ({
-        workloads: [{ modelId: "granite-mini-3b", port: 8086 }],
-        pressure: "NORMAL",
-        fetchedAt: 1000,
-      }),
+      fetchFn: () =>
+        Promise.resolve({
+          workloads: [{ modelId: "granite-mini-3b", port: 8086 }],
+          pressure: "NORMAL",
+          fetchedAt: 1000,
+        }),
       publish: cap.publish,
     });
     await cap.done;
@@ -54,10 +55,12 @@ describe("startPeerSnapshotPoller", () => {
     const stop = startPeerSnapshotPoller({
       intervalMs: 1_000_000,
       listPeersFn: () => [peer("up"), peer("down")],
-      fetchFn: async (p) =>
-        p.id === "up"
-          ? { workloads: [{ modelId: "m", port: 1 }], pressure: "NORMAL", fetchedAt: 1 }
-          : null,
+      fetchFn: (p) =>
+        Promise.resolve(
+          p.id === "up"
+            ? { workloads: [{ modelId: "m", port: 1 }], pressure: "NORMAL", fetchedAt: 1 }
+            : null,
+        ),
       publish: cap.publish,
     });
     await cap.done;
@@ -79,6 +82,7 @@ describe("startPeerSnapshotPoller", () => {
       intervalMs: 15,
       listPeersFn: () => [peer("mac-mini")],
       fetchFn: async () => {
+        await Promise.resolve();
         calls += 1;
         // First tick succeeds; every later tick fails (returns null).
         return calls === 1
@@ -105,7 +109,7 @@ describe("startPeerSnapshotPoller", () => {
     const stop = startPeerSnapshotPoller({
       intervalMs: 1_000_000,
       listPeersFn: () => [],
-      fetchFn: async () => null,
+      fetchFn: () => Promise.resolve(null),
       publish: cap.publish,
     });
     await cap.done;

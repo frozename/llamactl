@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { AppRouter } from "../src/router.js";
 import { generateToken } from "../src/server/auth.js";
 import {
   buildRagSystemMessage,
@@ -45,8 +46,8 @@ interface StubOpts {
   }[];
   searchCollection?: string;
   chatResponse?: Record<string, unknown>;
-  throwOnSearch?: unknown;
-  throwOnChat?: unknown;
+  throwOnSearch?: Error;
+  throwOnChat?: Error;
 }
 
 interface StubCaller {
@@ -76,6 +77,7 @@ function makeStubCaller(opts: StubOpts = {}): StubCaller {
     ragCalls,
     chatCalls,
     ragSearch: async (input) => {
+      await Promise.resolve();
       ragCalls.push(input);
       if (opts.throwOnSearch) throw opts.throwOnSearch;
       return {
@@ -91,6 +93,7 @@ function makeStubCaller(opts: StubOpts = {}): StubCaller {
       };
     },
     chatComplete: async (input) => {
+      await Promise.resolve();
       chatCalls.push(input);
       if (opts.throwOnChat) throw opts.throwOnChat;
       return opts.chatResponse ?? defaultChat;
@@ -111,8 +114,11 @@ function makeRequest(body: unknown, init?: { headers?: Record<string, string> })
   });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const anyRouter = {} as any;
+const appRouter = {
+  createCaller: () => {
+    throw new Error("unit tests inject caller directly");
+  },
+} as unknown as AppRouter;
 
 describe("handleRagChatCompletions — rag-less passthrough with via", () => {
   test("rag absent but via present → chatComplete called with original messages, no retrieval", async () => {
@@ -123,7 +129,7 @@ describe("handleRagChatCompletions — rag-less passthrough with via", () => {
         messages: [{ role: "user", content: "hi" }],
         via: "sirius-gw",
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     expect(res.status).toBe(200);
     expect(caller.ragCalls).toHaveLength(0);
@@ -135,8 +141,8 @@ describe("handleRagChatCompletions — rag-less passthrough with via", () => {
     // No x-llamactl-rag header when rag is absent.
     expect(res.headers.get("x-llamactl-rag")).toBeNull();
     // Response body mirrors upstream verbatim.
-    const body = await res.json();
-    expect((body as { choices: unknown[] }).choices).toHaveLength(1);
+    const body = (await res.json()) as { choices: unknown[] };
+    expect(body.choices).toHaveLength(1);
   });
 
   test("max_tokens + temperature + providerOptions forwarded intact", async () => {
@@ -150,7 +156,7 @@ describe("handleRagChatCompletions — rag-less passthrough with via", () => {
         temperature: 0.25,
         providerOptions: { seed: 42 },
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     expect(res.status).toBe(200);
     const req = caller.chatCalls[0]!.request;
@@ -175,7 +181,7 @@ describe("handleRagChatCompletions — rag injected", () => {
         via: "sirius-gw",
         rag: { node: "kb-pg" },
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     expect(res.status).toBe(200);
     expect(caller.ragCalls).toHaveLength(1);
@@ -208,7 +214,7 @@ describe("handleRagChatCompletions — rag injected", () => {
         via: "gw",
         rag: { node: "kb", topK: 7 },
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     expect(caller.ragCalls[0]!.topK).toBe(7);
   });
@@ -224,7 +230,7 @@ describe("handleRagChatCompletions — rag injected", () => {
         via: "gw",
         rag: { node: "kb", collection: "alt-coll" },
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     expect(caller.ragCalls[0]!.collection).toBe("alt-coll");
   });
@@ -243,7 +249,7 @@ describe("handleRagChatCompletions — rag injected", () => {
           system_prompt_prefix: "Use only the provided snippets.",
         },
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     const sys = (caller.chatCalls[0]!.request.messages as { content: string }[])[0]!.content;
     expect(sys.startsWith("Use only the provided snippets.")).toBe(true);
@@ -265,7 +271,7 @@ describe("handleRagChatCompletions — rag injected", () => {
         via: "gw",
         rag: { node: "kb" },
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     const msgs = caller.chatCalls[0]!.request.messages as { role: string; content: string }[];
     expect(msgs).toHaveLength(3);
@@ -298,7 +304,7 @@ describe("handleRagChatCompletions — rag injected", () => {
         via: "gw",
         rag: { node: "kb" },
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     expect(caller.ragCalls[0]!.query).toBe("line one\nline two");
   });
@@ -313,7 +319,7 @@ describe("handleRagChatCompletions — validation", () => {
         messages: [{ role: "user", content: "q" }],
         rag: { node: "kb" },
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
@@ -331,10 +337,11 @@ describe("handleRagChatCompletions — validation", () => {
         messages: [{ role: "user", content: "q" }],
       }),
       {
-        appRouter: anyRouter,
+        appRouter,
         caller,
-        log: () => {},
+        log: () => undefined,
         fallback: async (r) => {
+          await Promise.resolve();
           fallbackReq = r;
           return new Response(JSON.stringify({ delegated: true }), {
             status: 200,
@@ -347,7 +354,7 @@ describe("handleRagChatCompletions — validation", () => {
     expect((await res.json()) as { delegated: boolean }).toEqual({ delegated: true });
     expect(fallbackReq).not.toBeNull();
     // The fallback received a reconstructed Request with the body intact.
-    const replayed = await fallbackReq!.json();
+    const replayed = (await fallbackReq!.json()) as unknown;
     expect(replayed).toEqual({
       model: "m",
       messages: [{ role: "user", content: "q" }],
@@ -362,7 +369,7 @@ describe("handleRagChatCompletions — validation", () => {
         model: "m",
         messages: [{ role: "user", content: "q" }],
       }),
-      { appRouter: anyRouter, log: () => {} },
+      { appRouter, log: () => undefined },
     );
     expect(res.status).toBe(400);
   });
@@ -376,7 +383,7 @@ describe("handleRagChatCompletions — validation", () => {
         via: "gw",
         rag: { node: "kb" },
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
@@ -393,7 +400,7 @@ describe("handleRagChatCompletions — validation", () => {
         messages: [],
         via: "gw",
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     expect(res.status).toBe(400);
   });
@@ -405,8 +412,8 @@ describe("handleRagChatCompletions — validation", () => {
       body: "{not json",
     });
     const res = await handleRagChatCompletions(badReq, {
-      appRouter: anyRouter,
-      log: () => {},
+      appRouter,
+      log: () => undefined,
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
@@ -422,7 +429,7 @@ describe("handleRagChatCompletions — validation", () => {
         via: "gw",
         rag: { topK: 5 },
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
@@ -438,7 +445,7 @@ describe("handleRagChatCompletions — validation", () => {
         via: "gw",
         rag: { node: "kb", topK: 0 },
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     expect(res.status).toBe(400);
   });
@@ -450,7 +457,7 @@ describe("handleRagChatCompletions — validation", () => {
         messages: [{ role: "user", content: "q" }],
         via: "gw",
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter, caller, log: () => undefined },
     );
     expect(res.status).toBe(400);
   });
@@ -466,7 +473,7 @@ describe("handleRagChatCompletions — error propagation", () => {
         via: "gw",
         rag: { node: "kb" },
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter: appRouter, caller, log: () => undefined },
     );
     expect(res.status).toBe(502);
     const body = (await res.json()) as { error: { message: string; type: string } };
@@ -489,7 +496,7 @@ describe("handleRagChatCompletions — error propagation", () => {
         via: "gw",
         rag: { node: "kb" },
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter: appRouter, caller, log: () => undefined },
     );
     // BAD_REQUEST → 400.
     expect(res.status).toBe(400);
@@ -510,7 +517,7 @@ describe("handleRagChatCompletions — error propagation", () => {
         messages: [{ role: "user", content: "q" }],
         via: "gw",
       }),
-      { appRouter: anyRouter, caller, log: () => {} },
+      { appRouter: appRouter, caller, log: () => undefined },
     );
     expect(res.status).toBe(502);
     const body = (await res.json()) as { error: { type: string; message: string } };
@@ -532,7 +539,7 @@ describe("handleRagChatCompletions — logging hygiene", () => {
         via: "gw",
         rag: { node: "kb", topK: 1 },
       }),
-      { appRouter: anyRouter, caller, log: (l) => lines.push(l) },
+      { appRouter, caller, log: (l) => lines.push(l) },
     );
     const joined = lines.join("\n");
     expect(joined).toContain("rag_chat_retrieval_ok");
@@ -554,7 +561,7 @@ describe("handleRagChatCompletions — logging hygiene", () => {
         via: "gw",
         rag: { node: "kb" },
       }),
-      { appRouter: anyRouter, caller, log: (l) => lines.push(l) },
+      { appRouter, caller, log: (l) => lines.push(l) },
     );
     expect(lines.some((l) => l.includes("rag_chat_retrieval_error"))).toBe(true);
   });

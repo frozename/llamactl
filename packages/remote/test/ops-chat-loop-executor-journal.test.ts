@@ -1,3 +1,5 @@
+import type { PlannerExecutor } from "@nova/mcp";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,15 +30,16 @@ describe("loop-executor → journal + bus", () => {
     const stream = runLoopExecutor({
       goal: "do nothing",
       executor: {
+        name: "no-work",
         async generate() {
+          await Promise.resolve();
           return {
             ok: true,
             rawPlan: { steps: [], reasoning: "no work needed", requiresConfirmation: false },
           };
         },
-      } as any,
+      } satisfies PlannerExecutor,
       tools: [],
-      allowlist: (() => true) as any,
     });
     for await (const e of stream) {
       if (e.type === "plan_proposed") capturedSessionId = e.sessionId;
@@ -48,9 +51,6 @@ describe("loop-executor → journal + bus", () => {
     const dirs = await fs.readdir(root);
     expect(dirs.length).toBe(1);
     const events = await readJournal(dirs[0]!);
-    if (events[1]?.type === "refusal") {
-      console.log("REFUSAL:", events[1]);
-    }
     expect(events.map((e) => e.type)).toEqual(["session_started", "done"]);
     expect(sessionEventBus.hasChannel(dirs[0]!)).toBe(false);
   });

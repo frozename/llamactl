@@ -48,8 +48,7 @@ function postReq(body: Uint8Array, opts: { sha?: string; bearer?: string } = {})
       "x-sha256": sha,
       "content-type": "application/octet-stream",
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    body: body as any,
+    body,
   });
 }
 
@@ -101,8 +100,7 @@ describe("handleAgentUpdate — auth + integrity", () => {
     const req = new Request("http://test/agent/update", {
       method: "POST",
       headers: { "x-sha256": createHash("sha256").update("x").digest("hex") },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      body: Buffer.from("x") as any,
+      body: Buffer.from("x"),
     });
     const res = await handleAgentUpdate(req, { tokenHash: TOKEN_HASH, selfPath, exitAfter: false });
     expect(res.status).toBe(401);
@@ -120,8 +118,7 @@ describe("handleAgentUpdate — auth + integrity", () => {
     const req = new Request("http://test/agent/update", {
       method: "POST",
       headers: { authorization: `Bearer ${BEARER}` },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      body: Buffer.from("x") as any,
+      body: Buffer.from("x"),
     });
     const res = await handleAgentUpdate(req, { tokenHash: TOKEN_HASH, selfPath, exitAfter: false });
     expect(res.status).toBe(400);

@@ -50,6 +50,7 @@ async function startFakeChroma(opts: FakeChromaOptions = {}): Promise<{
   collections: Map<string, { id: string; name: string }>;
   stop: () => Promise<void>;
 }> {
+  await Promise.resolve();
   const calls: RecordedRequest[] = [];
   const collections = new Map<string, { id: string; name: string }>();
   let nextId = 0;
@@ -155,8 +156,8 @@ async function startFakeChroma(opts: FakeChromaOptions = {}): Promise<{
         if (action === "query") {
           const parsed = body ? (safeJson(body) as { n_results?: number }) : {};
           const n = parsed.n_results ?? 2;
-          const ids = Array.from({ length: n }, (_, i) => `doc-${i}`);
-          const docs = Array.from({ length: n }, (_, i) => `content-${i}`);
+          const ids = Array.from({ length: n }, (_, i) => `doc-${String(i)}`);
+          const docs = Array.from({ length: n }, (_, i) => `content-${String(i)}`);
           const metas = Array.from({ length: n }, (_, i): Record<string, unknown> | null =>
             i === n - 1 ? null : { t: "x" },
           );
@@ -190,11 +191,12 @@ async function startFakeChroma(opts: FakeChromaOptions = {}): Promise<{
   });
 
   return {
-    url: `http://127.0.0.1:${server.port}`,
+    url: `http://127.0.0.1:${String(server.port)}`,
     calls,
     collections,
     stop: async () => {
-      server.stop(true);
+      await Promise.resolve();
+      await server.stop(true);
     },
   };
 }
@@ -480,6 +482,7 @@ describe("ChromaRagAdapter (HTTP backend)", () => {
   test("uses delegated embedder when docs arrive without vectors", async () => {
     let embedCalls = 0;
     const embedder = async (texts: string[]) => {
+      await Promise.resolve();
       embedCalls++;
       // Return one 3-dim vector per text; each row deterministic by index.
       return texts.map((_, i) => [0.1 * (i + 1), 0.2 * (i + 1), 0.3 * (i + 1)]);
@@ -611,7 +614,7 @@ describe("ChromaRagAdapter (HTTP backend)", () => {
           embedder: {
             node: "external-embedder", // audit label only
             model: "nomic-embed-text-v1.5",
-            baseUrl: `http://127.0.0.1:${embedFixture.port}/v1`,
+            baseUrl: `http://127.0.0.1:${String(embedFixture.port)}/v1`,
             apiKeyRef: "env:G4_TEST_TOKEN",
           },
         }),
@@ -639,7 +642,7 @@ describe("ChromaRagAdapter (HTTP backend)", () => {
 
       await adapter.close();
     } finally {
-      embedFixture.stop(true);
+      await embedFixture.stop(true);
     }
   });
 
@@ -683,7 +686,7 @@ liveDescribe("ChromaRagAdapter (live HTTP, opt-in)", () => {
     const adapter = (await createChromaAdapter({
       provider: "chroma",
       endpoint: LIVE_URL!,
-      collection: `llamactl_test_${Date.now()}`,
+      collection: `llamactl_test_${String(Date.now())}`,
       extraArgs: [],
     })) as ChromaRagAdapter;
     try {

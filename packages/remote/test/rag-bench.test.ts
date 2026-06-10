@@ -25,6 +25,7 @@ function stubSearch(
   byQuery: Record<string, { id: string; content: string; score?: number }[]>,
 ): RagSearchCaller {
   return async (req) => {
+    await Promise.resolve();
     const rows = byQuery[req.query] ?? [];
     return {
       collection: req.collection ?? "docs",
@@ -174,6 +175,7 @@ describe("runRagBench", () => {
         { query: "bad", expected_doc_id: "x" },
       ]),
       search: async (req) => {
+        await Promise.resolve();
         if (req.query === "bad") throw new Error("ECONNREFUSED");
         return {
           collection: "docs",
@@ -202,6 +204,7 @@ describe("runRagBench", () => {
         },
       },
       search: async (req) => {
+        await Promise.resolve();
         sawTopK = req.topK;
         return { collection: "docs", results: [] };
       },
@@ -215,7 +218,7 @@ describe("runRagBench", () => {
     let t = 0;
     const report = await runRagBench({
       manifest: manifest([{ query: "q", expected_doc_id: "x" }]),
-      search: async () => ({ collection: "docs", results: [] }),
+      search: () => Promise.resolve({ collection: "docs", results: [] }),
       now: () => (t += 250),
     });
     // Two now() calls: startedAt (250), end (500). Delta = 250.

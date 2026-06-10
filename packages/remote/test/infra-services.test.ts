@@ -189,6 +189,7 @@ describe("writeServiceUnit / readServiceUnit / removeServiceUnit", () => {
     });
     const captured: string[][] = [];
     const runner: SubprocessRunner = async (cmd) => {
+      await Promise.resolve();
       captured.push(cmd);
       return { code: 0, stdout: "ok", stderr: "" };
     };
@@ -216,6 +217,7 @@ describe("writeServiceUnit / readServiceUnit / removeServiceUnit", () => {
     });
     const captured: string[][] = [];
     const runner: SubprocessRunner = async (cmd) => {
+      await Promise.resolve();
       captured.push(cmd);
       return { code: 0, stdout: "active", stderr: "" };
     };
@@ -237,15 +239,22 @@ describe("writeServiceUnit / readServiceUnit / removeServiceUnit", () => {
 
   test("runServiceLifecycle rejects start when unit file is missing", async () => {
     const home = mkdtempSync(join(tmpdir(), "llamactl-lifecycle-"));
-    await expect(
-      runServiceLifecycle({
-        pkg: "nope",
-        action: "start",
-        host: "darwin",
-        env: { HOME: home },
-        runner: async () => ({ code: 0, stdout: "", stderr: "" }),
-      }),
-    ).rejects.toThrow(/no unit file/);
+    await runServiceLifecycle({
+      pkg: "nope",
+      action: "start",
+      host: "darwin",
+      env: { HOME: home },
+      runner: () => Promise.resolve({ code: 0, stdout: "", stderr: "" }),
+    }).then(
+      () => {
+        throw new Error("expected runServiceLifecycle to reject");
+      },
+      (error: unknown) => {
+        expect(() => {
+          throw error;
+        }).toThrow(/no unit file/);
+      },
+    );
     rmSync(home, { recursive: true, force: true });
   });
 
@@ -264,7 +273,7 @@ describe("writeServiceUnit / readServiceUnit / removeServiceUnit", () => {
       action: "start",
       host: "darwin",
       env: { HOME: home },
-      runner: async () => ({ code: 1, stdout: "", stderr: "already loaded" }),
+      runner: () => Promise.resolve({ code: 1, stdout: "", stderr: "already loaded" }),
     });
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("already loaded");

@@ -26,7 +26,7 @@ const originalEnv = { ...process.env };
 beforeEach(() => {
   runtimeDir = mkdtempSync(join(tmpdir(), "llamactl-opschat-"));
   auditPath = join(runtimeDir, "audit.jsonl");
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv, {
     LLAMACTL_OPS_CHAT_AUDIT: auditPath,
     DEV_STORAGE: runtimeDir,
@@ -37,7 +37,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
   rmSync(runtimeDir, { recursive: true, force: true });
 });
@@ -166,6 +166,7 @@ describe("RAG dispatch", () => {
 
   function makeFakeCaller(calls: RagCalls): Caller {
     const stub = (method: string, reply: unknown) => async (input: unknown) => {
+      await Promise.resolve();
       calls.push({ method, input });
       return reply;
     };
@@ -333,6 +334,7 @@ describe("Composite dispatch", () => {
 
   function makeFakeCompositeCaller(calls: CompositeCalls): Caller {
     const stub = (method: string, reply: unknown) => async (input: unknown) => {
+      await Promise.resolve();
       calls.push({ method, input });
       return reply;
     };

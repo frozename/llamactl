@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { generateToken } from "../src/server/auth.js";
 import { generateSelfSignedCert } from "../src/server/tls.js";
 
-vi.mock("bonjour-service", () => {
+void vi.mock("bonjour-service", () => {
   type PublishOpts = Record<string, unknown> & {
     name?: string;
     type?: string;
@@ -24,7 +24,9 @@ vi.mock("bonjour-service", () => {
       return {
         ...opts,
         addresses: ["127.0.0.1"],
-        on(_evt: string, _cb: (err: unknown) => void) {},
+        on(_evt: string, _cb: (err: unknown) => void) {
+          return undefined;
+        },
         stop(cb?: () => void) {
           registry.delete(opts);
           cb?.();
@@ -44,10 +46,16 @@ vi.mock("bonjour-service", () => {
           }
         }
       }, 10);
-      return { stop() {} };
+      return {
+        stop() {
+          return undefined;
+        },
+      };
     }
 
-    destroy() {}
+    destroy() {
+      return undefined;
+    }
   }
 
   return {
@@ -101,7 +109,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (SKIP) return;
-  for (const a of agents) await a.stop().catch(() => {});
+  for (const a of agents) await a.stop().catch(() => undefined);
   if (tmp) rmSync(tmp, { recursive: true, force: true });
 });
 
