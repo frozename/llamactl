@@ -106,11 +106,18 @@ when a known-good UI has drifted.
 The gate is only trustworthy if the state is reproducible. Three
 invariants keep it hermetic:
 
-- `LLAMACTL_TEST_PROFILE=<tmpdir>` reroots every model path, runtime
-  dir, and cache under one scratch prefix, and pins `LLAMA_CPP_PORT` to
-  the sentinel `65534` so Logs/Server always show "offline" the same
-  way. See [`AGENTS.md`](../AGENTS.md#test-profiles-for-hermetic-audits)
-  for the full env table.
+- `LLAMACTL_TEST_PROFILE=/tmp/llamactl-audit-profile` reroots every
+  model path, runtime dir, and cache under one scratch prefix, and pins
+  `LLAMA_CPP_PORT` to the sentinel `65534` so Logs/Server always show
+  "offline" the same way. The prefix is a FIXED path (not mktemp): the
+  Settings module renders the resolved paths verbatim, so a random
+  profile path bakes a different string into every run and the baseline
+  can never match CI. See
+  [`AGENTS.md`](../AGENTS.md#test-profiles-for-hermetic-audits) for the
+  full env table.
+- The git-repo quick-pick scan in the Projects module expands `~`
+  against `LLAMACTL_TEST_PROFILE` (not `$HOME`) when the profile is set,
+  so the operator's real repos never render into baselines.
 - A per-run `userDataDir` for Chromium so no extension, history, or
   saved window state leaks between runs.
 - `--force-device-scale-factor=1` pins Chromium to 1× rendering, so
@@ -122,11 +129,19 @@ invariants keep it hermetic:
   and macOS silently clamps the window to the visible area (~1024×681),
   which also fails every baseline on dimensions. 1024×640 fits the
   runner while satisfying the app's 920×600 minimum.
-- `DEV_STORAGE=$PROFILE` is pinned explicitly. The resolver's priority
-  is individual env var > test-profile default, so a dev shell's
-  exported `DEV_STORAGE` (real cluster config, catalog, workloads)
-  would otherwise leak into the launched app and bake live fleet state
-  into baselines — state CI doesn't have.
+- `DEV_STORAGE=$PROFILE` is pinned explicitly, and EVERY other
+  ResolvedEnv key is blanked for the launched app. The resolver's
+  priority is individual env var > test-profile default, and a dev
+  shell that ran `eval "$(llamactl env --eval)"` exports them all
+  individually — `LLAMA_CPP_MODELS` (Catalog `installed` flags),
+  `LOCAL_AI_RUNTIME_DIR` (custom catalog entries), `LLAMA_CPP_HOST` /
+  `PORT` (live server state), and the rest would otherwise leak real
+  machine state into baselines — state CI doesn't have. `resolveEnv`
+  treats empty as unset, so blanking falls through to the test-profile
+  defaults. `LLAMA_CPP_MACHINE_PROFILE` is pinned to `balanced` rather
+  than blanked: its fallback sniffs hardware memory, and a 48 GiB dev
+  machine vs a CI runner would render different profile names and ctx
+  defaults in Settings.
 - The electron-mcp-server driver is pinned to a specific commit SHA in
   [`.github/workflows/ui-audit.yml`](../.github/workflows/ui-audit.yml) —
   bump that pin explicitly when the driver changes.

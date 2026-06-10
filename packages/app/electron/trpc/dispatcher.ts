@@ -340,8 +340,15 @@ const uiRouter = t.router({
     .query(async ({ input }) => {
       const { existsSync, statSync, readdirSync } = await import('node:fs');
       const { join } = await import('node:path');
+      // Under a hermetic test profile, reroot `~` to the profile dir —
+      // the operator's real home (and its git repos) must not leak into
+      // audit/CI renders. Same philosophy as env.ts's testProfileDefaults:
+      // every machine-specific path gets rerooted under the profile.
+      const home = process.env.LLAMACTL_TEST_PROFILE && process.env.LLAMACTL_TEST_PROFILE.length > 0
+        ? process.env.LLAMACTL_TEST_PROFILE
+        : process.env.HOME ?? '';
       const expandedRoot = input.root.startsWith('~/')
-        ? input.root.replace(/^~/, process.env.HOME ?? '')
+        ? input.root.replace(/^~/, home)
         : input.root;
       if (!existsSync(expandedRoot)) {
         return { root: expandedRoot, repos: [] };
