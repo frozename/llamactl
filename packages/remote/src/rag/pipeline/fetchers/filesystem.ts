@@ -109,7 +109,7 @@ async function* walkAndMatch(root: string, pattern: string): AsyncIterable<strin
 function globToRegex(glob: string): RegExp {
   let re = "";
   for (let i = 0; i < glob.length; i++) {
-    const c = glob[i]!;
+    const c = glob.charAt(i);
     if (c === "*") {
       if (glob[i + 1] === "*") {
         re += ".*";
@@ -140,7 +140,8 @@ export function looksBinary(buf: Buffer): boolean {
   if (limit === 0) return false;
   let nonPrintable = 0;
   for (let i = 0; i < limit; i++) {
-    const b = buf[i]!;
+    const b = buf[i];
+    if (b === undefined) continue;
     if (b === 0x09 || b === 0x0a || b === 0x0d) continue;
     if (b < 0x20 || b === 0x7f) {
       nonPrintable++;

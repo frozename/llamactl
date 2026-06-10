@@ -29,7 +29,7 @@ export const markdownChunkTransform: Transform = {
       for (const [i, chunk] of chunks.entries()) {
         const c = chunk;
         yield {
-          id: `${doc.id}#${i}`,
+          id: `${doc.id}#${String(i)}`,
           content: c.content,
           metadata: {
             ...doc.metadata,
@@ -125,14 +125,15 @@ function splitByHeadings(text: string): Section[] {
   };
 
   for (const line of lines) {
-    const m = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (m) {
-      const level = m[1]!.length;
-      const title = m[2]!.trim();
+    const heading = parseHeading(line);
+    if (heading !== null) {
+      const { level, title } = heading;
       // Emit whatever body accumulated under the previous heading
       // context before we mutate the stack.
       flush();
-      while (pathStack.length > 0 && pathStack[pathStack.length - 1]!.level >= level) {
+      while (pathStack.length > 0) {
+        const last = pathStack[pathStack.length - 1];
+        if (last === undefined || last.level < level) break;
         pathStack.pop();
       }
       pathStack.push({ level, title });
@@ -144,6 +145,19 @@ function splitByHeadings(text: string): Section[] {
   // Drop the initial empty-stack/empty-body "section" some docs open
   // with (no preface, first line is a heading).
   return sections.filter((s) => s.body.length > 0 || s.path.length > 0);
+}
+
+function parseHeading(line: string): { level: number; title: string } | null {
+  let level = 0;
+  while (level < line.length && level < 6 && line.charAt(level) === "#") {
+    level++;
+  }
+  if (level === 0) return null;
+  const separator = line.charAt(level);
+  if (separator !== " " && separator !== "\t") return null;
+  const title = line.slice(level + 1).trim();
+  if (title.length === 0) return null;
+  return { level, title };
 }
 
 function formatHeadingPrefix(path: string[]): string {

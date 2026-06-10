@@ -233,7 +233,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
       ...(request.filter && { where: request.filter }),
     });
 
-    const ids = payload.ids?.[0] ?? [];
+    const ids = payload.ids[0] ?? [];
     const distances = payload.distances?.[0] ?? [];
     const documents = payload.documents?.[0] ?? [];
     const metadatas = payload.metadatas?.[0] ?? [];
@@ -330,7 +330,12 @@ export class ChromaRagAdapter implements RetrievalProvider {
       if (!d.vector || d.vector.length === 0) missingIdx.push(i);
     }
     if (missingIdx.length > 0 && !this.backend.embedder) {
-      const firstMissing = documents[missingIdx[0]!]!;
+      const firstMissingIndex = missingIdx[0];
+      const firstMissing =
+        firstMissingIndex !== undefined ? documents[firstMissingIndex] : undefined;
+      if (firstMissing === undefined) {
+        throw new RagError("invalid-request", "chroma http store: missing document index");
+      }
       throw new RagError(
         "invalid-request",
         `chroma http store: doc id=${firstMissing.id} has no .vector and no rag.embedder is configured`,
@@ -339,12 +344,12 @@ export class ChromaRagAdapter implements RetrievalProvider {
 
     let computed: number[][] = [];
     if (missingIdx.length > 0 && this.backend.embedder) {
-      const texts = missingIdx.map((i) => documents[i]!.content);
+      const texts = missingIdx.map((i) => requireDocument(documents, i).content);
       computed = await this.backend.embedder(texts);
       if (computed.length !== missingIdx.length) {
         throw new RagError(
           "invalid-response",
-          `chroma http store: embedder returned ${computed.length} vectors for ${missingIdx.length} docs`,
+          `chroma http store: embedder returned ${String(computed.length)} vectors for ${String(missingIdx.length)} docs`,
         );
       }
     }
@@ -385,7 +390,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
     if (raw.isError === true) {
       throw new RagError(
         "tool-error",
-        `chroma-mcp returned isError for "${name}": ${extractText(raw)}`,
+        `chroma-mcp returned isError for "${name}": ${extractText(raw) ?? ""}`,
       );
     }
 
@@ -426,7 +431,7 @@ function buildResult(
 }
 
 function extractText(raw: ChromaToolResult): string | null {
-  const first = raw.content?.[0];
+  const first = raw.content[0];
   if (first?.type === "text" && typeof first.text === "string") return first.text;
   return null;
 }
@@ -449,6 +454,17 @@ export function extractQueryVector(req: SearchRequest): number[] | null {
   if (!Array.isArray(v) || v.length === 0) return null;
   if (!v.every((n) => typeof n === "number" && Number.isFinite(n))) return null;
   return v as number[];
+}
+
+function requireDocument(documents: readonly Document[], index: number): Document {
+  const document = documents[index];
+  if (document === undefined) {
+    throw new RagError(
+      "invalid-request",
+      `chroma http store: missing document at index ${String(index)}`,
+    );
+  }
+  return document;
 }
 
 function normalizeListCollections(payload: unknown): CollectionInfo[] {
@@ -477,7 +493,7 @@ function normalizeListCollections(payload: unknown): CollectionInfo[] {
     }
     throw new RagError(
       "invalid-response",
-      `chroma_list_collections entry at index ${i} is neither a string nor a named object`,
+      `chroma_list_collections entry at index ${String(i)} is neither a string nor a named object`,
     );
   });
 }

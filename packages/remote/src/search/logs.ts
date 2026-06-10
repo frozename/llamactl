@@ -36,7 +36,7 @@ function tailFile(path: string, windowBytes: number): { text: string; lineOffset
   }
 }
 
-export async function searchLogs(opts: SearchLogsOpts): Promise<LogHit[]> {
+export function searchLogs(opts: SearchLogsOpts): Promise<LogHit[]> {
   const window = opts.windowBytes ?? DEFAULT_WINDOW;
   const cap = opts.perFileCap ?? 10;
   const hits: LogHit[] = [];
@@ -53,7 +53,7 @@ export async function searchLogs(opts: SearchLogsOpts): Promise<LogHit[]> {
         if (matches.length >= cap) break;
         matches.push({
           lineNumber: i + 1,
-          where: `${f.label}:${i + 1}`,
+          where: `${f.label}:${String(i + 1)}`,
           snippet: m.snippet,
           spans: m.spans,
         });
@@ -70,5 +70,5 @@ export async function searchLogs(opts: SearchLogsOpts): Promise<LogHit[]> {
     }
   }
   hits.sort((a, b) => b.score - a.score || a.fileLabel.localeCompare(b.fileLabel));
-  return hits.slice(0, opts.limit);
+  return Promise.resolve(hits.slice(0, opts.limit));
 }

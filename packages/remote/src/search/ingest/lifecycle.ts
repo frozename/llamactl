@@ -9,10 +9,8 @@ import { startSessionsIngest } from "./sessions.js";
 
 let stopFns: (() => void)[] = [];
 
-async function makeSink(
-  collection: "sessions" | "logs",
-): Promise<(records: IngestRecord[]) => Promise<void>> {
-  const nodeName = await resolveDefaultRagNode();
+function makeSink(collection: "sessions" | "logs"): (records: IngestRecord[]) => Promise<void> {
+  const nodeName = resolveDefaultRagNode();
   if (!nodeName)
     return async () => {
       /* no-op when no RAG node */
@@ -35,9 +33,9 @@ async function makeSink(
   };
 }
 
-export async function startSearchIngest(): Promise<void> {
-  const sessionsSink = await makeSink("sessions");
-  const logsSink = await makeSink("logs");
+export function startSearchIngest(): Promise<void> {
+  const sessionsSink = makeSink("sessions");
+  const logsSink = makeSink("logs");
   stopFns.push(startSessionsIngest({ sink: sessionsSink }));
   stopFns.push(
     startLogsIngest({
@@ -48,6 +46,7 @@ export async function startSearchIngest(): Promise<void> {
       ],
     }),
   );
+  return Promise.resolve();
 }
 
 export function stopSearchIngest(): void {

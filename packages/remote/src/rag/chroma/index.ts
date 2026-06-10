@@ -95,14 +95,16 @@ export async function createChromaAdapter(
         kind: "http",
         client,
         ...(embedder && { embedder }),
-        teardown: () => client.close(),
+        teardown: (): Promise<void> => {
+          return client.close();
+        },
       },
       binding,
     );
   }
 
-  const { client, close } = await connectChromaMcp(binding, env);
-  return new ChromaRagAdapter(client, binding, close);
+  const connection = await connectChromaMcp(binding, env);
+  return new ChromaRagAdapter(connection.client, binding, () => connection.close());
 }
 
 function isHttpEndpoint(endpoint: string): boolean {
@@ -110,9 +112,7 @@ function isHttpEndpoint(endpoint: string): boolean {
   return trimmed.startsWith("http://") || trimmed.startsWith("https://");
 }
 
-function isOptionsBag(
-  v: NodeJS.ProcessEnv | CreateChromaAdapterOptions,
-): v is CreateChromaAdapterOptions {
+function isOptionsBag(v: unknown): v is CreateChromaAdapterOptions {
   if (typeof v !== "object" || v === null) return false;
   const maybe = v as Partial<CreateChromaAdapterOptions>;
   return (

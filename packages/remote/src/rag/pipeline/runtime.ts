@@ -143,9 +143,8 @@ export async function runPipeline(opts: RunPipelineOptions): Promise<RunSummary>
     };
 
     try {
-      for (let i = 0; i < manifest.spec.sources.length; i++) {
-        const src = manifest.spec.sources[i]!;
-        const label = sourceLabels[i]!;
+      for (const [i, src] of manifest.spec.sources.entries()) {
+        const label = sourceLabels[i] ?? sourceLabel(manifest.metadata.name, i, src.kind);
         const fetcher = FETCHERS[src.kind];
         if (!fetcher) {
           await journal.append({
@@ -427,7 +426,7 @@ async function processDoc(args: {
         await appendErrorEntry(
           journal,
           label,
-          `store failed for ${rawDoc.id} batch@${i}: ${toMessage(err)}`,
+          `store failed for ${rawDoc.id} batch@${String(i)}: ${toMessage(err)}`,
           rawDoc.id,
         );
         // Surface the first batch failure and stop pushing the rest —
@@ -492,7 +491,7 @@ async function applyTransforms(
   rawDoc: RawDoc,
   transforms: RagPipelineManifest["spec"]["transforms"],
 ): Promise<RawDoc[]> {
-  let stream: AsyncIterable<RawDoc> = asAsync(rawDoc);
+  let stream: AsyncIterable<RawDoc> = singleAsync(rawDoc);
   for (const t of transforms) {
     const impl = TRANSFORMS[t.kind];
     if (!impl) throw new Error(`unknown transform kind '${t.kind}'`);
@@ -503,8 +502,19 @@ async function applyTransforms(
   return out.length > 0 ? out : [rawDoc];
 }
 
-async function* asAsync(doc: RawDoc): AsyncIterable<RawDoc> {
-  yield doc;
+function singleAsync(doc: RawDoc): AsyncIterable<RawDoc> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<RawDoc> {
+      let yielded = false;
+      return {
+        next(): Promise<IteratorResult<RawDoc>> {
+          if (yielded) return Promise.resolve({ done: true, value: undefined });
+          yielded = true;
+          return Promise.resolve({ done: false, value: doc });
+        },
+      };
+    },
+  };
 }
 
 async function appendErrorEntry(
@@ -528,7 +538,7 @@ function sha256HexBytes(value: string): string {
 }
 
 function sourceLabel(pipeline: string, index: number, kind: string): string {
-  return `${pipeline}:${index}:${kind}`;
+  return `${pipeline}:${String(index)}:${kind}`;
 }
 
 /**
@@ -555,7 +565,7 @@ function computeEstimatedCost(
   else if (perDoc > 0 && perChunk === 0) costSource = "per_doc";
   return {
     usd: roundTo6(usd),
-    currency: cost.currency ?? "USD",
+    currency: cost.currency,
     source: costSource,
   };
 }

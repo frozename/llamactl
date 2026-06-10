@@ -160,11 +160,12 @@ export function startPipelineScheduler(
     opts.runPipeline ??
     (async (manifest, path) => await runPipeline({ manifest, journalPath: path }));
 
-  let stopped = false;
+  const state = { stopped: false };
   const inFlight = new Set<string>();
+  const isStopped = (): boolean => state.stopped;
 
   const done = (async (): Promise<void> => {
-    do {
+    for (;;) {
       const nowMs = now();
       const ts = new Date(nowMs).toISOString();
       const fired: string[] = [];
@@ -248,19 +249,20 @@ export function startPipelineScheduler(
       };
       if (opts.verbose) {
         process.stderr.write(
-          `rag-pipeline-scheduler: tick ${ts} considered=${considered} fired=${fired.length} skipped=${skippedInFlight.length}\n`,
+          `rag-pipeline-scheduler: tick ${ts} considered=${String(considered)} fired=${String(fired.length)} skipped=${String(skippedInFlight.length)}\n`,
         );
       }
       opts.onTick?.(report);
 
-      if (opts.once || stopped) return;
+      if (opts.once || isStopped()) return;
       await sleep(tickMs);
-    } while (!stopped);
+      if (isStopped()) return;
+    }
   })();
 
   return {
     stop() {
-      stopped = true;
+      state.stopped = true;
     },
     done,
   };

@@ -47,7 +47,8 @@ export const httpFetcher: Fetcher = {
 
     while (queue.length > 0) {
       if (ctx.signal.aborted) return;
-      const item = queue.shift()!;
+      const item = queue.shift();
+      if (item === undefined) break;
       const url = new URL(item.url);
 
       if (!spec.ignore_robots) {
@@ -62,7 +63,6 @@ export const httpFetcher: Fetcher = {
       }
 
       await rate.wait(url.hostname, ctx.signal);
-      if (ctx.signal.aborted) return;
 
       let res: Response;
       try {
@@ -88,7 +88,7 @@ export const httpFetcher: Fetcher = {
       if (!res.ok) {
         ctx.log({
           level: "warn",
-          msg: `http ${res.status} for ${item.url}`,
+          msg: `http ${String(res.status)} for ${item.url}`,
         });
         continue;
       }
@@ -206,7 +206,8 @@ export function extractLinks(html: string, base: URL): string[] {
   const re = /href\s*=\s*"([^"]+)"/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html))) {
-    const href = m[1]!;
+    const href = m[1];
+    if (href === undefined) continue;
     let resolved: string;
     try {
       resolved = new URL(href, base).toString();

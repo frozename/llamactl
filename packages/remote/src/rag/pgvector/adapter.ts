@@ -165,7 +165,7 @@ export class PgvectorRagAdapter implements RetrievalProvider {
       );
     }
     const literal = vectorLiteral(vector);
-    const topK = req.topK ?? 10;
+    const topK = req.topK;
 
     let rows: readonly SearchRow[];
     try {
@@ -340,7 +340,7 @@ export class PgvectorRagAdapter implements RetrievalProvider {
           : "the configured embedder";
         throw new RagError(
           "dimension-mismatch",
-          `pgvector store: collection '${collection}' was created with vector(${known}) but received a ${dim}-dim vector from ${label}. ` +
+          `pgvector store: collection '${collection}' was created with vector(${String(known)}) but received a ${String(dim)}-dim vector from ${label}. ` +
             `Rebind the rag node to an embedder whose dimension matches, or drop and recreate the collection.`,
         );
       }
@@ -350,9 +350,7 @@ export class PgvectorRagAdapter implements RetrievalProvider {
     // First write against this collection: ensure the extension and
     // the table exist. Both are idempotent; concurrent adapters racing
     // the same CREATE TABLE IF NOT EXISTS is safe.
-    if (!this.extensionEnsured) {
-      this.extensionEnsured = this.runCreateExtension();
-    }
+    this.extensionEnsured ??= this.runCreateExtension();
     try {
       await this.extensionEnsured;
     } catch (err) {
@@ -370,7 +368,7 @@ export class PgvectorRagAdapter implements RetrievalProvider {
     if (!Number.isInteger(dim) || dim <= 0) {
       throw new RagError(
         "invalid-request",
-        `pgvector store: refusing to create collection '${collection}' with non-positive-integer dim ${dim}`,
+        `pgvector store: refusing to create collection '${collection}' with non-positive-integer dim ${String(dim)}`,
       );
     }
 
@@ -421,7 +419,12 @@ export class PgvectorRagAdapter implements RetrievalProvider {
       if (!d.vector || d.vector.length === 0) missingIdx.push(i);
     }
     if (missingIdx.length > 0 && !this.embedder) {
-      const firstMissing = documents[missingIdx[0]!]!;
+      const firstMissingIndex = missingIdx[0];
+      const firstMissing =
+        firstMissingIndex !== undefined ? documents[firstMissingIndex] : undefined;
+      if (firstMissing === undefined) {
+        throw new RagError("invalid-request", "pgvector store: missing document index");
+      }
       throw new RagError(
         "invalid-request",
         `pgvector store requires doc.vector on every document (missing on id=${firstMissing.id}) — configure a rag.embedder to auto-compute`,
@@ -430,12 +433,12 @@ export class PgvectorRagAdapter implements RetrievalProvider {
 
     let computed: number[][] = [];
     if (missingIdx.length > 0 && this.embedder) {
-      const texts = missingIdx.map((i) => documents[i]!.content);
+      const texts = missingIdx.map((i) => requireDocument(documents, i).content);
       computed = await this.embedder(texts);
       if (computed.length !== missingIdx.length) {
         throw new RagError(
           "invalid-response",
-          `embedder returned ${computed.length} vectors for ${missingIdx.length} docs`,
+          `embedder returned ${String(computed.length)} vectors for ${String(missingIdx.length)} docs`,
         );
       }
     }
@@ -443,7 +446,7 @@ export class PgvectorRagAdapter implements RetrievalProvider {
     return documents.map((d, i) => {
       const supplied = d.vector && d.vector.length > 0 ? d.vector : null;
       const computedIdx = missingIdx.indexOf(i);
-      const vector = supplied ?? (computedIdx >= 0 ? computed[computedIdx]! : null);
+      const vector = supplied ?? (computedIdx >= 0 ? computed[computedIdx] : null);
       if (!vector) {
         // Unreachable — if we reach here, the earlier check should
         // have thrown. Defensive.
@@ -460,6 +463,17 @@ export class PgvectorRagAdapter implements RetrievalProvider {
       };
     });
   }
+}
+
+function requireDocument(documents: readonly Document[], index: number): Document {
+  const document = documents[index];
+  if (document === undefined) {
+    throw new RagError(
+      "invalid-request",
+      `pgvector store: missing document at index ${String(index)}`,
+    );
+  }
+  return document;
 }
 
 /**

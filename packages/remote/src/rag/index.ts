@@ -69,9 +69,7 @@ export async function createRagAdapter(
   }
 }
 
-function isOptionsBag(
-  v: NodeJS.ProcessEnv | CreateRagAdapterOptions,
-): v is CreateRagAdapterOptions {
+function isOptionsBag(v: unknown): v is CreateRagAdapterOptions {
   if (typeof v !== "object" || v === null) return false;
   const maybe = v as Partial<CreateRagAdapterOptions>;
   return (

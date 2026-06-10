@@ -27,7 +27,8 @@ import { type RagPipelineManifest, RagPipelineManifestSchema } from "./schema.js
 export function defaultPipelinesDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_RAG_PIPELINES_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const devStorage = env.DEV_STORAGE?.trim();
+  const base = devStorage && devStorage.length > 0 ? devStorage : join(homedir(), ".llamactl");
   return join(base, "rag-pipelines");
 }
 
@@ -116,9 +117,8 @@ export function applyPipeline(
     };
   }
 
-  const allClaimingAlreadyOwn = claimingNames.every((n) =>
-    cur.ownership!.compositeNames.includes(n),
-  );
+  const ownership = cur.ownership;
+  const allClaimingAlreadyOwn = claimingNames.every((n) => ownership.compositeNames.includes(n));
   if (allClaimingAlreadyOwn) {
     return { ok: true, changed: false, path: specPath(parsed.metadata.name, env) };
   }

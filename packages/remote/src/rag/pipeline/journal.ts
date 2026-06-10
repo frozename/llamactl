@@ -144,21 +144,24 @@ export async function openJournal(path: string): Promise<Journal> {
         prior.set(pk, list);
       }
     },
-    async seen(source, doc_id, sha) {
-      return seenSet.has(key(source, doc_id, sha));
+    seen(source, doc_id, sha) {
+      return Promise.resolve(seenSet.has(key(source, doc_id, sha)));
     },
-    async priorIngestions(source, doc_id) {
+    priorIngestions(source, doc_id) {
       // Return a defensive copy so callers mutating the list can't
       // corrupt the in-memory index.
-      return (prior.get(docKey(source, doc_id)) ?? []).map((p) => ({
-        sha: p.sha,
-        chunk_ids: [...p.chunk_ids],
-      }));
+      return Promise.resolve(
+        (prior.get(docKey(source, doc_id)) ?? []).map((p) => ({
+          sha: p.sha,
+          chunk_ids: [...p.chunk_ids],
+        })),
+      );
     },
-    async close() {
+    close() {
       // No resources held between calls — appendFile opens/closes
       // per call. Keeping the method in the contract so a future
       // batched-writer swap doesn't reshape the API.
+      return Promise.resolve();
     },
   };
 }

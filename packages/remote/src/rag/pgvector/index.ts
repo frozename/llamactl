@@ -5,7 +5,7 @@ import type { Embedder } from "../embedding.js";
 
 import { RagError } from "../errors.js";
 import { PgvectorRagAdapter } from "./adapter.js";
-import { connectPgvector, redactPostgresUrl } from "./client.js";
+import { connectPgvector } from "./client.js";
 
 export { extractQueryVector, PgvectorRagAdapter } from "./adapter.js";
 export { connectPgvector, redactPostgresUrl } from "./client.js";
@@ -75,15 +75,13 @@ export async function createPgvectorAdapter(
   return new PgvectorRagAdapter({
     sql: client.sql,
     defaultCollection: binding.collection,
-    safeLabel: client.safeLabel ?? redactPostgresUrl(binding.endpoint),
+    safeLabel: client.safeLabel,
     ...(embedder && { embedder }),
     ...(embedderLabel && { embedderLabel }),
   });
 }
 
-function isOptionsBag(
-  v: NodeJS.ProcessEnv | CreatePgvectorAdapterOptions,
-): v is CreatePgvectorAdapterOptions {
+function isOptionsBag(v: unknown): v is CreatePgvectorAdapterOptions {
   // ProcessEnv is a string-valued record; our options-bag has these
   // specific non-string fields. A process.env that someone literally
   // set with a `config: Config` key would confuse this, but that's

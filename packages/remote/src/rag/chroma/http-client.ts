@@ -212,7 +212,7 @@ export class HttpChromaClient {
     if (!res.ok) {
       throw new RagError(
         statusToCode(res.status),
-        `chroma http: heartbeat returned ${res.status} at ${this.baseUrl}`,
+        `chroma http: heartbeat returned ${String(res.status)} at ${this.baseUrl}`,
       );
     }
   }
@@ -309,8 +309,9 @@ export class HttpChromaClient {
 
   /** No-op close — fetch doesn't hold a connection we own. Exposed
    *  so the adapter can treat stdio / HTTP backends uniformly. */
-  async close(): Promise<void> {
+  close(): Promise<void> {
     this.collectionIds.clear();
+    return Promise.resolve();
   }
 
   private headers(): Record<string, string> {
@@ -350,7 +351,7 @@ export class HttpChromaClient {
       const snippet = await safeErrorSnippet(res);
       throw new RagError(
         statusToCode(res.status),
-        `chroma http: ${method} ${path} → ${res.status}${snippet ? `: ${snippet}` : ""}`,
+        `chroma http: ${method} ${path} → ${String(res.status)}${snippet ? `: ${snippet}` : ""}`,
       );
     }
     // Empty 2xx (some chroma responses are `{}` — upsert, delete) are

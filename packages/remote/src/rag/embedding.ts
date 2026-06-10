@@ -46,9 +46,7 @@ export function createEmbedderFromBinding(opts: EmbedderFactoryOptions): Embedde
 
   return async (texts) => {
     if (texts.length === 0) return [];
-    if (!cached) {
-      cached = await (opts.buildProvider ?? defaultBuildProvider)(opts);
-    }
+    cached ??= await (opts.buildProvider ?? defaultBuildProvider)(opts);
     if (typeof cached.createEmbeddings !== "function") {
       throw new RagError(
         "tool-missing",
@@ -69,10 +67,10 @@ export function createEmbedderFromBinding(opts: EmbedderFactoryOptions): Embedde
         err,
       );
     }
-    if (response.data?.length !== texts.length) {
+    if (response.data.length !== texts.length) {
       throw new RagError(
         "invalid-response",
-        `embedder '${binding.node}' returned ${response.data?.length ?? 0} vectors for ${texts.length} inputs`,
+        `embedder '${binding.node}' returned ${String(response.data.length)} vectors for ${String(texts.length)} inputs`,
       );
     }
     return response.data.map((row, i) => {
@@ -82,7 +80,7 @@ export function createEmbedderFromBinding(opts: EmbedderFactoryOptions): Embedde
       if (!Array.isArray(row.embedding)) {
         throw new RagError(
           "invalid-response",
-          `embedder '${binding.node}' returned non-array embedding at index ${i} (encoding_format='base64'? request float)`,
+          `embedder '${binding.node}' returned non-array embedding at index ${String(i)} (encoding_format='base64'? request float)`,
         );
       }
       return row.embedding;

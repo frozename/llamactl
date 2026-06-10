@@ -37,7 +37,7 @@ export function startLogsIngest(opts: LogsIngestOpts): () => void {
         const text = buf.toString("utf8");
         const lines = text.split("\n").filter((l) => l.length > 0);
         const records: IngestRecord[] = lines.map((line, idx) => ({
-          id: `${f.label}::${cur.offset}::${idx}`,
+          id: `${f.label}::${String(cur.offset)}::${String(idx)}`,
           content: line,
           metadata: { fileLabel: f.label, filePath: f.path, where: f.label },
         }));

@@ -47,18 +47,18 @@ export async function searchSessions(opts: SearchSessionsOpts): Promise<SessionH
         for (const m of r) {
           if (matches.length >= perCap) break;
           matches.push({
-            where: `iteration #${e.iteration + 1} reasoning`,
+            where: `iteration #${String(e.iteration + 1)} reasoning`,
             snippet: m.snippet,
             spans: m.spans,
           });
           bestScore = Math.max(bestScore, m.score);
         }
-        const argsText = JSON.stringify((e.step as any).args ?? {});
+        const argsText = JSON.stringify(readStepArgs(e.step));
         const ar = findTextMatches({ needle: opts.query, text: argsText });
         for (const m of ar) {
           if (matches.length >= perCap) break;
           matches.push({
-            where: `iteration #${e.iteration + 1} args`,
+            where: `iteration #${String(e.iteration + 1)} args`,
             snippet: m.snippet,
             spans: m.spans,
           });
@@ -79,4 +79,12 @@ export async function searchSessions(opts: SearchSessionsOpts): Promise<SessionH
   }
   hits.sort((a, b) => b.score - a.score || (a.startedAt < b.startedAt ? 1 : -1));
   return hits.slice(0, opts.limit);
+}
+
+function readStepArgs(step: unknown): Record<string, unknown> {
+  if (!step || typeof step !== "object") return {};
+  const maybe = step as { args?: unknown };
+  return maybe.args && typeof maybe.args === "object"
+    ? (maybe.args as Record<string, unknown>)
+    : {};
 }

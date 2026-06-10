@@ -82,7 +82,7 @@ export function connectPgvector(
       max: 4,
       // postgres.js defaults its notice handler to stdout logging;
       // silence it so Postgres NOTICEs don't leak into llamactl logs.
-      onnotice: () => {},
+      onnotice: () => undefined,
     };
     if (password) options.password = password;
     sql = postgres(binding.endpoint, options);

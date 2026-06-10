@@ -16,7 +16,7 @@ export interface SessionsIngestOpts {
   global?: boolean;
 }
 
-function recordFor(event: JournalEvent): IngestRecord | null {
+function recordFor(event: JournalEvent, sessionId?: string): IngestRecord | null {
   if (event.type === "session_started") {
     if (!event.goal) return null;
     return {
@@ -31,17 +31,18 @@ function recordFor(event: JournalEvent): IngestRecord | null {
     };
   }
   if (event.type === "plan_proposed") {
-    const argsText = JSON.stringify((event.step as any).args ?? {});
+    const owningSessionId = sessionId ?? "?";
+    const argsText = JSON.stringify(readStepArgs(event.step));
     const text = [event.reasoning, argsText].filter(Boolean).join("\n");
     if (!text.trim()) return null;
     return {
-      id: `${(event as any).sessionId ?? "?"}::${event.stepId}`,
+      id: `${owningSessionId}::${event.stepId}`,
       content: text,
       metadata: {
-        sessionId: (event as any).sessionId ?? "?",
+        sessionId: owningSessionId,
         stepId: event.stepId,
         iteration: event.iteration,
-        where: `iteration #${event.iteration + 1}`,
+        where: `iteration #${String(event.iteration + 1)}`,
       },
     };
   }
@@ -64,16 +65,18 @@ export function startSessionsIngest(opts: SessionsIngestOpts): () => void {
     }
   };
 
-  const onEvent = (sessionId: string) => (event: JournalEvent) => {
-    const r = recordFor({ ...event, sessionId } as JournalEvent);
-    if (!r) return;
-    queue.push(r);
-    if (timer === null) timer = setTimeout(() => void flush(), flushMs);
-  };
+  const onEvent =
+    (sessionId: string): ((event: JournalEvent) => void) =>
+    (event: JournalEvent) => {
+      const r = recordFor(event, sessionId);
+      if (!r) return;
+      queue.push(r);
+      timer ??= setTimeout(() => void flush(), flushMs);
+    };
 
   const originalCreate = sessionEventBus.create.bind(sessionEventBus);
   const subs = new Set<() => void>();
-  (sessionEventBus as any).create = (sessionId: string): void => {
+  sessionEventBus.create = (sessionId: string): void => {
     originalCreate(sessionId);
     subs.add(sessionEventBus.subscribe(sessionId, onEvent(sessionId)));
   };
@@ -83,6 +86,14 @@ export function startSessionsIngest(opts: SessionsIngestOpts): () => void {
     void flush();
     for (const off of subs) off();
     subs.clear();
-    (sessionEventBus as any).create = originalCreate;
+    sessionEventBus.create = originalCreate;
   };
+}
+
+function readStepArgs(step: unknown): Record<string, unknown> {
+  if (!step || typeof step !== "object") return {};
+  const maybe = step as { args?: unknown };
+  return maybe.args && typeof maybe.args === "object"
+    ? (maybe.args as Record<string, unknown>)
+    : {};
 }

@@ -60,6 +60,7 @@ const GIT_URL_RE = /\b(https?:\/\/[^\s"'<>`]+\.git|git@[\w.-]+:[^\s"'<>`]+\.git)
 // likely to be nonsense in a description than a real path.
 const PATH_RE = /(?:^|\s)([~./][\w./-]+|\/[\w./-]+)/g;
 const SCHEDULE_ALIAS_RE = /@(hourly|daily|weekly)\b/i;
+const SCHEDULE_WORD_RE = /\b(hourly|daily|weekly)\b/i;
 const SCHEDULE_EVERY_RE = /\bevery\s+(\d+)\s*(minutes?|m|hours?|h|days?|d)\b/i;
 const COLLECTION_RE = /\bcollection\s+[`"']?([\w-]+)[`"']?/i;
 
@@ -67,7 +68,7 @@ const DEFAULT_RAG_NODE = "kb-pg";
 
 export function draftPipeline(description: string, ctx: DraftContext = {}): DraftResult {
   const warnings: string[] = [];
-  const desc = (description ?? "").trim();
+  const desc = description.trim();
   if (desc.length === 0) {
     warnings.push("description was empty — draft is a bare skeleton");
   }
@@ -124,8 +125,10 @@ export function draftPipeline(description: string, ctx: DraftContext = {}): Draf
   // a plain docs-site URL.
   const unifiedUrls = [...gitUrls, ...httpUrls];
   const collection = pickCollection(desc, unifiedUrls, paths, warnings);
-  const name = ctx.nameOverride?.trim() || inferName(desc, unifiedUrls, paths);
-  if (!ctx.nameOverride && !inferName(desc, unifiedUrls, paths)) {
+  const inferredName = inferName(desc, unifiedUrls, paths);
+  const overrideName = ctx.nameOverride?.trim();
+  const name = overrideName && overrideName.length > 0 ? overrideName : inferredName;
+  if (!ctx.nameOverride && inferredName.length === 0) {
     warnings.push('could not infer a pipeline name — defaulted to "draft"');
   }
 
@@ -179,22 +182,26 @@ function pickRagNode(desc: string, ctx: DraftContext, warnings: string[]): strin
 
 function pickCollection(desc: string, urls: string[], paths: string[], warnings: string[]): string {
   const m = COLLECTION_RE.exec(desc);
-  if (m) return m[1]!;
+  const requestedCollection = m?.[1];
+  if (requestedCollection !== undefined) return requestedCollection;
   // Infer from the first source: host for URLs (incl. git clone
   // URLs), last path segment for filesystem. Collapses to snake_case.
   if (urls.length > 0) {
+    const firstUrl = urls[0];
+    if (firstUrl === undefined) return "docs";
     try {
-      const url = new URL(urls[0]!);
+      const url = new URL(firstUrl);
       return snakeCase(url.hostname.replace(/^www\./, ""));
     } catch {
       // Bare SSH git URLs (`git@host:org/repo.git`) don't parse as
       // URLs. Split on `:` to get the host, then snake_case it.
-      const ssh = /^git@([\w.-]+):/.exec(urls[0]!);
-      if (ssh) return snakeCase(ssh[1]!);
+      const sshHost = /^git@([\w.-]+):/.exec(firstUrl)?.[1];
+      if (sshHost !== undefined) return snakeCase(sshHost);
     }
   }
   if (paths.length > 0) {
-    const last = paths[0]!.split("/").filter(Boolean).pop() ?? "";
+    const firstPath = paths[0];
+    const last = firstPath?.split("/").filter(Boolean).pop() ?? "";
     if (last) return snakeCase(last);
   }
   warnings.push(
@@ -205,16 +212,16 @@ function pickCollection(desc: string, urls: string[], paths: string[], warnings:
 
 function pickSchedule(desc: string): string | null {
   const aliasMatch = SCHEDULE_ALIAS_RE.exec(desc);
-  if (aliasMatch) return `@${aliasMatch[1]!.toLowerCase()}`;
+  const alias = aliasMatch?.[1];
+  if (alias !== undefined) return `@${alias.toLowerCase()}`;
   // Also catch bare "daily" / "hourly" / "weekly" (no @).
-  if (/\b(hourly|daily|weekly)\b/i.test(desc)) {
-    const m = /\b(hourly|daily|weekly)\b/i.exec(desc)!;
-    return `@${m[1]!.toLowerCase()}`;
-  }
+  const bareAlias = SCHEDULE_WORD_RE.exec(desc)?.[1];
+  if (bareAlias !== undefined) return `@${bareAlias.toLowerCase()}`;
   const everyMatch = SCHEDULE_EVERY_RE.exec(desc);
-  if (everyMatch) {
-    const n = everyMatch[1]!;
-    const unit = everyMatch[2]!.toLowerCase();
+  const n = everyMatch?.[1];
+  const unitMatch = everyMatch?.[2];
+  if (n !== undefined && unitMatch !== undefined) {
+    const unit = unitMatch.toLowerCase();
     const short = unit.startsWith("m") ? "m" : unit.startsWith("h") ? "h" : "d";
     return `@every ${n}${short}`;
   }
@@ -223,15 +230,24 @@ function pickSchedule(desc: string): string | null {
 
 function inferName(desc: string, urls: string[], paths: string[]): string {
   if (urls.length > 0) {
-    const first = urls[0]!;
+    const first = urls[0];
+    if (first === undefined) return "";
     // Git clone URLs: pull the repo slug out of the path so
     // `https://github.com/pytorch/docs.git` becomes `pytorch-docs`
     // rather than `github-com`.
     if (first.endsWith(".git")) {
       const slugFromHttps = /\/([^/\s]+?)\/([^/\s]+?)\.git$/.exec(first);
-      if (slugFromHttps) return kebabCase(`${slugFromHttps[1]!}-${slugFromHttps[2]!}`);
+      const httpsOwner = slugFromHttps?.[1];
+      const httpsRepo = slugFromHttps?.[2];
+      if (httpsOwner !== undefined && httpsRepo !== undefined) {
+        return kebabCase(`${httpsOwner}-${httpsRepo}`);
+      }
       const slugFromSsh = /:([^/\s]+?)\/([^/\s]+?)\.git$/.exec(first);
-      if (slugFromSsh) return kebabCase(`${slugFromSsh[1]!}-${slugFromSsh[2]!}`);
+      const sshOwner = slugFromSsh?.[1];
+      const sshRepo = slugFromSsh?.[2];
+      if (sshOwner !== undefined && sshRepo !== undefined) {
+        return kebabCase(`${sshOwner}-${sshRepo}`);
+      }
     }
     try {
       const host = new URL(first).hostname.replace(/^www\./, "");
@@ -241,13 +257,15 @@ function inferName(desc: string, urls: string[], paths: string[]): string {
     }
   }
   if (paths.length > 0) {
-    const last = paths[0]!.split("/").filter(Boolean).pop() ?? "";
+    const firstPath = paths[0];
+    const last = firstPath?.split("/").filter(Boolean).pop() ?? "";
     if (last) return kebabCase(last);
   }
   // Last-ditch: if the description has a clear "noun-noun" label,
   // use it. E.g. "pytorch docs" → "pytorch-docs".
   const labelMatch = /\b([a-z][a-z0-9]+(?:[-\s][a-z][a-z0-9]+)+)\b/i.exec(desc);
-  if (labelMatch) return kebabCase(labelMatch[1]!);
+  const label = labelMatch?.[1];
+  if (label !== undefined) return kebabCase(label);
   return "";
 }
 

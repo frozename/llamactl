@@ -53,8 +53,13 @@ function parseEndpoint(binding: RagBinding): { command: string; args: string[] }
   // lines today don't need shell-quoted arguments; if that changes,
   // callers can use `binding.extraArgs` for anything with spaces.
   const tokens = trimmed.split(/\s+/);
-  const command = tokens[0]!;
-  const endpointArgs = tokens.slice(1);
+  const [command, ...endpointArgs] = tokens;
+  if (command === undefined) {
+    throw new RagError(
+      "connect-failed",
+      "chroma RAG binding has an empty endpoint; expected the chroma-mcp command line",
+    );
+  }
   return { command, args: [...endpointArgs, ...binding.extraArgs] };
 }
 

@@ -119,10 +119,10 @@ async function runGit(args: string[], opts: { cwd: string }): Promise<GitResult>
     const child = spawn("git", args, { cwd: opts.cwd });
     let stdout = "";
     let stderr = "";
-    child.stdout?.on("data", (b: Buffer) => {
+    child.stdout.on("data", (b: Buffer) => {
       stdout += b.toString();
     });
-    child.stderr?.on("data", (b: Buffer) => {
+    child.stderr.on("data", (b: Buffer) => {
       stderr += b.toString();
     });
     child.on("close", (code) => {
@@ -207,7 +207,7 @@ async function* scanFiles(root: string, pattern: string): AsyncIterable<string> 
 function globToRegex(glob: string): RegExp {
   let re = "";
   for (let i = 0; i < glob.length; i++) {
-    const c = glob[i]!;
+    const c = glob.charAt(i);
     if (c === "*") {
       if (glob[i + 1] === "*") {
         re += ".*";
