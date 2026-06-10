@@ -47,8 +47,9 @@ but ~2% of the frame drifting will.
 ## Running locally
 
 ```sh
-bun run audit          # diff against committed baselines; non-zero exit on breach
-bun run audit:update   # reseed baselines from the current built UI
+bun run audit             # diff against committed baselines; non-zero exit on breach
+bun run audit:update      # reseed baselines from the current built UI
+bun run audit:functional  # render every module and gate on console/network health
 ```
 
 The runner (`scripts/audit.sh`) handles everything:
@@ -152,14 +153,31 @@ in your real storage into the repo forever.
 ## CI workflow
 
 [`.github/workflows/ui-audit.yml`](../.github/workflows/ui-audit.yml)
-runs mac-only today. Linux is tracked as a follow-up — viable with
-Xvfb, but mac mirrors the primary operator's day-to-day and is the
-sharpest signal right now.
+runs two jobs:
 
-On failure, the workflow uploads two artifacts:
+- `audit` on `macos-latest` is the pixel-regression gate. It compares
+  screenshots against `tests/ui-audit-baselines/` and uploads diff
+  artifacts when the gate fails.
+- `functional-linux` on `ubuntu-latest` runs the same module navigation
+  suite under Xvfb, but does **not** pass `--baselines` to the driver.
+  It gates only on functional signals from the report: the app boots,
+  all 22 modules render, navigation reports success, the renderer
+  console is clean, and no failed network requests are captured.
+
+Linux pixel baselines remain a future follow-up. Do not generate,
+commit, or compare Linux baselines until a separate hermetic Linux
+seeding process has been reviewed.
+
+On mac pixel-gate failure, the workflow uploads:
 
 - `ui-audit-diffs` — the per-module diff PNGs.
 - `ui-audit-report` — the driver's `report.json` with pixel counts,
   ratios, console/network deltas, and the Playwright trace reference.
+
+On Linux functional failure, the workflow uploads:
+
+- `ui-audit-linux-report` — the driver's `report.json`.
+- `ui-audit-linux-screenshots` — screenshots and trace output from the
+  functional run.
 
 Both retain for 14 days.

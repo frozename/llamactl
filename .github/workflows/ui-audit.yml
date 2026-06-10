@@ -18,8 +18,8 @@ concurrency:
 
 jobs:
   audit:
-    # mac-only for now — matches the primary operator's environment and
-    # skips the Xvfb dance linux CI would need. Linux is a follow-up.
+    # Pixel gate stays mac-only because the committed baselines were seeded
+    # under the macOS hermetic profile.
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
@@ -102,6 +102,97 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ui-audit-screenshots
+          path: /tmp/llamactl-ui-audit-v2
+          retention-days: 14
+          if-no-files-found: warn
+
+  functional-linux:
+    # Functional-only Linux coverage: app boots under Xvfb, every module
+    # renders, and the driver report has no console or network failures.
+    # No Linux pixel baselines are generated or compared here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout llamactl
+        uses: actions/checkout@v4
+        with:
+          path: llamactl
+
+      - name: Checkout electron-mcp-server
+        # Pinned to the same driver commit as the mac pixel gate.
+        uses: actions/checkout@v4
+        with:
+          repository: frozename/electron-mcp
+          path: electron-mcp-server
+          ref: f976710523b63764ff148385de7d64089699f49f
+
+      # llamactl carries file:../nova/packages/* deps; sibling
+      # checkout is required for bun install to resolve them.
+      - name: Checkout nova
+        uses: actions/checkout@v4
+        with:
+          repository: frozename/nova
+          ref: main
+          path: nova
+
+      - name: Install Electron system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            libasound2t64 \
+            libatk-bridge2.0-0 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libnss3 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxrandr2 \
+            libxshmfence1 \
+            libxss1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install nova
+        working-directory: nova
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Install llamactl workspace
+        working-directory: llamactl
+        run: bun install --frozen-lockfile
+
+      - name: Install electron-mcp-server
+        working-directory: electron-mcp-server
+        run: bun install --frozen-lockfile
+
+      - name: Build electron-mcp-server
+        working-directory: electron-mcp-server
+        run: bun run build
+
+      - name: Run functional UI audit
+        working-directory: llamactl
+        env:
+          ELECTRON_MCP_DIR: ${{ github.workspace }}/electron-mcp-server
+        run: xvfb-run -a bun run audit:functional
+
+      - name: Upload audit report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-audit-linux-report
+          path: /tmp/llamactl-ui-audit-v2/report.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload audit screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-audit-linux-screenshots
           path: /tmp/llamactl-ui-audit-v2
           retention-days: 14
           if-no-files-found: warn
