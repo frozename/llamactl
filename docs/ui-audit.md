@@ -1,7 +1,7 @@
 # UI regression gate
 
 Pixel-diff gate for the Electron UI. Every PR and every push to `main`
-renders the 16 top-level modules under a hermetic test profile, compares
+renders all 22 registry modules under a hermetic test profile, compares
 each screenshot against the committed baselines at
 `tests/ui-audit-baselines/`, and fails the build if any module drifts.
 
@@ -12,19 +12,30 @@ The driver (`ui-audit-driver-v2.ts` in
 library-generic — it reads the module list from
 [`tests/ui-audit-modules.json`](../tests/ui-audit-modules.json) (passed
 via `--modules=<path>` from `scripts/audit.sh`) and walks each entry in
-order. That file is the single source of truth for which modules the
-audit covers — today, the 16 top-level activity-bar modules:
+order. That file mirrors `APP_MODULES` in
+`packages/app/src/modules/registry.ts` — all 22 modules, in registry
+order, as `{ id, label, rootTestId? }` entries (`rootTestId` carries the
+registry's `smokeAffordance` whenever it differs from the driver's
+`<id>-root` derivation, e.g. `models.bench` → `models-bench-root`). The
+drift test `packages/app/test/ui-audit-modules-drift.test.ts` fails the
+unit suite if the JSON and the registry ever diverge; its header comment
+has the one-liner to regenerate the file.
 
-```
-dashboard  nodes      chat       plan       ops-chat   cost
-pipelines  workloads  models     presets    pulls      bench
-server     logs       lmstudio   settings
-```
+Navigation and setup are app-supplied scripts (the Beacon shell has no
+per-module aria-label buttons):
+
+- [`tests/ui-audit-nav.js.tpl`](../tests/ui-audit-nav.js.tpl) — passed
+  via `--nav-script`; opens each module through the test-only
+  `window.useTabStore` handle, the same primitive Tier A uses.
+- [`tests/ui-audit-setup.js`](../tests/ui-audit-setup.js) — passed via
+  `--setup-script`; dismisses the FirstRunTip onboarding overlay that a
+  fresh hermetic `userDataDir` always shows (it would otherwise sit on
+  top of every screenshot).
 
 Add a new module to the registry + this JSON file (and capture a
 baseline PNG) in the same PR that introduces the feature.
 
-Each screenshot is diffed against `tests/ui-audit-baselines/<module>.png`
+Each screenshot is diffed against `tests/ui-audit-baselines/<module-id>.png`
 via the `screenshot_diff` MCP tool. A module fails when:
 
 - Any pixel differs by more than `pixelThreshold=0` (exact-match per-pixel), **AND**
@@ -102,6 +113,10 @@ invariants keep it hermetic:
   for the full env table.
 - A per-run `userDataDir` for Chromium so no extension, history, or
   saved window state leaks between runs.
+- `--force-device-scale-factor=1` pins Chromium to 1× rendering, so
+  baselines seeded on a Retina dev machine (2× by default) have the
+  same pixel geometry CI produces. Without it every diff fails on
+  dimensions alone.
 - The electron-mcp-server driver is pinned to a specific commit SHA in
   [`.github/workflows/ui-audit.yml`](../.github/workflows/ui-audit.yml) —
   bump that pin explicitly when the driver changes.

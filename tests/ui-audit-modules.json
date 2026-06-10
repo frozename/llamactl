@@ -1,20 +1,100 @@
 [
-  { "id": "dashboard", "label": "Dashboard" },
-  { "id": "nodes", "label": "Nodes" },
-  { "id": "chat", "label": "Chat" },
-  { "id": "plan", "label": "Plan" },
-  { "id": "knowledge", "label": "Knowledge" },
-  { "id": "ops-chat", "label": "Operator Console" },
-  { "id": "cost", "label": "Cost" },
-  { "id": "pipelines", "label": "Pipelines" },
-  { "id": "workloads", "label": "Workloads" },
-  { "id": "composites", "label": "Composites" },
-  { "id": "models", "label": "Models" },
-  { "id": "presets", "label": "Presets" },
-  { "id": "pulls", "label": "Pulls" },
-  { "id": "bench", "label": "Bench" },
-  { "id": "server", "label": "Server" },
-  { "id": "logs", "label": "Logs" },
-  { "id": "lmstudio", "label": "LM Studio" },
-  { "id": "settings", "label": "Settings" }
+  {
+    "id": "dashboard",
+    "label": "Dashboard"
+  },
+  {
+    "id": "chat",
+    "label": "Chat"
+  },
+  {
+    "id": "ops-chat",
+    "label": "Ops Chat"
+  },
+  {
+    "id": "ops-sessions",
+    "label": "Ops Sessions"
+  },
+  {
+    "id": "plan",
+    "label": "Planner"
+  },
+  {
+    "id": "projects",
+    "label": "Projects"
+  },
+  {
+    "id": "knowledge.retrieval",
+    "label": "Retrieval",
+    "rootTestId": "knowledge-retrieval-root"
+  },
+  {
+    "id": "knowledge.pipelines",
+    "label": "Pipelines",
+    "rootTestId": "knowledge-pipelines-root"
+  },
+  {
+    "id": "workloads",
+    "label": "Workloads"
+  },
+  {
+    "id": "workloads.model-runs",
+    "label": "Model Runs",
+    "rootTestId": "workloads-model-runs-root"
+  },
+  {
+    "id": "workloads.composites",
+    "label": "Composites",
+    "rootTestId": "workloads-composites-root"
+  },
+  {
+    "id": "models.catalog",
+    "label": "Catalog",
+    "rootTestId": "models-catalog-root"
+  },
+  {
+    "id": "models.presets",
+    "label": "Presets",
+    "rootTestId": "models-presets-root"
+  },
+  {
+    "id": "models.pulls",
+    "label": "Pulls",
+    "rootTestId": "models-pulls-root"
+  },
+  {
+    "id": "models.bench",
+    "label": "Bench",
+    "rootTestId": "models-bench-root"
+  },
+  {
+    "id": "models.lmstudio",
+    "label": "LM Studio",
+    "rootTestId": "models-lmstudio-root"
+  },
+  {
+    "id": "models.server",
+    "label": "Local Server",
+    "rootTestId": "models-server-root"
+  },
+  {
+    "id": "nodes",
+    "label": "Nodes"
+  },
+  {
+    "id": "logs",
+    "label": "Logs"
+  },
+  {
+    "id": "cost",
+    "label": "Cost"
+  },
+  {
+    "id": "settings",
+    "label": "Settings"
+  },
+  {
+    "id": "ui-primitives",
+    "label": "UI Primitives"
+  }
 ]

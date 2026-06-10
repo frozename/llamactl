@@ -86,16 +86,30 @@ fi
 # cascade, loosen here before reseeding.
 #
 # The driver is library-generic as of the electron-mcp genericization
-# pass; --modules=<json> supplies llamactl's 16-module activity bar
-# (tests/ui-audit-modules.json) and --out-dir keeps the report landing
-# at the llamactl-scoped path that docs/ui-audit.md + the CI workflow
-# reference.
+# pass; --modules=<json> supplies llamactl's 22 registry modules
+# (tests/ui-audit-modules.json, regenerated from APP_MODULES — the drift
+# test in packages/app keeps it honest) and --out-dir keeps the report
+# landing at the llamactl-scoped path that docs/ui-audit.md + the CI
+# workflow reference.
+#
+# --force-device-scale-factor=1 pins Chromium to 1× so screenshots have
+# identical geometry on Retina dev machines and CI runners — without it
+# baselines seeded locally are 2× the size CI produces and every diff
+# fails on dimensions alone.
+#
+# Navigation: the shell has no per-module aria-label buttons (rail +
+# tabs), so --nav-script opens each module via the test-only
+# window.useTabStore handle (same primitive as tier-a-modules.ts) and
+# --setup-script dismisses the FirstRunTip overlay that a fresh hermetic
+# userDataDir always shows.
 DRIVER_ARGS=(
   "--executable=$ELECTRON_BIN"
-  "--args=$APP_DIR"
+  "--args=$APP_DIR --force-device-scale-factor=1"
   "--env=LLAMACTL_TEST_PROFILE=$PROFILE"
   "--userDataDir=$USERDATA"
   "--modules=$MODULES_JSON"
+  "--nav-script=$REPO_ROOT/tests/ui-audit-nav.js.tpl"
+  "--setup-script=$REPO_ROOT/tests/ui-audit-setup.js"
   "--out-dir=$OUT_DIR"
   "--baselines=$BASELINES_DIR"
   "--diffDir=$DIFF_DIR"
