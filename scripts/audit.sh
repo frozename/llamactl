@@ -102,10 +102,21 @@ fi
 # window.useTabStore handle (same primitive as tier-a-modules.ts) and
 # --setup-script dismisses the FirstRunTip overlay that a fresh hermetic
 # userDataDir always shows.
+# LLAMACTL_WINDOW_SIZE pins the BrowserWindow to 1024x640 — small enough
+# to fit the CI runner's virtual display (~1024x681 usable; macOS clamps
+# larger windows, failing every baseline on dimensions) while satisfying
+# the app's 920x600 minimum.
+# DEV_STORAGE must be pinned explicitly: the resolver's priority is
+# individual env var > test-profile default, so a dev shell's exported
+# DEV_STORAGE (real cluster config, catalog, workloads) would otherwise
+# leak into the launched app and bake live fleet state into baselines —
+# state CI doesn't have.
 DRIVER_ARGS=(
   "--executable=$ELECTRON_BIN"
   "--args=$APP_DIR --force-device-scale-factor=1"
   "--env=LLAMACTL_TEST_PROFILE=$PROFILE"
+  "--env=DEV_STORAGE=$PROFILE"
+  "--env=LLAMACTL_WINDOW_SIZE=1024x640"
   "--userDataDir=$USERDATA"
   "--modules=$MODULES_JSON"
   "--nav-script=$REPO_ROOT/tests/ui-audit-nav.js.tpl"

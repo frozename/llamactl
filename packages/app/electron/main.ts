@@ -36,9 +36,15 @@ function seedEnvFromResolver(): void {
 seedEnvFromResolver();
 
 function createWindow(): BrowserWindow {
+  // Test harnesses (scripts/audit.sh) pin an explicit window size so
+  // screenshots have identical geometry everywhere: CI runners' virtual
+  // display is smaller than the 1280×800 default and macOS silently
+  // clamps the window to the visible area, which fails every pixel
+  // baseline on dimensions alone.
+  const sizeOverride = /^(\d+)x(\d+)$/.exec(process.env['LLAMACTL_WINDOW_SIZE'] ?? '');
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: sizeOverride ? Number(sizeOverride[1]) : 1280,
+    height: sizeOverride ? Number(sizeOverride[2]) : 800,
     minWidth: 920,
     minHeight: 600,
     backgroundColor: '#0b0f14',

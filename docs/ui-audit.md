@@ -117,6 +117,16 @@ invariants keep it hermetic:
   baselines seeded on a Retina dev machine (2× by default) have the
   same pixel geometry CI produces. Without it every diff fails on
   dimensions alone.
+- `LLAMACTL_WINDOW_SIZE=1024x640` pins the BrowserWindow itself. The CI
+  runner's virtual display is smaller than the app's 1280×800 default
+  and macOS silently clamps the window to the visible area (~1024×681),
+  which also fails every baseline on dimensions. 1024×640 fits the
+  runner while satisfying the app's 920×600 minimum.
+- `DEV_STORAGE=$PROFILE` is pinned explicitly. The resolver's priority
+  is individual env var > test-profile default, so a dev shell's
+  exported `DEV_STORAGE` (real cluster config, catalog, workloads)
+  would otherwise leak into the launched app and bake live fleet state
+  into baselines — state CI doesn't have.
 - The electron-mcp-server driver is pinned to a specific commit SHA in
   [`.github/workflows/ui-audit.yml`](../.github/workflows/ui-audit.yml) —
   bump that pin explicitly when the driver changes.
