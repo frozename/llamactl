@@ -32,6 +32,7 @@ export default tseslint.config(
       "packages/train/.spike-work/**",
       "**/.venv/**",
       "packages/app/release/**",
+      ".claude/**",
     ],
   },
   {

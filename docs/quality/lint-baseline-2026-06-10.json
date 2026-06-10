@@ -1,7 +1,7 @@
 {
   "totals": {
-    "errors": 1709,
-    "warnings": 2588
+    "errors": 46,
+    "warnings": 2439
   },
   "byRule": {
     "security/detect-non-literal-fs-filename": {
@@ -10,11 +10,11 @@
     },
     "@typescript-eslint/explicit-function-return-type": {
       "errors": 0,
-      "warnings": 703
+      "warnings": 656
     },
     "sonarjs/cognitive-complexity": {
       "errors": 0,
-      "warnings": 236
+      "warnings": 238
     },
     "max-lines-per-function": {
       "errors": 0,
@@ -22,7 +22,7 @@
     },
     "@typescript-eslint/no-explicit-any": {
       "errors": 0,
-      "warnings": 130
+      "warnings": 20
     },
     "unicorn/no-for-loop": {
       "errors": 0,
@@ -44,164 +44,32 @@
       "errors": 0,
       "warnings": 7
     },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "errors": 1,
+      "warnings": 0
+    },
     "no-warning-comments": {
       "errors": 0,
       "warnings": 3
     },
     "@typescript-eslint/consistent-type-imports": {
       "errors": 0,
-      "warnings": 24
+      "warnings": 23
     },
-    "@typescript-eslint/prefer-nullish-coalescing": {
-      "errors": 26,
-      "warnings": 0
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "errors": 166,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-unnecessary-condition": {
-      "errors": 107,
-      "warnings": 0
-    },
-    "@typescript-eslint/require-await": {
-      "errors": 412,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "errors": 160,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "errors": 183,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "errors": 67,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "errors": 34,
+    "@typescript-eslint/await-thenable": {
+      "errors": 2,
       "warnings": 0
     },
     "perfectionist/sort-imports": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 6
     },
-    "@typescript-eslint/dot-notation": {
-      "errors": 1,
-      "warnings": 0
+    "perfectionist/sort-named-imports": {
+      "errors": 0,
+      "warnings": 2
     },
-    "@typescript-eslint/no-non-null-assertion": {
-      "errors": 83,
-      "warnings": 0
-    },
-    "@typescript-eslint/unbound-method": {
-      "errors": 20,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-empty-function": {
-      "errors": 149,
-      "warnings": 0
-    },
-    "@typescript-eslint/use-unknown-in-catch-callback-variable": {
-      "errors": 1,
-      "warnings": 0
-    },
-    "@typescript-eslint/prefer-optional-chain": {
-      "errors": 1,
-      "warnings": 0
-    },
-    "@typescript-eslint/switch-exhaustiveness-check": {
-      "errors": 1,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-deprecated": {
-      "errors": 3,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "errors": 24,
-      "warnings": 0
-    },
-    "regexp/no-unused-capturing-group": {
-      "errors": 1,
-      "warnings": 0
-    },
-    "regexp/no-super-linear-backtracking": {
-      "errors": 1,
-      "warnings": 0
-    },
-    "@typescript-eslint/only-throw-error": {
-      "errors": 3,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-require-imports": {
-      "errors": 10,
-      "warnings": 0
-    },
-    "@typescript-eslint/prefer-as-const": {
-      "errors": 1,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-misused-spread": {
-      "errors": 18,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-base-to-string": {
-      "errors": 2,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-unnecessary-type-parameters": {
-      "errors": 2,
-      "warnings": 0
-    },
-    "no-useless-escape": {
-      "errors": 3,
-      "warnings": 0
-    },
-    "no-empty": {
-      "errors": 10,
-      "warnings": 0
-    },
-    "eqeqeq": {
-      "errors": 10,
-      "warnings": 0
-    },
-    "no-console": {
-      "errors": 12,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-floating-promises": {
-      "errors": 22,
-      "warnings": 0
-    },
-    "@typescript-eslint/restrict-plus-operands": {
-      "errors": 1,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-invalid-void-type": {
-      "errors": 1,
-      "warnings": 0
-    },
-    "@typescript-eslint/prefer-promise-reject-errors": {
-      "errors": 11,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-dynamic-delete": {
-      "errors": 31,
-      "warnings": 0
-    },
-    "@typescript-eslint/await-thenable": {
-      "errors": 48,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-confusing-void-expression": {
-      "errors": 48,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-misused-promises": {
-      "errors": 1,
+    "@typescript-eslint/restrict-template-expressions": {
+      "errors": 4,
       "warnings": 0
     },
     "no-unused-vars": {
@@ -210,6 +78,10 @@
     },
     "no-undef": {
       "errors": 19,
+      "warnings": 0
+    },
+    "no-empty": {
+      "errors": 4,
       "warnings": 0
     }
   },
@@ -1175,7 +1047,7 @@
       "warnings": 12
     },
     "packages/cli/src/commands/rag.ts": {
-      "errors": 0,
+      "errors": 1,
       "warnings": 2
     },
     "packages/cli/src/commands/recommendations.ts": {
@@ -2203,7 +2075,7 @@
       "warnings": 0
     },
     "packages/fleet-supervisor/test/fleetSnapshotRoute.test.ts": {
-      "errors": 0,
+      "errors": 2,
       "warnings": 2
     },
     "packages/fleet-supervisor/test/journal.test.ts": {
@@ -2319,7 +2191,7 @@
       "warnings": 13
     },
     "packages/remote/src/bench/schedule.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/src/bench/scheduleLoop.ts": {
@@ -2327,7 +2199,7 @@
       "warnings": 2
     },
     "packages/remote/src/cli/adapter.ts": {
-      "errors": 50,
+      "errors": 0,
       "warnings": 6
     },
     "packages/remote/src/cli/index.ts": {
@@ -2335,39 +2207,39 @@
       "warnings": 0
     },
     "packages/remote/src/cli/journal.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/src/cli/presets.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/client/infra-client.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 7
     },
     "packages/remote/src/client/links.ts": {
-      "errors": 3,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/src/client/node-client.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/src/composite/apply.ts": {
-      "errors": 7,
-      "warnings": 8
+      "errors": 0,
+      "warnings": 5
     },
     "packages/remote/src/composite/dag.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 1
     },
     "packages/remote/src/composite/event-bus.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/composite/handlers/pipeline.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/composite/schema.ts": {
@@ -2375,7 +2247,7 @@
       "warnings": 1
     },
     "packages/remote/src/composite/store.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 10
     },
     "packages/remote/src/composite/types.ts": {
@@ -2383,7 +2255,7 @@
       "warnings": 0
     },
     "packages/remote/src/config/agent-config.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 5
     },
     "packages/remote/src/config/bootstrap-tokens.ts": {
@@ -2391,11 +2263,15 @@
       "warnings": 12
     },
     "packages/remote/src/config/embersynth.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 7
     },
+    "packages/remote/src/config/env.ts": {
+      "errors": 0,
+      "warnings": 0
+    },
     "packages/remote/src/config/kubeconfig.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 6
     },
     "packages/remote/src/config/peers.ts": {
@@ -2403,11 +2279,11 @@
       "warnings": 0
     },
     "packages/remote/src/config/project-routing.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/src/config/projects.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/src/config/provider-nodes.ts": {
@@ -2415,15 +2291,15 @@
       "warnings": 3
     },
     "packages/remote/src/config/schema.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 1
     },
     "packages/remote/src/config/secret.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/src/config/sirius-providers.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/src/index.ts": {
@@ -2431,23 +2307,23 @@
       "warnings": 0
     },
     "packages/remote/src/infra/artifacts-fetch.ts": {
-      "errors": 9,
+      "errors": 0,
       "warnings": 19
     },
     "packages/remote/src/infra/install.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 5
     },
     "packages/remote/src/infra/layout.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 20
     },
     "packages/remote/src/infra/services.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 7
     },
     "packages/remote/src/infra/spec.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 5
     },
     "packages/remote/src/ops-chat/audit.ts": {
@@ -2455,12 +2331,12 @@
       "warnings": 4
     },
     "packages/remote/src/ops-chat/dispatch.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/src/ops-chat/loop-executor.ts": {
-      "errors": 8,
-      "warnings": 5
+      "errors": 0,
+      "warnings": 2
     },
     "packages/remote/src/ops-chat/loop-schema.ts": {
       "errors": 0,
@@ -2483,7 +2359,7 @@
       "warnings": 0
     },
     "packages/remote/src/ops-chat/sessions/journal-schema.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/ops-chat/sessions/journal.ts": {
@@ -2499,31 +2375,31 @@
       "warnings": 0
     },
     "packages/remote/src/providers/factory.ts": {
-      "errors": 11,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 2
     },
     "packages/remote/src/rag/bench.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/rag/chroma/adapter.ts": {
-      "errors": 9,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 2
     },
     "packages/remote/src/rag/chroma/client.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/rag/chroma/http-client.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/rag/chroma/index.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/rag/embedding.ts": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/rag/errors.ts": {
@@ -2531,39 +2407,39 @@
       "warnings": 0
     },
     "packages/remote/src/rag/index.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/rag/pgvector/adapter.ts": {
-      "errors": 11,
-      "warnings": 0
+      "errors": 0,
+      "warnings": 1
     },
     "packages/remote/src/rag/pgvector/client.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/rag/pgvector/index.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/rag/pipeline/draft.ts": {
-      "errors": 20,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/src/rag/pipeline/event-bus.ts": {
-      "errors": 4,
-      "warnings": 0
+      "errors": 0,
+      "warnings": 4
     },
     "packages/remote/src/rag/pipeline/fetchers/filesystem.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/src/rag/pipeline/fetchers/git.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/src/rag/pipeline/fetchers/http.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/src/rag/pipeline/fetchers/registry.ts": {
@@ -2575,7 +2451,7 @@
       "warnings": 0
     },
     "packages/remote/src/rag/pipeline/journal.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 9
     },
     "packages/remote/src/rag/pipeline/orphan.ts": {
@@ -2583,11 +2459,11 @@
       "warnings": 4
     },
     "packages/remote/src/rag/pipeline/runtime.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/src/rag/pipeline/scheduler.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 7
     },
     "packages/remote/src/rag/pipeline/schema.ts": {
@@ -2595,11 +2471,11 @@
       "warnings": 0
     },
     "packages/remote/src/rag/pipeline/store.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 12
     },
     "packages/remote/src/rag/pipeline/transforms/markdown-chunk.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/src/rag/pipeline/transforms/registry.ts": {
@@ -2615,11 +2491,11 @@
       "warnings": 0
     },
     "packages/remote/src/router.ts": {
-      "errors": 44,
+      "errors": 0,
       "warnings": 19
     },
     "packages/remote/src/routes/fleet.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/runtime/backend.ts": {
@@ -2627,11 +2503,11 @@
       "warnings": 0
     },
     "packages/remote/src/runtime/docker/backend.ts": {
-      "errors": 3,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 1
     },
     "packages/remote/src/runtime/docker/client.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/src/runtime/errors.ts": {
@@ -2643,23 +2519,23 @@
       "warnings": 0
     },
     "packages/remote/src/runtime/kubernetes/backend.ts": {
-      "errors": 38,
+      "errors": 0,
       "warnings": 6
     },
     "packages/remote/src/runtime/kubernetes/client.ts": {
-      "errors": 25,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 3
     },
     "packages/remote/src/runtime/kubernetes/labels.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/runtime/kubernetes/translate-deployment.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/runtime/kubernetes/translate-statefulset.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/runtime/labels.ts": {
@@ -2671,32 +2547,32 @@
       "warnings": 0
     },
     "packages/remote/src/search/ingest/logs.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 3
     },
     "packages/remote/src/search/ingest/sessions.ts": {
-      "errors": 8,
-      "warnings": 6
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/src/search/knowledge.ts": {
       "errors": 0,
       "warnings": 1
     },
     "packages/remote/src/search/logs.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/src/search/rag-bridge.ts": {
-      "errors": 43,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 1
     },
     "packages/remote/src/search/rag-node.ts": {
-      "errors": 5,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/src/search/sessions.ts": {
-      "errors": 3,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 3
     },
     "packages/remote/src/search/text-match.ts": {
       "errors": 0,
@@ -2707,11 +2583,11 @@
       "warnings": 0
     },
     "packages/remote/src/server/agent-update.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 12
     },
     "packages/remote/src/server/artifacts.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/src/server/auth.ts": {
@@ -2719,27 +2595,27 @@
       "warnings": 0
     },
     "packages/remote/src/server/install-script.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/server/mdns.ts": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 1
     },
     "packages/remote/src/server/metrics.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/server/modelhost.ts": {
-      "errors": 16,
-      "warnings": 6
+      "errors": 0,
+      "warnings": 8
     },
     "packages/remote/src/server/peer-snapshot-poller.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 3
     },
     "packages/remote/src/server/rag-chat-endpoint.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 6
     },
     "packages/remote/src/server/register.ts": {
@@ -2747,7 +2623,7 @@
       "warnings": 0
     },
     "packages/remote/src/server/serve.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 9
     },
     "packages/remote/src/server/service-templates.ts": {
@@ -2755,11 +2631,11 @@
       "warnings": 0
     },
     "packages/remote/src/server/tls.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 8
     },
     "packages/remote/src/server/tunnel-relay.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/src/service/errors.ts": {
@@ -2767,11 +2643,11 @@
       "warnings": 0
     },
     "packages/remote/src/service/handlers/chroma-handler.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 1
     },
     "packages/remote/src/service/handlers/generic-handler.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/service/handlers/hash.ts": {
@@ -2783,7 +2659,7 @@
       "warnings": 0
     },
     "packages/remote/src/service/handlers/pgvector-handler.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/service/handlers/registry.ts": {
@@ -2799,7 +2675,7 @@
       "warnings": 0
     },
     "packages/remote/src/service/schema.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/tunnel/index.ts": {
@@ -2807,7 +2683,7 @@
       "warnings": 0
     },
     "packages/remote/src/tunnel/journal.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/src/tunnel/messages.ts": {
@@ -2815,43 +2691,43 @@
       "warnings": 0
     },
     "packages/remote/src/tunnel/router-bridge.ts": {
-      "errors": 12,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 1
     },
     "packages/remote/src/tunnel/tunnel-client.ts": {
-      "errors": 42,
+      "errors": 0,
       "warnings": 15
     },
     "packages/remote/src/tunnel/tunnel-server.ts": {
-      "errors": 42,
+      "errors": 0,
       "warnings": 11
     },
     "packages/remote/src/workload/admission.test.ts": {
-      "errors": 4,
-      "warnings": 7
+      "errors": 0,
+      "warnings": 3
     },
     "packages/remote/src/workload/admission.ts": {
       "errors": 0,
       "warnings": 3
     },
     "packages/remote/src/workload/apply.multi.test.ts": {
-      "errors": 41,
-      "warnings": 23
+      "errors": 0,
+      "warnings": 8
     },
     "packages/remote/src/workload/apply.ts": {
-      "errors": 22,
+      "errors": 0,
       "warnings": 9
     },
     "packages/remote/src/workload/gateway-catalog/apply.ts": {
-      "errors": 3,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/src/workload/gateway-catalog/embersynth-entries.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/workload/gateway-catalog/hash.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/workload/gateway-catalog/index.ts": {
@@ -2863,12 +2739,12 @@
       "warnings": 0
     },
     "packages/remote/src/workload/gateway-catalog/reload.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 1
     },
     "packages/remote/src/workload/gateway-catalog/remove.ts": {
-      "errors": 2,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/src/workload/gateway-catalog/schema.ts": {
       "errors": 0,
@@ -2879,11 +2755,11 @@
       "warnings": 0
     },
     "packages/remote/src/workload/gateway-handlers/agent-gateway.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/workload/gateway-handlers/embersynth.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/src/workload/gateway-handlers/index.ts": {
@@ -2895,7 +2771,7 @@
       "warnings": 1
     },
     "packages/remote/src/workload/gateway-handlers/sirius.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/src/workload/gateway-handlers/types.ts": {
@@ -2903,7 +2779,7 @@
       "warnings": 0
     },
     "packages/remote/src/workload/lock.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 9
     },
     "packages/remote/src/workload/modelhost-schema.ts": {
@@ -2911,7 +2787,7 @@
       "warnings": 0
     },
     "packages/remote/src/workload/modelhost-store.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 9
     },
     "packages/remote/src/workload/node-mutex.ts": {
@@ -2919,7 +2795,7 @@
       "warnings": 0
     },
     "packages/remote/src/workload/noderun-apply.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 3
     },
     "packages/remote/src/workload/noderun-reconciler.ts": {
@@ -2927,11 +2803,11 @@
       "warnings": 0
     },
     "packages/remote/src/workload/noderun-schema.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/src/workload/noderun-store.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 8
     },
     "packages/remote/src/workload/reconcileLoop.ts": {
@@ -2939,8 +2815,8 @@
       "warnings": 0
     },
     "packages/remote/src/workload/reconciler.test.ts": {
-      "errors": 9,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 1
     },
     "packages/remote/src/workload/reconciler.ts": {
       "errors": 0,
@@ -2955,19 +2831,19 @@
       "warnings": 0
     },
     "packages/remote/src/workload/store.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 18
     },
     "packages/remote/test/agent-dial-central.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/agent-update.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 7
     },
     "packages/remote/test/artifacts-fetch.test.ts": {
-      "errors": 14,
+      "errors": 0,
       "warnings": 37
     },
     "packages/remote/test/artifacts.test.ts": {
@@ -2979,7 +2855,7 @@
       "warnings": 1
     },
     "packages/remote/test/auth.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/bench-schedule.test.ts": {
@@ -2991,7 +2867,7 @@
       "warnings": 6
     },
     "packages/remote/test/cli-adapter.test.ts": {
-      "errors": 15,
+      "errors": 0,
       "warnings": 1
     },
     "packages/remote/test/cli-schema.test.ts": {
@@ -2999,7 +2875,7 @@
       "warnings": 0
     },
     "packages/remote/test/cli-stream.test.ts": {
-      "errors": 12,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/cli-synthesis.test.ts": {
@@ -3007,11 +2883,11 @@
       "warnings": 0
     },
     "packages/remote/test/cluster-serverstart.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 9
     },
     "packages/remote/test/cluster-streaming.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 6
     },
     "packages/remote/test/cluster.test.ts": {
@@ -3019,8 +2895,8 @@
       "warnings": 0
     },
     "packages/remote/test/composite-apply.test.ts": {
-      "errors": 27,
-      "warnings": 20
+      "errors": 0,
+      "warnings": 17
     },
     "packages/remote/test/composite-dag-pipeline.test.ts": {
       "errors": 0,
@@ -3031,28 +2907,28 @@
       "warnings": 2
     },
     "packages/remote/test/composite-destroy-catalog-cleanup.test.ts": {
-      "errors": 19,
-      "warnings": 15
+      "errors": 0,
+      "warnings": 2
     },
     "packages/remote/test/composite-e2e.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/composite-event-bus.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/composite-pipeline-apply.test.ts": {
-      "errors": 17,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/composite-pipeline-destroy.test.ts": {
-      "errors": 17,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/composite-router.test.ts": {
-      "errors": 10,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/composite-schema-pipeline.test.ts": {
       "errors": 0,
@@ -3074,21 +2950,25 @@
       "errors": 0,
       "warnings": 4
     },
+    "packages/remote/test/config/env-paths.test.ts": {
+      "errors": 0,
+      "warnings": 0
+    },
     "packages/remote/test/config/peers.test.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/test/cross-repo-seam.test.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/embersynth.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/test/gateway-catalog-apply.test.ts": {
-      "errors": 8,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/gateway-catalog-derive-embersynth.test.ts": {
       "errors": 0,
@@ -3103,43 +2983,43 @@
       "warnings": 0
     },
     "packages/remote/test/gateway-catalog-io.test.ts": {
-      "errors": 4,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/gateway-catalog-remove.test.ts": {
-      "errors": 6,
-      "warnings": 7
+      "errors": 0,
+      "warnings": 1
     },
     "packages/remote/test/gateway-catalog-schema.test.ts": {
-      "errors": 4,
-      "warnings": 6
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/gateway-handler-embersynth-composite.test.ts": {
-      "errors": 18,
-      "warnings": 11
+      "errors": 0,
+      "warnings": 4
     },
     "packages/remote/test/gateway-handler-sirius-composite.test.ts": {
-      "errors": 18,
-      "warnings": 10
+      "errors": 0,
+      "warnings": 3
     },
     "packages/remote/test/gateway-handlers.test.ts": {
-      "errors": 10,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/gateway-integration.test.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/test/gateway-reload.test.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 6
     },
     "packages/remote/test/helpers.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 1
     },
     "packages/remote/test/infra-install.test.ts": {
-      "errors": 10,
+      "errors": 0,
       "warnings": 19
     },
     "packages/remote/test/infra-layout.test.ts": {
@@ -3147,7 +3027,7 @@
       "warnings": 6
     },
     "packages/remote/test/infra-services.test.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 6
     },
     "packages/remote/test/infra-spec.test.ts": {
@@ -3155,8 +3035,8 @@
       "warnings": 7
     },
     "packages/remote/test/infraRolloutHealthGate.test.ts": {
-      "errors": 5,
-      "warnings": 5
+      "errors": 0,
+      "warnings": 2
     },
     "packages/remote/test/install-script.test.ts": {
       "errors": 0,
@@ -3167,27 +3047,27 @@
       "warnings": 3
     },
     "packages/remote/test/mdns.test.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 8
     },
     "packages/remote/test/metrics.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 3
     },
     "packages/remote/test/node-client.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/test/noderun-reconciler.test.ts": {
-      "errors": 9,
+      "errors": 0,
       "warnings": 10
     },
     "packages/remote/test/noderun.test.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 1
     },
     "packages/remote/test/openai-proxy.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 12
     },
     "packages/remote/test/ops-chat-audit-session.test.ts": {
@@ -3195,7 +3075,7 @@
       "warnings": 0
     },
     "packages/remote/test/ops-chat-dispatch.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/test/ops-chat-event-bus.test.ts": {
@@ -3203,20 +3083,20 @@
       "warnings": 0
     },
     "packages/remote/test/ops-chat-journal.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/test/ops-chat-loop-executor-journal.test.ts": {
-      "errors": 4,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 1
     },
     "packages/remote/test/ops-chat-loop.test.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 3
     },
     "packages/remote/test/ops-chat-paths.test.ts": {
-      "errors": 4,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/ops-chat-redaction.test.ts": {
       "errors": 0,
@@ -3227,15 +3107,15 @@
       "warnings": 0
     },
     "packages/remote/test/ops-chat-sessions-list.test.ts": {
-      "errors": 3,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 2
     },
     "packages/remote/test/ops-session-router.test.ts": {
-      "errors": 4,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/peer-snapshot-poller.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/test/pipeline-apply-ownership.test.ts": {
@@ -3243,19 +3123,19 @@
       "warnings": 0
     },
     "packages/remote/test/pipeline-export-mcp.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 3
     },
     "packages/remote/test/pipeline-remove-refcounted.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/planner-composite.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/test/project-routing.test.ts": {
-      "errors": 8,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/test/projects-schema.test.ts": {
@@ -3263,7 +3143,7 @@
       "warnings": 0
     },
     "packages/remote/test/projects-store.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 3
     },
     "packages/remote/test/provider-nodes.test.ts": {
@@ -3271,31 +3151,31 @@
       "warnings": 0
     },
     "packages/remote/test/rag-bench.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/rag-chat-endpoint.test.ts": {
-      "errors": 50,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 3
     },
     "packages/remote/test/rag-chroma-adapter.test.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/rag-chroma-http.test.ts": {
-      "errors": 10,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/test/rag-e2e.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/rag-embedding.test.ts": {
-      "errors": 25,
+      "errors": 0,
       "warnings": 1
     },
     "packages/remote/test/rag-pgvector-adapter.test.ts": {
-      "errors": 9,
+      "errors": 0,
       "warnings": 6
     },
     "packages/remote/test/rag-pipeline-draft.test.ts": {
@@ -3303,7 +3183,7 @@
       "warnings": 0
     },
     "packages/remote/test/rag-pipeline-event-bus.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/rag-pipeline-filesystem.test.ts": {
@@ -3311,19 +3191,19 @@
       "warnings": 11
     },
     "packages/remote/test/rag-pipeline-git.test.ts": {
-      "errors": 2,
-      "warnings": 7
+      "errors": 0,
+      "warnings": 6
     },
     "packages/remote/test/rag-pipeline-http.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/test/rag-pipeline-journal.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 3
     },
     "packages/remote/test/rag-pipeline-md-chunk.test.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 1
     },
     "packages/remote/test/rag-pipeline-orphan.test.ts": {
@@ -3331,11 +3211,11 @@
       "warnings": 0
     },
     "packages/remote/test/rag-pipeline-runtime.test.ts": {
-      "errors": 7,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 2
     },
     "packages/remote/test/rag-pipeline-scheduler.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 7
     },
     "packages/remote/test/rag-pipeline-schema.test.ts": {
@@ -3343,7 +3223,7 @@
       "warnings": 0
     },
     "packages/remote/test/rag-pipeline-store.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 10
     },
     "packages/remote/test/register.test.ts": {
@@ -3351,40 +3231,40 @@
       "warnings": 1
     },
     "packages/remote/test/router-node-budget.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/router-project.test.ts": {
-      "errors": 13,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/test/router-rag-pipeline.test.ts": {
-      "errors": 30,
+      "errors": 0,
       "warnings": 15
     },
     "packages/remote/test/router-rag.test.ts": {
-      "errors": 17,
+      "errors": 0,
       "warnings": 9
     },
     "packages/remote/test/router-workload.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/runtime-docker-backend.test.ts": {
-      "errors": 21,
+      "errors": 0,
       "warnings": 2
     },
     "packages/remote/test/runtime-k8s-backend.test.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 1
     },
     "packages/remote/test/search-ingest-logs.test.ts": {
-      "errors": 6,
-      "warnings": 5
+      "errors": 0,
+      "warnings": 3
     },
     "packages/remote/test/search-ingest-sessions.test.ts": {
-      "errors": 6,
-      "warnings": 5
+      "errors": 0,
+      "warnings": 1
     },
     "packages/remote/test/search-knowledge.test.ts": {
       "errors": 0,
@@ -3395,27 +3275,27 @@
       "warnings": 4
     },
     "packages/remote/test/search-rag-bridge.test.ts": {
-      "errors": 10,
-      "warnings": 7
+      "errors": 0,
+      "warnings": 2
     },
     "packages/remote/test/search-rag-node.test.ts": {
       "errors": 0,
       "warnings": 2
     },
     "packages/remote/test/search-sessions.test.ts": {
-      "errors": 3,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/remote/test/search-text-match.test.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/serve.test.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 10
     },
     "packages/remote/test/server/modelhost.test.ts": {
-      "errors": 31,
+      "errors": 0,
       "warnings": 22
     },
     "packages/remote/test/service-handlers-chroma.test.ts": {
@@ -3427,7 +3307,7 @@
       "warnings": 0
     },
     "packages/remote/test/service-handlers-pgvector.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/service-schema.test.ts": {
@@ -3443,71 +3323,71 @@
       "warnings": 2
     },
     "packages/remote/test/translate-deployment.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/translate-statefulset.test.ts": {
-      "errors": 15,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/transport-spike.test.ts": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 3
     },
     "packages/remote/test/trpc-v11-spike.test.ts": {
-      "errors": 6,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 4
     },
     "packages/remote/test/tunnel-client-subscribe.test.ts": {
-      "errors": 12,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/test/tunnel-integration.test.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 3
     },
     "packages/remote/test/tunnel-journal.test.ts": {
-      "errors": 10,
-      "warnings": 5
+      "errors": 0,
+      "warnings": 7
     },
     "packages/remote/test/tunnel-messages.test.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/tunnel-relay-sse.test.ts": {
-      "errors": 19,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/test/tunnel-router-bridge-subscription.test.ts": {
-      "errors": 9,
+      "errors": 0,
       "warnings": 1
     },
     "packages/remote/test/tunnel-router-bridge.test.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 4
     },
     "packages/remote/test/tunnel-server-subscribe.test.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 3
     },
     "packages/remote/test/tunnel.test.ts": {
-      "errors": 42,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 6
     },
     "packages/remote/test/tunneled-client.test.ts": {
-      "errors": 36,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 8
     },
     "packages/remote/test/workload-apply-preflight.test.ts": {
-      "errors": 18,
+      "errors": 0,
       "warnings": 25
     },
     "packages/remote/test/workload-concurrency.test.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 16
     },
     "packages/remote/test/workload-list.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/remote/test/workload-lock.test.ts": {
@@ -3515,16 +3395,16 @@
       "warnings": 4
     },
     "packages/remote/test/workload.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 5
     },
     "packages/remote/test/workload/modelhost-apply-timeout.test.ts": {
-      "errors": 8,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 1
     },
     "packages/remote/test/workload/modelhost-apply.test.ts": {
-      "errors": 115,
-      "warnings": 43
+      "errors": 0,
+      "warnings": 3
     },
     "packages/remote/test/workload/modelhost-name-safety.test.ts": {
       "errors": 0,
@@ -3543,8 +3423,8 @@
       "warnings": 4
     },
     "packages/remote/test/workload/reconciler.test.ts": {
-      "errors": 19,
-      "warnings": 19
+      "errors": 0,
+      "warnings": 16
     },
     "packages/remote/test/workload/store-kind-filter.test.ts": {
       "errors": 0,
