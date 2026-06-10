@@ -137,7 +137,7 @@ test("readSchedulerLease reads holder from journal and does not call loadConfig 
     throw new Error("loadConfig should not be called");
   });
 
-  mock.module("../../src/config/kubeconfig.js", () => ({
+  void mock.module("../../src/config/kubeconfig.js", () => ({
     currentContext: () => {
       throw new Error("currentContext should not be called");
     },
@@ -148,7 +148,9 @@ test("readSchedulerLease reads holder from journal and does not call loadConfig 
     upsertNode,
   }));
 
-  const peers = await import(`../../src/config/peers.js?f11-${Date.now()}`);
+  const peers = (await import(`../../src/config/peers.js?f11-${String(Date.now())}`)) as {
+    readSchedulerLease: (path: string) => { holder: string } | null;
+  };
   const lease = peers.readSchedulerLease(journalPath);
   expect(lease).toEqual({ holder: "node-b" });
   expect(loadConfigSpy).not.toHaveBeenCalled();

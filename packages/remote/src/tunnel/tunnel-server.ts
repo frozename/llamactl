@@ -63,8 +63,15 @@ export interface TunnelRegistryEntry {
   close: (code?: number, reason?: string) => void;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyBunServerWebSocket = any;
+interface BunServerWebSocket {
+  data: unknown;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+}
+
+interface BunUpgradeServer {
+  upgrade(req: Request, opts: { data: ConnectionState }): boolean;
+}
 
 interface ConnectionState {
   authenticated: boolean;
@@ -90,16 +97,13 @@ export interface TunnelServerOptions {
 }
 
 export interface TunnelServer {
-  /** Used by Bun.serve's `fetch` handler for WebSocket upgrades.
-   *  Typed loosely with `any` because Bun's own Server type keeps its
-   *  `data` generic narrow; callers pass their Bun server directly. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  handleUpgrade: (req: Request, server: any) => Response | undefined;
+  /** Used by Bun.serve's `fetch` handler for WebSocket upgrades. */
+  handleUpgrade: (req: Request, server: BunUpgradeServer) => Response | undefined;
   /** Plugs straight into `Bun.serve({ websocket })`. */
   websocket: {
-    open: (ws: AnyBunServerWebSocket) => void;
-    message: (ws: AnyBunServerWebSocket, data: string | Buffer) => void;
-    close: (ws: AnyBunServerWebSocket, code: number, reason: string) => void;
+    open: (ws: BunServerWebSocket) => void;
+    message: (ws: BunServerWebSocket, data: string | Buffer) => void;
+    close: (ws: BunServerWebSocket, code: number, reason: string) => void;
   };
   send: (nodeName: string, req: Omit<TunnelReq, "type">) => Promise<TunnelRes>;
   /**
@@ -130,8 +134,7 @@ export interface TunnelServer {
  * later event after cancel is silently dropped.
  */
 function buildSubscriptionIterable(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ws: any,
+  ws: BunServerWebSocket,
   state: ConnectionState,
   req: TunnelReq,
 ): AsyncIterable<unknown> {
@@ -211,7 +214,8 @@ function buildSubscriptionIterable(
         async next(): Promise<IteratorResult<unknown>> {
           ensureRegistered();
           if (buffer.length > 0) {
-            const head = buffer.shift()!;
+            const head = buffer.shift();
+            if (!head) return { value: undefined, done: true };
             if (head.kind === "value") return { value: head.value, done: false };
             if (head.kind === "complete") return { value: undefined, done: true };
             throw Object.assign(new Error(head.error.message), {
@@ -223,14 +227,14 @@ function buildSubscriptionIterable(
             pending = { resolve, reject };
           });
         },
-        async return(): Promise<IteratorResult<unknown>> {
+        return(): Promise<IteratorResult<unknown>> {
           cleanup();
           if (pending) {
             const p = pending;
             pending = null;
             p.resolve({ value: undefined, done: true });
           }
-          return { value: undefined, done: true };
+          return Promise.resolve({ value: undefined, done: true });
         },
       };
     },
@@ -239,7 +243,7 @@ function buildSubscriptionIterable(
 
 export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
   const clock = opts.clock ?? (() => new Date());
-  const nodes = new Map<string, AnyBunServerWebSocket>();
+  const nodes = new Map<string, BunServerWebSocket>();
   // Resolved once at setup so env overrides capture the process's
   // startup state, not whatever `process.env` looks like when a ws
   // event fires. Journal writes are best-effort; `appendTunnelJournal`
@@ -254,11 +258,11 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
     }
   };
 
-  function getState(ws: AnyBunServerWebSocket): ConnectionState {
+  function getState(ws: BunServerWebSocket): ConnectionState {
     return ws.data as ConnectionState;
   }
 
-  function registerNode(ws: AnyBunServerWebSocket, nodeName: string): void {
+  function registerNode(ws: BunServerWebSocket, nodeName: string): void {
     const prior = nodes.get(nodeName);
     if (prior && prior !== ws) {
       // Emit the replaced entry BEFORE closing the prior socket so
@@ -284,7 +288,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
     });
   }
 
-  function unregisterNode(ws: AnyBunServerWebSocket, reason: string): void {
+  function unregisterNode(ws: BunServerWebSocket, reason: string): void {
     const state = getState(ws);
     if (!state.nodeName) return;
     // Only remove from registry if *this* ws still owns the slot.
@@ -297,7 +301,8 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       // numeric code so downstream tooling can bucket by close code
       // (1000 clean shutdown vs 4xxx policy-close vs 1006 abnormal).
       const codeMatch = /^ws closed (\d+)/.exec(reason);
-      const code = codeMatch ? Number.parseInt(codeMatch[1]!, 10) : undefined;
+      const rawCode = codeMatch?.[1];
+      const code = rawCode ? Number.parseInt(rawCode, 10) : undefined;
       journal({
         kind: "tunnel-disconnect",
         ts: clock().toISOString(),
@@ -457,7 +462,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
           clearTimeout(state.helloTimer);
           state.helloTimer = null;
         }
-        unregisterNode(ws, `ws closed ${code}${reason ? ` (${reason})` : ""}`);
+        unregisterNode(ws, `ws closed ${String(code)}${reason ? ` (${reason})` : ""}`);
       },
     },
     async send(nodeName, req) {
@@ -471,7 +476,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
           ws.send(encodeTunnelMessage(full));
         } catch (err) {
           state.pending.delete(full.id);
-          reject(err);
+          reject(err instanceof Error ? err : new Error(String(err)));
         }
       });
     },
@@ -486,13 +491,13 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
           [Symbol.asyncIterator](): AsyncIterator<unknown> {
             let thrown = false;
             return {
-              async next(): Promise<IteratorResult<unknown>> {
-                if (thrown) return { value: undefined, done: true };
+              next(): Promise<IteratorResult<unknown>> {
+                if (thrown) return Promise.resolve({ value: undefined, done: true });
                 thrown = true;
-                throw err;
+                return Promise.reject(err);
               },
-              async return(): Promise<IteratorResult<unknown>> {
-                return { value: undefined, done: true };
+              return(): Promise<IteratorResult<unknown>> {
+                return Promise.resolve({ value: undefined, done: true });
               },
             };
           },
@@ -516,7 +521,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
                 ws.send(encodeTunnelMessage(req));
               } catch (err) {
                 state.pending.delete(req.id);
-                reject(err);
+                reject(err instanceof Error ? err : new Error(String(err)));
               }
             }),
           close: (code, reason) => {

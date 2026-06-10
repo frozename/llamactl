@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
+import { nonEmpty } from "./env.js";
+
 /**
  * llamactl-owned storage for project resources. Projects are a
  * first-class primitive: filesystem path + optional RAG target + a
@@ -101,9 +103,9 @@ type ProjectFile = z.infer<typeof ProjectFileSchema>;
  * `~/.llamactl/projects.yaml`.
  */
 export function defaultProjectsPath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_PROJECTS_FILE?.trim();
+  const override = nonEmpty(env.LLAMACTL_PROJECTS_FILE);
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
   return join(base, "projects.yaml");
 }
 

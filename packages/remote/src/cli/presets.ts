@@ -114,7 +114,7 @@ export function resolvePreset(binding: CliBinding): ResolvedCliInvocation {
   return {
     command: binding.command ?? preset.command,
     args: binding.args ? [...binding.args] : [...preset.args],
-    format: binding.format ?? preset.format,
+    format: binding.format,
     stream: preset.stream,
     versionProbe: preset.versionProbe,
   };

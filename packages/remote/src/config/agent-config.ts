@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
+import { nonEmpty } from "./env.js";
+
 export const AgentConfigSchema = z.object({
   apiVersion: z.literal("llamactl/v1"),
   kind: z.literal("AgentConfig"),
@@ -19,9 +21,9 @@ export const AgentConfigSchema = z.object({
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
 export function defaultAgentDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_AGENT_DIR?.trim();
+  const override = nonEmpty(env.LLAMACTL_AGENT_DIR);
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
   return base;
 }
 
@@ -34,7 +36,7 @@ export function loadAgentConfig(path: string = defaultAgentConfigPath()): AgentC
     throw new Error(`agent config not found at ${path} — run 'llamactl agent init' first`);
   }
   const raw = readFileSync(path, "utf8");
-  const parsed = parseYaml(raw);
+  const parsed = parseYaml(raw) as unknown;
   return AgentConfigSchema.parse(parsed);
 }
 

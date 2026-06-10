@@ -79,8 +79,9 @@ export type TunnelJournalEntry =
 export function defaultTunnelJournalPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_TUNNEL_JOURNAL?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
-  return join(base, "tunnel", "journal.jsonl");
+  const devStorage = env.DEV_STORAGE?.trim();
+  if (devStorage) return join(devStorage, "tunnel", "journal.jsonl");
+  return join(homedir(), ".llamactl", "tunnel", "journal.jsonl");
 }
 
 // Module-scoped so we stderr-log exactly once per process when the

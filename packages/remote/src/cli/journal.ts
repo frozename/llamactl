@@ -21,6 +21,8 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { nonEmpty } from "../config/env.js";
+
 export interface CliJournalEntry {
   ts: string;
   agent: string;
@@ -41,9 +43,9 @@ export interface CliJournalEntry {
 }
 
 export function defaultCliJournalDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_CLI_JOURNAL_DIR?.trim();
+  const override = nonEmpty(env.LLAMACTL_CLI_JOURNAL_DIR);
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
   return join(base, "cli-journal");
 }
 

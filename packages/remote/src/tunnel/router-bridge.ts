@@ -33,8 +33,7 @@ import type { TunnelReq } from "./messages.js";
  * tunnel client surfaces as `res.error`. Malformed params → throws.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyCaller = any;
+type CallerProcedure = (input: unknown) => Promise<unknown>;
 
 export interface TunnelRouterParams {
   /** 'query' | 'mutation' | 'subscription' — query/mutation go through
@@ -44,7 +43,7 @@ export interface TunnelRouterParams {
   input?: unknown;
 }
 
-export function createTunnelRouterHandler(caller: AnyCaller): (req: TunnelReq) => Promise<unknown> {
+export function createTunnelRouterHandler(caller: unknown): (req: TunnelReq) => Promise<unknown> {
   return async (req: TunnelReq) => {
     const method = req.method;
     const params = (req.params ?? {}) as TunnelRouterParams;
@@ -72,17 +71,13 @@ export function createTunnelRouterHandler(caller: AnyCaller): (req: TunnelReq) =
  * fail on the very first segment for any real caller.
  */
 
-function walkCaller(
-  caller: any,
-  method: string,
-): ((input: unknown) => Promise<unknown>) | undefined {
+function walkCaller(caller: unknown, method: string): CallerProcedure | undefined {
   const parts = method.split(".");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let cursor: any = caller;
+  let cursor = caller;
   for (const part of parts) {
-    if (cursor == null) return undefined;
+    if (cursor === null || cursor === undefined) return undefined;
     if (typeof cursor !== "object" && typeof cursor !== "function") return undefined;
-    cursor = cursor[part];
+    cursor = Reflect.get(cursor, part);
     if (cursor === undefined) return undefined;
   }
   if (typeof cursor !== "function") return undefined;
@@ -91,7 +86,7 @@ function walkCaller(
   // it as another procedure-path segment, so cursor.bind would walk
   // into the proxy and 404. Use the prototype method directly.
 
-  return Function.prototype.bind.call(cursor, caller) as (input: unknown) => Promise<unknown>;
+  return Function.prototype.bind.call(cursor, caller) as CallerProcedure;
 }
 
 /**
@@ -180,7 +175,7 @@ export function createTunnelSubscriptionHandler(
             result = await callTRPCProcedure({
               router,
               path,
-              getRawInput: async () => params.input,
+              getRawInput: () => Promise.resolve(params.input),
               ctx: createContext(),
               type: "subscription",
               signal: abort.signal,
@@ -252,14 +247,14 @@ export function createTunnelSubscriptionHandler(
  *   - anything else — rejected; the caller surfaces an error frame.
  */
 function toAsyncIterable(value: unknown, signal: AbortSignal): AsyncIterable<unknown> | null {
-  if (value == null) return null;
+  if (value === null || value === undefined) return null;
   if (isAsyncIterable(value)) return value;
   if (isObservable(value)) return observableToAsyncIterable(value, signal);
   return null;
 }
 
 function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
-  if (value == null || typeof value !== "object") return false;
+  if (value === null || value === undefined || typeof value !== "object") return false;
   return (
     typeof (value as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function"
   );
@@ -270,11 +265,11 @@ interface MinimalObservable {
     next?: (v: unknown) => void;
     error?: (err: unknown) => void;
     complete?: () => void;
-  }): { unsubscribe: () => void } | (() => void) | void;
+  }): { unsubscribe: () => void } | (() => void) | undefined;
 }
 
 function isObservable(value: unknown): value is MinimalObservable {
-  if (value == null || typeof value !== "object") return false;
+  if (value === null || value === undefined || typeof value !== "object") return false;
   return typeof (value as { subscribe?: unknown }).subscribe === "function";
 }
 
@@ -365,7 +360,8 @@ function observableToAsyncIterable(
       return {
         async next(): Promise<IteratorResult<unknown>> {
           if (buffer.length > 0) {
-            const head = buffer.shift()!;
+            const head = buffer.shift();
+            if (!head) return { value: undefined, done: true };
             if (head.kind === "v") return { value: head.value, done: false };
             if (head.kind === "c") return { value: undefined, done: true };
             throw head.err;
@@ -375,7 +371,7 @@ function observableToAsyncIterable(
             pending = { resolve, reject };
           });
         },
-        async return(): Promise<IteratorResult<unknown>> {
+        return(): Promise<IteratorResult<unknown>> {
           if (!done) {
             done = true;
             try {
@@ -384,7 +380,7 @@ function observableToAsyncIterable(
               // ignore
             }
           }
-          return { value: undefined, done: true };
+          return Promise.resolve({ value: undefined, done: true });
         },
       };
     },

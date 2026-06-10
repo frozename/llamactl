@@ -277,8 +277,7 @@ export const ClusterNodeSchema = z
     (n) => {
       // Legacy kubeconfigs may carry `kind: 'cloud'`. Treat that as
       // gateway for validation — the data shape is identical.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const rawKind = (n as any).kind as string | undefined;
+      const rawKind = (n as { kind?: string }).kind;
       const k =
         rawKind === "gateway" || rawKind === "agent" || rawKind === "provider" || rawKind === "rag"
           ? rawKind
@@ -387,8 +386,7 @@ export const LOCAL_NODE_ENDPOINT = "inproc://local";
  *   * Otherwise it's an agent.
  */
 export function resolveNodeKind(node: ClusterNode): NodeKind {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const explicit = (node as any).kind as string | undefined;
+  const explicit = (node as { kind?: string }).kind;
   if (
     explicit === "gateway" ||
     explicit === "agent" ||

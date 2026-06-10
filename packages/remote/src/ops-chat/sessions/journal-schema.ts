@@ -36,12 +36,12 @@ export const OutcomeBodySchema = z.object({
 export const PreviewOutcomeSchema = Common.extend({
   type: z.literal("preview_outcome"),
   stepId: z.string().min(1),
-}).merge(OutcomeBodySchema);
+}).extend(OutcomeBodySchema.shape);
 
 export const WetOutcomeSchema = Common.extend({
   type: z.literal("wet_outcome"),
   stepId: z.string().min(1),
-}).merge(OutcomeBodySchema);
+}).extend(OutcomeBodySchema.shape);
 
 export const RefusalSchema = Common.extend({
   type: z.literal("refusal"),

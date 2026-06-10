@@ -37,6 +37,8 @@ export interface LoopExecutorOptions {
   goal: string;
   context?: string;
   history?: { role: "user" | "assistant"; text: string }[];
+  nodeId?: string;
+  model?: string;
   tools: PlannerToolDescriptor[];
   executor: PlannerExecutor;
   allowlist?: AllowlistConfig;
@@ -143,10 +145,10 @@ export async function* runLoopExecutor(
     ts: new Date().toISOString(),
     sessionId,
     goal: opts.goal,
-    nodeId: (opts as any).nodeId,
-    model: (opts as any).model,
+    nodeId: opts.nodeId,
+    model: opts.model,
     historyLen: opts.history?.length ?? 0,
-    toolCount: opts.tools?.length ?? 0,
+    toolCount: opts.tools.length,
   };
   await appendJournalEvent(sessionId, startEvent);
   sessionEventBus.publish(sessionId, startEvent);
@@ -162,7 +164,7 @@ export async function* runLoopExecutor(
   const outcomes: { step: string; ok: boolean; summary: string }[] = [];
   const seenSteps = new Set<string>();
 
-  const abortHandler = () => {
+  const abortHandler = (): void => {
     record.pendingOutcome?.reject(new Error("aborted"));
   };
   opts.signal?.addEventListener("abort", abortHandler);
@@ -210,7 +212,8 @@ export async function* runLoopExecutor(
 
       if (result.plan.steps.length === 0) break;
 
-      const step = result.plan.steps[0]!;
+      const [step] = result.plan.steps;
+      if (!step) break;
       const signature = `${step.tool}:${JSON.stringify(step.args)}`;
       if (seenSteps.has(signature)) {
         // Planner is looping on the same step — terminate to avoid
@@ -219,7 +222,7 @@ export async function* runLoopExecutor(
       }
       seenSteps.add(signature);
 
-      const stepId = `${sessionId}:${iteration}`;
+      const stepId = `${sessionId}:${String(iteration)}`;
       const pending = createDeferred<OpsChatStepOutcome>();
       record.currentStepId = stepId;
       record.pendingOutcome = pending;

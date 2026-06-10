@@ -56,8 +56,10 @@ export interface CliProviderOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+export type SpawnArgv = [command: string, ...args: string[]];
+
 export type SpawnFn = (
-  argv: string[],
+  argv: SpawnArgv,
   opts: {
     env: NodeJS.ProcessEnv;
     signal: AbortSignal;
@@ -89,7 +91,7 @@ export interface SpawnResult {
  * AbortSignal — partial consumption leaks the child.
  */
 export type SpawnStreamFn = (
-  argv: string[],
+  argv: SpawnArgv,
   opts: {
     env: NodeJS.ProcessEnv;
     signal: AbortSignal;
@@ -102,6 +104,26 @@ export interface SpawnStreamResult {
   stdout: AsyncIterable<string>;
   stderrPromise: Promise<string>;
   exitedPromise: Promise<{ exitCode: number; aborted: boolean }>;
+}
+
+interface BunChildProcess {
+  stdout: ReadableStream<Uint8Array>;
+  stderr: ReadableStream<Uint8Array>;
+  exited: Promise<number>;
+  stdin?: { write: (chunk: string) => void; end: () => void } | null;
+  kill: () => void;
+}
+
+interface BunRuntime {
+  spawn: (
+    argv: SpawnArgv,
+    opts: {
+      env: NodeJS.ProcessEnv;
+      stdout: "pipe";
+      stderr: "pipe";
+      stdin: "pipe" | null;
+    },
+  ) => BunChildProcess;
 }
 
 /**
@@ -123,7 +145,7 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
     async createResponse(request: UnifiedAiRequest): Promise<UnifiedAiResponse> {
       const prompt = messagesToPrompt(request.messages);
       const { args: expandedArgs, promptOnStdin } = expandArgs(resolved.args, prompt);
-      const argv = [resolved.command, ...expandedArgs];
+      const argv: SpawnArgv = [resolved.command, ...expandedArgs];
       const env = mergeEnv(opts.env ?? process.env, opts.binding.env);
 
       const ctrl = new AbortController();
@@ -188,7 +210,7 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
         throw wrapCliError(
           providerId,
           new Error(
-            `timed out after ${opts.binding.timeoutMs}ms (stderr: ${truncate(spawnResult.stderr, 400)})`,
+            `timed out after ${String(opts.binding.timeoutMs)}ms (stderr: ${truncate(spawnResult.stderr, 400)})`,
           ),
           "timeout",
         );
@@ -197,14 +219,14 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
         throw wrapCliError(
           providerId,
           new Error(
-            `exited with code ${spawnResult.exitCode} (stderr: ${truncate(spawnResult.stderr, 400)})`,
+            `exited with code ${String(spawnResult.exitCode)} (stderr: ${truncate(spawnResult.stderr, 400)})`,
           ),
           "non-zero-exit",
         );
       }
 
       const assistantContent = parseAssistantContent(spawnResult.stdout, resolved.format);
-      const model = request.model || opts.binding.defaultModel || `${opts.binding.preset}-cli`;
+      const model = request.model;
 
       // Rough token estimation — 4 chars/token is the industry
       // rule of thumb. Real adapters (openai-compat) read usage
@@ -247,7 +269,7 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
           ): AsyncGenerator<UnifiedStreamEvent, void, void> {
             const prompt = messagesToPrompt(request.messages);
             const { args: expandedArgs, promptOnStdin } = expandArgs(resolved.args, prompt);
-            const argv = [resolved.command, ...expandedArgs];
+            const argv: SpawnArgv = [resolved.command, ...expandedArgs];
             const env = mergeEnv(opts.env ?? process.env, opts.binding.env);
 
             // Local AbortController: timeout + caller signal both
@@ -265,8 +287,7 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
               else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
             }
             const startedAt = Date.now();
-            const model =
-              request.model || opts.binding.defaultModel || `${opts.binding.preset}-cli`;
+            const model = request.model;
             const chunkId = `cli-${randomUUID()}`;
             let responseBytes = 0;
             let yieldedRole = false;
@@ -381,7 +402,7 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
               yield {
                 type: "error",
                 error: {
-                  message: `cli provider '${providerId}' timeout after ${opts.binding.timeoutMs}ms`,
+                  message: `cli provider '${providerId}' timeout after ${String(opts.binding.timeoutMs)}ms`,
                   code: "timeout",
                   retryable: false,
                 },
@@ -393,7 +414,7 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
               yield {
                 type: "error",
                 error: {
-                  message: `cli provider '${providerId}' non-zero-exit ${exitCode}: ${truncate(stderrText, 400)}`,
+                  message: `cli provider '${providerId}' non-zero-exit ${String(exitCode)}: ${truncate(stderrText, 400)}`,
                   code: "non-zero-exit",
                 },
               };
@@ -433,7 +454,7 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
             state: "unhealthy",
             lastChecked: new Date().toISOString(),
             latencyMs,
-            error: `${resolved.command} ${resolved.versionProbe.join(" ")} exited ${result.exitCode}: ${truncate(result.stderr, 240)}`,
+            error: `${resolved.command} ${resolved.versionProbe.join(" ")} exited ${String(result.exitCode)}: ${truncate(result.stderr, 240)}`,
           };
         }
         return {
@@ -446,7 +467,7 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
           state: "unhealthy",
           lastChecked: new Date().toISOString(),
           latencyMs: Date.now() - startedAt,
-          error: (err as Error).message || "spawn-failed",
+          error: (err as Error).message,
         };
       } finally {
         clearTimeout(timer);
@@ -483,7 +504,6 @@ function flattenContent(content: ChatMessage["content"]): string {
   if (!Array.isArray(content)) return "";
   const parts: string[] = [];
   for (const block of content) {
-    if (!block) continue;
     if ("text" in block && typeof block.text === "string") {
       parts.push(block.text);
     } else if ("type" in block && block.type === "image_url") {
@@ -550,9 +570,8 @@ function wrapCliError(
  * adapter can include it in error messages without blocking the
  * streaming stdout path.
  */
-const defaultBunSpawnStream: SpawnStreamFn = async (argv, opts) => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const Bun = (globalThis as any).Bun;
+const defaultBunSpawnStream: SpawnStreamFn = (argv, opts) => {
+  const Bun = (globalThis as { Bun?: BunRuntime }).Bun;
   if (!Bun?.spawn) {
     throw new Error("Bun runtime not detected — cli adapter streaming requires Bun.spawn");
   }
@@ -589,11 +608,11 @@ const defaultBunSpawnStream: SpawnStreamFn = async (argv, opts) => {
   });
 
   async function* readLines(): AsyncIterable<string> {
-    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+    const reader = proc.stdout.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     try {
-      while (true) {
+      for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -608,7 +627,10 @@ const defaultBunSpawnStream: SpawnStreamFn = async (argv, opts) => {
       // Drain decoder + yield any trailing fragment that didn't
       // end with a newline. Common for single-line outputs.
       buffer += decoder.decode();
-      if (buffer.length > 0) yield buffer;
+      if (buffer.length === 0) {
+        return;
+      }
+      yield buffer;
     } finally {
       try {
         reader.releaseLock();
@@ -618,19 +640,18 @@ const defaultBunSpawnStream: SpawnStreamFn = async (argv, opts) => {
     }
   }
 
-  return {
+  return Promise.resolve({
     stdout: readLines(),
     stderrPromise,
     exitedPromise,
-  };
+  });
 };
 
 const defaultBunSpawn: SpawnFn = async (argv, opts) => {
   // Defer to Bun.spawn — the production path. Tests inject their
   // own `SpawnFn` via `CliProviderOptions.spawn` so this code only
   // runs against the real environment.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const Bun = (globalThis as any).Bun;
+  const Bun = (globalThis as { Bun?: BunRuntime }).Bun;
   if (!Bun?.spawn) {
     throw new Error("Bun runtime not detected — cli adapter requires Bun.spawn");
   }

@@ -6,6 +6,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
 import { CompositeOwnershipSchema } from "../workload/gateway-catalog/schema.js";
+import { nonEmpty } from "./env.js";
 import { loadConfig, resolveToken } from "./kubeconfig.js";
 import { type ClusterNode, type Config, LOCAL_NODE_ENDPOINT, resolveNodeKind } from "./schema.js";
 import { loadSiriusProviders } from "./sirius-providers.js";
@@ -120,9 +121,9 @@ export type EmbersynthProfile = z.infer<typeof EmbersynthProfileSchema>;
 // ---- Storage ---------------------------------------------------------
 
 export function defaultEmbersynthConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_EMBERSYNTH_CONFIG?.trim();
+  const override = nonEmpty(env.LLAMACTL_EMBERSYNTH_CONFIG);
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
   return join(base, "embersynth.yaml");
 }
 
@@ -131,7 +132,7 @@ export function loadEmbersynthConfig(
 ): EmbersynthConfig | null {
   if (!existsSync(path)) return null;
   const raw = readFileSync(path, "utf8");
-  return EmbersynthConfigSchema.parse(parseYaml(raw) ?? {});
+  return EmbersynthConfigSchema.parse((parseYaml(raw) as unknown) ?? {});
 }
 
 export function saveEmbersynthConfig(
@@ -215,10 +216,9 @@ function agentToEmbersynthNode(
       ? "http://127.0.0.1:8080"
       : node.endpoint.replace(/\/$/, "");
   const priority = benchSummary ? priorityFromGenTps(benchSummary.genTps) : 5;
-  const optimization =
-    benchSummary && benchSummary.contextWindow
-      ? { contextWindow: benchSummary.contextWindow }
-      : undefined;
+  const optimization = benchSummary?.contextWindow
+    ? { contextWindow: benchSummary.contextWindow }
+    : undefined;
   return EmbersynthNodeSchema.parse({
     id: `agent-${node.name}`,
     label: `llamactl agent '${node.name}'`,
@@ -373,9 +373,11 @@ export function generateEmbersynthConfig(opts?: {
     nodes.push(siriusProviderToEmbersynthNode(p.name, p.kind, baseUrl, p.apiKeyRef));
   }
 
-  const profiles = opts?.existing?.profiles?.length
-    ? opts.existing.profiles
-    : DEFAULT_EMBERSYNTH_PROFILES;
+  const existingProfiles = opts?.existing?.profiles;
+  const profiles =
+    existingProfiles && existingProfiles.length > 0
+      ? existingProfiles
+      : DEFAULT_EMBERSYNTH_PROFILES;
 
   const syntheticModels =
     opts?.existing?.syntheticModels && Object.keys(opts.existing.syntheticModels).length > 0

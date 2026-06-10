@@ -29,6 +29,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { nonEmpty } from "./env.js";
 import {
   defaultProjectsPath,
   loadProjects,
@@ -180,9 +181,9 @@ export async function resolveProjectNodeTarget(
 }
 
 export function defaultProjectRoutingJournalPath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_PROJECT_ROUTING_JOURNAL?.trim();
+  const override = nonEmpty(env.LLAMACTL_PROJECT_ROUTING_JOURNAL);
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
   return join(base, "project-routing.jsonl");
 }
 

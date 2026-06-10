@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { nonEmpty } from "./env.js";
 import {
   type ClusterNode,
   type Config,
@@ -15,16 +16,16 @@ import {
 import { resolveSecret } from "./secret.js";
 
 export function defaultConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_CONFIG?.trim();
+  const override = nonEmpty(env.LLAMACTL_CONFIG);
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
   return join(base, "config");
 }
 
 export function loadConfig(path: string = defaultConfigPath()): Config {
   if (!existsSync(path)) return freshConfig();
   const raw = readFileSync(path, "utf8");
-  const parsed = parseYaml(raw);
+  const parsed = parseYaml(raw) as unknown;
   return ConfigSchema.parse(parsed);
 }
 
@@ -57,7 +58,7 @@ export function resolveNode(
   const context = contextName
     ? config.contexts.find((c) => c.name === contextName)
     : currentContext(config);
-  if (!context) throw new Error(`context '${contextName}' not found`);
+  if (!context) throw new Error(`context '${contextName ?? "<default>"}' not found`);
   const cluster = config.clusters.find((c) => c.name === context.cluster);
   if (!cluster) throw new Error(`cluster '${context.cluster}' not found`);
   const user = config.users.find((u) => u.name === context.user);

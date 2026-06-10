@@ -76,8 +76,7 @@ export interface TunnelClientOptions {
    *  with `code: 'subscription-unsupported'`. */
   handleSubscription?: HandleSubscriptionFn;
   /** Override for tests. Defaults to the global WebSocket. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  WebSocketCtor?: any;
+  WebSocketCtor?: ClientWebSocketConstructor;
   /** Per-close observer. Fires on every socket close (including
    *  reconnects), not just the final stop(). */
   onClose?: (code: number, reason: string) => void;
@@ -113,12 +112,32 @@ export interface TunnelClient {
 const ACK_TIMEOUT_DEFAULT = 5000;
 const INITIAL_ATTEMPT_TIMEOUT_DEFAULT = 10000;
 
+interface ClientWebSocket {
+  onmessage: ((ev: { data: string | Buffer }) => void) | null;
+  onopen: (() => void) | null;
+  onclose: ((ev: { code: number; reason: string }) => void) | null;
+  onerror: (() => void) | null;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+}
+
+type ClientWebSocketConstructor = new (url: string) => ClientWebSocket;
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function errorCode(err: Error, fallback: string): string {
+  return "code" in err ? String(err.code) : fallback;
+}
+
 export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const WS: any = opts.WebSocketCtor ?? (globalThis as { WebSocket?: unknown }).WebSocket;
-  if (!WS) {
+  const WebSocketCtor =
+    opts.WebSocketCtor ?? (globalThis as { WebSocket?: ClientWebSocketConstructor }).WebSocket;
+  if (!WebSocketCtor) {
     throw new Error("createTunnelClient: no WebSocket available — pass WebSocketCtor explicitly");
   }
+  const WS: ClientWebSocketConstructor = WebSocketCtor;
   const reconnectCfg = {
     minDelayMs: opts.reconnect?.minDelayMs ?? 1000,
     maxDelayMs: opts.reconnect?.maxDelayMs ?? 60000,
@@ -129,8 +148,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
     timeoutMs: opts.heartbeat?.timeoutMs ?? 5000,
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let ws: any = null;
+  let ws: ClientWebSocket | null = null;
   let state: TunnelState = "disconnected";
   let stopped = false;
   let attempt = 0;
@@ -275,7 +293,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
       return {
         type: "res",
         id: req.id,
-        error: { code: "handler-threw", message: (err as Error).message },
+        error: { code: "handler-threw", message: errorMessage(err) },
       };
     }
   }
@@ -322,7 +340,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
             ok: false,
             error: {
               code: "subscription-handler-threw",
-              message: (err as Error).message,
+              message: errorMessage(err),
             },
           }),
         );
@@ -355,8 +373,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
               id: req.id,
               ok: false,
               error: {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                code: (err as any).code ?? "subscription-error",
+                code: errorCode(err, "subscription-error"),
                 message: err.message,
               },
             }),
@@ -389,8 +406,10 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
     setState("connecting");
     const ackTimeout = opts.helloAckTimeoutMs ?? ACK_TIMEOUT_DEFAULT;
     let ackTimer: ReturnType<typeof setTimeout> | null = null;
+    let newWs: ClientWebSocket;
     try {
-      ws = new WS(opts.url);
+      newWs = new WS(opts.url);
+      ws = newWs;
     } catch (err) {
       setState("disconnected");
       scheduleReconnect();
@@ -407,9 +426,9 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         /* ignore */
       }
     }, ackTimeout);
-    ws.onopen = () => {
+    newWs.onopen = () => {
       try {
-        ws.send(
+        newWs.send(
           encodeTunnelMessage({
             type: "hello",
             bearer: opts.bearer,
@@ -420,7 +439,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         // close path picks it up
       }
     };
-    ws.onmessage = (ev: { data: string | Buffer }) => {
+    newWs.onmessage = (ev: { data: string | Buffer }) => {
       const raw = typeof ev.data === "string" ? ev.data : ev.data.toString("utf8");
       const msg = parseTunnelMessage(raw);
       if (!msg) return;
@@ -479,7 +498,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         return;
       }
     };
-    ws.onclose = (ev: { code: number; reason: string }) => {
+    newWs.onclose = (ev: { code: number; reason: string }) => {
       if (ackTimer) {
         clearTimeout(ackTimer);
         ackTimer = null;
@@ -490,13 +509,13 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
       setState(stopped ? "stopped" : "disconnected");
       if (wasFirstAttempt && firstAttemptResolver) {
         firstAttemptResolver.reject(
-          new Error(`tunnel closed before hello-ack: ${ev.code} ${ev.reason}`),
+          new Error(`tunnel closed before hello-ack: ${String(ev.code)} ${ev.reason}`),
         );
         firstAttemptResolver = null;
       }
       if (!stopped) scheduleReconnect();
     };
-    ws.onerror = () => {
+    newWs.onerror = () => {
       // onclose will follow.
     };
   }
@@ -554,6 +573,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
     },
     async ping(nonce, timeoutMs = 3000) {
       if (state !== "ready" || !ws) throw new Error("tunnel not ready");
+      const currentWs = ws;
       const actualNonce = nonce ?? Math.random().toString(36).slice(2);
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -571,11 +591,11 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
           },
         });
         try {
-          ws.send(encodeTunnelMessage({ type: "ping", nonce: actualNonce }));
+          currentWs.send(encodeTunnelMessage({ type: "ping", nonce: actualNonce }));
         } catch (err) {
           pendingPings.delete(actualNonce);
           clearTimeout(timer);
-          reject(err);
+          reject(err instanceof Error ? err : new Error(String(err)));
         }
       });
     },
@@ -586,7 +606,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         const timer = setTimeout(() => {
           const i = readyWaiters.findIndex((w) => w.timer === timer);
           if (i >= 0) readyWaiters.splice(i, 1);
-          reject(new Error(`tunnel waitUntilReady: timeout after ${timeoutMs}ms`));
+          reject(new Error(`tunnel waitUntilReady: timeout after ${String(timeoutMs)}ms`));
         }, timeoutMs);
         readyWaiters.push({ resolve, reject, timer });
       });

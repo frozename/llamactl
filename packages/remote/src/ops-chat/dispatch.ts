@@ -71,28 +71,31 @@ export type OpsChatToolName = (typeof KNOWN_OPS_CHAT_TOOLS)[number];
  */
 export type ToolTier = "read" | "mutation-dry-run-safe" | "mutation-destructive";
 
+const DESTRUCTIVE_TOOLS = new Set<OpsChatToolName>([
+  "llamactl.node.remove",
+  "llamactl.workload.delete",
+  "llamactl.catalog.promoteDelete",
+  "llamactl.rag.delete",
+  "llamactl.rag.pipeline.remove",
+  "llamactl.composite.destroy",
+  "llamactl.project.remove",
+]);
+
+const MUTATION_DRY_RUN_TOOLS = new Set<OpsChatToolName>([
+  "llamactl.node.add",
+  "llamactl.catalog.promote",
+  "llamactl.rag.store",
+  "llamactl.rag.pipeline.apply",
+  "llamactl.rag.pipeline.run",
+  "llamactl.composite.apply",
+  "llamactl.project.apply",
+  "llamactl.project.index",
+]);
+
 export function toolTier(name: OpsChatToolName): ToolTier {
-  switch (name) {
-    case "llamactl.node.remove":
-    case "llamactl.workload.delete":
-    case "llamactl.catalog.promoteDelete":
-    case "llamactl.rag.delete":
-    case "llamactl.rag.pipeline.remove":
-    case "llamactl.composite.destroy":
-    case "llamactl.project.remove":
-      return "mutation-destructive";
-    case "llamactl.node.add":
-    case "llamactl.catalog.promote":
-    case "llamactl.rag.store":
-    case "llamactl.rag.pipeline.apply":
-    case "llamactl.rag.pipeline.run":
-    case "llamactl.composite.apply":
-    case "llamactl.project.apply":
-    case "llamactl.project.index":
-      return "mutation-dry-run-safe";
-    default:
-      return "read";
-  }
+  if (DESTRUCTIVE_TOOLS.has(name)) return "mutation-destructive";
+  if (MUTATION_DRY_RUN_TOOLS.has(name)) return "mutation-dry-run-safe";
+  return "read";
 }
 
 export interface OpsChatDispatchInput {
@@ -521,14 +524,16 @@ export async function dispatchOpsChatTool(
       result,
     };
   } catch (err) {
+    const code = err instanceof Error && "code" in err ? String(err.code) : "dispatch_error";
+    const message = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
       name: input.name,
       tier,
       durationMs: Date.now() - startedAt,
       error: {
-        code: (err as { code?: string }).code ?? "dispatch_error",
-        message: (err as Error).message ?? String(err),
+        code,
+        message,
       },
     };
   }

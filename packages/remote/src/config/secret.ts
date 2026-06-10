@@ -151,9 +151,7 @@ function resolveKeychain(
   } catch (err) {
     // Don't echo any CLI stderr body — it can contain hints that
     // reveal whether a service/account exists. Just name the miss.
-    throw new Error(
-      `keychain lookup failed for service='${service}' account='${account}' (${(err as Error).message ?? "unknown"})`,
-    );
+    throw new Error(`keychain lookup failed for service='${service}' account='${account}'`);
   }
 }
 

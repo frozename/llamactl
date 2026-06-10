@@ -65,8 +65,9 @@ type SiriusProviderFile = z.infer<typeof SiriusProviderFileSchema>;
 export function defaultSiriusProvidersPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_SIRIUS_PROVIDERS?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
-  return join(base, "sirius-providers.yaml");
+  const devStorage = env.DEV_STORAGE?.trim();
+  if (devStorage) return join(devStorage, "sirius-providers.yaml");
+  return join(homedir(), ".llamactl", "sirius-providers.yaml");
 }
 
 export function loadSiriusProviders(path: string = defaultSiriusProvidersPath()): SiriusProvider[] {
