@@ -51,6 +51,15 @@ const SERVER_SLUG = 'llamactl';
 const PROFILE_ENUM = z.enum(['mac-mini-16g', 'balanced', 'macbook-pro-48g']);
 const PRESET_ENUM = z.enum(['best', 'vision', 'balanced', 'fast']);
 
+export type WorkloadDeleteDryRunResult = {
+  dryRun: true;
+  found: boolean;
+  kind: 'ModelRun' | 'ModelHost' | null;
+  node: string | null;
+  rel: string | null;
+  message: string;
+};
+
 export function buildMcpServer(opts?: { name?: string; version?: string }): McpServer {
   const server = new McpServer({
     name: opts?.name ?? 'llamactl',
@@ -360,7 +369,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const manifest = match ? workloadStore.loadWorkloadByNameAny(name) : null;
       if (dryRun) {
         appendAudit({ server: SERVER_SLUG, tool: 'llamactl.workload.delete', input, dryRun: true });
-        return toTextContent({
+        const result = {
           dryRun: true,
           found: !!match,
           kind: manifest?.kind ?? null,
@@ -369,7 +378,8 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
           message: match
             ? `would remove manifest ${name} (kind=${manifest?.kind ?? 'unknown'}, node=${match.spec.node}, rel=${match.spec.target.value})`
             : `no manifest named ${name}`,
-        });
+        } satisfies WorkloadDeleteDryRunResult;
+        return toTextContent(result);
       }
       const removed = workloadStore.deleteWorkload(name);
       appendAudit({

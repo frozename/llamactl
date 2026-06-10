@@ -4,7 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildMcpServer } from '../src/server.js';
+import { buildMcpServer, type WorkloadDeleteDryRunResult } from '../src/server.js';
 import { saveNodeRun } from '../../remote/src/workload/noderun-store.js';
 import { saveModelHost } from '../../remote/src/workload/modelhost-store.js';
 import { saveWorkload } from '../../remote/src/workload/store.js';
@@ -387,7 +387,7 @@ describe('@llamactl/mcp read surface', () => {
       name: 'llamactl.workload.delete',
       arguments: { name: 'does-not-exist', dryRun: true },
     });
-    const parsed = JSON.parse(textOf(result)) as { dryRun: boolean; found: boolean; message: string };
+    const parsed = JSON.parse(textOf(result)) as WorkloadDeleteDryRunResult;
     expect(parsed.dryRun).toBe(true);
     expect(parsed.found).toBe(false);
     expect(parsed.message).toMatch(/no manifest named/);
@@ -400,13 +400,7 @@ describe('@llamactl/mcp read surface', () => {
       name: 'llamactl.workload.delete',
       arguments: { name: 'mlx-host-a', dryRun: true },
     });
-    const parsed = JSON.parse(textOf(result)) as {
-      dryRun: boolean;
-      found: boolean;
-      node: string | null;
-      rel: string | null;
-      message: string;
-    };
+    const parsed = JSON.parse(textOf(result)) as WorkloadDeleteDryRunResult;
     expect(parsed.dryRun).toBe(true);
     expect(parsed.found).toBe(true);
     expect(parsed.node).toBe('local');
@@ -422,14 +416,7 @@ describe('@llamactl/mcp read surface', () => {
       name: 'llamactl.workload.delete',
       arguments: { name: 'gemma4-run-a', dryRun: true },
     });
-    const parsed = JSON.parse(textOf(result)) as {
-      dryRun: boolean;
-      found: boolean;
-      kind: 'ModelRun' | 'ModelHost';
-      node: string | null;
-      rel: string | null;
-      message: string;
-    };
+    const parsed = JSON.parse(textOf(result)) as WorkloadDeleteDryRunResult;
     expect(parsed.dryRun).toBe(true);
     expect(parsed.found).toBe(true);
     expect(parsed.kind).toBe('ModelRun');

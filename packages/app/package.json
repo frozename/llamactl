@@ -9,7 +9,7 @@
     "dev": "env -u ELECTRON_RUN_AS_NODE electron-vite dev",
     "build": "electron-vite build",
     "start": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit --tsBuildInfoFile /dev/null && tsc -p tsconfig.node.json --noEmit --tsBuildInfoFile /dev/null && tsc -p tsconfig.web.json --noEmit --tsBuildInfoFile /dev/null",
     "package": "bun run build && electron-builder --config electron-builder.yml",
     "package:mac": "bun run build && electron-builder --config electron-builder.yml --mac",
     "package:mac:arm64": "bun run build && electron-builder --config electron-builder.yml --mac --arm64",

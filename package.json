@@ -12,7 +12,7 @@
     "cli": "bun run --cwd packages/cli src/bin.ts",
     "build:agent": "bun run packages/cli/src/bin.ts artifacts build-agent",
     "build:agent:all": "scripts/build-all-targets.sh",
-    "typecheck": "bun run --cwd packages/core tsc --noEmit && bun run --cwd packages/cli tsc --noEmit",
+    "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd packages/cli typecheck && bun run --cwd packages/app typecheck && bun run --cwd packages/remote typecheck && bun run --cwd packages/eval typecheck && bun run --cwd packages/agents typecheck && bun run --cwd packages/fleet-supervisor typecheck && bun run --cwd packages/mcp typecheck",
     "test": "zsh test/run-all.zsh",
     "test:core": "bun run --cwd packages/core test",
     "test:cli": "bun run --cwd packages/cli test",
