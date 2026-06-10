@@ -90,6 +90,8 @@ type Turn =
 
 function tierClass(tier: ToolCatalogEntry["tier"]): string {
   switch (tier) {
+    case "read":
+      return "bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]";
     case "mutation-destructive":
       return "bg-[var(--color-err)] text-[color:var(--color-text-inverse)]";
     case "mutation-dry-run-safe":
@@ -110,9 +112,9 @@ function summarizeResultForHistory(result: PlanResult): string {
     return `planner failed: ${result.reason}${result.message ? ` — ${result.message}` : ""}`;
   }
   const steps = result.plan.steps
-    .map((step, i) => `${i + 1}. ${step.tool} — ${step.annotation}`)
+    .map((step, i) => `${String(i + 1)}. ${step.tool} — ${step.annotation}`)
     .join("\n");
-  return `proposed ${result.plan.steps.length} step plan:\n${steps}\n\nreasoning: ${result.plan.reasoning}`;
+  return `proposed ${String(result.plan.steps.length)} step plan:\n${steps}\n\nreasoning: ${result.plan.reasoning}`;
 }
 
 function PlanCard({
@@ -184,7 +186,7 @@ function PlanCard({
               padding: 8,
               marginTop: 4,
             }}
-            data-testid={`plan-step-${i}`}
+            data-testid={`plan-step-${String(i)}`}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 12, fontFamily: "var(--font-mono)" }}>{i + 1}.</span>
@@ -470,7 +472,7 @@ export default function Plan(): React.JSX.Element {
               <div
                 key={turn.id}
                 style={{ display: "flex", justifyContent: "flex-end" }}
-                data-testid={`plan-turn-user-${turn.id}`}
+                data-testid={`plan-turn-user-${String(turn.id)}`}
               >
                 <div
                   style={{
@@ -493,7 +495,7 @@ export default function Plan(): React.JSX.Element {
             <div
               key={turn.id}
               style={{ display: "flex", justifyContent: "flex-start" }}
-              data-testid={`plan-turn-assistant-${turn.id}`}
+              data-testid={`plan-turn-assistant-${String(turn.id)}`}
             >
               <div style={{ width: "100%" }}>
                 <PlanCard

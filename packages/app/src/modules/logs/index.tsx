@@ -49,8 +49,9 @@ export default function Logs(): React.JSX.Element {
       onData: (evt) => {
         const e = evt as { type?: string; line?: string };
         if (e.type === "line" && typeof e.line === "string") {
+          const line = e.line;
           setLines((prev) => {
-            const next = [...prev, e.line!];
+            const next = [...prev, line];
             if (next.length > MAX_BUFFER_LINES) {
               return next.slice(next.length - MAX_BUFFER_LINES);
             }

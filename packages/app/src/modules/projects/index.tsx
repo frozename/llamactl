@@ -83,13 +83,13 @@ function formatElapsed(iso: string, now: number = Date.now()): string {
   const ms = now - Date.parse(iso);
   if (!Number.isFinite(ms) || ms < 0) return iso;
   const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s ago`;
+  if (s < 60) return `${String(s)}s ago`;
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
+  if (m < 60) return `${String(m)}m ago`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
+  if (h < 24) return `${String(h)}h ago`;
   const d = Math.floor(h / 24);
-  return `${d}d ago`;
+  return `${String(d)}d ago`;
 }
 
 function RoutingHeatmap(props: { routing: Record<string, string> | undefined }): React.JSX.Element {
@@ -259,7 +259,7 @@ function RoutingJournalFeed(props: { project: string }): React.JSX.Element {
         <tbody>
           {reversed.map((d, i) => (
             <tr
-              key={`${d.ts}-${i}`}
+              key={`${d.ts}-${String(i)}`}
               style={{
                 borderTop: "1px solid var(--color-border)",
                 borderColor: "var(--color-border)",
@@ -339,6 +339,7 @@ function ProjectDetail(props: {
   });
   const onRemove = (): void => {
     if (
+      // eslint-disable-next-line no-alert -- Preserve the existing synchronous destructive confirmation flow.
       !confirm(`Remove project '${project.metadata.name}'? Indexed data stays in the rag node.`)
     ) {
       return;
@@ -653,14 +654,14 @@ function ProjectRow(props: {
           fontSize: 10,
         }}
       >
-        {hasRag ? (
+        {project.spec.rag ? (
           <span
             style={{
               fontFamily: "var(--font-mono)",
               color: "var(--color-text)",
             }}
           >
-            {project.spec.rag!.node}/{project.spec.rag!.collection}
+            {project.spec.rag.node}/{project.spec.rag.collection}
           </span>
         ) : (
           <span style={{ color: "var(--color-text-secondary)" }}>no rag block</span>
@@ -906,7 +907,7 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
   const ragNodes = (nodesQuery.data?.nodes ?? []).filter((n) => n.effectiveKind === "rag");
   const canSubmit = name.trim().length > 0 && path.trim().length > 0;
 
-  function onSubmit(e: React.FormEvent): void {
+  function onSubmit(e: { preventDefault: () => void }): void {
     e.preventDefault();
     if (!canSubmit) return;
     setStatus({ kind: "idle" });
@@ -1023,18 +1024,20 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
               type="button"
               variant="secondary"
               size="sm"
-              onClick={async () => {
-                const picked = await trpcUIClient.uiPickDirectory.mutate({
-                  title: "Pick a project directory",
-                  defaultPath: path || undefined,
-                });
-                if (picked) {
-                  setPath(picked);
-                  if (!name.trim()) {
-                    const basename = picked.split("/").filter(Boolean).pop() ?? "";
-                    setName(basename);
+              onClick={() => {
+                void (async () => {
+                  const picked = await trpcUIClient.uiPickDirectory.mutate({
+                    title: "Pick a project directory",
+                    defaultPath: path.length > 0 ? path : undefined,
+                  });
+                  if (picked) {
+                    setPath(picked);
+                    if (!name.trim()) {
+                      const basename = picked.split("/").filter(Boolean).pop() ?? "";
+                      setName(basename);
+                    }
                   }
-                }
+                })();
               }}
               data-testid="projects-create-pick-dir"
               title="Pick directory\u2026"

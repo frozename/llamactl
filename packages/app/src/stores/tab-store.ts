@@ -32,7 +32,7 @@ const CLOSED_MAX = 10;
 function lastPinnedIndex(tabs: readonly TabEntry[]): number {
   let idx = -1;
   for (const [i, tab] of tabs.entries()) {
-    if (tab?.pinned) idx = i;
+    if (tab.pinned) idx = i;
     else break;
   }
   return idx;
@@ -53,7 +53,8 @@ export function addOrFocus(s: TabState, entry: TabEntry): TabState {
 export function closeTab(s: TabState, key: string): TabState {
   const idx = s.tabs.findIndex((t) => t.tabKey === key);
   if (idx < 0) return s;
-  const removed = s.tabs[idx]!;
+  const removed = s.tabs[idx];
+  if (!removed) return s;
   const nextTabs = s.tabs.filter((_, i) => i !== idx);
 
   let activeKey = s.activeKey;
@@ -72,7 +73,9 @@ export function closeTab(s: TabState, key: string): TabState {
 export function pinTab(s: TabState, key: string): TabState {
   const idx = s.tabs.findIndex((t) => t.tabKey === key);
   if (idx < 0 || s.tabs[idx]?.pinned) return s;
-  const marked = { ...s.tabs[idx]!, pinned: true };
+  const tab = s.tabs[idx];
+  if (!tab) return s;
+  const marked = { ...tab, pinned: true };
   // Move to the end of the pinned range (after other pinned tabs,
   // before the first unpinned tab).
   const withoutIt = s.tabs.filter((_, i) => i !== idx);
@@ -94,7 +97,8 @@ export function unpinTab(s: TabState, key: string): TabState {
 export function moveTab(s: TabState, key: string, toIndex: number): TabState {
   const fromIdx = s.tabs.findIndex((t) => t.tabKey === key);
   if (fromIdx < 0) return s;
-  const entry = s.tabs[fromIdx]!;
+  const entry = s.tabs[fromIdx];
+  if (!entry) return s;
   const withoutIt = s.tabs.filter((_, i) => i !== fromIdx);
 
   // Clamp to the entry's pinned-ness boundary: pinned tabs only

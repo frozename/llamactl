@@ -20,10 +20,17 @@ function truncate(lines: LogLine[]): LogLine[] {
 }
 
 function fmtTps(raw: string | number | undefined | null): string {
-  if (raw == null || raw === "") return "—";
+  if (raw === null || raw === undefined || raw === "") return "—";
   const n = typeof raw === "number" ? raw : Number.parseFloat(raw);
   if (!Number.isFinite(n)) return "—";
   return n.toFixed(1);
+}
+
+function eventText(value: unknown, fallback = ""): string {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
 }
 
 function SchedulerPanel(): React.JSX.Element {
@@ -229,7 +236,7 @@ function SchedulerPanel(): React.JSX.Element {
           title={
             !canAddSchedule
               ? "Fill id and rel before adding a schedule."
-              : `Run bench for ${rel.trim()} on ${node.trim() || "local"} every ${hours}h.`
+              : `Run bench for ${rel.trim()} on ${node.trim() || "local"} every ${String(hours)}h.`
           }
         >
           {add.isPending ? "Adding…" : "Add schedule"}
@@ -330,14 +337,16 @@ export default function Bench(): React.JSX.Element {
       case "start":
         appendLog({
           kind: "start",
-          text: `$ ${String(e.command)} ${((e.args as string[]) ?? []).join(" ")}`,
+          text: `$ ${eventText(e.command)} ${
+            Array.isArray(e.args) ? e.args.map((arg) => eventText(arg)).join(" ") : ""
+          }`,
         });
         break;
       case "stdout":
-        appendLog({ kind: "stdout", text: String(e.line ?? "") });
+        appendLog({ kind: "stdout", text: eventText(e.line) });
         break;
       case "stderr":
-        appendLog({ kind: "stderr", text: String(e.line ?? "") });
+        appendLog({ kind: "stderr", text: eventText(e.line) });
         break;
       case "profile-start":
         appendLog({ kind: "profile", text: `-- profile=${String(e.profile)} --` });
@@ -361,7 +370,7 @@ export default function Bench(): React.JSX.Element {
           prompt_ts?: string;
           rel?: string;
         };
-        const text = `preset: rel=${r.rel} profile=${r.bestProfile} gen_tps=${r.gen_ts} prompt_tps=${r.prompt_ts}`;
+        const text = `preset: rel=${String(r.rel)} profile=${String(r.bestProfile)} gen_tps=${String(r.gen_ts)} prompt_tps=${String(r.prompt_ts)}`;
         appendLog({ kind: "done", text });
         setSummary(text);
         setActive(null);
@@ -381,7 +390,7 @@ export default function Bench(): React.JSX.Element {
           prompt_tps?: string;
           gen_tps?: string;
         };
-        const text = `vision: rel=${r.rel} load_ms=${r.load_ms} encode_ms=${r.image_encode_ms} prompt_tps=${r.prompt_tps} gen_tps=${r.gen_tps}`;
+        const text = `vision: rel=${String(r.rel)} load_ms=${String(r.load_ms)} encode_ms=${String(r.image_encode_ms)} prompt_tps=${String(r.prompt_tps)} gen_tps=${String(r.gen_tps)}`;
         appendLog({ kind: "done", text });
         setSummary(text);
         setActive(null);
@@ -738,7 +747,7 @@ export default function Bench(): React.JSX.Element {
                   .slice(0, 30)
                   .map((row, i) => (
                     <tr
-                      key={`${row.updated_at}-${i}`}
+                      key={`${row.updated_at}-${String(i)}`}
                       style={{
                         borderTop: "1px solid var(--color-border)",
                         backgroundColor: "var(--color-surface-1)",

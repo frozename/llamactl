@@ -40,9 +40,19 @@ function getLogColor(kind: LogLine["kind"]): string {
     case "start":
     case "profile":
       return "var(--color-brand)";
+    case "stdout":
+    case "exit":
+      return "var(--color-text)";
     default:
       return "var(--color-text)";
   }
+}
+
+function eventText(value: unknown, fallback = ""): string {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
 }
 
 function PullCard({
@@ -73,17 +83,19 @@ function PullCard({
       case "start":
         appendLog({
           kind: "start",
-          text: `$ ${String(e.command)} ${((e.args as string[]) ?? []).join(" ")}`,
+          text: `$ ${eventText(e.command)} ${
+            Array.isArray(e.args) ? e.args.map((arg) => eventText(arg)).join(" ") : ""
+          }`,
         });
         break;
       case "stdout":
-        appendLog({ kind: "stdout", text: String(e.line ?? "") });
+        appendLog({ kind: "stdout", text: eventText(e.line) });
         break;
       case "stderr":
-        appendLog({ kind: "stderr", text: String(e.line ?? "") });
+        appendLog({ kind: "stderr", text: eventText(e.line) });
         break;
       case "exit":
-        appendLog({ kind: "exit", text: `(exit ${e.code})` });
+        appendLog({ kind: "exit", text: `(exit ${String(e.code)})` });
         break;
       case "profile-start":
         appendLog({ kind: "profile", text: `-- profile=${String(e.profile)} --` });
@@ -122,8 +134,8 @@ function PullCard({
           vision?: { ran?: boolean; reason?: string };
         };
         const parts = [
-          `rel=${result.rel}`,
-          `curated_added=${result.curatedAdded}`,
+          `rel=${String(result.rel)}`,
+          `curated_added=${String(result.curatedAdded)}`,
           `preset=${result.preset?.ran ? "ran" : (result.preset?.reason ?? "skipped")}`,
           `vision=${result.vision?.ran ? "ran" : (result.vision?.reason ?? "skipped")}`,
         ];
@@ -178,7 +190,7 @@ function PullCard({
 
   const label =
     spec.mode === "file"
-      ? `pull file ${spec.repo} ${spec.file}`
+      ? `pull file ${spec.repo} ${String(spec.file)}`
       : spec.mode === "candidate"
         ? `pull candidate ${spec.repo}${spec.profile ? ` (${spec.profile})` : ""}`
         : `candidate test ${spec.repo}`;
@@ -247,7 +259,7 @@ function PullCard({
           </Button>
         </div>
       </div>
-      {(summary || error) && (
+      {(summary !== null || error !== null) && (
         <div
           style={{
             fontFamily: "monospace",
@@ -306,7 +318,7 @@ export default function Pulls(): React.JSX.Element {
       return;
     }
     setError(null);
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = `${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`;
     const spec: PullCardSpec = {
       id,
       mode,

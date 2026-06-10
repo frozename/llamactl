@@ -3,9 +3,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { APP_MODULES, type AppModule } from "@/modules/registry";
 import { useTabStore } from "@/stores/tab-store";
-import { useUIStore } from "@/stores/ui-store";
 
 import { useAppCommands } from "./commands";
+import { useCommandPaletteOpen } from "./command-palette-state";
 
 /**
  * VSCode-style command palette. Opens on ⌘⇧P or ⌘K (Ctrl+Shift+P /
@@ -36,7 +36,7 @@ function modulesToCommands(): Command[] {
     id: `go:${m.id}`,
     label: `Open ${m.labelKey}`,
     group: groupLabel(m.group),
-    hint: m.shortcut ? `⌘${m.shortcut}` : undefined,
+    hint: m.shortcut ? `⌘${String(m.shortcut)}` : undefined,
     keywords: m.aliases ?? [],
     run: () => {
       useTabStore.getState().open({
@@ -59,6 +59,8 @@ function groupLabel(g: AppModule["group"]): string {
       return "Ops";
     case "observability":
       return "Observability";
+    case undefined:
+      return "Other";
     default:
       return "Other";
   }
@@ -83,18 +85,6 @@ function fuzzyScore(query: string, haystack: string): number {
   if (qi < q.length) return 0;
   // Prefer shorter haystacks when scores tie.
   return score - haystack.length * 0.01;
-}
-
-/**
- * Shared selector over the palette's open state (in `ui-store`). Any
- * consumer (TitleBar, StatusBar, SearchStub) can call this to drive
- * the same mounted palette. No keydown listener here — exactly one
- * listener is installed in `CommandPaletteMount`.
- */
-export function useCommandPaletteOpen(): [boolean, (open: boolean) => void] {
-  const open = useUIStore((s) => s.commandPaletteOpen);
-  const setOpen = useUIStore((s) => s.setCommandPaletteOpen);
-  return [open, setOpen];
 }
 
 interface CommandPaletteProps {
@@ -131,14 +121,18 @@ export function CommandPalette({
 
   useEffect(() => {
     if (open) {
-      setQuery("");
-      setHighlight(0);
+      queueMicrotask(() => {
+        setQuery("");
+        setHighlight(0);
+      });
       setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [open]);
 
   useEffect(() => {
-    setHighlight(0);
+    queueMicrotask(() => {
+      setHighlight(0);
+    });
   }, [query]);
 
   useEffect(() => {

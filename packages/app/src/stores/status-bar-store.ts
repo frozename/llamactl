@@ -38,8 +38,9 @@ export const useStatusBarStore = create<StatusBarStore>((set) => ({
   },
   clearModuleItems: (moduleId) => {
     set((state) => {
-      const next = { ...state.contributions };
-      delete next[moduleId];
+      const next = Object.fromEntries(
+        Object.entries(state.contributions).filter(([key]) => key !== moduleId),
+      );
       return { contributions: next };
     });
   },

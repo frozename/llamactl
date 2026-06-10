@@ -2,7 +2,7 @@ import { Command } from "lucide-react";
 import * as React from "react";
 
 import { trpc } from "@/lib/trpc";
-import { useCommandPaletteOpen } from "@/shell/command-palette";
+import { useCommandPaletteOpen } from "@/shell/command-palette-state";
 import { useStatusBarStore } from "@/stores/status-bar-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useThemeStore } from "@/stores/theme-store";
@@ -55,7 +55,7 @@ export function StatusBar(): React.JSX.Element {
         overflow: "hidden",
       }}
     >
-      <SBItem glyph="⊡" text={`${running} running`} tone={running > 0 ? "ok" : "muted"} />
+      <SBItem glyph="⊡" text={`${String(running)} running`} tone={running > 0 ? "ok" : "muted"} />
       <WorkloadPicker />
 
       {moduleItems.length > 0 && (

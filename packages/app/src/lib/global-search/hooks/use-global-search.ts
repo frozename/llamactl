@@ -16,6 +16,36 @@ import { mapSessionRagHits } from "../surfaces/sessions-rag";
 const TIER2_MS = 250;
 const TIER3_MS = 400;
 
+type RagResult = {
+  document: {
+    id: string;
+    content: string;
+    metadata?: Record<string, unknown>;
+  };
+  score: number;
+  distance?: number;
+};
+
+function metadataString(metadata: Record<string, unknown> | undefined, key: string): string | null {
+  const value = metadata?.[key];
+  return typeof value === "string" ? value : null;
+}
+
+function metadataNumber(metadata: Record<string, unknown> | undefined, key: string): number | null {
+  const value = metadata?.[key];
+  return typeof value === "number" ? value : null;
+}
+
+function sessionStatus(value: string | null): "live" | "done" | "refused" | "aborted" {
+  return value === "live" || value === "done" || value === "refused" || value === "aborted"
+    ? value
+    : "done";
+}
+
+function ragSnippet(result: RagResult): { where: string; snippet: string; spans: never[] } {
+  return { where: "content", snippet: result.document.content.slice(0, 240), spans: [] };
+}
+
 export function computeNextSchedule(
   now: number,
   opts: { tier2Ms?: number; tier3Ms?: number } = {},
@@ -59,125 +89,183 @@ export function useGlobalSearch(input: string): {
 
     const parsed = parseQuery(input);
     if (!parsed.needle) {
-      setResults([]);
-      setStatus("idle");
+      queueMicrotask(() => {
+        setResults([]);
+        setStatus("idle");
+      });
       return;
     }
-    setStatus("searching");
-
     const initial = runClientPhase({
       query: parsed,
-      tabState: { tabs, closed: closed as any },
-      workloads: ((workloadsQ.data as any)?.workloads ?? []) as any[],
-      nodes: ((nodesQ.data as any)?.nodes ?? []) as any[],
+      tabState: { tabs, closed: closed.map((tab) => ({ ...tab, closedAt: tab.openedAt })) },
+      workloads: workloadsQ.data ?? [],
+      nodes: nodesQ.data?.nodes ?? [],
       presets: [],
     });
-    setResults(initial);
+    queueMicrotask(() => {
+      setStatus("searching");
+      setResults(initial);
+    });
 
     const allow = (s: string): boolean => !parsed.surfaceFilter || parsed.surfaceFilter === s;
 
-    tier2Timer.current = setTimeout(async () => {
-      const tasks: Promise<unknown>[] = [];
-      if (allow("session")) {
-        tasks.push(
-          utils.opsSessionSearch
-            .fetch({ query: parsed.needle })
-            .then((res) => {
-              if (queryToken.current !== token) return;
-              setResults((cur) =>
-                mergeServerHits(cur, "session", mapSessionHits((res as any).hits ?? []), {
-                  append: true,
-                }),
-              );
-            })
-            .catch((e: unknown) => {
-              if (queryToken.current !== token) return;
-              setResults((cur) =>
-                mergeServerHits(cur, "session", [], { error: String((e as Error).message) }),
-              );
-            }),
-        );
-      }
-      if (allow("logs")) {
-        tasks.push(
-          utils.logsSearch
-            .fetch({ query: parsed.needle })
-            .then((res) => {
-              if (queryToken.current !== token) return;
-              setResults((cur) =>
-                mergeServerHits(cur, "logs", mapLogHits((res as any).hits ?? []), { append: true }),
-              );
-            })
-            .catch(() => {
-              if (queryToken.current !== token) return;
-            }),
-        );
-      }
-      await Promise.allSettled(tasks);
-      if (queryToken.current === token) setStatus("idle");
+    tier2Timer.current = setTimeout(() => {
+      void (async () => {
+        const tasks: Promise<unknown>[] = [];
+        if (allow("session")) {
+          tasks.push(
+            utils.opsSessionSearch
+              .fetch({ query: parsed.needle })
+              .then((res) => {
+                if (queryToken.current !== token) return;
+                setResults((cur) =>
+                  mergeServerHits(cur, "session", mapSessionHits(res.hits), {
+                    append: true,
+                  }),
+                );
+              })
+              .catch((e: unknown) => {
+                if (queryToken.current !== token) return;
+                setResults((cur) =>
+                  mergeServerHits(cur, "session", [], {
+                    error: e instanceof Error ? e.message : JSON.stringify(e),
+                  }),
+                );
+              }),
+          );
+        }
+        if (allow("logs")) {
+          tasks.push(
+            utils.logsSearch
+              .fetch({ query: parsed.needle })
+              .then((res) => {
+                if (queryToken.current !== token) return;
+                setResults((cur) =>
+                  mergeServerHits(cur, "logs", mapLogHits(res.hits), { append: true }),
+                );
+              })
+              .catch(() => {
+                if (queryToken.current !== token) return;
+              }),
+          );
+        }
+        await Promise.allSettled(tasks);
+        if (queryToken.current === token) setStatus("idle");
+      })();
     }, TIER2_MS);
 
-    tier3Timer.current = setTimeout(async () => {
-      if (queryToken.current !== token) return;
-      const status = ragStatus.data;
-      if (!status?.defaultNode) return;
-      const tasks: Promise<unknown>[] = [];
-      if (allow("session") && status.sessions) {
-        tasks.push(
-          utils.ragSearch
-            .fetch({
-              node: status.defaultNode,
-              query: parsed.needle,
-              collection: "sessions",
-              topK: 10,
-            })
-            .then((res) => {
-              if (queryToken.current !== token) return;
-              setResults((cur) =>
-                mergeServerHits(cur, "session", mapSessionRagHits((res as any).hits ?? []), {
-                  append: true,
-                }),
-              );
-            })
-            .catch(() => {}),
-        );
-      }
-      if (allow("knowledge") && status.knowledge) {
-        tasks.push(
-          utils.ragSearch
-            .fetch({
-              node: status.defaultNode,
-              query: parsed.needle,
-              collection: "knowledge",
-              topK: 10,
-            })
-            .then((res) => {
-              if (queryToken.current !== token) return;
-              setResults((cur) =>
-                mergeServerHits(cur, "knowledge", mapKnowledgeRagHits((res as any).hits ?? []), {
-                  append: true,
-                }),
-              );
-            })
-            .catch(() => {}),
-        );
-      }
-      if (allow("logs") && status.logs) {
-        tasks.push(
-          utils.ragSearch
-            .fetch({ node: status.defaultNode, query: parsed.needle, collection: "logs", topK: 10 })
-            .then((res) => {
-              if (queryToken.current !== token) return;
-              setResults((cur) =>
-                mergeServerHits(cur, "logs", mapLogRagHits((res as any).hits ?? []), {
-                  append: true,
-                }),
-              );
-            })
-            .catch(() => {}),
-        );
-      }
-      await Promise.allSettled(tasks);
+    tier3Timer.current = setTimeout(() => {
+      void (async () => {
+        if (queryToken.current !== token) return;
+        const status = ragStatus.data;
+        if (!status?.defaultNode) return;
+        const tasks: Promise<unknown>[] = [];
+        if (allow("session") && status.sessions) {
+          tasks.push(
+            utils.ragSearch
+              .fetch({
+                node: status.defaultNode,
+                query: parsed.needle,
+                collection: "sessions",
+                topK: 10,
+              })
+              .then((res) => {
+                if (queryToken.current !== token) return;
+                const hits = res.results.map((result) => {
+                  const metadata = result.document.metadata;
+                  return {
+                    sessionId: metadataString(metadata, "sessionId") ?? result.document.id,
+                    goal: metadataString(metadata, "goal") ?? result.document.id,
+                    status: sessionStatus(metadataString(metadata, "status")),
+                    startedAt: metadataString(metadata, "startedAt") ?? "",
+                    matches: [ragSnippet(result)],
+                    score: result.score,
+                    ragDistance: result.distance,
+                  };
+                });
+                setResults((cur) =>
+                  mergeServerHits(cur, "session", mapSessionRagHits(hits), {
+                    append: true,
+                  }),
+                );
+              })
+              .catch(() => {
+                return undefined;
+              }),
+          );
+        }
+        if (allow("knowledge") && status.knowledge) {
+          tasks.push(
+            utils.ragSearch
+              .fetch({
+                node: status.defaultNode,
+                query: parsed.needle,
+                collection: "knowledge",
+                topK: 10,
+              })
+              .then((res) => {
+                if (queryToken.current !== token) return;
+                const hits = res.results.map((result) => {
+                  const metadata = result.document.metadata;
+                  return {
+                    entityId: metadataString(metadata, "entityId") ?? result.document.id,
+                    title: metadataString(metadata, "title") ?? result.document.id,
+                    matches: [ragSnippet(result)],
+                    score: result.score,
+                    ragDistance: result.distance,
+                  };
+                });
+                setResults((cur) =>
+                  mergeServerHits(cur, "knowledge", mapKnowledgeRagHits(hits), {
+                    append: true,
+                  }),
+                );
+              })
+              .catch(() => {
+                return undefined;
+              }),
+          );
+        }
+        if (allow("logs") && status.logs) {
+          tasks.push(
+            utils.ragSearch
+              .fetch({
+                node: status.defaultNode,
+                query: parsed.needle,
+                collection: "logs",
+                topK: 10,
+              })
+              .then((res) => {
+                if (queryToken.current !== token) return;
+                const hits = res.results.map((result) => {
+                  const metadata = result.document.metadata;
+                  const fileLabel = metadataString(metadata, "fileLabel") ?? result.document.id;
+                  return {
+                    fileLabel,
+                    filePath: metadataString(metadata, "filePath") ?? fileLabel,
+                    matches: [
+                      {
+                        lineNumber: metadataNumber(metadata, "lineNumber") ?? 0,
+                        ...ragSnippet(result),
+                      },
+                    ],
+                    score: result.score,
+                    ragDistance: result.distance,
+                  };
+                });
+                setResults((cur) =>
+                  mergeServerHits(cur, "logs", mapLogRagHits(hits), {
+                    append: true,
+                  }),
+                );
+              })
+              .catch(() => {
+                return undefined;
+              }),
+          );
+        }
+        await Promise.allSettled(tasks);
+      })();
     }, TIER3_MS);
 
     return () => {

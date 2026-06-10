@@ -6,11 +6,15 @@ import { observable } from "@trpc/server/observable";
 
 interface ElectronTRPCBridge {
   sendMessage: (msg: unknown) => void;
-  onMessage: (cb: (msg: any) => void) => void;
+  onMessage: (cb: (msg: unknown) => void) => void;
 }
 
 function getBridge(): ElectronTRPCBridge {
-  const bridge = (globalThis as any).electronTRPC as ElectronTRPCBridge | undefined;
+  const bridge = (
+    globalThis as typeof globalThis & {
+      electronTRPC?: ElectronTRPCBridge;
+    }
+  ).electronTRPC;
   if (!bridge) {
     throw new Error(
       "electronTRPC global not found — ensure exposeElectronTRPC() ran in the preload.",
@@ -20,7 +24,7 @@ function getBridge(): ElectronTRPCBridge {
 }
 
 type Pending = {
-  next: (envelope: any) => void;
+  next: (envelope: unknown) => void;
   error: (err: unknown) => void;
   complete: () => void;
   type: "query" | "mutation" | "subscription";
@@ -36,11 +40,12 @@ class IPCClient {
     });
   }
 
-  private handleResponse(msg: any) {
-    const entry = msg?.id != null ? this.pending.get(msg.id) : undefined;
+  private handleResponse(msg: unknown) {
+    const envelope = msg as { id?: number | string; result?: { type?: string } } | null;
+    const entry = envelope?.id !== undefined ? this.pending.get(envelope.id) : undefined;
     if (!entry) return;
     entry.next(msg);
-    if ("result" in msg && msg.result?.type === "stopped") {
+    if (envelope?.result?.type === "stopped") {
       entry.complete();
     }
   }
@@ -68,11 +73,12 @@ class IPCClient {
   }
 }
 
-function transformResponse(envelope: any) {
-  if ("error" in envelope) {
+function transformResponse(envelope: unknown) {
+  if (typeof envelope === "object" && envelope !== null && "error" in envelope) {
     return { ok: false as const, error: envelope };
   }
-  return { ok: true as const, result: envelope.result };
+  const result = envelope as { result: unknown };
+  return { ok: true as const, result: result.result };
 }
 
 export function ipcLink<TRouter extends AnyRouter>(): TRPCLink<TRouter> {
@@ -88,14 +94,14 @@ export function ipcLink<TRouter extends AnyRouter>(): TRPCLink<TRouter> {
               obs.error(TRPCClientError.from(res.error));
               return;
             }
-            obs.next({ result: res.result });
+            obs.next({ result: res.result } as Parameters<typeof obs.next>[0]);
             if (op.type !== "subscription") {
               teardown();
               obs.complete();
             }
           },
           error(err) {
-            obs.error(TRPCClientError.from(err as any));
+            obs.error(TRPCClientError.from(err as Error));
             teardown();
           },
           complete() {

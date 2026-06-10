@@ -73,8 +73,8 @@ function layoutCluster(nodes: NodeListItem[]): {
   placed: PlacedNode[];
   edges: { from: string; to: string }[];
 } {
-  const local = nodes.find((n) => n.isLocal || n.name === "local");
-  const agents = nodes.filter((n) => (n.effectiveKind ?? "agent") === "agent" && n !== local);
+  const local = nodes.find((n) => n.isLocal === true || n.name === "local");
+  const agents = nodes.filter((n) => n.effectiveKind === "agent" && n !== local);
   const gateways = nodes.filter((n) => n.effectiveKind === "gateway");
   const rags = nodes.filter((n) => n.effectiveKind === "rag");
   const providers = nodes.filter((n) => n.effectiveKind === "provider");
@@ -155,7 +155,7 @@ function NodeBubble({
       data-testid={`node-map-bubble-${node.name}`}
       data-kind={kind}
       data-active={isActive ? "true" : "false"}
-      transform={`translate(${node.x}, ${node.y})`}
+      transform={`translate(${String(node.x)}, ${String(node.y)})`}
       onClick={onClick}
       onMouseEnter={() => {
         onHover(node.name);
@@ -308,7 +308,7 @@ export function NodeMap(): React.JSX.Element {
       data-active-node={effective}
     >
       <svg
-        viewBox={`0 0 ${VIEWBOX.w} ${VIEWBOX.h}`}
+        viewBox={`0 0 ${String(VIEWBOX.w)} ${String(VIEWBOX.h)}`}
         className="h-[480px] w-full"
         style={{ display: "block" }}
       >
@@ -348,8 +348,8 @@ export function NodeMap(): React.JSX.Element {
         <div
           className="absolute pointer-events-auto"
           style={{
-            left: `calc(${(focusedNode.x / VIEWBOX.w) * 100}% + 24px)`,
-            top: `calc(${(focusedNode.y / VIEWBOX.h) * 100}% - 40px)`,
+            left: `calc(${String((focusedNode.x / VIEWBOX.w) * 100)}% + 24px)`,
+            top: `calc(${String((focusedNode.y / VIEWBOX.h) * 100)}% - 40px)`,
             zIndex: 10,
           }}
         >

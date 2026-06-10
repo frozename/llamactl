@@ -33,7 +33,7 @@ export interface Theme {
 const SANS_STACK = "'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif";
 const MONO_STACK = "'JetBrains Mono', ui-monospace, Menlo, monospace";
 
-export const THEMES: readonly Theme[] = [
+export const THEMES: readonly [Theme, ...Theme[]] = [
   {
     id: "sirius",
     label: "Sirius",
@@ -71,7 +71,7 @@ export const THEMES: readonly Theme[] = [
 export const DEFAULT_THEME: ThemeId = "sirius";
 
 export function getTheme(id: ThemeId): Theme {
-  return THEMES.find((t) => t.id === id) ?? THEMES[0]!;
+  return THEMES.find((t) => t.id === id) ?? THEMES[0];
 }
 
 /** Null-safe helper: accepts any string (e.g. a legacy id that hasn't

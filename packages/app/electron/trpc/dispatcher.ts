@@ -10,7 +10,13 @@ import {
 import { createTRPCClient } from "@trpc/client";
 import { initTRPC, TRPCError } from "@trpc/server";
 import { observable } from "@trpc/server/observable";
-import { getErrorShape } from "@trpc/server/unstable-core-do-not-import";
+import {
+  getErrorShape,
+  type AnyProcedure,
+  type AnyRouter,
+  type CreateRouterOptions,
+  type ProcedureCallOptions,
+} from "@trpc/server/unstable-core-do-not-import";
 import { z } from "zod";
 
 import { fanOutSurface, listAgentNodes } from "./cross-node-fan-out.js";
@@ -34,6 +40,76 @@ import { makeNodePinnedFetch } from "./node-pinned-fetch.js";
 
 const t = initTRPC.create();
 
+type KubeUser = Parameters<typeof kubecfg.resolveToken>[0];
+type SubscriptionHandle = { unsubscribe: () => void };
+type LocalCaller = Record<string, (input: unknown) => unknown>;
+type RemoteProcedure = {
+  query: (input: unknown, opts?: { signal?: AbortSignal }) => Promise<unknown>;
+  mutate: (input: unknown, opts?: { signal?: AbortSignal }) => Promise<unknown>;
+  subscribe: (
+    input: unknown,
+    handlers: {
+      onData: (ev: unknown) => void;
+      onError: (err: unknown) => void;
+      onComplete: () => void;
+    },
+  ) => SubscriptionHandle;
+};
+type RemoteClient = Record<string, RemoteProcedure>;
+
+type ProcedureKind = "query" | "mutation" | "subscription";
+type CompatProcedureDef = AnyProcedure["_def"] & {
+  query?: boolean;
+  mutation?: boolean;
+  subscription?: boolean;
+};
+type CompatProcedure = AnyProcedure & {
+  _def: CompatProcedureDef;
+  procedure?: unknown;
+  meta?: unknown;
+};
+type RouterWithCompat = AnyRouter & {
+  _def: AnyRouter["_def"] & {
+    procedures: Record<string, CompatProcedure>;
+  };
+  getErrorShape?: (opts: {
+    error: unknown;
+    type: ProcedureKind | "unknown";
+    path: string | undefined;
+    input: unknown;
+    ctx: unknown;
+  }) => unknown;
+};
+type V10ProcedureCallOptions = {
+  getRawInput?: unknown;
+  rawInput?: unknown;
+  [key: string]: unknown;
+};
+
+function isProcedureCallOptions(
+  opts: ProcedureCallOptions<unknown> | V10ProcedureCallOptions,
+): opts is ProcedureCallOptions<unknown> {
+  return typeof opts.getRawInput === "function";
+}
+
+function formatUnknownError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  return JSON.stringify(err);
+}
+
+function localProcedure(caller: LocalCaller, path: string): (input: unknown) => unknown {
+  const procedure = caller[path];
+  if (!procedure) throw new Error(`Missing local tRPC procedure: ${path}`);
+  return procedure;
+}
+
+function remoteProcedure(client: RemoteClient, path: string): RemoteProcedure {
+  const procedure = client[path];
+  if (!procedure) throw new Error(`Missing remote tRPC procedure: ${path}`);
+  return procedure;
+}
+
 /**
  * Adapt a tRPC v11 async-generator subscription result into a v10
  * `@trpc/server/observable` Observable so electron-trpc v1.0.0-alpha.0
@@ -51,25 +127,25 @@ const t = initTRPC.create();
  */
 function asyncIterableToObservable<T>(iter: AsyncIterable<T>) {
   return observable<T>((emit) => {
-    let cancelled = false;
+    const state = { cancelled: false };
     const iterator = iter[Symbol.asyncIterator]();
-    (async () => {
+    void (async () => {
       try {
-        while (true) {
-          const { value, done } = await iterator.next();
-          if (cancelled) return;
-          if (done) {
+        for (;;) {
+          const next = await iterator.next();
+          if (state.cancelled) return;
+          if (next.done) {
             emit.complete();
             return;
           }
-          emit.next(value);
+          emit.next(next.value);
         }
       } catch (err) {
-        if (!cancelled) emit.error(err);
+        if (!state.cancelled) emit.error(err);
       }
     })();
     return () => {
-      cancelled = true;
+      state.cancelled = true;
       try {
         void iterator.return?.(undefined);
       } catch {
@@ -210,13 +286,7 @@ const uiRouter = t.router({
       }),
     )
     .query(async ({ input, signal }) => {
-      const cfg = kubecfg.loadConfig();
-      const ctx = kubecfg.currentContext(cfg);
-      const user = cfg.users.find((u) => u.name === ctx.user);
-      if (!user) return { hits: [], unreachableNodes: [] };
-      const activeName = getActiveNodeOverride() ?? ctx.defaultNode;
-      const peers = listAgentNodes(cfg, activeName);
-      const result = await fanOutSurface<{
+      type SessionSearchHit = {
         sessionId: string;
         goal: string;
         status: "live" | "done" | "refused" | "aborted";
@@ -224,7 +294,14 @@ const uiRouter = t.router({
         matches: { where: string; snippet: string; spans: { start: number; end: number }[] }[];
         score: number;
         originNode?: string;
-      }>({
+      };
+      const cfg = kubecfg.loadConfig();
+      const ctx = kubecfg.currentContext(cfg);
+      const user = cfg.users.find((u) => u.name === ctx.user);
+      if (!user) return { hits: [], unreachableNodes: [] };
+      const activeName = getActiveNodeOverride() ?? ctx.defaultNode;
+      const peers = listAgentNodes(cfg, activeName);
+      const result = await fanOutSurface<SessionSearchHit>({
         nodes: peers,
         perNodeFetch: async (node, peerSignal) => {
           const client = getPeerClient(node, user) as {
@@ -232,14 +309,14 @@ const uiRouter = t.router({
               query: (
                 i: { query: string },
                 o?: { signal?: AbortSignal },
-              ) => Promise<{ hits: any[] }>;
+              ) => Promise<{ hits: SessionSearchHit[] }>;
             };
           };
           const r = await client.opsSessionSearch.query(
             { query: input.query },
             { signal: peerSignal },
           );
-          return r.hits.map((h: any) => ({ ...h, originNode: node.name }));
+          return r.hits.map((h) => ({ ...h, originNode: node.name }));
         },
         perNodeTimeoutMs: input.perNodeTimeoutMs ?? 2000,
         signal,
@@ -283,11 +360,23 @@ const uiRouter = t.router({
               query: (
                 i: { query: string },
                 o?: { signal?: AbortSignal },
-              ) => Promise<{ hits: any[] }>;
+              ) => Promise<{
+                hits: {
+                  fileLabel: string;
+                  filePath: string;
+                  matches: {
+                    lineNumber: number;
+                    where: string;
+                    snippet: string;
+                    spans: { start: number; end: number }[];
+                  }[];
+                  score: number;
+                }[];
+              }>;
             };
           };
           const r = await client.logsSearch.query({ query: input.query }, { signal: peerSignal });
-          return r.hits.map((h: any) => ({ ...h, originNode: node.name }));
+          return r.hits.map((h) => ({ ...h, originNode: node.name }));
         },
         perNodeTimeoutMs: input.perNodeTimeoutMs ?? 2000,
         signal,
@@ -338,8 +427,9 @@ const uiRouter = t.router({
             defaultPath: input?.defaultPath,
             properties: ["openDirectory", "createDirectory"],
           });
-      if (result.canceled || result.filePaths.length === 0) return null;
-      return result.filePaths[0]!;
+      const [firstPath] = result.filePaths;
+      if (result.canceled || !firstPath) return null;
+      return firstPath;
     }),
   /**
    * Scan `root` for directories that look like git checkouts —
@@ -479,9 +569,6 @@ function resolveDispatchTarget(path: string): DispatchTarget {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ProxyClient = Record<string, any>;
-
 /**
  * Typed caller over the base router. Hoisted to module scope because
  * `baseRouter` is a module-level constant and the caller has no
@@ -490,7 +577,7 @@ type ProxyClient = Record<string, any>;
  * `ProxyClient` type alias so downstream reads are still dynamically
  * dispatched but we don't repeat the cast every hot path.
  */
-const baseCaller: ProxyClient = baseRouter.createCaller({});
+const baseCaller = baseRouter.createCaller({}) as unknown as LocalCaller;
 
 /**
  * Pinned remote-client cache, keyed by the (endpoint + fingerprint +
@@ -499,7 +586,7 @@ const baseCaller: ProxyClient = baseRouter.createCaller({});
  * the already-built `createTRPCClient` instance, avoiding the
  * linkBuilder + eventsource-ponyfill wiring cost on every query.
  */
-const clientCache = new Map<string, ProxyClient>();
+const clientCache = new Map<string, RemoteClient>();
 
 function cacheKey(target: DispatchTarget): string {
   if (!target.node || !target.token) return "";
@@ -511,7 +598,7 @@ function cacheKey(target: DispatchTarget): string {
   return `${target.node.endpoint}|${fp}|${target.token.slice(0, 8)}`;
 }
 
-function buildRemoteClient(target: DispatchTarget, fetchFactory: PinnedFetchFactory): ProxyClient {
+function buildRemoteClient(target: DispatchTarget, fetchFactory: PinnedFetchFactory): RemoteClient {
   if (!target.node || !target.token) {
     throw new Error("remote target missing node or token");
   }
@@ -529,7 +616,7 @@ function buildRemoteClient(target: DispatchTarget, fetchFactory: PinnedFetchFact
       target.token,
       fetchFactory,
     ),
-  }) as unknown as ProxyClient;
+  }) as unknown as RemoteClient;
   clientCache.set(key, client);
   return client;
 }
@@ -553,7 +640,7 @@ export function __resetPeerClientFactoryForTests(): void {
   peerClientFactoryOverride = null;
 }
 
-function getPeerClient(node: ClusterNode, user: any): unknown {
+function getPeerClient(node: ClusterNode, user: KubeUser): unknown {
   if (peerClientFactoryOverride) return peerClientFactoryOverride(node);
   return buildRemoteClient(
     {
@@ -574,14 +661,15 @@ function wrapQueryOrMutation(
   path: string,
   type: "query" | "mutation",
   fetchFactory: PinnedFetchFactory,
-): unknown {
-  const resolver = async ({ input }: { input: unknown }) => {
+): AnyProcedure {
+  const resolver = ({ input }: { input: unknown }) => {
     const target = resolveDispatchTarget(path);
     if (target.kind === "local") {
-      return baseCaller[path](input);
+      return localProcedure(baseCaller, path)(input);
     }
     const client = buildRemoteClient(target, fetchFactory);
-    return type === "query" ? client[path].query(input) : client[path].mutate(input);
+    const procedure = remoteProcedure(client, path);
+    return type === "query" ? procedure.query(input) : procedure.mutate(input);
   };
   // Input shape is inferred from the underlying procedure at call
   // time; we don't re-validate here because the destination (local
@@ -594,10 +682,10 @@ function wrapQueryOrMutation(
   // `z.unknown()` keeps the transformer-lookup path happy while
   // preserving our pass-through semantics.
   const base = t.procedure.input(z.unknown());
-  return type === "query" ? base.query(resolver) : base.mutation(resolver);
+  return (type === "query" ? base.query(resolver) : base.mutation(resolver)) as AnyProcedure;
 }
 
-function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unknown {
+function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): AnyProcedure {
   // Same rationale as `wrapQueryOrMutation` above: electron-trpc's
   // IPC serializer expects an `.input()` declaration on every wrapped
   // procedure, even when the wrapper itself does no validation.
@@ -629,8 +717,11 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
         const localCaller = baseRouter.createCaller(
           {},
           { signal: controller.signal },
-        ) as unknown as ProxyClient;
-        const iterable = (await localCaller[path](opts.input)) as AsyncIterable<unknown>;
+        ) as unknown as LocalCaller;
+        const iterable = (await localProcedure(
+          localCaller,
+          path,
+        )(opts.input)) as AsyncIterable<unknown>;
         for await (const ev of iterable) {
           if (controller.signal.aborted) break;
           yield ev;
@@ -645,7 +736,7 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
     // async generator, honoring client disconnects.
     const client = buildRemoteClient(target, fetchFactory);
     const queue: unknown[] = [];
-    let done = false;
+    const state = { done: false };
     let err: unknown = null;
     let wake: (() => void) | null = null;
     const drain = (): void => {
@@ -654,55 +745,56 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
       w?.();
     };
 
-    const sub = client[path].subscribe(opts.input, {
+    const sub = remoteProcedure(client, path).subscribe(opts.input, {
       onData: (ev: unknown) => {
         queue.push(ev);
         drain();
       },
       onError: (e: unknown) => {
         err = e;
-        done = true;
+        state.done = true;
         drain();
       },
       onComplete: () => {
-        done = true;
+        state.done = true;
         drain();
       },
     });
 
     const onClientAbort = (): void => {
       try {
-        sub?.unsubscribe?.();
+        sub.unsubscribe();
       } catch {
         // best effort
       }
-      done = true;
+      state.done = true;
       drain();
     };
     clientSignal?.addEventListener("abort", onClientAbort);
 
     try {
-      while (true) {
+      for (;;) {
         if (queue.length > 0) {
           const next = queue.shift();
           yield next;
           continue;
         }
-        if (done) break;
+        if (state.done) break;
         await new Promise<void>((resolve) => {
           wake = resolve;
         });
       }
-      if (err) throw err;
+      if (err instanceof Error) throw err;
+      if (err) throw new Error(formatUnknownError(err));
     } finally {
       clientSignal?.removeEventListener("abort", onClientAbort);
       try {
-        sub?.unsubscribe?.();
+        sub.unsubscribe();
       } catch {
         // best effort
       }
     }
-  });
+  }) as AnyProcedure;
 }
 
 /**
@@ -720,37 +812,38 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
 export function buildDispatcherRouter(
   fetchFactory: PinnedFetchFactory = makeNodePinnedFetch,
 ): BaseAppRouter {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const procs: Record<string, any> = {};
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const baseDef = (baseRouter as any)._def;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const source = baseDef.procedures as Record<string, any>;
+  const procs: CreateRouterOptions = {};
+  const baseDef = (baseRouter as unknown as RouterWithCompat)._def;
+  const source = baseDef.procedures as Record<string, CompatProcedure>;
   for (const [name, orig] of Object.entries(source)) {
     // tRPC v11 exposes the procedure kind on `_def.type`. Older paths
     // used `_def.query`/`_def.mutation`/`_def.subscription` booleans
     // — check both to stay robust across tRPC point releases.
-    const def = orig?._def ?? {};
-    let type: "query" | "mutation" | "subscription" | undefined;
-    if (def.type === "query" || def.type === "mutation" || def.type === "subscription") {
-      type = def.type;
+    const def = orig._def;
+    // Widen deliberately: at runtime `type` may be absent or carry an
+    // unexpected value on other tRPC releases, despite the v11 typing.
+    const rawType: string | undefined = def.type;
+    let kind: ProcedureKind | undefined;
+    if (rawType === "query" || rawType === "mutation" || rawType === "subscription") {
+      kind = rawType;
     } else if (def.query) {
-      type = "query";
+      kind = "query";
     } else if (def.mutation) {
-      type = "mutation";
+      kind = "mutation";
     } else if (def.subscription) {
-      type = "subscription";
+      kind = "subscription";
     }
-    if (type === "query") procs[name] = wrapQueryOrMutation(name, "query", fetchFactory);
-    else if (type === "mutation") procs[name] = wrapQueryOrMutation(name, "mutation", fetchFactory);
-    else if (type === "subscription") procs[name] = wrapSubscription(name, fetchFactory);
+    if (kind === "subscription") {
+      procs[name] = wrapSubscription(name, fetchFactory);
+    } else if (kind !== undefined) {
+      procs[name] = wrapQueryOrMutation(name, kind, fetchFactory);
+    }
   }
   // Cast the dynamic wrapped router to the base AppRouter type, then
   // merge with the typed UI router. The resulting type surfaces every
   // forwarded procedure AND the two UI procedures to the renderer.
   const wrappedBase = t.router(procs) as unknown as BaseAppRouter;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const merged = t.mergeRouters(wrappedBase, uiRouter) as any;
+  const merged = t.mergeRouters(wrappedBase, uiRouter) as unknown as RouterWithCompat;
   // electron-trpc v1.0.0-alpha.0's main-side `callProcedure` wires
   // procedures in two v10-shaped ways that tRPC v11 no longer supports:
   //
@@ -767,14 +860,20 @@ export function buildDispatcherRouter(
   //
   // Backfilling both shapes in place makes the alpha routes work
   // without forking electron-trpc.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const procsDef = (merged._def?.procedures ?? {}) as Record<string, any>;
+  const procsDef = merged._def.procedures as Record<string, CompatProcedure>;
   for (const [path, origProc] of Object.entries(procsDef)) {
-    const d = origProc?._def;
-    if (!d) continue;
-    if (d.type === "query") d.query = true;
-    else if (d.type === "mutation") d.mutation = true;
-    else if (d.type === "subscription") d.subscription = true;
+    const d = origProc._def;
+    switch (d.type) {
+      case "query":
+        d.query = true;
+        break;
+      case "mutation":
+        d.mutation = true;
+        break;
+      case "subscription":
+        d.subscription = true;
+        break;
+    }
     // Wrap with a v10-compat shim. The shim is callable both ways:
     // when invoked with v11's `ProcedureCallOptions` (from
     // createCaller) it passes through; when invoked with v10's
@@ -789,20 +888,26 @@ export function buildDispatcherRouter(
     // field. v11 createCaller paths (tests, future callers) keep the
     // AsyncIterable so they stay native.
     const isSubscription = d.type === "subscription";
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const shim: any = async (opts: any) => {
-      const isV10ShapeCall = opts && typeof opts.getRawInput !== "function";
+    const callOriginal = origProc as (opts: ProcedureCallOptions<unknown>) => Promise<unknown>;
+    const shim = (async (opts: ProcedureCallOptions<unknown> | V10ProcedureCallOptions) => {
+      const isV10ShapeCall = !isProcedureCallOptions(opts);
+      let callOpts: ProcedureCallOptions<unknown>;
       if (isV10ShapeCall) {
         const rawInput = opts.rawInput;
-        opts = { ...opts, getRawInput: () => Promise.resolve(rawInput) };
+        callOpts = {
+          ...opts,
+          getRawInput: () => Promise.resolve(rawInput),
+        } as ProcedureCallOptions<unknown>;
+      } else {
+        callOpts = opts;
       }
-      const result = await origProc(opts);
+      const result = await callOriginal(callOpts);
       if (!isSubscription || !isV10ShapeCall) return result;
       return asyncIterableToObservable(result as AsyncIterable<unknown>);
-    };
+    }) as CompatProcedure;
     shim._def = origProc._def;
     shim.procedure = origProc.procedure;
-    shim.meta = origProc.meta;
+    shim.meta = d.meta;
     procsDef[path] = shim;
   }
   // electron-trpc v1.0.0-alpha.0's main-side IPC handler calls
@@ -828,10 +933,10 @@ export function buildDispatcherRouter(
         type: opts.type,
         path: opts.path,
         input: opts.input,
-        ctx: opts.ctx,
+        ctx: typeof opts.ctx === "object" && opts.ctx !== null ? opts.ctx : undefined,
       });
   }
-  return merged;
+  return merged as unknown as BaseAppRouter;
 }
 
 /**

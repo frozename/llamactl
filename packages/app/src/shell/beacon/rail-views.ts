@@ -19,5 +19,7 @@ export const RAIL_VIEWS: readonly RailView[] = [
 ];
 
 export function getRailView(id: RailViewId): RailView {
-  return RAIL_VIEWS.find((v) => v.id === id) ?? RAIL_VIEWS[0]!;
+  const fallback = RAIL_VIEWS[0];
+  if (!fallback) throw new Error("rail views are not configured");
+  return RAIL_VIEWS.find((v) => v.id === id) ?? fallback;
 }

@@ -76,18 +76,18 @@ function hitRateBadge(rate: number): { cls: string; label: string } {
   if (rate >= 0.9) {
     return {
       cls: "bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]",
-      label: `${pct}%`,
+      label: `${String(pct)}%`,
     };
   }
   if (rate >= 0.6) {
     return {
       cls: "bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]",
-      label: `${pct}%`,
+      label: `${String(pct)}%`,
     };
   }
   return {
     cls: "bg-[var(--color-err)] text-[color:var(--color-text-inverse)]",
-    label: `${pct}%`,
+    label: `${String(pct)}%`,
   };
 }
 
@@ -255,7 +255,7 @@ export function QualityTab(props: { nodeName: string; collection: string }): Rea
                       : "text-[color:var(--color-text-secondary)]";
                   return (
                     <tr
-                      key={`${i}-${q.query}`}
+                      key={`${String(i)}-${q.query}`}
                       className={`border-t border-[var(--color-border)] ${cls}`}
                     >
                       <td className="px-2 py-1 mono">{i + 1}</td>

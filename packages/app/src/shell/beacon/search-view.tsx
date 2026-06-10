@@ -4,7 +4,7 @@ import * as React from "react";
 import { useGlobalSearch } from "@/lib/global-search/hooks/use-global-search";
 import type { Hit } from "@/lib/global-search/types";
 import { trpcUIClient } from "@/lib/trpc";
-import { useTabStore } from "@/stores/tab-store";
+import { type TabEntry, useTabStore } from "@/stores/tab-store";
 import { Input, Kbd } from "@/ui";
 
 import { SearchResultsTree } from "./search-results-tree";
@@ -18,14 +18,16 @@ export function SearchView(): React.JSX.Element {
     trpcUIClient.uiGetActiveNode
       .query()
       .then((res) => {
-        setConnectedNode(res.name || undefined);
+        setConnectedNode(res.name ?? undefined);
       })
-      .catch(() => {});
+      .catch(() => {
+        return undefined;
+      });
   }, []);
 
   const onActivate = React.useCallback(
     (hit: Hit) => {
-      if (hit.action.kind === "open-tab") open(hit.action.tab);
+      if (hit.action.kind === "open-tab") open(hit.action.tab as TabEntry);
     },
     [open],
   );

@@ -81,10 +81,10 @@ function formatElapsed(startIso: string, now: number = Date.now()): string {
   const ms = now - Date.parse(startIso);
   if (!Number.isFinite(ms) || ms < 0) return "";
   const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
+  if (s < 60) return `${String(s)}s`;
   const m = Math.floor(s / 60);
   const rem = s % 60;
-  return rem === 0 ? `${m}m` : `${m}m${rem}s`;
+  return rem === 0 ? `${String(m)}m` : `${String(m)}m${String(rem)}s`;
 }
 
 function RunningBadge(props: { entry: RunningEntry }): React.JSX.Element {
@@ -131,13 +131,13 @@ function formatRelative(iso: string, now: number = Date.now()): string {
   const ms = now - Date.parse(iso);
   if (!Number.isFinite(ms) || ms < 0) return iso;
   const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s ago`;
+  if (s < 60) return `${String(s)}s ago`;
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
+  if (m < 60) return `${String(m)}m ago`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
+  if (h < 24) return `${String(h)}h ago`;
   const d = Math.floor(h / 24);
-  return `${d}d ago`;
+  return `${String(d)}d ago`;
 }
 
 function formatCost(cost: { usd: number; currency: string }): string {
@@ -169,10 +169,10 @@ function LastRunBadge(props: { rec: PipelineRecord }): React.JSX.Element {
     : "bg-[var(--color-err)] text-[color:var(--color-text-inverse)]";
   const costStr = summary.estimated_cost ? formatCost(summary.estimated_cost) : null;
   const tooltipParts: string[] = [
-    `${summary.total_docs} docs`,
-    `${summary.total_chunks} chunks`,
-    `${summary.errors} errors`,
-    `${Math.round(summary.elapsed_ms)}ms`,
+    `${String(summary.total_docs)} docs`,
+    `${String(summary.total_chunks)} chunks`,
+    `${String(summary.errors)} errors`,
+    `${String(Math.round(summary.elapsed_ms))}ms`,
   ];
   if (costStr) tooltipParts.push(`cost ~${costStr}`);
   return (
@@ -181,17 +181,17 @@ function LastRunBadge(props: { rec: PipelineRecord }): React.JSX.Element {
         className={`rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] ${cls}`}
         title={tooltipParts.join(" · ")}
       >
-        {ok ? "ok" : `${summary.errors} err`}
+        {ok ? "ok" : `${String(summary.errors)} err`}
       </span>
       <span className="text-[10px] text-[color:var(--color-text-secondary)]">
         {summary.total_docs}/{summary.total_chunks} · {formatRelative(at)}
-        {costStr && (
+        {costStr && summary.estimated_cost && (
           <>
             {" · "}
             <span
               className="mono text-[color:var(--color-text)]"
               data-testid={`pipelines-lastrun-cost-${rec.name}`}
-              title={`source: ${summary.estimated_cost!.source}`}
+              title={`source: ${summary.estimated_cost.source}`}
             >
               ~{costStr}
             </span>
@@ -238,7 +238,7 @@ function LogsPanel(props: { name: string; onClose: () => void }): React.JSX.Elem
       )}
       {!logs.isLoading && !logs.error && entries.length === 0 && (
         <div className="p-3 text-sm text-[color:var(--color-text-secondary)]">
-          Journal empty — the pipeline hasn't run yet.
+          Journal empty — the pipeline hasn&apos;t run yet.
         </div>
       )}
       {entries.length > 0 && (

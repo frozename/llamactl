@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { matchWorkloads } from "../../../../src/lib/global-search/surfaces/workloads";
+import type { TabEntry } from "../../../../src/stores/tab-store";
 
 describe("matchWorkloads", () => {
   const items = [
@@ -28,11 +29,15 @@ describe("matchWorkloads", () => {
 
   test("action opens workload tab", () => {
     const out = matchWorkloads("qwen", items);
-    const a = out[0]!.action;
+    const [hit] = out;
+    expect(hit).toBeDefined();
+    const a = hit?.action;
+    if (!a) return;
     expect(a.kind).toBe("open-tab");
     if (a.kind === "open-tab") {
-      expect(a.tab.kind).toBe("workload");
-      expect(a.tab.instanceId).toBe("qwen-72b");
+      const tab = a.tab as TabEntry;
+      expect(tab.kind).toBe("workload");
+      expect(tab.instanceId).toBe("qwen-72b");
     }
   });
 });

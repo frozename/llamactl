@@ -1,4 +1,4 @@
-import { config as kubecfg } from "@llamactl/remote";
+import { type ClusterNode, config as kubecfg } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 import {
@@ -8,11 +8,25 @@ import {
   buildDispatcherRouter,
 } from "../../../electron/trpc/dispatcher.js";
 
+type Config = ReturnType<typeof kubecfg.loadConfig>;
+type OpsSearchResult = {
+  hits: { id: string; query: string; originNode?: string }[];
+  unreachableNodes: string[];
+};
+type LogsSearchResult = {
+  hits: { line: string; query: string; originNode?: string }[];
+  unreachableNodes: string[];
+};
+type CrossNodeCaller = {
+  uiCrossNodeOpsSessionSearch: (input: { query: string }) => Promise<OpsSearchResult>;
+  uiCrossNodeLogsSearch: (input: { query: string }) => Promise<LogsSearchResult>;
+};
+
 describe("UI Cross-Node Dispatcher Procedures", () => {
   beforeEach(() => {
     __resetPeerClientFactoryForTests();
     __resetActiveNodeOverrideForTests();
-    spyOn(kubecfg, "loadConfig").mockReturnValue({
+    const config: Config = {
       apiVersion: "llamactl/v1",
       kind: "Config",
       currentContext: "default",
@@ -28,7 +42,8 @@ describe("UI Cross-Node Dispatcher Procedures", () => {
         },
       ],
       users: [{ name: "me", token: "abc" }],
-    } as any);
+    };
+    spyOn(kubecfg, "loadConfig").mockReturnValue(config);
   });
 
   afterEach(() => {
@@ -40,55 +55,52 @@ describe("UI Cross-Node Dispatcher Procedures", () => {
   test("uiCrossNodeOpsSessionSearch fans out to remote agent nodes", async () => {
     const hitsCalled: string[] = [];
 
-    __setPeerClientFactoryForTests((node: any) => {
+    __setPeerClientFactoryForTests((node: ClusterNode) => {
       const nodeName = node.name;
       return {
         opsSessionSearch: {
-          query: async (input: any) => {
+          query: (input: { query: string }) => {
             hitsCalled.push(nodeName);
-            return { hits: [{ id: `session-${nodeName}` }] };
+            return Promise.resolve({ hits: [{ id: `session-${nodeName}`, query: input.query }] });
           },
         },
       };
     });
 
     const router = buildDispatcherRouter();
-    const caller = router.createCaller({});
+    const caller = router.createCaller({}) as unknown as CrossNodeCaller;
 
-    const result = await caller.uiCrossNodeOpsSessionSearch({ query: "test" });
+    const result: OpsSearchResult = await caller.uiCrossNodeOpsSessionSearch({ query: "test" });
 
     expect(hitsCalled.sort()).toEqual(["linux-box", "mac-mini"]);
     expect(result.hits).toHaveLength(2);
-    expect(result.hits.map((h: any) => h.id).sort()).toEqual([
-      "session-linux-box",
-      "session-mac-mini",
-    ]);
+    expect(result.hits.map((h) => h.id).sort()).toEqual(["session-linux-box", "session-mac-mini"]);
     expect(result.unreachableNodes).toEqual([]);
   });
 
   test("uiCrossNodeLogsSearch fans out to remote agent nodes", async () => {
     const hitsCalled: string[] = [];
 
-    __setPeerClientFactoryForTests((node: any) => {
+    __setPeerClientFactoryForTests((node: ClusterNode) => {
       const nodeName = node.name;
       return {
         logsSearch: {
-          query: async (input: any) => {
+          query: (input: { query: string }) => {
             hitsCalled.push(nodeName);
-            return { hits: [{ line: `log-${nodeName}` }] };
+            return Promise.resolve({ hits: [{ line: `log-${nodeName}`, query: input.query }] });
           },
         },
       };
     });
 
     const router = buildDispatcherRouter();
-    const caller = router.createCaller({});
+    const caller = router.createCaller({}) as unknown as CrossNodeCaller;
 
-    const result = await caller.uiCrossNodeLogsSearch({ query: "error" });
+    const result: LogsSearchResult = await caller.uiCrossNodeLogsSearch({ query: "error" });
 
     expect(hitsCalled.sort()).toEqual(["linux-box", "mac-mini"]);
     expect(result.hits).toHaveLength(2);
-    expect(result.hits.map((h: any) => h.line).sort()).toEqual(["log-linux-box", "log-mac-mini"]);
+    expect(result.hits.map((h) => h.line).sort()).toEqual(["log-linux-box", "log-mac-mini"]);
     expect(result.unreachableNodes).toEqual([]);
   });
 });

@@ -2,11 +2,14 @@
 import { describe, expect, test } from "bun:test";
 
 import { applySurfaceBias, sortGroups } from "../../../src/lib/global-search/ranking";
+import type { Hit } from "../../../src/lib/global-search/types";
 
 describe("ranking", () => {
   test("applySurfaceBias adds 0.1 to tier 1 surfaces", () => {
-    expect(applySurfaceBias({ surface: "module", score: 0.8 } as any)).toBeCloseTo(0.9);
-    expect(applySurfaceBias({ surface: "session", score: 0.8 } as any)).toBeCloseTo(0.8);
+    const moduleHit = { surface: "module", score: 0.8 } as Hit;
+    const sessionHit = { surface: "session", score: 0.8 } as Hit;
+    expect(applySurfaceBias(moduleHit)).toBeCloseTo(0.9);
+    expect(applySurfaceBias(sessionHit)).toBeCloseTo(0.8);
   });
 
   test("sortGroups orders by topScore descending", () => {

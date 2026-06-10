@@ -20,8 +20,8 @@ export function mapLogRagHits(hits: LogRagServerHit[]): Hit[] {
     for (const m of h.matches) {
       out.push({
         surface: "logs",
-        parentId: `${h.fileLabel}:${m.lineNumber}`,
-        parentTitle: `${h.fileLabel}:${m.lineNumber}`,
+        parentId: `${h.fileLabel}:${String(m.lineNumber)}`,
+        parentTitle: `${h.fileLabel}:${String(m.lineNumber)}`,
         score: h.score,
         matchKind: "semantic",
         ragDistance: h.ragDistance,

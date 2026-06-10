@@ -40,7 +40,7 @@ function ExposePanel(): React.JSX.Element {
         kind: "ok",
         name: result.name,
         action: result.action,
-        endpoint: result.status?.endpoint ?? null,
+        endpoint: result.status.endpoint,
       });
       void utils.workloadList.invalidate();
       void qc.invalidateQueries();
@@ -72,7 +72,7 @@ function ExposePanel(): React.JSX.Element {
   }
 
   const nodeOptions = (nodes.data?.nodes ?? [])
-    .filter((n) => (n.effectiveKind ?? "agent") === "agent")
+    .filter((n) => n.effectiveKind === "agent")
     .map((n) => n.name);
   if (nodeOptions.length === 0) nodeOptions.push("local");
   const catalogRels = useMemo(() => {
@@ -242,7 +242,7 @@ function ExposedWorkloads(): React.JSX.Element {
           color: "var(--color-text-secondary)",
         }}
       >
-        No workloads currently serving. Use "Expose a model" above to start one.
+        No workloads currently serving. Use &quot;Expose a model&quot; above to start one.
       </div>
     );
   }
@@ -296,7 +296,7 @@ function ExposedWorkloads(): React.JSX.Element {
 }
 
 function fmtTps(raw: string | undefined | null): string {
-  if (raw == null) return "—";
+  if (raw === null || raw === undefined) return "—";
   const n = typeof raw === "number" ? raw : Number.parseFloat(raw);
   if (!Number.isFinite(n)) return "—";
   return n.toFixed(1);

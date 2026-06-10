@@ -15,7 +15,11 @@ export function FirstRunTip(): React.JSX.Element | null {
 
   useEffect(() => {
     if (typeof localStorage === "undefined") return;
-    if (localStorage.getItem(FIRST_RUN_KEY) !== "1") setVisible(true);
+    if (localStorage.getItem(FIRST_RUN_KEY) !== "1") {
+      queueMicrotask(() => {
+        setVisible(true);
+      });
+    }
   }, []);
 
   if (!visible) return null;
@@ -55,7 +59,8 @@ export function FirstRunTip(): React.JSX.Element | null {
     },
   ];
 
-  const current = steps[step] ?? steps[0]!;
+  const current = steps[step] ?? steps[0];
+  if (!current) return null;
   const isLast = step === steps.length - 1;
 
   return (

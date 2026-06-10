@@ -6,7 +6,7 @@
 
 export type LegacyThemeId = "glass" | "neon" | "ops";
 export type BeaconThemeId = "sirius" | "ember" | "clinical" | "scrubs";
-export type AnyThemeId = LegacyThemeId | BeaconThemeId | string;
+export type AnyThemeId = string;
 
 export interface MigrationExtras {
   /** True if the legacy theme had a decoration we want to preserve as

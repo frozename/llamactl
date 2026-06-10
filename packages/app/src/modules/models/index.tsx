@@ -1,32 +1,11 @@
 import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { useState } from "react";
-import { create } from "zustand";
-import { persist } from "zustand/middleware";
 
 import { trpc } from "@/lib/trpc";
 import { Button, EditorialHero } from "@/ui";
 
-type ScopeFilter = "all" | "builtin" | "custom";
-
-interface ModelsStore {
-  scope: ScopeFilter;
-  setScope: (s: ScopeFilter) => void;
-}
-
-/**
- * Per-module store: UI state local to the Models view. Kept in its own
- * file so feature slices stay isolated (matches the novaflow pattern).
- */
-export const useModelsStore = create<ModelsStore>()(
-  persist(
-    (set) => ({
-      scope: "all",
-      setScope: (s) => set({ scope: s }),
-    }),
-    { name: "llamactl-models" },
-  ),
-);
+import { type ScopeFilter, useModelsStore } from "./store";
 
 function ScopeTabs(): React.JSX.Element {
   const { scope, setScope } = useModelsStore();
@@ -94,7 +73,7 @@ export default function Models(): React.JSX.Element {
         setError(null);
       } else {
         setReport(null);
-        setError(result.error ?? `Uninstall refused (code=${result.code})`);
+        setError(result.error ?? `Uninstall refused (code=${String(result.code)})`);
       }
       await queryClient.invalidateQueries({
         queryKey: [["catalogList"], { type: "query" }],
@@ -169,7 +148,7 @@ export default function Models(): React.JSX.Element {
         </div>
       )}
 
-      {catalog.isSuccess && (catalog.data?.length ?? 0) === 0 ? (
+      {catalog.isSuccess && catalog.data.length === 0 ? (
         <EditorialHero
           title={`No entries for scope "${scope}"`}
           lede="Pull a new model to see it here."

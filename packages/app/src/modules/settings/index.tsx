@@ -227,7 +227,7 @@ function PromotionsEditor(): React.JSX.Element {
                       {p.rel}
                     </td>
                     <td style={{ padding: "8px 12px", color: "var(--color-text-secondary)" }}>
-                      {p.updated_at ?? ""}
+                      {p.updated_at}
                     </td>
                     <td style={{ padding: "8px 12px", textAlign: "right" }}>
                       {isPending ? (

@@ -1,7 +1,7 @@
 // packages/app/test/lib/global-search/orchestrator.test.ts
 import { describe, expect, test } from "bun:test";
 
-import type { Hit } from "../../../src/lib/global-search/types";
+import type { GroupedResults, Hit } from "../../../src/lib/global-search/types";
 
 import { mergeServerHits, runClientPhase } from "../../../src/lib/global-search/orchestrator";
 
@@ -94,7 +94,7 @@ describe("mergeServerHits", () => {
   });
 });
 test("mergeServerHits preserves unreachableNodes from the merge call", () => {
-  const initial: any = [];
+  const initial: GroupedResults = [];
   const hits: Hit[] = [
     {
       surface: "session",
@@ -123,7 +123,7 @@ test("mergeServerHits preserves unreachableNodes from the merge call", () => {
 });
 
 test("originNode flows through mergeServerHits unchanged", () => {
-  const initial: any = [];
+  const initial: GroupedResults = [];
   const hits: Hit[] = [
     {
       surface: "session",

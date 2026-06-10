@@ -39,7 +39,7 @@ export function Lockup({ size = "md", className, style, ...rest }: LockupProps):
           height: orbSize,
           borderRadius: "50%",
           background: "var(--color-brand)",
-          boxShadow: `0 0 ${orbSize + 2}px var(--color-brand)`,
+          boxShadow: `0 0 ${String(orbSize + 2)}px var(--color-brand)`,
           flexShrink: 0,
         }}
       />

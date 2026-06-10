@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { matchModules } from "../../../../src/lib/global-search/surfaces/modules";
+import type { TabEntry } from "../../../../src/stores/tab-store";
 
 describe("matchModules", () => {
   test("matches by prefix with higher score", () => {
@@ -19,11 +20,15 @@ describe("matchModules", () => {
 
   test("returns action to open module tab", () => {
     const out = matchModules("dash");
-    const action = out[0]!.action;
+    const [hit] = out;
+    expect(hit).toBeDefined();
+    const action = hit?.action;
+    if (!action) return;
     expect(action.kind).toBe("open-tab");
     if (action.kind === "open-tab") {
-      expect(action.tab.kind).toBe("module");
-      expect(action.tab.tabKey).toBe("module:dashboard");
+      const tab = action.tab as TabEntry;
+      expect(tab.kind).toBe("module");
+      expect(tab.tabKey).toBe("module:dashboard");
     }
   });
 });

@@ -1,11 +1,8 @@
-import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
-import { useEffect } from "react";
-import { create } from "zustand";
-import { persist } from "zustand/middleware";
 
-import { trpc, trpcUIClient } from "@/lib/trpc";
+import { trpc } from "@/lib/trpc";
 import { useUIStore } from "@/stores/ui-store";
+import { useSyncActiveNode } from "./node-selection";
 
 /**
  * Cluster chip that sits in the title bar. Shows the kubeconfig
@@ -26,59 +23,14 @@ import { useUIStore } from "@/stores/ui-store";
  *   - The chip is a navigation primitive, not a state mutator.
  */
 
-interface NodeSelectionStore {
-  selectedNode: string | null;
-  setSelectedNode: (name: string | null) => void;
-}
-
-export const useNodeSelection = create<NodeSelectionStore>()(
-  persist(
-    (set) => ({
-      selectedNode: null,
-      setSelectedNode: (name) => set({ selectedNode: name }),
-    }),
-    { name: "llamactl-node-selection" },
-  ),
-);
-
-/**
- * Clear any stale active-node override on boot. The dispatcher
- * honors an override-first policy, and a persisted value from the
- * old dropdown-era UX silently routed every tRPC call to whatever
- * was last picked \u2014 even after the UI dropped the dropdown and
- * the user thought they were back on local. Reset to null on mount
- * so every module defaults to kubeconfig.defaultNode. Scoped
- * per-feature pickers (chat conversation, RAG-node dropdown) drive
- * their own routing with explicit inputs \u2014 they don't need the
- * global override.
- */
-export function useSyncActiveNode(): void {
-  const qc = useQueryClient();
-  const utils = trpc.useUtils();
-  const { selectedNode, setSelectedNode } = useNodeSelection();
-  useEffect(() => {
-    // Clear the persisted override exactly once on boot. If the
-    // user picks a node again via the dashboard map's detail-card
-    // "set as active" action (which navigates instead of overriding
-    // in the new UX), no re-sync fires and the override stays null.
-    if (selectedNode !== null) {
-      setSelectedNode(null);
-      void trpcUIClient.uiSetActiveNode.mutate({ name: "local" }).catch(() => {});
-      void utils.invalidate();
-      void qc.invalidateQueries();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-}
-
 export function NodeSelector(): React.JSX.Element | null {
   const list = trpc.nodeList.useQuery();
   const setActiveModule = useUIStore((s) => s.setActiveModule);
   useSyncActiveNode();
 
   if (list.isLoading || !list.data) return null;
-  const nodes = list.data.nodes ?? [];
-  const agentCount = nodes.filter((n) => (n.effectiveKind ?? "agent") === "agent").length;
+  const nodes = list.data.nodes;
+  const agentCount = nodes.filter((n) => n.effectiveKind === "agent").length;
   const gatewayCount = nodes.filter((n) => n.effectiveKind === "gateway").length;
   const totalCount = nodes.length;
 
@@ -92,7 +44,7 @@ export function NodeSelector(): React.JSX.Element | null {
       style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       data-testid="node-selector-root"
       data-node-count={totalCount}
-      title={`${totalCount} node${totalCount === 1 ? "" : "s"} in the cluster (${agentCount} agent, ${gatewayCount} gateway) \u2014 click to open the cluster map`}
+      title={`${String(totalCount)} node${totalCount === 1 ? "" : "s"} in the cluster (${String(agentCount)} agent, ${String(gatewayCount)} gateway) \u2014 click to open the cluster map`}
     >
       <span className="text-[10px] text-[color:var(--color-text-secondary)]">cluster</span>
       <span className="font-mono text-[11px]">

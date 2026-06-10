@@ -95,8 +95,9 @@ const usePipelinesStore = create<PipelinesStore>()(
         }),
       remove: (id) =>
         set((s) => {
-          const rest = { ...s.pipelines };
-          delete rest[id];
+          const rest = Object.fromEntries(
+            Object.entries(s.pipelines).filter(([key]) => key !== id),
+          );
           const ids = Object.keys(rest);
           return {
             pipelines: rest,
@@ -570,7 +571,8 @@ export default function Pipelines(): React.JSX.Element {
       setStreamInput(null);
       return;
     }
-    const nextStage = activePipeline.stages[nextIdx]!;
+    const nextStage = activePipeline.stages[nextIdx];
+    if (!nextStage) return;
     setCurrentIdx(nextIdx);
     setOutputs((o) => [...o, ""]);
     setStreamKey((k) => k + 1);
@@ -631,7 +633,8 @@ export default function Pipelines(): React.JSX.Element {
     setCurrentIdx(0);
     setRunningId(active.id);
     setStreamKey((k) => k + 1);
-    const first = active.stages[0]!;
+    const [first] = active.stages;
+    if (!first) return;
     setStreamInput(buildStageRequest(first, text));
   }
 
@@ -938,7 +941,9 @@ export default function Pipelines(): React.JSX.Element {
               type="submit"
               disabled={runningId !== null || !initialInput.trim() || active.stages.length === 0}
             >
-              {runningId === active.id ? `Stage ${currentIdx + 1}/${active.stages.length}…` : "Run"}
+              {runningId === active.id
+                ? `Stage ${String(currentIdx + 1)}/${String(active.stages.length)}…`
+                : "Run"}
             </Button>
           </form>
         </div>
@@ -959,8 +964,8 @@ export default function Pipelines(): React.JSX.Element {
               Chain model calls into a pipeline
             </h2>
             <p style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>
-              Each stage consumes the previous stage's final assistant message. Useful for summarise
-              → review → rewrite, vision-caption → reasoning, cheap-draft → cloud-polish.
+              Each stage consumes the previous stage&apos;s final assistant message. Useful for
+              summarise → review → rewrite, vision-caption → reasoning, cheap-draft → cloud-polish.
             </p>
             <Button
               variant="primary"

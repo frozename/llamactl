@@ -1,7 +1,7 @@
 import * as React from "react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
-import { trpc } from "@/lib/trpc";
+import { type N, type NodeKind, useMockNodes } from "./NodeMapVariantsData";
 
 /**
  * Three mock node-map aesthetics rendered side-by-side so an operator
@@ -20,36 +20,6 @@ import { trpc } from "@/lib/trpc";
  * This file is intentionally self-contained so we can delete it once a
  * direction is chosen.
  */
-
-type NodeKind = "agent" | "gateway" | "provider" | "rag" | "cloud";
-interface N {
-  name: string;
-  endpoint: string;
-  effectiveKind: NodeKind;
-  isLocal?: boolean;
-}
-
-export function useMockNodes(): N[] {
-  const list = trpc.nodeList.useQuery();
-  return useMemo(() => {
-    const raw = list.data?.nodes ?? [];
-    const out: N[] = raw.map((n) => ({
-      name: n.name,
-      endpoint: n.endpoint,
-      effectiveKind: n.effectiveKind ?? "agent",
-      isLocal: n.name === "local",
-    }));
-    if (!out.some((n) => n.name === "local")) {
-      out.unshift({
-        name: "local",
-        endpoint: "inproc://local",
-        effectiveKind: "agent",
-        isLocal: true,
-      });
-    }
-    return out;
-  }, [list.data]);
-}
 
 /* ────────────── A · Tailscale / Vercel glass cards ────────────── */
 
@@ -209,7 +179,7 @@ export function NodeMapCyberpunk({ nodes }: { nodes: N[] }): React.JSX.Element {
       />
       <div className="relative">
         <div className="mb-3 text-[10px] uppercase tracking-[0.3em] opacity-60">
-          // fleet.map ::agents
+          {"// fleet.map ::agents"}
         </div>
         <div className="flex flex-wrap gap-2">
           {agents.map((n) => (
@@ -221,7 +191,8 @@ export function NodeMapCyberpunk({ nodes }: { nodes: N[] }): React.JSX.Element {
           return (
             <div key={g.name} className="mt-5">
               <div className="mb-2 text-[10px] uppercase tracking-[0.3em] opacity-60">
-                // gateway :: {g.name}
+                {"// gateway :: "}
+                {g.name}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <CyberpunkBubble node={g} active={false} />
@@ -241,7 +212,7 @@ export function NodeMapCyberpunk({ nodes }: { nodes: N[] }): React.JSX.Element {
         {rags.length > 0 && (
           <div className="mt-5">
             <div className="mb-2 text-[10px] uppercase tracking-[0.3em] opacity-60">
-              // retrieval
+              {"// retrieval"}
             </div>
             <div className="flex flex-wrap gap-2">
               {rags.map((n) => (

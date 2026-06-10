@@ -161,7 +161,8 @@ const useChatStore = create<ChatStore>()(
         set((s) => {
           const conv = s.conversations[id];
           if (!conv || conv.messages.length === 0) return s;
-          const last = conv.messages[conv.messages.length - 1]!;
+          const last = conv.messages.at(-1);
+          if (!last) return s;
           const updated = { ...last, ...patch };
           return {
             conversations: {
@@ -213,7 +214,8 @@ const useChatStore = create<ChatStore>()(
           const conv = s.conversations[id];
           const list = conv?.messagesB ?? [];
           if (!conv || list.length === 0) return s;
-          const last = list[list.length - 1]!;
+          const last = list.at(-1);
+          if (!last) return s;
           return {
             conversations: {
               ...s.conversations,
@@ -278,7 +280,9 @@ const useChatStore = create<ChatStore>()(
           if (!conv) return s;
           const idx = conv.messages.findIndex((m) => m.id === messageId);
           if (idx < 0) return s;
-          const updated = { ...conv.messages[idx]!, ...patch };
+          const message = conv.messages[idx];
+          if (!message) return s;
+          const updated = { ...message, ...patch };
           return {
             conversations: {
               ...s.conversations,
@@ -314,8 +318,9 @@ const useChatStore = create<ChatStore>()(
         }),
       remove: (id) =>
         set((s) => {
-          const rest = { ...s.conversations };
-          delete rest[id];
+          const rest = Object.fromEntries(
+            Object.entries(s.conversations).filter(([key]) => key !== id),
+          );
           const ids = Object.keys(rest);
           return {
             conversations: rest,
@@ -590,7 +595,12 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
   }, [catalog.data]);
   const [choice, setChoice] = React.useState<string>("");
   React.useEffect(() => {
-    if (!choice && rels.length > 0) setChoice(rels[0]!);
+    const [firstRel] = rels;
+    if (!choice && firstRel) {
+      queueMicrotask(() => {
+        setChoice(firstRel);
+      });
+    }
   }, [rels, choice]);
   const isStarting = picked !== "" && !!workload;
   return (
@@ -969,7 +979,7 @@ function ComposerBar(props: {
   function submit(): void {
     const text = input.trim();
     if (!text || props.busy) return;
-    props.onSend(text);
+    void props.onSend(text);
     setInput("");
   }
   return (
@@ -1050,7 +1060,7 @@ export default function Chat(): React.JSX.Element {
   // all qualify. RAG nodes (Chroma/pgvector) don't speak chat, so
   // they're filtered out.
   const nodes = useMemo(
-    () => (nodeList.data?.nodes ?? []).filter((n) => (n.effectiveKind ?? "agent") !== "rag"),
+    () => (nodeList.data?.nodes ?? []).filter((n) => n.effectiveKind !== "rag"),
     [nodeList.data],
   );
   const modelList = trpc.nodeModels.useQuery(
@@ -1072,9 +1082,10 @@ export default function Chat(): React.JSX.Element {
   // subsequent request 404'd.
   useEffect(() => {
     if (!active || !activeId) return;
-    if (models.length === 0) return;
+    const [firstModel] = models;
+    if (!firstModel) return;
     if (!active.model || !models.includes(active.model)) {
-      store.updateMeta(activeId, { model: models[0]! });
+      store.updateMeta(activeId, { model: firstModel });
     }
   }, [active, activeId, models, store]);
   const modelListB = trpc.nodeModels.useQuery(
@@ -1114,7 +1125,7 @@ export default function Chat(): React.JSX.Element {
           }
         } else if (e.type === "error") {
           store.append(activeId, {
-            id: `m-${Date.now()}`,
+            id: `m-${String(Date.now())}`,
             role: "error",
             content: e.error?.message ?? "stream error",
           });
@@ -1128,7 +1139,7 @@ export default function Chat(): React.JSX.Element {
       onError: (err) => {
         if (!activeId) return;
         store.append(activeId, {
-          id: `m-${Date.now()}`,
+          id: `m-${String(Date.now())}`,
           role: "error",
           content: err.message,
         });
@@ -1158,7 +1169,7 @@ export default function Chat(): React.JSX.Element {
           }
         } else if (e.type === "error") {
           store.appendB(activeId, {
-            id: `m-${Date.now()}`,
+            id: `m-${String(Date.now())}`,
             role: "error",
             content: e.error?.message ?? "stream error",
           });
@@ -1172,7 +1183,7 @@ export default function Chat(): React.JSX.Element {
       onError: (err) => {
         if (!activeId) return;
         store.appendB(activeId, {
-          id: `m-${Date.now()}`,
+          id: `m-${String(Date.now())}`,
           role: "error",
           content: err.message,
         });
@@ -1243,17 +1254,18 @@ export default function Chat(): React.JSX.Element {
     } catch {
       return null;
     }
-    const hits = response.results ?? [];
+    const hits = response.results;
     if (hits.length === 0) return null;
 
     // Greedy budget-fill: keep adding docs to the system-message
     // body until the next doc would blow the char budget, then stop.
-    const parts: string[] = [`Relevant context from knowledge base "${ragNode}":`];
+    const header = `Relevant context from knowledge base "${ragNode}":`;
+    const parts: string[] = [header];
     const attachedDocs: RetrievedDoc[] = [];
-    let used = parts[0]!.length;
+    let used = header.length;
     let truncated = false;
     for (const hit of hits) {
-      const body = hit.document.content ?? "";
+      const body = hit.document.content;
       const chunk = `--- doc ${hit.document.id} (score=${hit.score.toFixed(3)}) ---\n${body}`;
       if (used + chunk.length + 2 > MAX_CONTEXT_CHARS) {
         truncated = true;
@@ -1282,8 +1294,8 @@ export default function Chat(): React.JSX.Element {
   async function send(text: string): Promise<void> {
     if (!active) return;
     const stamp = Date.now();
-    const userMsg: Message = { id: `m-${stamp}-u`, role: "user", content: text };
-    const asstMsg: Message = { id: `m-${stamp}-a`, role: "assistant", content: "" };
+    const userMsg: Message = { id: `m-${String(stamp)}-u`, role: "user", content: text };
+    const asstMsg: Message = { id: `m-${String(stamp)}-a`, role: "assistant", content: "" };
     store.append(active.id, userMsg);
     store.append(active.id, asstMsg);
     if (active.messages.length === 0) {
@@ -1325,8 +1337,8 @@ export default function Chat(): React.JSX.Element {
     // history is independent so each side's context stays honest to
     // its own prior assistant turns.
     if (active.compareWith) {
-      const userMsgB: Message = { id: `m-${stamp}-ub`, role: "user", content: text };
-      const asstMsgB: Message = { id: `m-${stamp}-ab`, role: "assistant", content: "" };
+      const userMsgB: Message = { id: `m-${String(stamp)}-ub`, role: "user", content: text };
+      const asstMsgB: Message = { id: `m-${String(stamp)}-ab`, role: "assistant", content: "" };
       store.appendB(active.id, userMsgB);
       store.appendB(active.id, asstMsgB);
       setBusyB(true);

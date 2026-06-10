@@ -16,6 +16,13 @@ function truncate(lines: LogLine[]): LogLine[] {
   return lines.length > MAX_LOG_LINES ? lines.slice(lines.length - MAX_LOG_LINES) : lines;
 }
 
+function eventText(value: unknown, fallback = ""): string {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
+}
+
 export default function Server(): React.JSX.Element {
   const queryClient = useQueryClient();
   const { workload, loading: workloadLoading } = useActiveWorkload();
@@ -51,36 +58,41 @@ export default function Server(): React.JSX.Element {
       case "launch":
         appendLog({
           kind: "launch",
-          text: `launched pid=${String(e.pid)} — ${String(e.command)} ${((e.args as string[]) ?? []).join(" ")}`,
+          text: `launched pid=${eventText(e.pid)} — ${eventText(e.command)} ${
+            Array.isArray(e.args) ? e.args.map((arg) => eventText(arg)).join(" ") : ""
+          }`,
         });
         break;
       case "waiting":
         if ((e.attempt as number) % 5 === 0) {
           appendLog({
             kind: "waiting",
-            text: `waiting attempt=${String(e.attempt)} http=${String(e.httpCode ?? "n/a")}`,
+            text: `waiting attempt=${eventText(e.attempt)} http=${eventText(e.httpCode, "n/a")}`,
           });
         }
         break;
       case "retry":
-        appendLog({ kind: "retry", text: `retry: ${String(e.reason)}` });
+        appendLog({ kind: "retry", text: `retry: ${eventText(e.reason)}` });
         break;
       case "ready":
         appendLog({
           kind: "ready",
-          text: `ready pid=${String(e.pid)} endpoint=${String(e.endpoint)}`,
+          text: `ready pid=${eventText(e.pid)} endpoint=${eventText(e.endpoint)}`,
         });
         break;
       case "timeout":
-        appendLog({ kind: "timeout", text: `timeout pid=${String(e.pid)}` });
+        appendLog({ kind: "timeout", text: `timeout pid=${eventText(e.pid)}` });
         break;
       case "exited":
-        appendLog({ kind: "exited", text: `exited code=${String(e.code ?? "?")}` });
+        appendLog({ kind: "exited", text: `exited code=${eventText(e.code, "?")}` });
         break;
       case "done": {
         const r = e.result as { ok?: boolean; pid?: number; endpoint?: string; error?: string };
         if (r.ok) {
-          appendLog({ kind: "done", text: `started pid=${r.pid} endpoint=${r.endpoint}` });
+          appendLog({
+            kind: "done",
+            text: `started pid=${eventText(r.pid)} endpoint=${eventText(r.endpoint)}`,
+          });
         } else {
           appendLog({ kind: "error", text: r.error ?? "start failed" });
           setError(r.error ?? "start failed");
@@ -335,7 +347,7 @@ export default function Server(): React.JSX.Element {
               fontSize: 14,
               color: httpOk
                 ? "var(--color-ok)"
-                : s?.health.httpCode == null
+                : s?.health.httpCode === null || s?.health.httpCode === undefined
                   ? "var(--color-text-secondary)"
                   : "var(--color-err)",
             }}
@@ -457,7 +469,9 @@ export default function Server(): React.JSX.Element {
             <Button
               type="button"
               variant="destructive"
-              onClick={() => workload && stopMutation.mutate({ workload, graceSeconds: 5 })}
+              onClick={() => {
+                if (workload) stopMutation.mutate({ workload, graceSeconds: 5 });
+              }}
               disabled={busy || stopMutation.isPending || !isUp || !workload}
               data-testid="server-stop"
               title={
@@ -544,7 +558,7 @@ export default function Server(): React.JSX.Element {
               color: ka?.running ? "var(--color-ok)" : "var(--color-text-secondary)",
             }}
           >
-            {ka?.running ? `running (pid=${ka.pid})` : "stopped"}
+            {ka?.running ? `running (pid=${String(ka.pid)})` : "stopped"}
           </span>
         </div>
         <div
@@ -566,7 +580,7 @@ export default function Server(): React.JSX.Element {
               onChange={(e) => {
                 setTarget(e.target.value);
               }}
-              disabled={ka?.running || keepAliveStartMutation.isPending}
+              disabled={ka?.running === true || keepAliveStartMutation.isPending}
               style={{ width: "100%", fontFamily: "monospace" }}
             />
           </label>
@@ -582,9 +596,10 @@ export default function Server(): React.JSX.Element {
               type="button"
               variant="primary"
               onClick={() => {
-                keepAliveStartMutation.mutate({ target: target.trim() || "current" });
+                const trimmed = target.trim();
+                keepAliveStartMutation.mutate({ target: trimmed.length > 0 ? trimmed : "current" });
               }}
-              disabled={ka?.running || keepAliveStartMutation.isPending}
+              disabled={ka?.running === true || keepAliveStartMutation.isPending}
               style={{ flex: 1 }}
             >
               {keepAliveStartMutation.isPending ? "Starting…" : "Start supervisor"}
@@ -592,9 +607,9 @@ export default function Server(): React.JSX.Element {
             <Button
               type="button"
               variant="destructive"
-              onClick={() =>
-                workload && keepAliveStopMutation.mutate({ workload, graceSeconds: 10 })
-              }
+              onClick={() => {
+                if (workload) keepAliveStopMutation.mutate({ workload, graceSeconds: 10 });
+              }}
               disabled={!ka?.running || keepAliveStopMutation.isPending}
               style={{ flex: 1 }}
             >

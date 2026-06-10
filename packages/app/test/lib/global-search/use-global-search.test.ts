@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 
 describe("computeNextSchedule", () => {
   test("schedules tier2 at 250ms and tier3 at 400ms from now", async () => {
-    (globalThis as any).electronTRPC = { onMessage: () => {} };
+    globalThis.electronTRPC = { onMessage: () => undefined };
     const { computeNextSchedule } =
       await import("../../../src/lib/global-search/hooks/use-global-search");
     const out = computeNextSchedule(1000);
@@ -12,7 +12,7 @@ describe("computeNextSchedule", () => {
   });
 
   test("respects custom debounce overrides", async () => {
-    (globalThis as any).electronTRPC = { onMessage: () => {} };
+    globalThis.electronTRPC = { onMessage: () => undefined };
     const { computeNextSchedule } =
       await import("../../../src/lib/global-search/hooks/use-global-search");
     const out = computeNextSchedule(1000, { tier2Ms: 100, tier3Ms: 200 });
@@ -22,7 +22,7 @@ describe("computeNextSchedule", () => {
 });
 
 test("Tier 2 fires both local and cross-node fetches under one debounce anchor", async () => {
-  (globalThis as any).electronTRPC = { onMessage: () => {} };
+  globalThis.electronTRPC = { onMessage: () => undefined };
   const { computeNextSchedule } =
     await import("../../../src/lib/global-search/hooks/use-global-search");
   const t0 = Date.now();

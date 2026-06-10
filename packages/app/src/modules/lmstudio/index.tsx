@@ -14,7 +14,7 @@ function formatBytes(n: number): string {
     x /= 1024;
     i += 1;
   }
-  return i === 0 ? `${Math.trunc(x)} B` : `${x.toFixed(1)} ${units[i]}`;
+  return i === 0 ? `${String(Math.trunc(x))} B` : `${x.toFixed(1)} ${String(units[i])}`;
 }
 
 export default function LMStudio(): React.JSX.Element {
@@ -33,9 +33,9 @@ export default function LMStudio(): React.JSX.Element {
     onSuccess: async (result) => {
       const lines = [
         `root=${result.root ?? "unknown"}`,
-        `applied=${result.applied.length}`,
-        `skipped=${result.skipped.length}`,
-        `errors=${result.errors.length}`,
+        `applied=${String(result.applied.length)}`,
+        `skipped=${String(result.skipped.length)}`,
+        `errors=${String(result.errors.length)}`,
       ];
       setReport(lines.join(" "));
       setError(null);
@@ -154,14 +154,14 @@ export default function LMStudio(): React.JSX.Element {
               title={
                 actionableCount === 0
                   ? "No candidates ready to import — scan a root with .gguf files first."
-                  : `Import ${actionableCount} candidate${actionableCount === 1 ? "" : "s"} into $LLAMA_CPP_MODELS.`
+                  : `Import ${String(actionableCount)} candidate${actionableCount === 1 ? "" : "s"} into $LLAMA_CPP_MODELS.`
               }
             >
               {busy
                 ? "Importing…"
                 : actionableCount === 0
                   ? "Nothing to import"
-                  : `Import ${actionableCount}`}
+                  : `Import ${String(actionableCount)}`}
             </Button>
           </div>
         </div>

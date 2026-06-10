@@ -1,8 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import type { LucideIcon } from "lucide-react";
+import { lazy } from "react";
 
 import type { AppModule } from "../../src/modules/registry";
 
 import { buildExplorerTree } from "../../src/shell/beacon/registry-view";
+
+const TestIcon = (() => null) as unknown as LucideIcon;
+const TestComponent = lazy(() => Promise.resolve({ default: () => null }));
 
 // A minimal stand-in for AppModule without the lazy Component.
 function m(
@@ -14,10 +19,8 @@ function m(
   return {
     id,
     labelKey: id.slice(0, 1).toUpperCase() + id.slice(1),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    icon: (() => null) as any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    Component: (() => null) as any,
+    icon: TestIcon,
+    Component: TestComponent,
     activityBar: false,
     beaconGroup: beaconGroup as AppModule["beaconGroup"],
     beaconKind,

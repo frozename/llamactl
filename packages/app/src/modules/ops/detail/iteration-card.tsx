@@ -3,23 +3,13 @@ import * as React from "react";
 import type { IterationView, OutcomeView } from "../../../lib/use-ops-session";
 
 import { Badge } from "../../../ui";
+import { fmtMs, statusGlyph } from "./iteration-card-helpers";
 import { ResultViewer } from "./result-viewer";
 
 interface Props {
   it: IterationView;
   expanded: boolean;
   onToggle: () => void;
-}
-
-export function statusGlyph(it: IterationView): string {
-  const last = it.wet ?? it.preview;
-  if (!last) return "·";
-  return last.ok ? "✓" : "✗";
-}
-
-export function fmtMs(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function OutcomeBlock({
@@ -98,11 +88,15 @@ export function IterationCard({ it, expanded, onToggle }: Props): React.JSX.Elem
         <span style={{ color: "var(--color-text-secondary)" }}>#{it.iteration + 1}</span>
         <code style={{ flex: 1, fontFamily: "var(--font-mono)" }}>{it.tool}</code>
         <Badge variant={it.tier === "mutation-destructive" ? "err" : "default"}>{it.tier}</Badge>
-        {(it.wet ?? it.preview) && (
-          <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
-            {fmtMs((it.wet ?? it.preview)!.durationMs)}
-          </span>
-        )}
+        {(() => {
+          const run = it.wet ?? it.preview;
+          if (!run) return null;
+          return (
+            <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
+              {fmtMs(run.durationMs)}
+            </span>
+          );
+        })()}
       </button>
       {expanded && (
         <div

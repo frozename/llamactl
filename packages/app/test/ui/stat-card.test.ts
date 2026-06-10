@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { sparklineHeights } from "../../src/ui/stat-card";
+import { sparklineHeights } from "../../src/ui/sparkline";
 
 describe("sparklineHeights", () => {
   test("maps the max value to full height", () => {

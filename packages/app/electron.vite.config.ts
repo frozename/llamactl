@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { defineConfig, externalizeDepsPlugin } from "electron-vite";
+import { defineConfig } from "electron-vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -30,7 +30,6 @@ const WORKSPACE_BUNDLE = [
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: WORKSPACE_BUNDLE })],
     // Bun builtins (imported at module scope by bundled workspace code:
     // core's kvstore/responsecache storage via openaiProxy, eval's bench
     // server via agents → mcp tools) must NOT be externalized: in a
@@ -45,6 +44,7 @@ export default defineConfig({
       },
     },
     build: {
+      externalizeDeps: { exclude: WORKSPACE_BUNDLE },
       rollupOptions: {
         input: { index: resolve("electron/main.ts") },
         external: ["electron"],
@@ -57,7 +57,6 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin({ exclude: WORKSPACE_BUNDLE })],
     // Same Bun-builtin shims as the main config — see the comment there.
     resolve: {
       alias: {
@@ -66,6 +65,7 @@ export default defineConfig({
       },
     },
     build: {
+      externalizeDeps: { exclude: WORKSPACE_BUNDLE },
       rollupOptions: {
         input: { index: resolve("electron/preload.ts") },
         external: ["electron"],

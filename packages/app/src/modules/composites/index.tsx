@@ -598,9 +598,7 @@ function WetRunSummary(props: { result: WetRunResult }): React.JSX.Element {
                 ? "ok"
                 : result.status.phase === "Failed"
                   ? "err"
-                  : result.status.phase === "Degraded"
-                    ? "warn"
-                    : "idle"
+                  : "warn"
             }
           />
           {result.status.phase}
@@ -675,16 +673,20 @@ function ApplyTab(props: {
         metadata: manifest.metadata,
         spec: manifest.spec,
       };
-      setYamlText(YAML.stringify(serializable));
-      setDryRunOk(null);
-      setWetResult(null);
-      setError(null);
-      setDryRunYaml(null);
+      queueMicrotask(() => {
+        setYamlText(YAML.stringify(serializable));
+        setDryRunOk(null);
+        setWetResult(null);
+        setError(null);
+        setDryRunYaml(null);
+      });
     }
     if (mode === "new") {
-      setDryRunOk(null);
-      setWetResult(null);
-      setError(null);
+      queueMicrotask(() => {
+        setDryRunOk(null);
+        setWetResult(null);
+        setError(null);
+      });
     }
   }, [mode, existing.data]);
 
@@ -965,7 +967,7 @@ function ApplyTab(props: {
             fontSize: 12,
           }}
         >
-          {apply.isPending && apply.variables?.dryRun ? "Validating…" : "Dry-run"}
+          {apply.isPending && apply.variables.dryRun ? "Validating…" : "Dry-run"}
         </Button>
         <Button
           type="button"
@@ -994,7 +996,7 @@ function ApplyTab(props: {
               : "Dry-run first — unlocks wet apply"
           }
         >
-          {apply.isPending && apply.variables?.dryRun === false ? "Applying…" : "Apply"}
+          {apply.isPending && apply.variables.dryRun === false ? "Applying…" : "Apply"}
         </Button>
         {error && <span style={{ color: "var(--color-err)", fontSize: 12 }}>{error}</span>}
       </div>
@@ -1285,8 +1287,10 @@ function LiveStatusStream(props: { name: string }): React.JSX.Element {
 
   // Reset on composite change.
   React.useEffect(() => {
-    setEvents([]);
-    setError(null);
+    queueMicrotask(() => {
+      setEvents([]);
+      setError(null);
+    });
   }, [name]);
 
   trpc.compositeStatus.useSubscription(
@@ -1366,7 +1370,7 @@ function LiveStatusStream(props: { name: string }): React.JSX.Element {
           data-testid={`composites-live-event-${ev.type}`}
         >
           <span style={{ color: "var(--color-text)" }}>{ev.type}</span>
-          {"phase" in ev && ` · ${String(ev.phase)}`}
+          {"phase" in ev && ` · ${ev.phase}`}
           {"ref" in ev && ` · ${ev.ref.kind}/${ev.ref.name}`}
           {"message" in ev && ev.message && ` · ${ev.message}`}
           {"ok" in ev && ` · ok=${String(ev.ok)}`}
@@ -1745,7 +1749,6 @@ function DetailTab(props: {
        * who need to inspect raw endpoints go through the YAML view,
        * which shows what they authored themselves.
        */}
-      {false && <span>{redactEndpoint("unused")}</span>}
     </div>
   );
 }

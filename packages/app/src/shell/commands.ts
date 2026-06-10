@@ -48,7 +48,7 @@ export function useAppCommands(): Command[] {
       keywords: ["next theme", "switch theme"],
       run: () => {
         const idx = THEMES.findIndex((t) => t.id === themeId);
-        const next = THEMES[(idx + 1) % THEMES.length]!;
+        const next = THEMES[(idx + 1) % THEMES.length] ?? THEMES[0];
         setThemeId(next.id);
       },
     });
@@ -211,8 +211,10 @@ export function useAppCommands(): Command[] {
         keywords: ["devtools", "inspector", "debug"],
         run: () => {
           try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (window as any).electron?.toggleDevTools?.();
+            const bridge = window as Window & {
+              electron?: { toggleDevTools?: () => void };
+            };
+            bridge.electron?.toggleDevTools?.();
           } catch {
             /* electron bridge may not expose this; no-op */
           }

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { env as envMod } from "@llamactl/core";
 import { buildDispatcherRouter } from "./trpc/dispatcher.js";
 
+type IPCHandlerOptions = Parameters<typeof createIPCHandler>[0];
+
 // `__dirname` is set by Rollup's CJS wrapper, so we don't need the
 // ESM-style `fileURLToPath(import.meta.url)` dance here.
 declare const __dirname: string;
@@ -58,24 +60,21 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  // The dispatcher wraps the base router so its getErrorShape type
-  // erasure flows through; electron-trpc's AnyRouter constraint is
-  // satisfied structurally at runtime.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  createIPCHandler({ router: buildDispatcherRouter() as any, windows: [win] });
+  const router = buildDispatcherRouter() as unknown as IPCHandlerOptions["router"];
+  createIPCHandler({ router, windows: [win] });
 
   const devUrl = process.env["ELECTRON_RENDERER_URL"];
   if (devUrl) {
-    win.loadURL(devUrl);
+    void win.loadURL(devUrl);
     win.webContents.openDevTools({ mode: "detach" });
   } else {
-    win.loadFile(join(__dirname, "../renderer/index.html"));
+    void win.loadFile(join(__dirname, "../renderer/index.html"));
   }
 
   return win;
 }
 
-app.whenReady().then(() => {
+void app.whenReady().then(() => {
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

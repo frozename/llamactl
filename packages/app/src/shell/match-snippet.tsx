@@ -10,8 +10,7 @@ interface Props {
 export function MatchSnippet({ match }: Props): React.JSX.Element {
   const parts: React.ReactNode[] = [];
   let cursor = 0;
-  for (let i = 0; i < match.spans.length; i++) {
-    const sp = match.spans[i]!;
+  for (const [i, sp] of match.spans.entries()) {
     if (sp.start > cursor) parts.push(match.snippet.slice(cursor, sp.start));
     parts.push(
       <strong key={i} style={{ color: "var(--color-brand)" }}>

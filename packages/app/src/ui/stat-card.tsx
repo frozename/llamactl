@@ -1,6 +1,7 @@
 import * as React from "react";
 
 import { cx } from "./classes";
+import { sparklineHeights } from "./sparkline";
 
 export interface StatCardProps extends React.HTMLAttributes<HTMLDivElement> {
   label: string;
@@ -8,21 +9,6 @@ export interface StatCardProps extends React.HTMLAttributes<HTMLDivElement> {
   unit?: string;
   delta?: { text: string; direction?: "up" | "down" | "flat" };
   sparkline?: readonly number[];
-}
-
-/**
- * Scales a sample series into bar heights for the 32 px sparkline.
- * Max value → full height; min value → floor of 2 px so zero samples
- * are still visible. Exported for unit testing.
- */
-export function sparklineHeights(samples: readonly number[], maxHeight: number): number[] {
-  if (samples.length === 0) return [];
-  const max = Math.max(...samples);
-  if (max === 0) return samples.map(() => Math.min(2, maxHeight));
-  return samples.map((s) => {
-    const raw = (s / max) * maxHeight;
-    return Math.max(2, Math.round(raw));
-  });
 }
 
 export function StatCard({

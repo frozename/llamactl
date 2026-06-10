@@ -18,6 +18,7 @@ export function SessionsView(): React.JSX.Element {
   const open = useTabStore((s) => s.open);
 
   const { today, earlier, older } = React.useMemo(
+    // eslint-disable-next-line react-hooks/purity -- age bucketing needs the current time at recompute; staleness is worse than impurity here
     () => bucketTabsByAge(tabs, closed, Date.now()),
     [tabs, closed],
   );
@@ -72,7 +73,7 @@ function Group({
       </h3>
       {items.map((t) => (
         <TreeItem
-          key={`${t.tabKey}:${t.openedAt}`}
+          key={`${t.tabKey}:${String(t.openedAt)}`}
           label={t.title}
           trailing={
             <span

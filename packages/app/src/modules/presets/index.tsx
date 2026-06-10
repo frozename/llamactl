@@ -22,7 +22,7 @@ type Preset = (typeof PRESETS)[number];
 type ClassFilter = "all" | "reasoning" | "multimodal" | "general" | "custom";
 
 function fmtTps(raw: string | undefined | null): string {
-  if (raw == null || raw === "") return "—";
+  if (raw === null || raw === undefined || raw === "") return "—";
   const n = Number.parseFloat(raw);
   if (!Number.isFinite(n)) return "—";
   return n.toFixed(1);
@@ -531,7 +531,7 @@ export default function Presets(): React.JSX.Element {
                       color: "var(--color-text-secondary)",
                     }}
                   >
-                    No candidates for class "{classFilter}".
+                    No candidates for class &quot;{classFilter}&quot;.
                   </td>
                 </tr>
               )}

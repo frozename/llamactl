@@ -1,4 +1,4 @@
-(globalThis as any).electronTRPC = {
-  sendMessage: () => {},
-  onMessage: () => {},
+globalThis.electronTRPC = {
+  sendMessage: () => undefined,
+  onMessage: () => undefined,
 };

@@ -26,6 +26,6 @@ export function getLiveWorkloads(rows: WorkloadRow[]): LiveWorkload[] {
 
 export function selectActiveWorkload(selected: string | null, live: LiveWorkload[]): string | null {
   if (selected && live.some((w) => w.name === selected)) return selected;
-  if (live.length > 0) return live[0]!.name;
+  if (live.length > 0) return live[0]?.name ?? null;
   return null;
 }

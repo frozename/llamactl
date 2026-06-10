@@ -141,7 +141,7 @@ function parseIndexInput(raw: string): {
     }
     const docs: IndexDocumentInput[] = [];
     for (let i = 0; i < parsed.length; i++) {
-      const entry = parsed[i];
+      const entry: unknown = parsed[i];
       if (
         !entry ||
         typeof entry !== "object" ||
@@ -150,7 +150,7 @@ function parseIndexInput(raw: string): {
       ) {
         return {
           documents: [],
-          error: `Entry [${i}] must have string 'id' and string 'content' fields.`,
+          error: `Entry [${String(i)}] must have string 'id' and string 'content' fields.`,
         };
       }
       const e = entry as {
@@ -265,7 +265,7 @@ function CollectionHeader(props: {
         }}
         data-testid="knowledge-collection-header"
       >
-        No collection picked yet — switch to the Collections tab to see what's available on{" "}
+        No collection picked yet — switch to the Collections tab to see what&apos;s available on{" "}
         <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
           {nodeName}
         </Badge>
@@ -332,7 +332,7 @@ function CollectionHeader(props: {
             style={{ fontFamily: "var(--font-mono)", color: "var(--color-text)" }}
             data-testid="knowledge-collection-dims"
           >
-            {dims !== null ? dims : "—"}
+            {dims ?? "—"}
           </span>
         </span>
         <span>
@@ -690,7 +690,7 @@ function QueryTab(props: {
           </div>
         )}
         {results.map((r, i) => {
-          const key = `${r.document.id}-${i}`;
+          const key = `${r.document.id}-${String(i)}`;
           const isOpen = openResult === key;
           const hasMeta = !!r.document.metadata && Object.keys(r.document.metadata).length > 0;
           return (
@@ -1134,8 +1134,8 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
               fontSize: 12,
             }}
           >
-            {previewCount != null
-              ? `${previewCount} document${previewCount === 1 ? "" : "s"} will be stored.`
+            {previewCount !== null
+              ? `${String(previewCount)} document${previewCount === 1 ? "" : "s"} will be stored.`
               : "Starts with [ to parse as JSON; otherwise split on blank lines."}
           </span>
         </label>
@@ -1293,11 +1293,13 @@ function EmbedderPanel(props: {
   React.useEffect(() => {
     // Reset drafts when the selected node changes. The fresh selection
     // is the source of truth; keep the form hydrated from it.
-    setDraftNode(node.embedder?.node ?? "");
-    setDraftModel(node.embedder?.model ?? "");
-    setOptimistic(undefined);
-    setEditing(false);
-    setError(null);
+    queueMicrotask(() => {
+      setDraftNode(node.embedder?.node ?? "");
+      setDraftModel(node.embedder?.model ?? "");
+      setOptimistic(undefined);
+      setEditing(false);
+      setError(null);
+    });
   }, [node.name, node.embedder?.node, node.embedder?.model]);
 
   const mutation = trpc.nodeUpdateRagBinding.useMutation({
@@ -1587,8 +1589,8 @@ export default function Knowledge(): React.JSX.Element {
           embedder:
             embedder && typeof embedder === "object"
               ? {
-                  node: String((embedder as EmbedderBinding).node),
-                  model: String((embedder as EmbedderBinding).model),
+                  node: (embedder as EmbedderBinding).node,
+                  model: (embedder as EmbedderBinding).model,
                 }
               : null,
         };
@@ -1612,11 +1614,15 @@ export default function Knowledge(): React.JSX.Element {
   React.useEffect(() => {
     const first = ragNodes[0];
     if (!selectedNode && first) {
-      setSelectedNode(first.name);
+      queueMicrotask(() => {
+        setSelectedNode(first.name);
+      });
       return;
     }
     if (selectedNode && !ragNodes.some((n) => n.name === selectedNode)) {
-      setSelectedNode(first?.name ?? null);
+      queueMicrotask(() => {
+        setSelectedNode(first?.name ?? null);
+      });
     }
   }, [ragNodes, selectedNode]);
 

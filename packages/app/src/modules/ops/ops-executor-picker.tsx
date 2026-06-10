@@ -43,8 +43,10 @@ export function OpsExecutorPicker(): React.JSX.Element {
   // switches nodes, or the model was renamed upstream).
   useEffect(() => {
     if (!nodeId || models.length === 0) return;
+    const [firstModel] = models;
+    if (!firstModel) return;
     if (!model || !models.includes(model)) {
-      setModel(models[0]!);
+      setModel(firstModel);
     }
   }, [nodeId, model, models, setModel]);
 

@@ -7,8 +7,19 @@ import {
 import { afterAll, describe, expect, test } from "bun:test";
 
 import { type Cluster, makeCluster } from "../../remote/test/helpers";
+import type { buildDispatcherRouter } from "../electron/trpc/dispatcher";
 
 let cluster: Cluster | null = null;
+
+type DispatcherCaller = ReturnType<ReturnType<typeof buildDispatcherRouter>["createCaller"]> & {
+  uiSetActiveNode: (input: { name: string }) => Promise<{ ok: true; name: string }>;
+};
+
+function fetchInputLabel(input: Parameters<PinnedFetch>[0]): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
 
 afterAll(async () => {
   await cluster?.cleanup();
@@ -34,7 +45,7 @@ describe("Electron dispatcher router", () => {
     return (node: ClusterNode): PinnedFetch => {
       const inner = makePinnedFetch(node);
       return async (input, init) => {
-        urls.push(typeof input === "string" ? input : String(input));
+        urls.push(fetchInputLabel(input));
         return await inner(input, init);
       };
     };
@@ -53,8 +64,7 @@ describe("Electron dispatcher router", () => {
       await import("../electron/trpc/dispatcher");
     __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter(spyFactory(urls));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const caller = (dispatcher as any).createCaller({});
+    const caller = dispatcher.createCaller({}) as DispatcherCaller;
     const res = await caller.env();
     expect(res).toBeTruthy();
     expect(urls.length).toBeGreaterThan(0);
@@ -77,12 +87,11 @@ describe("Electron dispatcher router", () => {
     const dispatcher = buildDispatcherRouter((node) => {
       const inner = makePinnedFetch(node);
       return async (input, init) => {
-        urls.push(typeof input === "string" ? input : String(input));
+        urls.push(fetchInputLabel(input));
         return await inner(input, init);
       };
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const caller = (dispatcher as any).createCaller({});
+    const caller = dispatcher.createCaller({}) as DispatcherCaller;
     const res = await caller.env();
     expect(res).toBeTruthy();
     expect(urls.length).toBe(0);
@@ -101,8 +110,7 @@ describe("Electron dispatcher router", () => {
       await import("../electron/trpc/dispatcher");
     __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter(spyFactory(urls));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const caller = (dispatcher as any).createCaller({});
+    const caller = dispatcher.createCaller({}) as DispatcherCaller;
 
     // serverLogs runs tailServerLog against the agent's empty log dir
     // and completes quickly with no lines when follow is false.
@@ -135,8 +143,7 @@ describe("Electron dispatcher router", () => {
       await import("../electron/trpc/dispatcher");
     __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter(spyFactory(urls));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const caller = (dispatcher as any).createCaller({});
+    const caller = dispatcher.createCaller({}) as DispatcherCaller;
     const mod = await import("../electron/trpc/dispatcher");
     await caller.uiSetActiveNode({ name: "remote1" });
     try {
@@ -162,12 +169,11 @@ describe("Electron dispatcher router", () => {
     const dispatcher = buildDispatcherRouter((node) => {
       const inner = makePinnedFetch(node);
       return async (input, init) => {
-        urls.push(typeof input === "string" ? input : String(input));
+        urls.push(fetchInputLabel(input));
         return await inner(input, init);
       };
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const caller = (dispatcher as any).createCaller({});
+    const caller = dispatcher.createCaller({}) as DispatcherCaller;
 
     // nodeList must come from the control plane even when the remote
     // node is selected — the remote agent doesn't host a kubeconfig

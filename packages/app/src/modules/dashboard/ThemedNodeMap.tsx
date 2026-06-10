@@ -4,12 +4,8 @@ import { useThemeStore } from "@/stores/theme-store";
 import { getTheme } from "@/themes";
 
 import { NodeMap } from "./NodeMap";
-import {
-  NodeMapCyberpunk,
-  NodeMapDatadog,
-  NodeMapTailscale,
-  useMockNodes,
-} from "./NodeMapVariants";
+import { NodeMapCyberpunk, NodeMapDatadog, NodeMapTailscale } from "./NodeMapVariants";
+import { useMockNodes } from "./NodeMapVariantsData";
 
 /**
  * Cluster map that swaps its visual variant based on the active

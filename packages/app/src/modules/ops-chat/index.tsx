@@ -196,14 +196,14 @@ function ProposalBubble({
           backgroundColor: "var(--color-surface-1)",
           ...tierStyle(tier),
         }}
-        data-testid={`ops-chat-step-${iteration}`}
+        data-testid={`ops-chat-step-${String(iteration)}`}
         data-tier={tier}
         data-state={state}
       >
         {reasoning.length > 0 && (
           <p
             style={{ fontSize: 12, color: "var(--color-text-secondary)" }}
-            data-testid={`ops-chat-step-${iteration}-reasoning`}
+            data-testid={`ops-chat-step-${String(iteration)}-reasoning`}
           >
             {reasoning}
           </p>
@@ -222,7 +222,7 @@ function ProposalBubble({
               fontSize: 10,
               ...tierStyle(tier),
             }}
-            data-testid={`ops-chat-step-${iteration}-tier`}
+            data-testid={`ops-chat-step-${String(iteration)}-tier`}
           >
             {tier}
           </span>
@@ -237,7 +237,7 @@ function ProposalBubble({
               padding: 4,
               overflow: "auto",
             }}
-            data-testid={`ops-chat-step-${iteration}-args`}
+            data-testid={`ops-chat-step-${String(iteration)}-args`}
           >
             {JSON.stringify(step.args, null, 2)}
           </pre>
@@ -260,7 +260,7 @@ function ProposalBubble({
               onChange={(e) => {
                 onConfirmText(e.target.value);
               }}
-              data-testid={`ops-chat-step-${iteration}-confirm`}
+              data-testid={`ops-chat-step-${String(iteration)}-confirm`}
               style={{
                 width: 192,
                 borderRadius: "var(--r-md)",
@@ -285,7 +285,7 @@ function ProposalBubble({
                   onApprove(true);
                 }}
                 disabled={running || state === "preview-ready"}
-                data-testid={`ops-chat-step-${iteration}-preview`}
+                data-testid={`ops-chat-step-${String(iteration)}-preview`}
                 style={{
                   borderRadius: "var(--r-md)",
                   border: "1px solid var(--color-border)",
@@ -309,7 +309,7 @@ function ProposalBubble({
                 onApprove(false);
               }}
               disabled={running || (tier === "mutation-destructive" && !destructiveReady)}
-              data-testid={`ops-chat-step-${iteration}-run`}
+              data-testid={`ops-chat-step-${String(iteration)}-run`}
               className={
                 tier === "mutation-destructive"
                   ? "rounded border border-[var(--color-err)] px-2 py-0.5 text-[10px] text-[color:var(--color-err)] disabled:opacity-40"
@@ -324,7 +324,7 @@ function ProposalBubble({
               type="button"
               onClick={onReject}
               disabled={running}
-              data-testid={`ops-chat-step-${iteration}-reject`}
+              data-testid={`ops-chat-step-${String(iteration)}-reject`}
               style={{
                 borderRadius: "var(--r-md)",
                 border: "1px solid var(--color-border)",
@@ -351,7 +351,7 @@ function ProposalBubble({
         {state === "rejected" && (
           <div
             style={{ fontSize: 12, color: "var(--color-text-secondary)" }}
-            data-testid={`ops-chat-step-${iteration}-rejected`}
+            data-testid={`ops-chat-step-${String(iteration)}-rejected`}
           >
             Operator rejected \u2014 session closed.
           </div>
@@ -381,7 +381,7 @@ function OutcomePanel({
         padding: 8,
         fontSize: 11,
       }}
-      data-testid={`ops-chat-step-${iteration}-${kind === "preview" ? "preview-result" : "result"}`}
+      data-testid={`ops-chat-step-${String(iteration)}-${kind === "preview" ? "preview-result" : "result"}`}
       data-ok={outcome.ok ? "true" : "false"}
     >
       <div style={{ color: "var(--color-text-secondary)" }}>
@@ -480,7 +480,7 @@ export default function OpsChat(): React.JSX.Element {
         ]);
         setStreaming(false);
         setStreamInput(null);
-      } else if (e.type === "done") {
+      } else {
         if (e.iterations > 0) {
           setMessages((prev) => [
             ...prev,
@@ -757,7 +757,7 @@ export default function OpsChat(): React.JSX.Element {
                     marginTop: 4,
                     background: "color:var(--color-surface-1)",
                   }}
-                  data-testid={`ops-chat-refusal-${msg.id}`}
+                  data-testid={`ops-chat-refusal-${String(msg.id)}`}
                 >
                   <div style={{ fontWeight: 500 }}>Planner refused</div>
                   <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
@@ -772,7 +772,7 @@ export default function OpsChat(): React.JSX.Element {
               <div
                 key={msg.id}
                 style={{ display: "flex", justifyContent: "center" }}
-                data-testid={`ops-chat-done-${msg.id}`}
+                data-testid={`ops-chat-done-${String(msg.id)}`}
               >
                 <div
                   style={{
@@ -863,8 +863,8 @@ export default function OpsChat(): React.JSX.Element {
           >
             {auditTail.data.entries.slice(0, 20).map((entry, i) => (
               <li
-                key={`${entry.ts}-${i}`}
-                data-testid={`ops-chat-audit-entry-${i}`}
+                key={`${entry.ts}-${String(i)}`}
+                data-testid={`ops-chat-audit-entry-${String(i)}`}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -931,7 +931,7 @@ export default function OpsChat(): React.JSX.Element {
                 setDraft(cp.prompt);
               }}
               disabled={streaming}
-              data-testid={`ops-chat-canned-${i}`}
+              data-testid={`ops-chat-canned-${String(i)}`}
               style={{
                 borderRadius: 9999,
                 border: "1px solid var(--color-border)",
@@ -1023,5 +1023,7 @@ function summarizeOutcome(outcome: ToolCallOutcome): string {
     return `error ${outcome.error?.code ?? "unknown"}: ${outcome.error?.message ?? "(no message)"}`;
   }
   const json = JSON.stringify(outcome.result);
-  return json.length > 500 ? `ok (${json.length} bytes): ${json.slice(0, 500)}…` : `ok: ${json}`;
+  return json.length > 500
+    ? `ok (${String(json.length)} bytes): ${json.slice(0, 500)}…`
+    : `ok: ${json}`;
 }

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 
 import { APP_MODULES } from "@/modules/registry";
 import { CommandPaletteMount } from "@/shell/command-palette";
@@ -34,7 +34,8 @@ export function BeaconLayout(): React.JSX.Element {
 
   const [railView, setRailView] = useState<RailViewId>(() => {
     if (typeof localStorage === "undefined") return "explorer";
-    return (localStorage.getItem(RAIL_KEY) as RailViewId) || "explorer";
+    const stored = localStorage.getItem(RAIL_KEY);
+    return stored !== null ? (stored as RailViewId) : "explorer";
   });
   useEffect(() => {
     localStorage.setItem(RAIL_KEY, railView);
@@ -83,9 +84,10 @@ export function BeaconLayout(): React.JSX.Element {
     };
   }, [tabs, activeKey, close, reopen, setActive]);
 
-  const visitedRef = useRef(new Set<string>());
-  if (activeKey) visitedRef.current.add(activeKey);
-  for (const t of tabs) visitedRef.current.add(t.tabKey);
+  const visitedKeys = useMemo(
+    () => new Set([...tabs.map((tab) => tab.tabKey), ...(activeKey ? [activeKey] : [])]),
+    [activeKey, tabs],
+  );
 
   return (
     <div
@@ -126,7 +128,7 @@ export function BeaconLayout(): React.JSX.Element {
                 }
               >
                 {tabs.map((tab) => {
-                  if (!visitedRef.current.has(tab.tabKey)) return null;
+                  if (!visitedKeys.has(tab.tabKey)) return null;
                   const isActive = tab.tabKey === activeKey;
                   if (tab.kind === "module") {
                     const moduleId = tab.tabKey.slice("module:".length);

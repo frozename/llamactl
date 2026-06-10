@@ -73,7 +73,8 @@ export function buildExplorerTree(
       const src = dynamicSourceFor(leaf.id);
       leaf.instances = src ? sources[src] : [];
     }
-    byGroup.get(g)!.push(leaf);
+    const group = byGroup.get(g);
+    if (group) group.push(leaf);
   }
 
   return GROUP_ORDER.map((id) => {

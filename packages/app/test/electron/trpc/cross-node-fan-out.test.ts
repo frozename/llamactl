@@ -65,7 +65,7 @@ describe("fanOutSurface", () => {
   test("all-succeed merges hits, no failures", async () => {
     const out = await fanOutSurface<{ id: string; node: string }>({
       nodes,
-      perNodeFetch: async (node) => [{ id: node.name, node: node.name }],
+      perNodeFetch: (node) => Promise.resolve([{ id: node.name, node: node.name }]),
       perNodeTimeoutMs: 100,
     });
     expect(out.failures).toEqual([]);
@@ -94,9 +94,9 @@ describe("fanOutSurface", () => {
   test("per-node rejection produces failure with reason=rejected", async () => {
     const out = await fanOutSurface<{ id: string }>({
       nodes,
-      perNodeFetch: async (node) => {
-        if (node.name === "a") throw new Error("TLS handshake failed");
-        return [{ id: node.name }];
+      perNodeFetch: (node) => {
+        if (node.name === "a") return Promise.reject(new Error("TLS handshake failed"));
+        return Promise.resolve([{ id: node.name }]);
       },
       perNodeTimeoutMs: 100,
     });
@@ -136,8 +136,8 @@ describe("fanOutSurface", () => {
   test("empty nodes array returns instant empty result", async () => {
     const out = await fanOutSurface<{ id: string }>({
       nodes: [],
-      perNodeFetch: async () => {
-        throw new Error("should not be called");
+      perNodeFetch: () => {
+        return Promise.reject(new Error("should not be called"));
       },
       perNodeTimeoutMs: 100,
     });
@@ -147,8 +147,8 @@ describe("fanOutSurface", () => {
   test("failures shape carries detail strings", async () => {
     const out = await fanOutSurface<{ id: string }>({
       nodes: [{ name: "x", endpoint: "" }],
-      perNodeFetch: async () => {
-        throw new Error("boom");
+      perNodeFetch: () => {
+        return Promise.reject(new Error("boom"));
       },
       perNodeTimeoutMs: 100,
     });

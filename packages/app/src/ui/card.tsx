@@ -21,7 +21,7 @@ export function Card({
   return (
     <div
       {...rest}
-      className={cx("bcn-card", `bcn-card--tier${tier}`, className)}
+      className={cx("bcn-card", `bcn-card--tier${String(tier)}`, className)}
       style={{
         background: bg,
         border: bordered ? "1px solid var(--color-border-subtle)" : "none",
@@ -53,7 +53,7 @@ export function Panel({
   return (
     <div
       {...rest}
-      className={cx("bcn-panel", `bcn-panel--tier${tier}`, className)}
+      className={cx("bcn-panel", `bcn-panel--tier${String(tier)}`, className)}
       style={{
         background: bg,
         border: bordered ? "1px solid var(--color-border-subtle)" : "none",

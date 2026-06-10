@@ -1,7 +1,7 @@
 import { Bell } from "lucide-react";
 import * as React from "react";
 
-import { useCommandPaletteOpen } from "@/shell/command-palette";
+import { useCommandPaletteOpen } from "@/shell/command-palette-state";
 import { NodeSelector } from "@/shell/node-selector";
 import { useTabStore } from "@/stores/tab-store";
 import { useThemeStore } from "@/stores/theme-store";

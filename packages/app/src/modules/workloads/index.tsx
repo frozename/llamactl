@@ -235,7 +235,9 @@ function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
           type="button"
           variant="secondary"
           size="sm"
-          onClick={onValidate}
+          onClick={() => {
+            void onValidate();
+          }}
           disabled={validate.isFetching}
         >
           {validate.isFetching ? "Validating…" : "Validate"}
@@ -455,7 +457,7 @@ function WorkloadRow(props: { row: WorkloadRow }): React.JSX.Element {
             <span style={{ color: "var(--color-err)" }}>{describe.error.message}</span>
           ) : describe.data ? (
             <div style={{ marginTop: 8 }}>
-              <WorkersPanel workers={describe.data.manifest.spec.workers ?? []} />
+              <WorkersPanel workers={describe.data.manifest.spec.workers} />
               <div>
                 <div style={{ fontWeight: 500, color: "var(--color-text)" }}>Manifest</div>
                 <pre
@@ -546,7 +548,7 @@ function ReconcilerToolbar(): React.JSX.Element {
     reports.length === 0
       ? "no workloads reconciled yet"
       : Object.entries(actionCounts)
-          .map(([k, v]) => `${k}:${v}`)
+          .map(([k, v]) => `${k}:${String(v)}`)
           .join(" · ");
 
   return (
@@ -664,7 +666,8 @@ export default function Workloads(): React.JSX.Element {
           <div style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
             Declarative ModelRun manifests (
             <span style={{ fontFamily: "var(--font-mono)" }}>
-              {workloadsDir.data?.dir ?? "…"}/*.yaml
+              {workloadsDir.data?.dir ?? "…"}
+              {"/*.yaml"}
             </span>
             )
           </div>
@@ -707,8 +710,8 @@ export default function Workloads(): React.JSX.Element {
             <p style={{ marginTop: 4, color: "var(--color-text-secondary)", fontSize: 12 }}>
               A <span style={{ fontFamily: "var(--font-mono)" }}>ModelRun</span> manifest pins a
               model to a node. The reconciler keeps it running, restarts it on crash, and corrects
-              drift when extra args change. Use it for long-lived endpoints that shouldn't depend on
-              someone typing{" "}
+              drift when extra args change. Use it for long-lived endpoints that shouldn&apos;t
+              depend on someone typing{" "}
               <span style={{ fontFamily: "var(--font-mono)" }}>llamactl server start</span>.
             </p>
             <Button

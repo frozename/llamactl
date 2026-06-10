@@ -198,13 +198,13 @@ function validate(form: FormState): string[] {
   if (form.sources.length === 0) errs.push("at least one source is required");
   for (const [i, s] of form.sources.entries()) {
     if (s.kind === "filesystem" && !s.root.trim()) {
-      errs.push(`sources[${i}].root is required`);
+      errs.push(`sources[${String(i)}].root is required`);
     }
     if (s.kind === "http" && !s.url.trim()) {
-      errs.push(`sources[${i}].url is required`);
+      errs.push(`sources[${String(i)}].url is required`);
     }
     if (s.kind === "git" && !s.repo.trim()) {
-      errs.push(`sources[${i}].repo is required`);
+      errs.push(`sources[${String(i)}].repo is required`);
     }
   }
   return errs;
@@ -507,7 +507,7 @@ function SourceEditor(props: {
   return (
     <div
       className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
-      data-testid={`pipeline-wizard-source-${idx}`}
+      data-testid={`pipeline-wizard-source-${String(idx)}`}
     >
       <div className="mb-2 flex items-center justify-between">
         <label className="flex items-baseline gap-2 text-sm">
@@ -517,7 +517,7 @@ function SourceEditor(props: {
             onChange={(e) => {
               onUpdate({ kind: e.target.value as SourceKind });
             }}
-            data-testid={`pipeline-wizard-source-kind-${idx}`}
+            data-testid={`pipeline-wizard-source-kind-${String(idx)}`}
             className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 mono text-xs text-[color:var(--color-text)]"
           >
             <option value="filesystem">filesystem</option>
@@ -528,7 +528,7 @@ function SourceEditor(props: {
         <button
           type="button"
           onClick={onRemove}
-          data-testid={`pipeline-wizard-source-remove-${idx}`}
+          data-testid={`pipeline-wizard-source-remove-${String(idx)}`}
           className="rounded border border-[var(--color-err)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-err)] hover:opacity-90"
         >
           Remove
@@ -547,7 +547,7 @@ function SourceEditor(props: {
                 onUpdate({ root: e.target.value });
               }}
               placeholder="/path/to/docs"
-              data-testid={`pipeline-wizard-source-root-${idx}`}
+              data-testid={`pipeline-wizard-source-root-${String(idx)}`}
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
@@ -561,7 +561,7 @@ function SourceEditor(props: {
               onChange={(e) => {
                 onUpdate({ glob: e.target.value });
               }}
-              data-testid={`pipeline-wizard-source-glob-${idx}`}
+              data-testid={`pipeline-wizard-source-glob-${String(idx)}`}
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
@@ -578,7 +578,7 @@ function SourceEditor(props: {
                 onUpdate({ url: e.target.value });
               }}
               placeholder="https://docs.example.com"
-              data-testid={`pipeline-wizard-source-url-${idx}`}
+              data-testid={`pipeline-wizard-source-url-${String(idx)}`}
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>
@@ -649,7 +649,7 @@ function SourceEditor(props: {
                 onUpdate({ repo: e.target.value });
               }}
               placeholder="https://github.com/acme/docs.git"
-              data-testid={`pipeline-wizard-source-repo-${idx}`}
+              data-testid={`pipeline-wizard-source-repo-${String(idx)}`}
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
             />
           </label>

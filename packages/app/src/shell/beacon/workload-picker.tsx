@@ -7,6 +7,8 @@ export function WorkloadPicker(): React.JSX.Element | null {
 
   if (loading || workloads.length === 0) return null;
   if (workloads.length === 1) {
+    const [onlyWorkload] = workloads;
+    if (!onlyWorkload) return null;
     return (
       <span
         data-testid="beacon-workload-picker"
@@ -18,7 +20,7 @@ export function WorkloadPicker(): React.JSX.Element | null {
         }}
       >
         <span aria-hidden="true">▸</span>
-        <span>{workloads[0]!.name}</span>
+        <span>{onlyWorkload.name}</span>
       </span>
     );
   }

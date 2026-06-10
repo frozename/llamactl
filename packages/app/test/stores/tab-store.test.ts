@@ -64,8 +64,8 @@ describe("tab-store ops", () => {
 
   test("closed LRU caps at 10", () => {
     for (let i = 0; i < 15; i += 1) {
-      s = addOrFocus(s, entry(`k${i}`));
-      s = closeTab(s, `k${i}`);
+      s = addOrFocus(s, entry(`k${String(i)}`));
+      s = closeTab(s, `k${String(i)}`);
     }
     expect(s.closed).toHaveLength(10);
     expect(s.closed[0]?.tabKey).toBe("k14");

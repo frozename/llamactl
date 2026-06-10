@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import type { LucideIcon } from "lucide-react";
+import { lazy } from "react";
 
 import { APP_MODULES, type AppModule } from "../../../src/modules/registry";
 import { searchModules } from "../../../src/shell/beacon/search-modules";
+
+const TestIcon = (() => null) as unknown as LucideIcon;
+const TestComponent = lazy(() => Promise.resolve({ default: () => null }));
 
 describe("searchModules", () => {
   test("empty / whitespace query returns no results", () => {
@@ -64,12 +69,10 @@ describe("searchModules", () => {
     // Build a synthetic registry with 50 entries that all match a
     // common substring; confirm slice happens.
     const fake: AppModule[] = Array.from({ length: 50 }, (_, i) => ({
-      id: `mod-${i}`,
-      labelKey: `Mod ${i}`,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      icon: (() => null) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      Component: (() => null) as any,
+      id: `mod-${String(i)}`,
+      labelKey: `Mod ${String(i)}`,
+      icon: TestIcon,
+      Component: TestComponent,
       activityBar: false,
       beaconGroup: "workspace",
       beaconKind: "static",

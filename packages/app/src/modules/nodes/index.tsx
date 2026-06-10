@@ -32,7 +32,7 @@ interface NodeFactsLite {
 function humanBytes(n: number | null | undefined): string {
   if (!n || n <= 0) return "—";
   const gb = n / 1024 / 1024 / 1024;
-  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(n / 1024 / 1024)} MB`;
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${String(Math.round(n / 1024 / 1024))} MB`;
 }
 
 type CloudProvider =
@@ -223,7 +223,7 @@ function RegisterPanel(props: { onDone: () => void }): React.JSX.Element {
     }
     const b = blob.trim();
     const match = /(?:--bootstrap\s+)?([A-Za-z0-9_-]+)\s*$/.exec(b);
-    const pasted = match ? match[1]! : b;
+    const pasted = match?.[1] ?? b;
     if (!pasted) {
       setError("Paste the bootstrap blob emitted by `llamactl agent init`.");
       return;
@@ -606,7 +606,14 @@ function NodeRow(props: {
           )}
         </div>
         <div style={{ display: "flex", gap: 4, fontSize: 12 }}>
-          <Button variant="secondary" size="sm" onClick={runTest} disabled={test.isFetching}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              void runTest();
+            }}
+            disabled={test.isFetching}
+          >
             {test.isFetching ? "Testing…" : "Test"}
           </Button>
           {!isLocal && !isProvider && (
@@ -755,7 +762,7 @@ function DiscoverPanel(): React.JSX.Element {
         <ul style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {rows.map((r) => (
             <li
-              key={`${r.host}:${r.port}`}
+              key={`${r.host}:${String(r.port)}`}
               style={{
                 borderRadius: 4,
                 border: "1px solid var(--color-border)",

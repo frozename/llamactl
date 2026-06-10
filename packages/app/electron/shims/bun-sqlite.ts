@@ -13,6 +13,8 @@
 // Aliasing the import here keeps the bundle self-contained: loading the
 // shim is harmless; actually constructing a Database throws loudly.
 export class Database {
+  readonly unavailable = true;
+
   constructor() {
     throw new Error(
       "bun:sqlite is unavailable in the Electron process; " +

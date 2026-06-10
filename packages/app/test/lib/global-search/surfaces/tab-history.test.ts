@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { matchTabHistory } from "../../../../src/lib/global-search/surfaces/tab-history";
+import type { TabEntry } from "../../../../src/stores/tab-store";
 
 describe("matchTabHistory", () => {
   const state = {
@@ -21,9 +22,11 @@ describe("matchTabHistory", () => {
   test("matches closed tabs and strips closedAt", () => {
     const out = matchTabHistory("local", state);
     expect(out.length).toBe(1);
-    expect(out[0]!.parentId).toBe("node:local");
-    if (out[0]!.action.kind === "open-tab") {
-      expect(out[0]!.action.tab.closedAt).toBeUndefined();
+    const [hit] = out;
+    expect(hit?.parentId).toBe("node:local");
+    if (hit?.action.kind === "open-tab") {
+      const tab = hit.action.tab as TabEntry;
+      expect(tab.closedAt).toBeUndefined();
     }
   });
 

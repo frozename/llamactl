@@ -49,27 +49,33 @@ export function ExplorerTree(): React.JSX.Element {
   const activeTabKey = useTabStore((s) => s.activeKey);
   const open = useTabStore((s) => s.open);
 
-  const openLeaf = (leaf: ExplorerLeaf): void => {
-    const entry: TabEntry = {
-      tabKey: `module:${leaf.id}`,
-      title: leaf.title,
-      kind: "module",
-      openedAt: Date.now(),
-    };
-    open(entry);
-  };
+  const openLeaf = React.useCallback(
+    (leaf: ExplorerLeaf): void => {
+      const entry: TabEntry = {
+        tabKey: `module:${leaf.id}`,
+        title: leaf.title,
+        kind: "module",
+        openedAt: Date.now(),
+      };
+      open(entry);
+    },
+    [open],
+  );
 
-  const openInstance = (leaf: ExplorerLeaf, inst: DynamicInstance): void => {
-    const kind = leaf.id === "workloads" ? "workload" : leaf.id === "nodes" ? "node" : "module";
-    const entry: TabEntry = {
-      tabKey: `${kind}:${inst.id}`,
-      title: inst.title,
-      kind: kind,
-      instanceId: inst.id,
-      openedAt: Date.now(),
-    };
-    open(entry);
-  };
+  const openInstance = React.useCallback(
+    (leaf: ExplorerLeaf, inst: DynamicInstance): void => {
+      const kind = leaf.id === "workloads" ? "workload" : leaf.id === "nodes" ? "node" : "module";
+      const entry: TabEntry = {
+        tabKey: `${kind}:${inst.id}`,
+        title: inst.title,
+        kind: kind,
+        instanceId: inst.id,
+        openedAt: Date.now(),
+      };
+      open(entry);
+    },
+    [open],
+  );
 
   return (
     <div role="tree" style={{ overflowY: "auto", flex: 1 }}>

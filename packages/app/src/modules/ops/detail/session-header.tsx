@@ -24,7 +24,7 @@ const STATUS_TONE: Record<SessionView["status"], "default" | "ok" | "info"> = {
 
 export function SessionHeader({ view, onOpenInOpsChat }: Props): React.JSX.Element {
   const ledeParts = [
-    `${view.iterations.length} iteration${view.iterations.length === 1 ? "" : "s"}`,
+    `${String(view.iterations.length)} iteration${view.iterations.length === 1 ? "" : "s"}`,
     view.startedAt ? `started ${new Date(view.startedAt).toLocaleString()}` : null,
     view.endedAt ? `ended ${new Date(view.endedAt).toLocaleString()}` : null,
   ].filter(Boolean) as string[];

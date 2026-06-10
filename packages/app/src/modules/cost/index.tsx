@@ -28,6 +28,8 @@ interface CostGroup {
 
 function tierToTone(tier: Tier): "default" | "ok" | "info" {
   switch (tier) {
+    case "noop":
+      return "info";
     case "deregister":
       return "default";
     case "force_private":
@@ -118,7 +120,7 @@ function BudgetBar({
           style={{
             height: "100%",
             transition: "width 0.2s",
-            width: `${width}%`,
+            width: `${String(width)}%`,
             background: barColor(fraction, thresholds),
           }}
           data-testid={`${testId}-fill`}
@@ -390,7 +392,7 @@ function JournalRow({ entry }: { entry: unknown }): React.JSX.Element {
         }}
       >
         <div style={{ minWidth: 0 }}>
-          <Badge variant={e.ok ? "ok" : "err"}>{e.action || "action"}</Badge>{" "}
+          <Badge variant={e.ok ? "ok" : "err"}>{e.action ?? "action"}</Badge>{" "}
           <span style={{ color: "var(--color-text)" }}>{e.ok ? "ok" : (e.error ?? "failed")}</span>
         </div>
         <time style={{ flexShrink: 0, color: "var(--color-text-secondary)" }}>
@@ -448,7 +450,8 @@ export default function CostDashboard(): React.JSX.Element {
     );
   }
 
-  const d = status.data!;
+  const d = status.data;
+  if (!d) return <></>;
   const tier = d.decision.tier;
 
   return (
@@ -546,7 +549,7 @@ export default function CostDashboard(): React.JSX.Element {
         Weekly window: {d.weekly.windowSince.slice(0, 19)}Z → {d.weekly.windowUntil.slice(0, 19)}Z ·
         {d.weekly.pricingFilesLoaded} pricing file(s) loaded
         {d.weekly.recordsMissingPricing > 0
-          ? ` · ${d.weekly.recordsMissingPricing} request(s) had no pricing match`
+          ? ` · ${String(d.weekly.recordsMissingPricing)} request(s) had no pricing match`
           : ""}
       </footer>
     </div>

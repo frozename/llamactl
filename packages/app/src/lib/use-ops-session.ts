@@ -107,13 +107,14 @@ export function mergeEventIntoView(view: SessionView, event: JournalEvent): Sess
       };
     case "plan_proposed": {
       if (view.iterations.some((i) => i.stepId === event.stepId)) return view;
+      const step = event.step as { args?: unknown };
       const next: IterationView = {
         iteration: event.iteration,
         stepId: event.stepId,
         tool: event.step.tool,
         tier: event.tier,
         reasoning: event.reasoning,
-        args: (event.step as any).args,
+        args: step.args,
       };
       return { ...view, iterations: [...view.iterations, next] };
     }
@@ -164,7 +165,7 @@ export function useOpsSession(sessionId: string): {
         setLoading(false);
       },
       onError: (err) => {
-        setError(err instanceof Error ? err : new Error(String(err)));
+        setError(err instanceof Error ? err : new Error(JSON.stringify(err)));
       },
     },
   );
