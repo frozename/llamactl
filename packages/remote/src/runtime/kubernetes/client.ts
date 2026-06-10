@@ -1,4 +1,14 @@
-import { AppsV1Api, CoreV1Api, KubeConfig } from "@kubernetes/client-node";
+import {
+  AppsV1Api,
+  type ApiConstructor,
+  type ApiType,
+  CoreV1Api,
+  KubeConfig,
+} from "@kubernetes/client-node";
+import { createConfiguration } from "@kubernetes/client-node/dist/gen/configuration.js";
+import { ResponseContext } from "@kubernetes/client-node/dist/gen/http/http.js";
+import { Observable } from "@kubernetes/client-node/dist/gen/rxjsStub.js";
+import { ServerConfiguration } from "@kubernetes/client-node/dist/gen/servers.js";
 /**
  * Thin wrapper around `@kubernetes/client-node`'s KubeConfig +
  * typed API clients. Every k8s-backend entrypoint flows through
@@ -88,14 +98,17 @@ function resolveNamespace(kc: KubeConfig, contextName: string): string {
  * so fetch honors the kubeconfig's TLS material. On Node, delegates
  * to the library's default `makeApiClient`.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function makeApiClient<T>(kc: KubeConfig, ClientCtor: any, injectedKc: boolean): T {
+function makeApiClient<ClientType extends ApiType>(
+  kc: KubeConfig,
+  ClientCtor: ApiConstructor<ClientType>,
+  injectedKc: boolean,
+): ClientType {
   if (injectedKc) {
     // Tests rely on their stub kc.makeApiClient to return fakes.
-    return kc.makeApiClient(ClientCtor) as T;
+    return kc.makeApiClient(ClientCtor);
   }
   if (typeof (globalThis as { Bun?: unknown }).Bun === "undefined") {
-    return kc.makeApiClient(ClientCtor) as T;
+    return kc.makeApiClient(ClientCtor);
   }
   return makeApiClientForBun(kc, ClientCtor);
 }
@@ -104,26 +117,13 @@ function makeApiClient<T>(kc: KubeConfig, ClientCtor: any, injectedKc: boolean):
 // Bun support
 // ------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function makeApiClientForBun<T>(kc: KubeConfig, ClientCtor: any): T {
-  // Dynamic import so Node-only test runs don't pay the cost (and
-  // don't exercise the library's subpath exports on machines where
-  // the package's export map is wired for CommonJS fallbacks).
-  const client = require("@kubernetes/client-node");
+function makeApiClientForBun<ClientType extends ApiType>(
+  kc: KubeConfig,
+  ClientCtor: ApiConstructor<ClientType>,
+): ClientType {
   const cluster = kc.getCurrentCluster();
   if (!cluster) {
     throw new Error("No active cluster!");
-  }
-  const ServerConfiguration = client.ServerConfiguration;
-  const createConfiguration = client.createConfiguration;
-  if (typeof ServerConfiguration !== "function" || typeof createConfiguration !== "function") {
-    // Fallback: library didn't re-export the low-level constructors.
-    // Node-path does the right thing; under Bun this leaves us with
-    // the broken default, but surfaces a loud error rather than a
-    // silent TLS mystery.
-    throw new Error(
-      "BunFetchHttpLibrary: @kubernetes/client-node did not expose ServerConfiguration + createConfiguration; upgrade the library or run under Node.",
-    );
   }
   const config = createConfiguration({
     baseServer: new ServerConfiguration(cluster.server, {}),
@@ -145,7 +145,7 @@ function makeApiClientForBun<T>(kc: KubeConfig, ClientCtor: any): T {
  * intact.
  */
 class BunFetchHttpLibrary {
-  async sendAsync(request: KubeRequestContext): Promise<KubeResponseContext> {
+  async sendAsync(request: KubeRequestContext): Promise<ResponseContext> {
     const url = request.getUrl();
     const method = request.getHttpMethod().toString();
     const body = request.getBody() as string | Uint8Array | null | undefined;
@@ -171,18 +171,16 @@ class BunFetchHttpLibrary {
       text: () => resp.text(),
       binary: async () => Buffer.from(await resp.arrayBuffer()),
     };
-    const client = require("@kubernetes/client-node");
-    return new client.ResponseContext(resp.status, headerMap, respBody);
+    return new ResponseContext(resp.status, headerMap, respBody);
   }
 
-  send(request: KubeRequestContext): unknown {
-    const client = require("@kubernetes/client-node");
+  send(request: KubeRequestContext): Observable<ResponseContext> {
     // The library's default http library returns an RxJS Observable
     // (a `rxjsStub.Observable`, which is just a promise wrapper with
     // a `pipe` + `toPromise`). `from()` isn't re-exported from the
     // library root, so we construct the Observable directly using
     // the exported class.
-    return new client.Observable(this.sendAsync(request));
+    return new Observable<ResponseContext>(this.sendAsync(request));
   }
 }
 
@@ -213,10 +211,6 @@ interface KubeRequestContext {
   getSignal(): AbortSignal | undefined;
   getAgent(): unknown;
 }
-interface KubeResponseContext {
-  httpStatusCode: number;
-}
-
 // Silence no-unused warnings when the file-scope imports aren't
 // exercised under Node (readFileSync is reserved for future PEM-file
 // loading fallbacks in the shim — currently the agent carries the

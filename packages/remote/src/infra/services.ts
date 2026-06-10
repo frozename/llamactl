@@ -58,7 +58,7 @@ export function infraServiceUnitPath(
 export function defaultInfraLogsDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_INFRA_LOGS_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const base = env.DEV_STORAGE?.trim() ?? join(homedir(), ".llamactl");
   return join(base, "logs");
 }
 
@@ -261,7 +261,7 @@ function launchctlArgs(action: ServiceLifecycleAction, label: string, plistPath:
     case "stop":
       return ["launchctl", "unload", plistPath];
     case "reload":
-      return ["launchctl", "kickstart", "-k", `gui/${process.getuid?.() ?? 501}/${label}`];
+      return ["launchctl", "kickstart", "-k", `gui/${String(process.getuid?.() ?? 501)}/${label}`];
     case "status":
       return ["launchctl", "list", label];
   }

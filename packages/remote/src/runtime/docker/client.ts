@@ -91,10 +91,10 @@ function encodeQuery(q: Record<string, string | number | boolean | undefined>): 
 }
 
 function wrapTransportError(err: unknown, socketPath: string): RuntimeError {
-  const msg = (err as Error)?.message ?? String(err);
+  const msg = err instanceof Error ? err.message : String(err);
   // ENOENT = socket missing entirely (Docker not installed / stopped).
   // ECONNREFUSED = socket present but daemon isn't accepting.
-  const code: "backend-unreachable" = "backend-unreachable";
+  const code = "backend-unreachable" as const;
   return new RuntimeError(code, `docker daemon unreachable (${msg})`, { socketPath, cause: err });
 }
 
@@ -135,7 +135,10 @@ export async function failWith(
   } catch {
     // body wasn't JSON — keep the raw text
   }
-  return new RuntimeError(code, `${context} failed (HTTP ${res.status}): ${message.slice(0, 300)}`);
+  return new RuntimeError(
+    code,
+    `${context} failed (HTTP ${String(res.status)}): ${message.slice(0, 300)}`,
+  );
 }
 
 /**

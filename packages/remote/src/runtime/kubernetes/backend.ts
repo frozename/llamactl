@@ -121,7 +121,7 @@ export class KubernetesBackend implements RuntimeBackend {
     } catch (err) {
       throw new RuntimeError(
         "backend-unreachable",
-        `kubernetes unreachable: ${(err as Error)?.message ?? String(err)}`,
+        `kubernetes unreachable: ${err instanceof Error ? err.message : String(err)}`,
         err,
       );
     }
@@ -147,10 +147,7 @@ export class KubernetesBackend implements RuntimeBackend {
     if (kind === "deployment") {
       return await this.ensureDeployment(spec, namespace, compositeName, resolvedSecrets);
     }
-    if (kind === "statefulset") {
-      return await this.ensureStatefulSet(spec);
-    }
-    throw new RuntimeError("spec-invalid", `unknown controllerKind: ${kind satisfies never}`);
+    return await this.ensureStatefulSet(spec);
   }
 
   /**
@@ -210,7 +207,7 @@ export class KubernetesBackend implements RuntimeBackend {
         namespace,
         labelSelector: serviceSelector,
       });
-      for (const svc of services.items ?? []) {
+      for (const svc of services.items) {
         if (!svc.metadata?.name) continue;
         try {
           await this.client.core.deleteNamespacedService({
@@ -252,7 +249,7 @@ export class KubernetesBackend implements RuntimeBackend {
         const pvcs = await this.client.core.listNamespacedPersistentVolumeClaim({
           namespace,
         });
-        for (const pvc of pvcs.items ?? []) {
+        for (const pvc of pvcs.items) {
           const n = pvc.metadata?.name;
           if (!n) continue;
           // Deployment case: exactly `${name}-data`.
@@ -346,7 +343,7 @@ export class KubernetesBackend implements RuntimeBackend {
       const res = await this.client.apps.listDeploymentForAllNamespaces({
         labelSelector,
       });
-      deployments = res.items ?? [];
+      deployments = res.items;
     } catch (err) {
       throw wrapBackend(err, "list Deployments");
     }
@@ -354,7 +351,7 @@ export class KubernetesBackend implements RuntimeBackend {
       const res = await this.client.apps.listStatefulSetForAllNamespaces({
         labelSelector,
       });
-      statefulSets = res.items ?? [];
+      statefulSets = res.items;
     } catch (err) {
       throw wrapBackend(err, "list StatefulSets");
     }
@@ -435,7 +432,7 @@ export class KubernetesBackend implements RuntimeBackend {
       const deployments = await this.client.apps.listDeploymentForAllNamespaces({
         labelSelector,
       });
-      const match = (deployments.items ?? []).find((d) => d.metadata?.name === name);
+      const match = deployments.items.find((d) => d.metadata?.name === name);
       if (match?.metadata?.namespace) {
         return {
           namespace: match.metadata.namespace,
@@ -450,7 +447,7 @@ export class KubernetesBackend implements RuntimeBackend {
       const statefulSets = await this.client.apps.listStatefulSetForAllNamespaces({
         labelSelector,
       });
-      const match = (statefulSets.items ?? []).find((s) => s.metadata?.name === name);
+      const match = statefulSets.items.find((s) => s.metadata?.name === name);
       if (match?.metadata?.namespace) {
         return {
           namespace: match.metadata.namespace,
@@ -601,7 +598,7 @@ export class KubernetesBackend implements RuntimeBackend {
         nodePort = svc?.spec?.ports?.[0]?.nodePort;
       }
       if (typeof nodePort !== "number") return null;
-      return `http://localhost:${nodePort}`;
+      return `http://localhost:${String(nodePort)}`;
     }
 
     // LoadBalancer
@@ -621,12 +618,12 @@ export class KubernetesBackend implements RuntimeBackend {
     // hostnames / IPs still win — a real cloud LoadBalancer reports
     // those and they're what operators want.
     if (typeof hostname === "string" && hostname.length > 0 && !isLocalHostname(hostname)) {
-      return `http://${hostname}:${port}`;
+      return `http://${hostname}:${String(port)}`;
     }
     if (typeof ip === "string" && ip.length > 0 && !isPrivateIpv4(ip)) {
-      return `http://${ip}:${port}`;
+      return `http://${ip}:${String(port)}`;
     }
-    return `http://localhost:${port}`;
+    return `http://localhost:${String(port)}`;
   }
 
   // Consumed by Phase 3+ translators; exposed here so tests can
@@ -777,13 +774,10 @@ export class KubernetesBackend implements RuntimeBackend {
     // Always replace — Secret payloads can rotate on every apply
     // and a base64 diff is cheap. Preserve `resourceVersion` on the
     // replace so the API server accepts the optimistic-lock.
-    const body: V1Secret = {
-      ...desired,
-      metadata: {
-        ...desired.metadata,
-        resourceVersion: existing.metadata?.resourceVersion,
-      },
-    };
+    const body = desired;
+    body.metadata = Object.assign(body.metadata ?? {}, {
+      resourceVersion: existing.metadata?.resourceVersion,
+    });
     try {
       await this.client.core.replaceNamespacedSecret({
         name,
@@ -850,13 +844,10 @@ export class KubernetesBackend implements RuntimeBackend {
     if (annotationHash(existing) === specHash) {
       return;
     }
-    const body: V1ConfigMap = {
-      ...desired,
-      metadata: {
-        ...desired.metadata,
-        resourceVersion: existing.metadata?.resourceVersion,
-      },
-    };
+    const body = desired;
+    body.metadata = Object.assign(body.metadata ?? {}, {
+      resourceVersion: existing.metadata?.resourceVersion,
+    });
     try {
       await this.client.core.replaceNamespacedConfigMap({
         name,
@@ -965,22 +956,16 @@ export class KubernetesBackend implements RuntimeBackend {
     if (annotationHash(existing) === specHash) {
       return;
     }
-    const body: V1Service = {
-      ...desired,
-      metadata: {
-        ...desired.metadata,
-        resourceVersion: existing.metadata?.resourceVersion,
-      },
-      // ClusterIP is immutable after create; preserve it on replace
-      // so the API server doesn't reject the PUT.
-      spec: {
-        ...desired.spec,
-        ...(existing.spec?.clusterIP && { clusterIP: existing.spec.clusterIP }),
-        ...(existing.spec?.clusterIPs && {
-          clusterIPs: existing.spec.clusterIPs,
-        }),
-      },
-    };
+    const body = desired;
+    body.metadata = Object.assign(body.metadata ?? {}, {
+      resourceVersion: existing.metadata?.resourceVersion,
+    });
+    // ClusterIP is immutable after create; preserve it on replace
+    // so the API server doesn't reject the PUT.
+    body.spec = Object.assign(body.spec ?? {}, {
+      ...(existing.spec?.clusterIP ? { clusterIP: existing.spec.clusterIP } : {}),
+      ...(existing.spec?.clusterIPs ? { clusterIPs: existing.spec.clusterIPs } : {}),
+    });
     try {
       await this.client.core.replaceNamespacedService({
         name,
@@ -1036,13 +1021,16 @@ export class KubernetesBackend implements RuntimeBackend {
       // we never trip on a stub / elided field.
       if (typeof existingReplicas === "number" && existingReplicas < desiredReplicas) {
         try {
+          const specBody = existing.spec ?? desired.spec;
+          if (!specBody) {
+            throw new RuntimeError("spec-invalid", `deployment '${name}' missing spec`);
+          }
+          specBody.replicas = desiredReplicas;
+          existing.spec = specBody;
           return await this.client.apps.replaceNamespacedDeployment({
             name,
             namespace,
-            body: {
-              ...existing,
-              spec: { ...existing.spec!, replicas: desiredReplicas },
-            },
+            body: existing,
           });
         } catch (err) {
           throw wrapBackend(err, `reconcile-replicas deployment '${name}'`);
@@ -1050,13 +1038,10 @@ export class KubernetesBackend implements RuntimeBackend {
       }
       return existing;
     }
-    const body: V1Deployment = {
-      ...desired,
-      metadata: {
-        ...desired.metadata,
-        resourceVersion: existing.metadata?.resourceVersion,
-      },
-    };
+    const body = desired;
+    body.metadata = Object.assign(body.metadata ?? {}, {
+      resourceVersion: existing.metadata?.resourceVersion,
+    });
     try {
       return await this.client.apps.replaceNamespacedDeployment({
         name,
@@ -1103,19 +1088,16 @@ export class KubernetesBackend implements RuntimeBackend {
     // StatefulSet API — preserving them on replace keeps the PUT
     // accepted. Size expansions happen through the PVC itself, not
     // the template; that's a v1 limitation and out of scope here.
-    const body: V1StatefulSet = {
-      ...desired,
-      metadata: {
-        ...desired.metadata,
-        resourceVersion: existing.metadata?.resourceVersion,
-      },
-      spec: {
-        ...desired.spec!,
-        ...(existing.spec?.volumeClaimTemplates && {
-          volumeClaimTemplates: existing.spec.volumeClaimTemplates,
-        }),
-      },
-    };
+    const body = desired;
+    body.metadata = Object.assign(body.metadata ?? {}, {
+      resourceVersion: existing.metadata?.resourceVersion,
+    });
+    if (!body.spec) {
+      throw new RuntimeError("spec-invalid", `statefulset '${name}' missing spec`);
+    }
+    if (existing.spec?.volumeClaimTemplates) {
+      body.spec.volumeClaimTemplates = existing.spec.volumeClaimTemplates;
+    }
     try {
       return await this.client.apps.replaceNamespacedStatefulSet({
         name,
@@ -1163,7 +1145,7 @@ export class KubernetesBackend implements RuntimeBackend {
     const replicas = latest.status?.replicas ?? 0;
     throw new RuntimeError(
       "start-failed",
-      `statefulset '${name}' not ready after ${this.readinessTimeoutMs}ms (ready=${ready}, replicas=${replicas})`,
+      `statefulset '${name}' not ready after ${String(this.readinessTimeoutMs)}ms (ready=${String(ready)}, replicas=${String(replicas)})`,
     );
   }
 
@@ -1203,7 +1185,7 @@ export class KubernetesBackend implements RuntimeBackend {
     const replicas = latest.status?.replicas ?? 0;
     throw new RuntimeError(
       "start-failed",
-      `deployment '${name}' not ready after ${this.readinessTimeoutMs}ms (ready=${ready}, replicas=${replicas})`,
+      `deployment '${name}' not ready after ${String(this.readinessTimeoutMs)}ms (ready=${String(ready)}, replicas=${String(replicas)})`,
     );
   }
 
@@ -1266,15 +1248,22 @@ function readStatus(err: unknown): number | null {
 
 function wrapBackend(err: unknown, context: string): RuntimeError {
   const status = readStatus(err);
-  const message =
-    err && typeof err === "object" && "message" in err
-      ? String((err as { message?: unknown }).message ?? err)
-      : String(err);
+  const message = errorMessage(err);
   return new RuntimeError(
     "backend-unreachable",
-    `${context} failed${status !== null ? ` (${status})` : ""}: ${message}`,
+    `${context} failed${status !== null ? ` (${String(status)})` : ""}: ${message}`,
     err,
   );
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object" && "message" in err) {
+    const message = (err as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+    if (message instanceof Error) return message.message;
+  }
+  return String(err);
 }
 
 function annotationHash(resource: {

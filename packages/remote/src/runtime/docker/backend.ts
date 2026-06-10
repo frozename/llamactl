@@ -33,6 +33,7 @@ import type {
   ServiceRef,
 } from "../backend.js";
 
+import { resolveSecret } from "../../config/secret.js";
 import { RuntimeError } from "../errors.js";
 import { LABEL_KEYS, MANAGED_BY_VALUE } from "../labels.js";
 import {
@@ -311,11 +312,6 @@ export class DockerBackend implements RuntimeBackend {
    */
   private resolveSecrets(spec: ServiceDeployment): Record<string, string> {
     if (!spec.secrets) return {};
-    // Lazy import — the resolver lives in config/secret.ts which
-    // docker/backend.ts doesn't otherwise pull in. Keeps load order
-    // predictable when tests mock either side.
-    const { resolveSecret } =
-      require("../../config/secret.js") as typeof import("../../config/secret.js");
     const resolved: Record<string, string> = {};
     for (const [envName, secret] of Object.entries(spec.secrets)) {
       try {
@@ -391,7 +387,7 @@ function translateDeployment(
     body.ExposedPorts = {};
     body.HostConfig.PortBindings = {};
     for (const p of spec.ports) {
-      const key = `${p.containerPort}/${p.protocol ?? "tcp"}`;
+      const key = `${String(p.containerPort)}/${p.protocol ?? "tcp"}`;
       body.ExposedPorts[key] = {};
       if (p.hostPort !== undefined) {
         body.HostConfig.PortBindings[key] = [{ HostPort: String(p.hostPort) }];
@@ -409,7 +405,7 @@ function translateDeployment(
       if (v.configMap !== undefined) {
         throw new RuntimeError(
           "spec-invalid",
-          `volumes[${i}]: configMap mounts require runtime: kubernetes; use hostPath or name for docker`,
+          `volumes[${String(i)}]: configMap mounts require runtime: kubernetes; use hostPath or name for docker`,
         );
       }
       return {

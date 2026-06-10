@@ -179,13 +179,14 @@ function proxyFromCaller(): NodeClient {
   const handler: ProxyHandler<object> = {
     get(_target, prop) {
       if (typeof prop !== "string") return undefined;
-      if (typeof caller[prop] !== "function") return undefined;
+      const fn = caller[prop];
+      if (typeof fn !== "function") return undefined;
       // Binding tRPC v10's caller proxy via .bind() breaks path
       // tracking; wrapping each call as a fresh invocation preserves
       // the proxy's per-call context. The .query/.mutate/.subscribe
       // surface mirrors the remote proxy client so downstream code
       // treats both paths identically.
-      const invoke = (...args: unknown[]): unknown => caller[prop]!(...args);
+      const invoke = (...args: unknown[]): unknown => Reflect.apply(fn, caller, args);
       return {
         query: invoke,
         mutate: invoke,
@@ -238,8 +239,7 @@ function proxyFromTunnel(
     });
     if (res.error) {
       const err = new Error(res.error.message);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (err as any).code = res.error.code;
+      Object.assign(err, { code: res.error.code });
       throw err;
     }
     return res.result;
@@ -281,7 +281,7 @@ function proxyFromTunnel(
       get(_target, prop) {
         if (typeof prop !== "string") return undefined;
         if (prop === "query" || prop === "mutate" || prop === "subscribe") {
-          if (!leaf) leaf = buildLeaf(path.join("."));
+          leaf ??= buildLeaf(path.join("."));
           return leaf[prop];
         }
         return makeNamespaceProxy([...path, prop]);

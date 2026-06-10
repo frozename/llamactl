@@ -34,7 +34,7 @@ import { basename, dirname, join } from "node:path";
 export function defaultInfraDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_INFRA_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const base = env.DEV_STORAGE?.trim() ?? join(homedir(), ".llamactl");
   return join(base, "infra");
 }
 
@@ -130,7 +130,7 @@ export function activateInfraVersion(
   }
   mkdirSync(pkgDir, { recursive: true });
   const finalLink = infraCurrentSymlink(pkg, base);
-  const tmpLink = `${finalLink}.tmp.${process.pid}.${Date.now()}`;
+  const tmpLink = `${finalLink}.tmp.${String(process.pid)}.${String(Date.now())}`;
   try {
     // Clean any stale tmp link from a prior crashed flip.
     if (existsSync(tmpLink)) rmSync(tmpLink, { force: true });

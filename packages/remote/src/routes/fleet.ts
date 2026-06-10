@@ -7,10 +7,10 @@ export interface FleetSnapshotRouteOptions {
   journalPath?: string;
 }
 
-export async function handleFleetSnapshotRoute(
+export function handleFleetSnapshotRoute(
   _req: Request,
   opts: FleetSnapshotRouteOptions = {},
-): Promise<Response> {
+): Response {
   const journalPath = opts.journalPath ?? defaultFleetJournalPath();
   const latest = readLatestFleetSnapshotFromJournal(journalPath);
   if (latest === null) return new Response(null, { status: 204 });

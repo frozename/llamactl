@@ -1,8 +1,8 @@
 import type { TRPCLink } from "@trpc/client";
+import type { FetchLike } from "eventsource";
 
 import { httpBatchLink, httpSubscriptionLink, splitLink } from "@trpc/client";
 import { EventSource } from "eventsource";
-import type { FetchLike } from "eventsource";
 
 import type { ClusterNode } from "../config/schema.js";
 
@@ -18,6 +18,7 @@ import { computeFingerprint, fingerprintsEqual } from "../server/tls.js";
 type FetchInput = string | URL | Request;
 export type PinnedFetch = (input: FetchInput, init?: RequestInit) => Promise<Response>;
 export type PinnedFetchFactory = (node: ClusterNode) => PinnedFetch;
+type HttpBatchFetch = NonNullable<Parameters<typeof httpBatchLink>[0]["fetch"]>;
 
 // eventsource@4's FetchLike is a stripped-down RequestInit. We widen to
 // a loose shape that our pinned fetch wrapper can satisfy.
@@ -90,14 +91,20 @@ export function buildPinnedLinks(
         url: trpcUrl,
         EventSource,
         eventSourceOptions: {
-          fetch: ((url, init) =>
-            pinnedFetch(url as string, {
+          fetch: ((url, init): ReturnType<FetchLike> => {
+            const headers = init.headers;
+            const mergedHeaders =
+              headers instanceof Headers
+                ? Object.fromEntries(headers.entries())
+                : ((headers as Record<string, string> | undefined) ?? {});
+            return pinnedFetch(url, {
               ...(init as RequestInit | undefined),
               headers: {
-                ...((init?.["headers"] as Record<string, string> | undefined) ?? {}),
+                ...mergedHeaders,
                 authorization: authHeader,
               },
-            })) satisfies FetchLike,
+            });
+          }) satisfies FetchLike,
         },
       }),
       false: httpBatchLink({
@@ -106,8 +113,7 @@ export function buildPinnedLinks(
         // Bun's native fetch and tRPC's internal FetchEsque type
         // differ on ReadableStream generics; the runtime shapes are
         // compatible so we erase the TS mismatch here.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        fetch: pinnedFetch as any,
+        fetch: pinnedFetch as unknown as HttpBatchFetch,
       }),
     }),
   ];

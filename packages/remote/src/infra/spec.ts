@@ -79,7 +79,7 @@ export type InfraPackageSpec = z.infer<typeof InfraPackageSpecSchema>;
 export function defaultInfraPackagesDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_INFRA_PACKAGES_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const base = env.DEV_STORAGE?.trim() ?? join(homedir(), ".llamactl");
   return join(base, "packages");
 }
 

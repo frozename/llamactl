@@ -26,7 +26,12 @@ import {
   target as targetMod,
   uninstall as uninstallMod,
 } from "@llamactl/core";
-import { type AiProvider, createOpenAICompatProvider } from "@nova/contracts";
+import {
+  type AiProvider,
+  createOpenAICompatProvider,
+  type UnifiedAiRequest,
+  type UnifiedAiResponse,
+} from "@nova/contracts";
 import {
   computeCostSnapshot,
   createLlmExecutor,
@@ -138,18 +143,17 @@ function localCallerProxy(): WorkloadNodeClient {
  * so in-flight work cancels cleanly.
  */
 async function* bridgeEventStream<T>(
-  clientSignal: AbortSignal,
+  clientSignal: AbortSignal | undefined,
   runner: (emit: (evt: T) => void, signal: AbortSignal) => Promise<void>,
 ): AsyncGenerator<T, void, unknown> {
   const controller = new AbortController();
   const onClientAbort = (): void => {
     controller.abort();
   };
-  clientSignal.addEventListener("abort", onClientAbort);
+  clientSignal?.addEventListener("abort", onClientAbort);
 
   const queue: T[] = [];
-  let finished = false;
-  let err: unknown = null;
+  const state: { finished: boolean; err: Error | null } = { finished: false, err: null };
   let wake: (() => void) | null = null;
   const drain = (): void => {
     const w = wake;
@@ -164,29 +168,29 @@ async function* bridgeEventStream<T>(
         drain();
       }, controller.signal);
     } catch (e) {
-      err = e;
+      state.err = e instanceof Error ? e : new Error(String(e));
     } finally {
-      finished = true;
+      state.finished = true;
       drain();
     }
   })();
 
   try {
-    while (true) {
+    while (!state.finished || queue.length > 0) {
       if (queue.length > 0) {
-        yield queue.shift() as T;
+        const next = queue.shift();
+        if (next !== undefined) yield next;
         continue;
       }
-      if (finished) break;
       await new Promise<void>((resolve) => {
         wake = resolve;
       });
     }
-    if (err) throw err;
+    if (state.err) throw state.err;
   } finally {
-    clientSignal.removeEventListener("abort", onClientAbort);
+    clientSignal?.removeEventListener("abort", onClientAbort);
     controller.abort();
-    await run.catch(() => {});
+    await run.catch(() => undefined);
   }
 }
 
@@ -408,7 +412,7 @@ async function probeNodeFacts(opts: {
   );
   if (!res.ok) {
     throw new Error(
-      `probe HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`,
+      `probe HTTP ${String(res.status)}: ${(await res.text().catch(() => "")).slice(0, 200)}`,
     );
   }
   // tRPC v11 GET-procedure responses wrap the payload as { result: { data: ... } }.
@@ -476,7 +480,13 @@ export const router = t.router({
           if (kind === "provider" && provider.listModels) {
             try {
               const models = await provider.listModels();
-              const binding = node.provider!;
+              const binding = node.provider;
+              if (!binding) {
+                throw new TRPCError({
+                  code: "INTERNAL_SERVER_ERROR",
+                  message: `provider node '${node.name}' missing provider binding`,
+                });
+              }
               const hit = models.some(
                 (m) => (m as { owned_by?: string }).owned_by === binding.providerName,
               );
@@ -790,16 +800,15 @@ export const router = t.router({
         if (!res.ok) {
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: `local chat ${res.status}`,
+            message: `local chat ${String(res.status)}`,
           });
         }
-        return await res.json();
+        return (await res.json()) as UnifiedAiResponse;
       }
       const { providerForNode } = await import("./providers/factory.js");
 
       const provider = providerForNode({ node: resolved.node, user: resolved.user, cfg });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return await provider.createResponse(input.request as any);
+      return await provider.createResponse(input.request as UnifiedAiRequest);
     }),
 
   /**
@@ -847,11 +856,7 @@ export const router = t.router({
           baseUrl: `http://${rEnv.LLAMA_CPP_HOST}:${rEnv.LLAMA_CPP_PORT}/v1`,
           apiKey: "local",
         });
-        const stream = provider.streamResponse?.(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          input.request as any,
-          signal,
-        );
+        const stream = provider.streamResponse?.(input.request as UnifiedAiRequest, signal);
         if (!stream) {
           yield { type: "done" as const, finish_reason: "stop" as const };
           return;
@@ -864,11 +869,7 @@ export const router = t.router({
       }
 
       const provider = providerForNode({ node: resolved.node, user: resolved.user, cfg });
-      const stream = provider.streamResponse?.(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        input.request as any,
-        signal,
-      );
+      const stream = provider.streamResponse?.(input.request as UnifiedAiRequest, signal);
       if (!stream) {
         yield { type: "done" as const, finish_reason: "stop" as const };
         return;
@@ -895,7 +896,13 @@ export const router = t.router({
       // `owned_by === providerName`. Sirius tags each model with
       // the provider that serves it, so this is the natural
       // narrowing for the chat UI's picker.
-      const binding = resolved.node.provider!;
+      const binding = resolved.node.provider;
+      if (!binding) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `provider node '${resolved.node.name}' missing provider binding`,
+        });
+      }
       const parent = cfg.clusters
         .find((c) => c.name === kubecfg.currentContext(cfg).cluster)
         ?.nodes.find((n) => n.name === binding.gateway);
@@ -948,7 +955,7 @@ export const router = t.router({
     if (!r.ok) {
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
-        message: `remote /v1/models ${r.status}`,
+        message: `remote /v1/models ${String(r.status)}`,
       });
     }
     const body = (await r.json()) as { data?: unknown[] };
@@ -1002,7 +1009,7 @@ export const router = t.router({
         addresses: svc.addresses,
         version: svc.version,
         fingerprint: svc.fingerprint,
-        url: `https://${svc.host}:${svc.port}`,
+        url: `https://${svc.host}:${String(svc.port)}`,
         alreadyRegistered: svc.fingerprint ? existingFingerprints.has(svc.fingerprint) : false,
       }));
     }),
@@ -1040,7 +1047,7 @@ export const router = t.router({
         } catch {
           phase = "Unreachable";
         }
-        const workers = manifest.spec.workers ?? [];
+        const workers = manifest.spec.workers;
         return {
           name: manifest.metadata.name,
           kind: "ModelRun" as const,
@@ -1069,13 +1076,20 @@ export const router = t.router({
     const hostRows = modelHostStoreMod.listModelHosts().map((manifest) => {
       const status = statusModelHost({ key: { name: manifest.metadata.name } });
       const ep = manifest.spec.endpoint;
+      const hosted = manifest.spec.hostedModels[0];
+      if (!hosted) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `ModelHost '${manifest.metadata.name}' has no hosted models`,
+        });
+      }
       return {
         name: manifest.metadata.name,
         kind: "ModelHost" as const,
         node: manifest.spec.node,
-        rel: manifest.spec.hostedModels[0]!.rel,
+        rel: hosted.rel,
         phase: status.state === "Running" ? "Running" : "Stopped",
-        endpoint: ep ? `http://${ep.host ?? "127.0.0.1"}:${ep.port}` : null,
+        endpoint: `http://${ep.host}:${String(ep.port)}`,
         status: null,
         workerCount: 0,
         workerNodes: [] as string[],
@@ -1099,7 +1113,7 @@ export const router = t.router({
       return { manifest, liveStatus };
     }),
 
-  nodeBudget: t.procedure.input(z.object({ node: z.string().min(1) })).query(async ({ input }) => {
+  nodeBudget: t.procedure.input(z.object({ node: z.string().min(1) })).query(({ input }) => {
     const nodeRuns = nodeRunStoreMod.listNodeRuns();
     const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
     const budget = defaultNodeBudgetGiB(node?.spec.budget?.memoryGiB);
@@ -1113,7 +1127,7 @@ export const router = t.router({
         enabled: manifest.spec.enabled,
         expectedMemoryGiB: manifest.spec.resources?.expectedMemoryGiB ?? null,
         endpoint: manifest.spec.endpoint
-          ? `${manifest.spec.endpoint.host ?? "127.0.0.1"}:${manifest.spec.endpoint.port ?? "?"}`
+          ? `${manifest.spec.endpoint.host ?? "127.0.0.1"}:${String(manifest.spec.endpoint.port)}`
           : null,
         phase: manifest.status?.phase ?? "Pending",
       }));
@@ -1130,9 +1144,7 @@ export const router = t.router({
         kind: "ModelHost" as const,
         enabled: manifest.spec.enabled,
         expectedMemoryGiB: estimateModelHostMemoryGiB(manifest, resolved),
-        endpoint: manifest.spec.endpoint
-          ? `${manifest.spec.endpoint.host ?? "127.0.0.1"}:${manifest.spec.endpoint.port ?? "?"}`
-          : null,
+        endpoint: `${manifest.spec.endpoint.host}:${String(manifest.spec.endpoint.port)}`,
         phase: statusModelHost({ key: { name: manifest.metadata.name } }).state,
       }));
     const workloads = [...runRows, ...hostRows].sort((a, b) => a.name.localeCompare(b.name));
@@ -1212,7 +1224,7 @@ export const router = t.router({
 
   modelHostStatus: t.procedure
     .input(modelHostStatusInput)
-    .query(async ({ input }) => statusModelHost({ key: { name: input.workload } })),
+    .query(({ input }) => statusModelHost({ key: { name: input.workload } })),
 
   modelHostStop: t.procedure.input(modelHostStopInput).mutation(
     async ({ input }) =>
@@ -1699,7 +1711,7 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<serverLogsMod.LogLineEvent>(signal!, (emit, sig) =>
+      yield* bridgeEventStream<serverLogsMod.LogLineEvent>(signal, (emit, sig) =>
         serverLogsMod.tailServerLog({
           key: { name: input.workload },
           lines: input.lines,
@@ -1744,7 +1756,7 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<ServerStartEvent>(signal!, async (emit, sig) => {
+      yield* bridgeEventStream<ServerStartEvent>(signal, async (emit, sig) => {
         const result = await serverMod.startServer({
           key: { name: input.workload },
           target: input.target,
@@ -1810,7 +1822,7 @@ export const router = t.router({
    */
   rpcServerDoctor: t.procedure
     .input(z.object({}))
-    .query(async () => rpcServerMod.checkRpcServerAvailable()),
+    .query(() => rpcServerMod.checkRpcServerAvailable()),
 
   rpcServerStop: t.procedure
     .input(z.object({ graceSeconds: z.number().int().positive().max(60).optional() }).optional())
@@ -1832,7 +1844,7 @@ export const router = t.router({
       type RpcEvent =
         | rpcServerMod.RpcServerEvent
         | { type: "done"; result: rpcServerMod.StartRpcServerResult };
-      yield* bridgeEventStream<RpcEvent>(signal!, async (emit, sig) => {
+      yield* bridgeEventStream<RpcEvent>(signal, async (emit, sig) => {
         const result = await rpcServerMod.startRpcServer({
           ...input,
           signal: sig,
@@ -1871,7 +1883,7 @@ export const router = t.router({
         return {
           ok: false,
           pid: existing,
-          error: `keep-alive already running (pid=${existing})`,
+          error: `keep-alive already running (pid=${String(existing)})`,
         };
       }
       const llamactlHome =
@@ -1906,7 +1918,7 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<CandidateStreamEvent>(signal!, async (emit, sig) => {
+      yield* bridgeEventStream<CandidateStreamEvent>(signal, async (emit, sig) => {
         const result = await candidateMod.candidateTest({
           repo: input.repo,
           file: input.file,
@@ -1944,7 +1956,7 @@ export const router = t.router({
       type TuneEvent =
         | bench.BenchEvent
         | { type: "done-tune"; result: autotuneMod.MaybeTuneAfterPullResult };
-      yield* bridgeEventStream<TuneEvent>(signal!, async (emit, sig) => {
+      yield* bridgeEventStream<TuneEvent>(signal, async (emit, sig) => {
         const result = await autotuneMod.maybeTuneAfterPull({
           rel: input.rel,
           wasMissing: input.wasMissing,
@@ -1963,7 +1975,7 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<PullStreamEvent>(signal!, async (emit, sig) => {
+      yield* bridgeEventStream<PullStreamEvent>(signal, async (emit, sig) => {
         const result = await pull.pullRepoFile({
           repo: input.repo,
           file: input.file,
@@ -2034,7 +2046,7 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<BenchStreamEvent>(signal!, async (emit, sig) => {
+      yield* bridgeEventStream<BenchStreamEvent>(signal, async (emit, sig) => {
         const result = await bench.benchPreset({
           target: input.target,
           mode: input.mode,
@@ -2049,7 +2061,7 @@ export const router = t.router({
   benchVisionRun: t.procedure
     .input(z.object({ target: z.string().min(1) }))
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<BenchStreamEvent>(signal!, async (emit, sig) => {
+      yield* bridgeEventStream<BenchStreamEvent>(signal, async (emit, sig) => {
         const result = await bench.benchVision({
           target: input.target,
           signal: sig,
@@ -2069,7 +2081,7 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<PullStreamEvent>(signal!, async (emit, sig) => {
+      yield* bridgeEventStream<PullStreamEvent>(signal, async (emit, sig) => {
         const result = await pull.pullCandidate({
           repo: input.repo,
           file: input.file,
@@ -2210,7 +2222,7 @@ export const router = t.router({
         })
         .default({ days: 7 }),
     )
-    .query(async ({ input }) => {
+    .query(({ input }) => {
       return computeCostSnapshot({ days: input.days });
     }),
 
@@ -2222,7 +2234,7 @@ export const router = t.router({
    * pure decision function what tier the current spend crosses. Never
    * mutates — the dashboard reads this to show the gauge + tier badge.
    */
-  costGuardianStatus: t.procedure.query(async () => {
+  costGuardianStatus: t.procedure.query(() => {
     const configPath = defaultCostGuardianConfigPath();
     const config = existsSync(configPath)
       ? loadCostGuardianConfig(configPath)
@@ -2264,7 +2276,7 @@ export const router = t.router({
         })
         .default({ limit: 50 }),
     )
-    .query(async ({ input }) => {
+    .query(({ input }) => {
       const path = defaultCostJournalPath();
       if (!existsSync(path)) return { entries: [] as CostJournalEntry[], path };
       const body = readFileSync(path, "utf8");
@@ -2318,7 +2330,7 @@ export const router = t.router({
         overwrite: z.boolean().default(false),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(({ input }) => {
       const slug =
         input.name
           .trim()
@@ -2330,7 +2342,7 @@ export const router = t.router({
       // > production default under the operator's homedir.
       const devStorage = process.env.DEV_STORAGE?.trim();
       const baseDir =
-        process.env.LLAMACTL_MCP_PIPELINES_DIR?.trim() ||
+        process.env.LLAMACTL_MCP_PIPELINES_DIR?.trim() ??
         (devStorage
           ? join(devStorage, "mcp", "pipelines")
           : join(homedir(), ".llamactl", "mcp", "pipelines"));
@@ -2351,7 +2363,7 @@ export const router = t.router({
         title: input.name,
         description:
           input.description ??
-          `Multi-stage pipeline with ${input.stages.length} stage${input.stages.length === 1 ? "" : "s"}.`,
+          `Multi-stage pipeline with ${String(input.stages.length)} stage${input.stages.length === 1 ? "" : "s"}.`,
         inputSchema: {
           type: "object",
           properties: {
@@ -2470,7 +2482,8 @@ export const router = t.router({
             resolve = null;
           }
           while (queue.length > 0) {
-            const ev = queue.shift()!;
+            const ev = queue.shift();
+            if (ev === undefined) continue;
             yield ev;
             if (isTerminal(ev)) return;
           }

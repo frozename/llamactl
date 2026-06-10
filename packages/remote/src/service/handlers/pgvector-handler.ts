@@ -228,7 +228,7 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
       );
     }
     const { host, port } = instance.endpoint;
-    const url = `postgres://${spec.user}:REDACTED@${host}:${port}/${spec.database}`;
+    const url = `postgres://${spec.user}:REDACTED@${host}:${String(port)}/${spec.database}`;
     return { host, port, url };
   },
 };

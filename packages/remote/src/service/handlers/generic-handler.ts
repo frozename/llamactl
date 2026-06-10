@@ -153,10 +153,10 @@ export const genericContainerHandler: ServiceHandler<GenericContainerServiceSpec
       return {
         host: "127.0.0.1",
         port,
-        url: `http://127.0.0.1:${port}`,
+        url: `http://127.0.0.1:${String(port)}`,
       };
     }
     const { host, port } = instance.endpoint;
-    return { host, port, url: `http://${host}:${port}` };
+    return { host, port, url: `http://${host}:${String(port)}` };
   },
 };

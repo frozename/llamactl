@@ -29,7 +29,7 @@ export type InfraExtractor = (tarballPath: string, destDir: string) => Promise<v
 async function defaultFetcher(url: string): Promise<Uint8Array> {
   const res = await fetch(url);
   if (!res.ok) {
-    throw new Error(`infra fetch: ${url} returned ${res.status}`);
+    throw new Error(`infra fetch: ${url} returned ${String(res.status)}`);
   }
   return new Uint8Array(await res.arrayBuffer());
 }
@@ -47,7 +47,7 @@ async function defaultExtractor(tarballPath: string, destDir: string): Promise<v
   const code = await proc.exited;
   if (code !== 0) {
     const err = await new Response(proc.stderr).text();
-    throw new Error(`infra extract: tar exited ${code}: ${err.trim() || "(no stderr)"}`);
+    throw new Error(`infra extract: tar exited ${String(code)}: ${err.trim() || "(no stderr)"}`);
   }
 }
 
@@ -143,7 +143,11 @@ export async function installInfraPackage(opts: InstallInfraOptions): Promise<In
   rmSync(workDir, { recursive: true, force: true });
   if (cpCode !== 0) {
     const err = await new Response(cp.stderr).text();
-    return { ok: false, reason: "extract-failed", error: `cp exited ${cpCode}: ${err.trim()}` };
+    return {
+      ok: false,
+      reason: "extract-failed",
+      error: `cp exited ${String(cpCode)}: ${err.trim()}`,
+    };
   }
 
   if (activate) {

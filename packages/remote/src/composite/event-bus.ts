@@ -34,11 +34,11 @@ export interface CompositeRun {
 }
 
 export interface CompositeEventBus {
-  startRun(name: string): void;
-  emit(name: string, event: CompositeApplyEvent): void;
-  endRun(name: string): void;
-  subscribe(name: string, listener: (e: CompositeApplyEvent) => void): () => void;
-  currentRun(name: string): CompositeRun | null;
+  startRun: (name: string) => void;
+  emit: (name: string, event: CompositeApplyEvent) => void;
+  endRun: (name: string) => void;
+  subscribe: (name: string, listener: (e: CompositeApplyEvent) => void) => () => void;
+  currentRun: (name: string) => CompositeRun | null;
 }
 
 /**

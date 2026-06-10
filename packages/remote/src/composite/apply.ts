@@ -14,6 +14,8 @@ import type {
   CompositeApplyResult,
   CompositeComponentResult,
 } from "./types.js";
+import type { EmbersynthNode } from "../config/embersynth.js";
+import type { SiriusProvider } from "../config/sirius-providers.js";
 
 import { resolveInternalProxyEndpoint } from "../../../core/src/env.js";
 import {
@@ -170,7 +172,8 @@ export async function applyComposite(opts: CompositeApplyOptions): Promise<Compo
   if (haltedOnPending !== null) {
     const haltRef = haltedOnPending.ref;
     for (let i = lastProcessedIdx + 1; i < order.length; i++) {
-      const ref = order[i]!;
+      const ref = order[i];
+      if (!ref) continue;
       componentResults.push({
         ref,
         state: "Pending",
@@ -402,16 +405,14 @@ async function applyRagComponent(
     let endpointUrl = resolved.url;
     const serviceType =
       "serviceType" in serviceSpec && serviceSpec.serviceType ? serviceSpec.serviceType : undefined;
-    const external = opts.backend.resolveExternalServiceEndpoint;
+    const external = opts.backend.resolveExternalServiceEndpoint?.bind(opts.backend);
     if (
       serviceType &&
       serviceType !== "ClusterIP" &&
       typeof external === "function" &&
       serviceRecord?.serviceRef
     ) {
-      const externalUrl = await external.call(opts.backend, serviceRecord.serviceRef, {
-        serviceType,
-      });
+      const externalUrl = await external(serviceRecord.serviceRef, { serviceType });
       if (externalUrl) {
         // The external resolver returns host:port (wrapped as
         // http://host:port) since it works at the Service level and
@@ -600,7 +601,7 @@ async function teardownComponent(
       const client = opts.getWorkloadClient(manifestWorkload.node);
       await client.serverStop
         .mutate({ workload: manifest.metadata.name, graceSeconds: 10 })
-        .catch(() => {});
+        .catch(() => undefined);
       return;
     }
     case "rag": {
@@ -710,7 +711,7 @@ export async function destroyComposite(
       current: currentSirius,
     });
     if (resSirius.changed) {
-      writeGatewayCatalog("sirius", resSirius.next as any);
+      writeGatewayCatalog("sirius", resSirius.next as SiriusProvider[]);
       await reloadAllGatewayNodesOfKind("sirius");
     }
 
@@ -721,7 +722,7 @@ export async function destroyComposite(
       current: currentEmber,
     });
     if (resEmber.changed) {
-      writeGatewayCatalog("embersynth", resEmber.next as any);
+      writeGatewayCatalog("embersynth", resEmber.next as EmbersynthNode[]);
       await reloadAllGatewayNodesOfKind("embersynth");
     }
 
@@ -744,7 +745,7 @@ export async function destroyComposite(
     current: currentSirius,
   });
   if (resSirius.changed) {
-    writeGatewayCatalog("sirius", resSirius.next as any);
+    writeGatewayCatalog("sirius", resSirius.next as SiriusProvider[]);
     await reloadAllGatewayNodesOfKind("sirius");
   }
 
@@ -755,7 +756,7 @@ export async function destroyComposite(
     current: currentEmber,
   });
   if (resEmber.changed) {
-    writeGatewayCatalog("embersynth", resEmber.next as any);
+    writeGatewayCatalog("embersynth", resEmber.next as EmbersynthNode[]);
     await reloadAllGatewayNodesOfKind("embersynth");
   }
 

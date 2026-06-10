@@ -210,7 +210,7 @@ function buildVolumeMounts(spec: ServiceDeployment): V1VolumeMount[] {
   return spec.volumes.map((v, i) => {
     // Keep the synthetic pod-volume name in lockstep with
     // `buildPodVolumes` so the kubelet resolves the mount reference.
-    const fallback = v.configMap ? `cfg-${i}` : `data-${i}`;
+    const fallback = v.configMap ? `cfg-${String(i)}` : `data-${String(i)}`;
     const mount: V1VolumeMount = {
       name: v.name ?? fallback,
       mountPath: v.containerPath,
@@ -231,7 +231,7 @@ function buildPodVolumes(spec: ServiceDeployment): V1Volume[] {
     // Deployment apply.
     if (v.configMap) {
       return {
-        name: v.name ?? `cfg-${i}`,
+        name: v.name ?? `cfg-${String(i)}`,
         configMap: {
           name: v.configMap.name,
           ...(v.configMap.defaultMode !== undefined && {
@@ -240,7 +240,7 @@ function buildPodVolumes(spec: ServiceDeployment): V1Volume[] {
         },
       };
     }
-    const name = v.name ?? `data-${i}`;
+    const name = v.name ?? `data-${String(i)}`;
     if (v.hostPath) {
       // Bind-style volumes. `DirectoryOrCreate` mirrors the docker
       // bind-mount behaviour — create the host directory when it's

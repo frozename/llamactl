@@ -1,4 +1,9 @@
-import { type AiProvider, createOpenAICompatProvider } from "@nova/contracts";
+import {
+  type AiProvider,
+  createOpenAICompatProvider,
+  type ModelInfo,
+  type UnifiedAiRequest,
+} from "@nova/contracts";
 
 import type { PinnedFetchFactory } from "../client/links.js";
 
@@ -34,10 +39,7 @@ export function providerForCloudNode(
   // unauthenticated upstreams ignore.
   const apiKey = node.cloud.apiKeyRef ? resolveApiKeyRef(node.cloud.apiKeyRef, env) : "";
   const providerName: CloudProvider = node.cloud.provider;
-  const baseUrl = normalizeOpenAICompatBaseUrl(
-    node.cloud.baseUrl || DEFAULT_CLOUD_BASE_URLS[providerName] || "",
-    providerName,
-  );
+  const baseUrl = normalizeOpenAICompatBaseUrl(node.cloud.baseUrl, providerName);
   const base = createOpenAICompatProvider({
     name: node.name,
     displayName: node.cloud.displayName ?? node.name,
@@ -67,25 +69,22 @@ export function providerForCloudNode(
 function applyProviderQuirks(base: AiProvider, providerName: CloudProvider): AiProvider {
   if (providerName !== "gemini" && providerName !== "anthropic") return base;
 
-  const stripGeminiPrefix = (value: string | undefined): string | undefined =>
-    typeof value === "string" && value.startsWith("models/")
-      ? value.slice("models/".length)
-      : value;
+  const stripGeminiPrefix = (value: string): string =>
+    value.startsWith("models/") ? value.slice("models/".length) : value;
 
-  const transformRequest = <T extends { model?: string } | undefined>(req: T): T => {
-    if (providerName !== "gemini" || !req || !req.model) return req;
+  const transformRequest = (req: UnifiedAiRequest): UnifiedAiRequest => {
+    if (providerName !== "gemini" || !req.model) return req;
     return { ...req, model: stripGeminiPrefix(req.model) };
   };
 
+  const streamResponse = base.streamResponse?.bind(base);
   const wrapped = {
     ...base,
-    createResponse: (req: any) => base.createResponse(transformRequest(req)),
-    ...(base.streamResponse
+    createResponse: (req: UnifiedAiRequest) => base.createResponse(transformRequest(req)),
+    ...(streamResponse
       ? {
-          streamResponse: (req: any, signal?: AbortSignal) => {
-            const nonNullStream = base.streamResponse!;
-            return nonNullStream(transformRequest(req), signal);
-          },
+          streamResponse: (req: UnifiedAiRequest, signal?: AbortSignal) =>
+            streamResponse(transformRequest(req), signal),
         }
       : {}),
     listModels: async () => {
@@ -93,7 +92,7 @@ function applyProviderQuirks(base: AiProvider, providerName: CloudProvider): AiP
       if (!base.listModels) return fallback;
       try {
         const upstream = await base.listModels();
-        if (upstream && upstream.length > 0) return upstream;
+        if (upstream.length > 0) return upstream;
         return fallback;
       } catch {
         return fallback;
@@ -103,8 +102,7 @@ function applyProviderQuirks(base: AiProvider, providerName: CloudProvider): AiP
   return wrapped;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function fallbackModelsFor(provider: CloudProvider): any[] {
+function fallbackModelsFor(provider: CloudProvider): ModelInfo[] {
   // Curated minimal catalogs — keep short, recent, and non-exhaustive.
   // The operator picks one to chat with; they can add custom catalog
   // entries if they need a model we don't list.
@@ -211,15 +209,16 @@ export function providerForNode(opts: {
     // agent's `cli:[]` binding, NOT a gateway's cloud binding. Dispatch
     // to the subprocess adapter; the parent "gateway" in this binding
     // is actually the hosting agent.
-    if (node.provider.source === "cli") {
+    const binding = node.provider;
+    if (binding.source === "cli") {
       return buildCliProviderForNode({ node, cfg, env });
     }
     const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
     const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
-    const parent = cluster?.nodes.find((n) => n.name === node.provider!.gateway);
+    const parent = cluster?.nodes.find((n) => n.name === binding.gateway);
     if (!parent?.cloud) {
       throw new Error(
-        `provider-kind node '${node.name}': parent gateway '${node.provider.gateway}' not found or missing cloud{}`,
+        `provider-kind node '${node.name}': parent gateway '${binding.gateway}' not found or missing cloud{}`,
       );
     }
     const apiKey = parent.cloud.apiKeyRef ? resolveApiKeyRef(parent.cloud.apiKeyRef, env) : "";
@@ -271,23 +270,24 @@ function buildCliProviderForNode(opts: {
   env: NodeJS.ProcessEnv;
 }): AiProvider {
   const { node, cfg, env } = opts;
-  if (!node.provider) {
+  const providerBinding = node.provider;
+  if (!providerBinding) {
     throw new Error(`cli-source provider-kind node '${node.name}' missing provider{}`);
   }
   const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
   const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
   const agent = cluster?.nodes.find(
-    (n) => n.name === node.provider!.gateway && resolveNodeKind(n) === "agent",
+    (n) => n.name === providerBinding.gateway && resolveNodeKind(n) === "agent",
   );
   if (!agent) {
     throw new Error(
-      `cli-source provider-kind node '${node.name}': parent agent '${node.provider.gateway}' not found`,
+      `cli-source provider-kind node '${node.name}': parent agent '${providerBinding.gateway}' not found`,
     );
   }
-  const binding = agent.cli?.find((b) => b.name === node.provider!.providerName);
+  const binding = agent.cli?.find((b) => b.name === providerBinding.providerName);
   if (!binding) {
     throw new Error(
-      `cli-source provider-kind node '${node.name}': binding '${node.provider.providerName}' not declared on agent '${agent.name}'`,
+      `cli-source provider-kind node '${node.name}': binding '${providerBinding.providerName}' not declared on agent '${agent.name}'`,
     );
   }
   // Dynamic import avoids pulling the cli/ module into consumers

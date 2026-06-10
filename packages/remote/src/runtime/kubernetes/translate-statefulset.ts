@@ -210,7 +210,7 @@ function buildVolumeClaimTemplates(
     // entry — they need a pod-level `volumes[]` source referencing
     // the composite-scoped ConfigMap that the backend materializes.
     if (v.configMap) {
-      const cfgName = v.name ?? `cfg-${i}`;
+      const cfgName = v.name ?? `cfg-${String(i)}`;
       podVolumes.push({
         name: cfgName,
         configMap: {
@@ -227,7 +227,7 @@ function buildVolumeClaimTemplates(
       });
       continue;
     }
-    const name = v.name ?? `data-${i}`;
+    const name = v.name ?? `data-${String(i)}`;
     const pvcSpec: V1PersistentVolumeClaim["spec"] = {
       accessModes: ["ReadWriteOnce"],
       resources: { requests: { storage: DEFAULT_STORAGE_REQUEST } },

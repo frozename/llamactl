@@ -13,6 +13,11 @@ import type { ComponentRef, CompositeSpec, DependencyEdge } from "./schema.js";
 
 import { workloadRefName } from "./schema.js";
 
+function pipelinesOf(spec: CompositeSpec): CompositeSpec["pipelines"] {
+  const legacySpec = spec as unknown as { pipelines?: CompositeSpec["pipelines"] };
+  return legacySpec.pipelines ?? [];
+}
+
 /**
  * List every declared component as a `ComponentRef`. Order within
  * each kind matches the authoring order in the spec, so callers
@@ -31,7 +36,7 @@ export function listComponents(spec: CompositeSpec): ComponentRef[] {
   // (Zod fills the default), but a handful of tests construct specs
   // by hand with `as any` and predate the `pipelines` field — keep them
   // green without forcing every fixture to track every new field.
-  for (const p of spec.pipelines ?? []) out.push({ kind: "pipeline", name: p.name });
+  for (const p of pipelinesOf(spec)) out.push({ kind: "pipeline", name: p.name });
   for (const g of spec.gateways) out.push({ kind: "gateway", name: g.name });
   return out;
 }
@@ -68,7 +73,7 @@ export function impliedEdges(spec: CompositeSpec): DependencyEdge[] {
     }
   }
   const ragNodeNames = new Set(spec.ragNodes.map((r) => r.name));
-  for (const p of spec.pipelines ?? []) {
+  for (const p of pipelinesOf(spec)) {
     const destRagNode = p.spec.destination.ragNode;
     if (ragNodeNames.has(destRagNode)) {
       edges.push({
@@ -121,6 +126,11 @@ export function topologicalOrder(spec: CompositeSpec): ComponentRef[] {
   for (const [i, node] of nodes.entries()) {
     byKey.set(refKey(node), { ref: node, order: i });
   }
+  const requireNode = (key: string): { ref: ComponentRef; order: number } => {
+    const node = byKey.get(key);
+    if (!node) throw new Error(`missing component node: ${key}`);
+    return node;
+  };
 
   // Build: `from depends on to`.
   // dependents.get(k) = nodes that depend on k (i.e., downstream of k).
@@ -139,7 +149,7 @@ export function topologicalOrder(spec: CompositeSpec): ComponentRef[] {
     // edges that could point at missing components if impliedEdges
     // is called on a partially-invalid spec. Be defensive.
     if (!byKey.has(fromKey) || !byKey.has(toKey)) continue;
-    dependents.get(toKey)!.push(fromKey);
+    dependents.get(toKey)?.push(fromKey);
     remaining.set(fromKey, (remaining.get(fromKey) ?? 0) + 1);
   }
 
@@ -148,12 +158,13 @@ export function topologicalOrder(spec: CompositeSpec): ComponentRef[] {
   for (const [k, count] of remaining) {
     if (count === 0) zero.push(k);
   }
-  zero.sort((a, b) => byKey.get(a)!.order - byKey.get(b)!.order);
+  zero.sort((a, b) => requireNode(a).order - requireNode(b).order);
 
   const out: ComponentRef[] = [];
   while (zero.length > 0) {
-    const k = zero.shift()!;
-    out.push(byKey.get(k)!.ref);
+    const k = zero.shift();
+    if (!k) break;
+    out.push(requireNode(k).ref);
     const downstream = dependents.get(k) ?? [];
     // Sort the newly-freed nodes by declaration order so ties stay
     // stable across runs.
@@ -163,11 +174,11 @@ export function topologicalOrder(spec: CompositeSpec): ComponentRef[] {
       remaining.set(d, next);
       if (next === 0) freed.push(d);
     }
-    freed.sort((a, b) => byKey.get(a)!.order - byKey.get(b)!.order);
+    freed.sort((a, b) => requireNode(a).order - requireNode(b).order);
     // Insert in-order at the head so overall processing stays
     // insertion-sorted.
     zero.unshift(...freed);
-    zero.sort((a, b) => byKey.get(a)!.order - byKey.get(b)!.order);
+    zero.sort((a, b) => requireNode(a).order - requireNode(b).order);
   }
 
   if (out.length !== nodes.length) {

@@ -153,7 +153,8 @@ export function parseShaLine(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   const match = /^([0-9a-f]{64})\b/i.exec(trimmed);
-  return match ? match[1]!.toLowerCase() : null;
+  const hex = match?.[1];
+  return hex ? hex.toLowerCase() : null;
 }
 
 async function resolveLatestTag(
@@ -165,7 +166,7 @@ async function resolveLatestTag(
   if (!res.ok) {
     return {
       ok: false,
-      message: `GitHub API ${res.status} for ${url}: ${res.text().slice(0, 300)}`,
+      message: `GitHub API ${String(res.status)} for ${url}: ${res.text().slice(0, 300)}`,
     };
   }
   try {
@@ -240,7 +241,7 @@ async function defaultCosignVerifier(
     const stderr = await new Response(proc.stderr).text();
     return {
       ok: false,
-      message: stderr.trim().slice(0, 500) || `cosign exited ${code}`,
+      message: stderr.trim().slice(0, 500) || `cosign exited ${String(code)}`,
     };
   } catch (err) {
     return { ok: false, message: `cosign invocation failed: ${(err as Error).message}` };
@@ -279,7 +280,7 @@ export async function fetchAgentRelease(
     return {
       ok: false,
       reason: "asset-missing",
-      message: `binary asset ${binUrl} returned ${binRes.status}`,
+      message: `binary asset ${binUrl} returned ${String(binRes.status)}`,
       detail: { url: binUrl, status: binRes.status },
     };
   }
@@ -287,7 +288,7 @@ export async function fetchAgentRelease(
     return {
       ok: false,
       reason: "asset-missing",
-      message: `sha256 asset ${shaUrl} returned ${shaRes.status}`,
+      message: `sha256 asset ${shaUrl} returned ${String(shaRes.status)}`,
       detail: { url: shaUrl, status: shaRes.status },
     };
   }
@@ -453,7 +454,7 @@ async function maybeVerifySignature(opts: MaybeVerifyOptions): Promise<Signature
   if (!sigRes.ok || !certRes.ok) {
     return {
       verified: null,
-      reason: `signature assets missing (.sig=${sigRes.status} .cert=${certRes.status})`,
+      reason: `signature assets missing (.sig=${String(sigRes.status)} .cert=${String(certRes.status)})`,
     };
   }
   const sigPath = `${opts.binaryPath}.sig`;
@@ -608,7 +609,9 @@ export function pruneAgentArtifacts(
 ): PruneAgentArtifactsResult {
   const keep = opts.keep ?? 3;
   if (!Number.isInteger(keep) || keep < 0) {
-    throw new Error(`pruneAgentArtifacts: keep must be a non-negative integer (got ${keep})`);
+    throw new Error(
+      `pruneAgentArtifacts: keep must be a non-negative integer (got ${String(keep)})`,
+    );
   }
   const inspected = listAgentVersions({
     ...(opts.artifactsDir !== undefined ? { artifactsDir: opts.artifactsDir } : {}),
@@ -625,7 +628,8 @@ export function pruneAgentArtifacts(
   for (const bucket of byTarget.values()) {
     bucket.sort((a, b) => b.mtimeMs - a.mtimeMs);
     for (let i = keep; i < bucket.length; i++) {
-      const v = bucket[i]!;
+      const v = bucket[i];
+      if (!v) continue;
       if (v.active) continue;
       candidates.push({
         target: v.target,

@@ -82,7 +82,7 @@ function snapshotFetch(
       Object.keys(headers).length ? { method: "GET", headers } : { method: "GET" },
     );
     if (res.status === 204) return "timeout";
-    if (!res.ok) throw new Error(`peer ${peer.id} returned ${res.status}`);
+    if (!res.ok) throw new Error(`peer ${peer.id} returned ${String(res.status)}`);
     const snapshot = (await res.json()) as { workloads: { reachable: boolean }[] } | null;
     if (
       snapshot &&

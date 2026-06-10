@@ -174,10 +174,7 @@ export const GenericContainerServiceSpecSchema = z.object({
           readOnly: z.boolean().default(false),
         })
         .refine(
-          (v) =>
-            [v.hostPath, v.name, v.configMap].filter(
-              (x) => x !== undefined && x !== null && x !== "",
-            ).length === 1,
+          (v) => [v.hostPath, v.name, v.configMap].filter((x) => x !== undefined).length === 1,
           {
             message: "volumes[N]: exactly one of { hostPath, name, configMap } is required",
           },

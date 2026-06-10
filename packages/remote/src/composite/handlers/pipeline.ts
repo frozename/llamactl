@@ -119,7 +119,7 @@ export async function applyPipelineComponent(
     // Fire-and-forget first run. Errors surface in the pipeline journal,
     // not in this handler — composite reaches Ready as soon as
     // registration succeeded.
-    void ctx.caller.ragPipelineRun({ name: entry.name }).catch((err) => {
+    void ctx.caller.ragPipelineRun({ name: entry.name }).catch((err: unknown) => {
       ctx.onFirstRunError?.(err as Error, entry.name);
     });
   }

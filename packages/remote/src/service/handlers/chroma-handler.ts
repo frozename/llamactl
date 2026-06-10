@@ -109,7 +109,7 @@ export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
         [LABEL_KEYS.specHash]: hash,
       },
       healthcheck: {
-        test: ["CMD", "curl", "-f", `http://localhost:${CONTAINER_PORT}/api/v1/heartbeat`],
+        test: ["CMD", "curl", "-f", `http://localhost:${String(CONTAINER_PORT)}/api/v1/heartbeat`],
         intervalMs: 10_000,
         timeoutMs: 3_000,
         retries: 5,
@@ -170,6 +170,6 @@ export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
       );
     }
     const { host, port } = instance.endpoint;
-    return { host, port, url: `http://${host}:${port}` };
+    return { host, port, url: `http://${host}:${String(port)}` };
   },
 };
