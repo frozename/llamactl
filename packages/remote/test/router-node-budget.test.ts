@@ -11,18 +11,6 @@ import { parseWorkload, saveWorkload } from "../src/workload/store.js";
 const originalEnv = { ...process.env };
 let tmp = "";
 
-const nodeRunYaml = `
-apiVersion: llamactl/v1
-kind: NodeRun
-metadata:
-  name: budget-node
-spec:
-  node: local
-  budget:
-    memoryGiB: 36
-  infra: []
-`;
-
 const workloadA = `
 apiVersion: llamactl/v1
 kind: ModelRun
@@ -98,7 +86,7 @@ describe("nodeBudget", () => {
       {
         apiVersion: "llamactl/v1",
         kind: "NodeRun",
-        metadata: { name: "budget-node", labels: {} },
+        metadata: { name: "local", labels: {} },
         spec: {
           node: "local",
           budget: { memoryGiB: 36 },
@@ -127,7 +115,7 @@ describe("nodeBudget", () => {
       {
         apiVersion: "llamactl/v1",
         kind: "NodeRun",
-        metadata: { name: "budget-node", labels: {} },
+        metadata: { name: "local", labels: {} },
         spec: {
           node: "local",
           budget: { memoryGiB: 36 },

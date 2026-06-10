@@ -311,6 +311,7 @@ describe("applyManifest — kind dispatch", () => {
       const result = await applyManifest({
         manifest: makeModelHostManifest("mlx-host-c", 4),
         workloadsDir,
+        getNodeBudgetGiB: () => 16,
         getClient: () => client,
         spawn: mock(() => ({ pid: 99999 }) as any) as any,
         env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
