@@ -1,6 +1,6 @@
 {
   "totals": {
-    "errors": 46,
+    "errors": 0,
     "warnings": 2439
   },
   "byRule": {
@@ -44,10 +44,6 @@
       "errors": 0,
       "warnings": 7
     },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "errors": 1,
-      "warnings": 0
-    },
     "no-warning-comments": {
       "errors": 0,
       "warnings": 3
@@ -56,10 +52,6 @@
       "errors": 0,
       "warnings": 23
     },
-    "@typescript-eslint/await-thenable": {
-      "errors": 2,
-      "warnings": 0
-    },
     "perfectionist/sort-imports": {
       "errors": 0,
       "warnings": 6
@@ -67,22 +59,6 @@
     "perfectionist/sort-named-imports": {
       "errors": 0,
       "warnings": 2
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "errors": 4,
-      "warnings": 0
-    },
-    "no-unused-vars": {
-      "errors": 16,
-      "warnings": 0
-    },
-    "no-undef": {
-      "errors": 19,
-      "warnings": 0
-    },
-    "no-empty": {
-      "errors": 4,
-      "warnings": 0
     }
   },
   "byFile": {
@@ -1047,7 +1023,7 @@
       "warnings": 12
     },
     "packages/cli/src/commands/rag.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/cli/src/commands/recommendations.ts": {
@@ -2075,7 +2051,7 @@
       "warnings": 0
     },
     "packages/fleet-supervisor/test/fleetSnapshotRoute.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 2
     },
     "packages/fleet-supervisor/test/journal.test.ts": {
@@ -3439,7 +3415,7 @@
       "warnings": 3
     },
     "scripts/tooling/lint-baseline.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 2
     },
     "scripts/tooling/strict-lint-rollout.test.ts": {
@@ -3451,7 +3427,7 @@
       "warnings": 0
     },
     "tests/ui-flows/chat-compare-flow.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/global-search-flow.ts": {
@@ -3459,15 +3435,15 @@
       "warnings": 0
     },
     "tests/ui-flows/ops-chat-flow.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/ops-session-replay-flow.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/ops-sessions-list-flow.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/palette-search-flow.ts": {
@@ -3475,47 +3451,47 @@
       "warnings": 0
     },
     "tests/ui-flows/pilot-driver.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/pipelines-apply-run-flow.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/pipelines-wizard-flow.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/projects-tab-flow.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/shell/command-palette.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/shell/dynamic-tabs.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/shell/error-boundary.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/shell/rail-views.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/shell/tab-bar.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/shell/theme-switch.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "tests/ui-flows/tier-a-modules.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "tools/eval-driver/run-tool-calling.ts": {

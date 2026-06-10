@@ -89,10 +89,10 @@ jobs:
         working-directory: llamactl
         run: bun run format:check
 
-      - name: Lint advisory
+      - name: Lint
         working-directory: llamactl
-        continue-on-error: true
-        # Baseline: docs/quality/lint-baseline-2026-06-10.json
-        # (4249 errors / 2644 warnings). Flips to blocking after the
-        # burn-down lands.
-        run: bun run lint || true
+        # Error tier reached zero on 2026-06-10 (baseline:
+        # docs/quality/lint-baseline-2026-06-10.json — 0 errors /
+        # 2439 warnings); errors now block. Warnings stay advisory
+        # until the warn-tier burn-down.
+        run: bun run lint
