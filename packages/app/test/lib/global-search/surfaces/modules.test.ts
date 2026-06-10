@@ -1,8 +1,6 @@
 // packages/app/test/lib/global-search/surfaces/modules.test.ts
 import { describe, expect, test } from "bun:test";
 
-import type { TabEntry } from "../../../../src/stores/tab-store";
-
 import { matchModules } from "../../../../src/lib/global-search/surfaces/modules";
 
 describe("matchModules", () => {
@@ -27,7 +25,7 @@ describe("matchModules", () => {
     if (!action) return;
     expect(action.kind).toBe("open-tab");
     if (action.kind === "open-tab") {
-      const tab = action.tab as TabEntry;
+      const tab = action.tab;
       expect(tab.kind).toBe("module");
       expect(tab.tabKey).toBe("module:dashboard");
     }

@@ -26,7 +26,9 @@ describe("matchTabHistory", () => {
     const [hit] = out;
     expect(hit?.parentId).toBe("node:local");
     if (hit?.action.kind === "open-tab") {
-      const tab = hit.action.tab as TabEntry;
+      // Widen to admit the (stripped) closedAt so the assertion can
+      // prove it is gone.
+      const tab = hit.action.tab as TabEntry & { closedAt?: number };
       expect(tab.closedAt).toBeUndefined();
     }
   });

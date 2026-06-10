@@ -1,9 +1,11 @@
 // packages/app/src/lib/global-search/surfaces/tab-history.ts
+import type { TabEntry } from "@/stores/tab-store";
+
 import type { Hit } from "../types";
 
 export interface TabHistoryState {
-  tabs: { tabKey: string; title: string; kind: string; openedAt: number; [k: string]: any }[];
-  closed: { tabKey: string; title: string; kind: string; closedAt: number; [k: string]: any }[];
+  tabs: TabEntry[];
+  closed: (TabEntry & { closedAt: number })[];
 }
 
 export function matchTabHistory(needle: string, state: TabHistoryState): Hit[] {

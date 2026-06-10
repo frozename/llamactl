@@ -1,8 +1,6 @@
 // packages/app/test/lib/global-search/surfaces/workloads.test.ts
 import { describe, expect, test } from "bun:test";
 
-import type { TabEntry } from "../../../../src/stores/tab-store";
-
 import { matchWorkloads } from "../../../../src/lib/global-search/surfaces/workloads";
 
 describe("matchWorkloads", () => {
@@ -36,7 +34,7 @@ describe("matchWorkloads", () => {
     if (!a) return;
     expect(a.kind).toBe("open-tab");
     if (a.kind === "open-tab") {
-      const tab = a.tab as TabEntry;
+      const tab = a.tab;
       expect(tab.kind).toBe("workload");
       expect(tab.instanceId).toBe("qwen-72b");
     }

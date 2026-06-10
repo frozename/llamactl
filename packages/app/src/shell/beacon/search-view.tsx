@@ -4,7 +4,7 @@ import * as React from "react";
 import { useGlobalSearch } from "@/lib/global-search/hooks/use-global-search";
 import type { Hit } from "@/lib/global-search/types";
 import { trpcUIClient } from "@/lib/trpc";
-import { type TabEntry, useTabStore } from "@/stores/tab-store";
+import { useTabStore } from "@/stores/tab-store";
 import { Input, Kbd } from "@/ui";
 
 import { SearchResultsTree } from "./search-results-tree";
@@ -27,7 +27,7 @@ export function SearchView(): React.JSX.Element {
 
   const onActivate = React.useCallback(
     (hit: Hit) => {
-      if (hit.action.kind === "open-tab") open(hit.action.tab as TabEntry);
+      if (hit.action.kind === "open-tab") open(hit.action.tab);
     },
     [open],
   );

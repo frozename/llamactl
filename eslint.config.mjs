@@ -108,7 +108,7 @@ export default tseslint.config(
       "import-x/first": "error",
       "security/detect-eval-with-expression": "error",
       "security/detect-new-buffer": "error",
-      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/explicit-function-return-type": [
         "warn",
         {
@@ -225,12 +225,6 @@ export default tseslint.config(
     },
     rules: {
       "react-refresh/only-export-components": "off",
-    },
-  },
-  {
-    files: ["packages/core/**/*.ts"],
-    rules: {
-      "@typescript-eslint/no-explicit-any": "error",
     },
   },
   {

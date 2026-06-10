@@ -1,4 +1,6 @@
 // packages/app/src/lib/global-search/types.ts
+import type { TabEntry } from "@/stores/tab-store";
+
 export type SurfaceKind =
   | "module"
   | "tab-history"
@@ -17,7 +19,7 @@ export interface MatchExcerpt {
   spans: { start: number; end: number }[];
 }
 
-export type HitAction = { kind: "open-tab"; tab: any } | { kind: "command"; id: string };
+export type HitAction = { kind: "open-tab"; tab: TabEntry } | { kind: "command"; id: string };
 
 export interface Hit {
   surface: SurfaceKind;

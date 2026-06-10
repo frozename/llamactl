@@ -1,4 +1,9 @@
-import { planRollout, runRollback, runRollout } from "@llamactl/fleet-supervisor";
+import {
+  type InfraClientLike,
+  planRollout,
+  runRollback,
+  runRollout,
+} from "@llamactl/fleet-supervisor";
 import { infraSpec, listPeers, makeInfraClient, type PeerNode } from "@llamactl/remote";
 
 import { getGlobals, getNodeClient } from "../dispatcher.js";
@@ -290,7 +295,7 @@ async function runCurrent(argv: string[]): Promise<number> {
 
 export async function executeRollout(
   groups: PeerNode[][],
-  clientFactory: (peer: PeerNode) => any,
+  clientFactory: (peer: PeerNode) => InfraClientLike,
   opts: {
     pkg: string;
     version: string;
@@ -304,7 +309,7 @@ export async function executeRollout(
 
 export async function executeRollback(
   peers: PeerNode[],
-  clientFactory: (peer: PeerNode) => any,
+  clientFactory: (peer: PeerNode) => InfraClientLike,
   opts: { pkg: string; previousVersion: string },
 ) {
   return await runRollback(peers, clientFactory, opts);
