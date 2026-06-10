@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: frozename/electron-mcp
-          ref: fceaaa3ed06d1ce85fe7ece8934c2a40ea2b351d
+          ref: f976710523b63764ff148385de7d64089699f49f
           path: electron-mcp
 
       # llamactl's package.json carries file:../nova/packages/* deps.

@@ -37,7 +37,7 @@ jobs:
         with:
           repository: frozename/electron-mcp
           path: electron-mcp-server
-          ref: fceaaa3ed06d1ce85fe7ece8934c2a40ea2b351d
+          ref: f976710523b63764ff148385de7d64089699f49f
 
       # llamactl carries file:../nova/packages/* deps; sibling
       # checkout is required for bun install to resolve them.
