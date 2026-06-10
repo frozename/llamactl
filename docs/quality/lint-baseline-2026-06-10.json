@@ -1,7 +1,7 @@
 {
   "totals": {
     "errors": 0,
-    "warnings": 2439
+    "warnings": 2396
   },
   "byRule": {
     "security/detect-non-literal-fs-filename": {
@@ -19,10 +19,6 @@
     "max-lines-per-function": {
       "errors": 0,
       "warnings": 107
-    },
-    "@typescript-eslint/no-explicit-any": {
-      "errors": 0,
-      "warnings": 20
     },
     "unicorn/no-for-loop": {
       "errors": 0,
@@ -47,10 +43,6 @@
     "no-warning-comments": {
       "errors": 0,
       "warnings": 3
-    },
-    "@typescript-eslint/consistent-type-imports": {
-      "errors": 0,
-      "warnings": 23
     },
     "perfectionist/sort-imports": {
       "errors": 0,
@@ -328,7 +320,7 @@
     },
     "packages/app/src/lib/global-search/surfaces/tab-history.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 1
     },
     "packages/app/src/lib/global-search/surfaces/workloads.ts": {
       "errors": 0,
@@ -336,7 +328,7 @@
     },
     "packages/app/src/lib/global-search/types.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/lib/ipc-link.ts": {
       "errors": 0,
@@ -980,7 +972,7 @@
     },
     "packages/cli/src/commands/infra.ts": {
       "errors": 0,
-      "warnings": 7
+      "warnings": 5
     },
     "packages/cli/src/commands/init.ts": {
       "errors": 0,
@@ -1128,7 +1120,7 @@
     },
     "packages/cli/test/cli-doctor.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/test/composite.test.ts": {
       "errors": 0,
@@ -1972,7 +1964,7 @@
     },
     "packages/fleet-supervisor/src/index.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 2
     },
     "packages/fleet-supervisor/src/infra-rollout.ts": {
       "errors": 0,
@@ -2152,7 +2144,7 @@
     },
     "packages/mcp/test/fleet-write-tools.test.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 4
     },
     "packages/mcp/test/server-composite.test.ts": {
       "errors": 0,
@@ -2172,7 +2164,7 @@
     },
     "packages/remote/src/bench/scheduleLoop.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/cli/adapter.ts": {
       "errors": 0,
@@ -2264,7 +2256,7 @@
     },
     "packages/remote/src/config/provider-nodes.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/remote/src/config/schema.ts": {
       "errors": 0,
@@ -2468,7 +2460,7 @@
     },
     "packages/remote/src/router.ts": {
       "errors": 0,
-      "warnings": 19
+      "warnings": 11
     },
     "packages/remote/src/routes/fleet.ts": {
       "errors": 0,
@@ -2496,7 +2488,7 @@
     },
     "packages/remote/src/runtime/kubernetes/backend.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 4
     },
     "packages/remote/src/runtime/kubernetes/client.ts": {
       "errors": 0,
@@ -2692,7 +2684,7 @@
     },
     "packages/remote/src/workload/apply.ts": {
       "errors": 0,
-      "warnings": 9
+      "warnings": 7
     },
     "packages/remote/src/workload/gateway-catalog/apply.ts": {
       "errors": 0,
@@ -2744,7 +2736,7 @@
     },
     "packages/remote/src/workload/gateway-handlers/registry.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/workload/gateway-handlers/sirius.ts": {
       "errors": 0,
@@ -2996,7 +2988,7 @@
     },
     "packages/remote/test/infra-install.test.ts": {
       "errors": 0,
-      "warnings": 19
+      "warnings": 12
     },
     "packages/remote/test/infra-layout.test.ts": {
       "errors": 0,
@@ -3324,7 +3316,7 @@
     },
     "packages/remote/test/tunnel-journal.test.ts": {
       "errors": 0,
-      "warnings": 7
+      "warnings": 5
     },
     "packages/remote/test/tunnel-messages.test.ts": {
       "errors": 0,
@@ -3348,11 +3340,11 @@
     },
     "packages/remote/test/tunnel.test.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 4
     },
     "packages/remote/test/tunneled-client.test.ts": {
       "errors": 0,
-      "warnings": 8
+      "warnings": 1
     },
     "packages/remote/test/workload-apply-preflight.test.ts": {
       "errors": 0,
