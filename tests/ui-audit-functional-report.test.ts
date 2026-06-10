@@ -44,4 +44,28 @@ describe('validateFunctionalReport', () => {
       'network captured 1 failed request(s)',
     ]);
   });
+
+  test('rejects a failed request without an http status even when the aggregate count is zero', () => {
+    const report = cleanReport();
+    report.network = {
+      failureCount: 0,
+      requests: [{ failed: true }],
+    };
+
+    expect(validateFunctionalReport(report, modules)).toEqual([
+      'network captured 1 failed request(s)',
+    ]);
+  });
+
+  test('rejects when only the aggregate network counter reports failure', () => {
+    const report = cleanReport();
+    report.network = {
+      failureCount: 2,
+      requests: [{ status: 200 }],
+    };
+
+    expect(validateFunctionalReport(report, modules)).toEqual([
+      'network captured 2 failed request(s)',
+    ]);
+  });
 });

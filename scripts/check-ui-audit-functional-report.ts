@@ -11,7 +11,14 @@ export interface UiAuditFunctionalReport {
   modulesTested?: number;
   network?: {
     failureCount?: number;
-    failures?: unknown[];
+    failures?: Array<{
+      failed?: boolean;
+      status?: number;
+    }>;
+    requests?: Array<{
+      failed?: boolean;
+      status?: number;
+    }>;
   };
   console?: {
     count?: number;
@@ -56,8 +63,12 @@ export function validateFunctionalReport(
     errors.push(`renderer console captured ${consoleCount} entrie(s)`);
   }
 
-  const networkFailures =
-    report.network?.failureCount ?? report.network?.failures?.length ?? 0;
+  const requestEntries = report.network?.requests ?? report.network?.failures ?? [];
+  const requestFailures = requestEntries.filter(
+    (request) => request.failed === true || (request.status ?? 0) >= 400,
+  ).length;
+  const aggregateFailures = report.network?.failureCount ?? 0;
+  const networkFailures = Math.max(requestFailures, aggregateFailures);
   if (networkFailures > 0) {
     errors.push(`network captured ${networkFailures} failed request(s)`);
   }
