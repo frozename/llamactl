@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- Test tool-client fakes implement Promise-returning interfaces with synchronous fixtures. */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,6 +7,7 @@ import { stringify as stringifyYaml } from "yaml";
 
 import {
   appendHealerJournal,
+  askPlanner,
   buildGoal,
   executePlan,
   gatePlan,
@@ -434,6 +436,46 @@ describe("startHealerLoop remediation — auto mode", () => {
     }
     expect(journaled.find((e) => e.kind === "proposal")).toBeUndefined();
     expect(journaled.find((e) => e.kind === "executed")).toBeUndefined();
+  });
+});
+
+describe("askPlanner envelope hardening (planner JSON is untrusted)", () => {
+  test("ok:true envelope without plan → typed envelope-error result, no throw", async () => {
+    const { client } = makeMockClient(async () =>
+      envelope({ ok: true, executor: "stub", toolsAvailable: [] }),
+    );
+    const result = await askPlanner(client, "goal");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe("envelope-error");
+      expect(result.message).toContain("plan.steps");
+    }
+  });
+
+  test("ok:false envelope without reason/message → journaled message is a defined string", async () => {
+    const { kubeconfigPath, siriusProvidersPath } = seedYamls();
+    const { client } = makeMockClient(async (input) => {
+      if (input.name === "nova.ops.healthcheck") return UNHEALTHY_HEALTHCHECK;
+      if (input.name === "nova.operator.plan") return envelope({ ok: false });
+      throw new Error(`unexpected: ${input.name}`);
+    });
+    const journaled: JournalEntry[] = [];
+    const handle = startHealerLoop({
+      kubeconfigPath,
+      siriusProvidersPath,
+      once: true,
+      toolClient: client,
+      writeJournal: (e) => journaled.push(e),
+    });
+    await handle.done;
+
+    const failed = journaled.find((e) => e.kind === "plan-failed");
+    expect(failed).toBeTruthy();
+    if (failed?.kind === "plan-failed") {
+      expect(typeof failed.reason).toBe("string");
+      expect(typeof failed.message).toBe("string");
+      expect(failed.message.length).toBeGreaterThan(0);
+    }
   });
 });
 

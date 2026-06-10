@@ -34,9 +34,23 @@ interface MountedServer {
   close: () => Promise<void>;
 }
 
+interface MountableMcpServer {
+  connect(transport: unknown): Promise<void>;
+  close(): Promise<void>;
+}
+
+interface MappedToolDescriptor {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+}
+
+interface ListToolsResult {
+  tools: MappedToolDescriptor[];
+}
+
 async function mountInProcess(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  server: any,
+  server: MountableMcpServer,
   clientName: string,
 ): Promise<MountedServer> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -81,13 +95,13 @@ export interface DefaultToolClientHandle {
 function inferTier(name: string): PlannerToolDescriptor["tier"] {
   // Clearly-destructive tier — name must match exactly or have one
   // of these verbs as the final segment.
-  if (/\.(uninstall|deregister|delete|remove)$/.test(name)) {
+  if (/\.(?:uninstall|deregister|delete|remove)$/.test(name)) {
     return "mutation-destructive";
   }
   // Mutation verbs. Rest of the surface is treated as read even if
   // it writes (e.g. `catalog.promote` which edits a TSV) — the
   // planner's dry-run cascade catches those.
-  if (/\.(install|promote|start|stop|sync|apply|kick|rotate)/.test(name)) {
+  if (/\.(?:install|promote|start|stop|sync|apply|kick|rotate)/.test(name)) {
     return "mutation-dry-run-safe";
   }
   return "read";
@@ -132,16 +146,14 @@ async function defaultToolClient(): Promise<DefaultToolClientHandle> {
       nova.client.listTools(),
     ]);
     const out: HarnessToolDescriptor[] = [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const t of (lTools as { tools: any[] }).tools) {
+    for (const t of (lTools as ListToolsResult).tools) {
       out.push({
         name: t.name,
         description: t.description ?? "",
         inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
       });
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    for (const t of (nTools as { tools: any[] }).tools) {
+    for (const t of (nTools as ListToolsResult).tools) {
       out.push({
         name: t.name,
         description: t.description ?? "",
@@ -166,6 +178,9 @@ async function defaultToolClient(): Promise<DefaultToolClientHandle> {
   return { client, listTools, listPlannerTools, dispose };
 }
 
+const noopLog = (_message: string): void => undefined;
+
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- Callers use the generic to type params before schema validation.
 export async function runRunbook<Params>(
   name: string,
   params: Params,
@@ -183,7 +198,7 @@ export async function runRunbook<Params>(
     params = parsed.data;
   }
 
-  const log = opts.log ?? (() => {});
+  const log = opts.log ?? noopLog;
   const dryRun = opts.dryRun ?? false;
 
   let client = opts.toolClient;

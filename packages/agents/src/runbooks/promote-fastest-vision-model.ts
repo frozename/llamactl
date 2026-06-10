@@ -46,24 +46,25 @@ export const promoteFastestVisionModel: Runbook<Params> = {
     const bench = parseToolJson<BenchRow[]>(benchRaw);
     const candidates = bench
       .filter((r) => r.installed && r.tuned && Number.isFinite(Number.parseFloat(r.tuned.gen_tps)))
-      .sort((a, b) => Number.parseFloat(b.tuned!.gen_tps) - Number.parseFloat(a.tuned!.gen_tps));
+      .map((row) => ({ row, genTps: Number.parseFloat(row.tuned?.gen_tps ?? "0") }))
+      .sort((a, b) => b.genTps - a.genTps);
     steps.push({
       tool: "llamactl.bench.compare",
       dryRun: false,
       result: {
         inspected: bench.length,
         candidates: candidates.length,
-        top: candidates[0]?.rel ?? null,
+        top: candidates[0]?.row.rel ?? null,
       },
     });
-    if (candidates.length === 0) {
+    const top = candidates.at(0)?.row;
+    if (top === undefined) {
       return {
         ok: false,
         steps,
         error: "no installed multimodal models with a recorded bench run — pull + bench one first",
       };
     }
-    const top = candidates[0]!;
     ctx.log(`promote-fastest-vision-model: top candidate ${top.rel}`);
 
     const profiles = params.profile

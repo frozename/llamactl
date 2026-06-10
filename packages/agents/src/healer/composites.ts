@@ -137,7 +137,7 @@ export async function fetchComposites(toolClient: RunbookToolClient): Promise<Co
     arguments: {},
   })) as McpCallResult;
 
-  if (raw?.isError === true) {
+  if (raw.isError === true) {
     const text = firstTextBlock(raw) ?? "llamactl.composite.list returned isError";
     throw new Error(text.slice(0, 500));
   }
@@ -146,7 +146,7 @@ export async function fetchComposites(toolClient: RunbookToolClient): Promise<Co
   const list = env.composites ?? [];
   const out: CompositeSummary[] = [];
   for (const entry of list) {
-    const name = entry?.metadata?.name;
+    const name = entry.metadata?.name;
     if (typeof name !== "string" || name.length === 0) continue;
     const phase = normalizePhase(entry.status?.phase);
     const components: CompositeComponentSummary[] = [];
@@ -195,8 +195,8 @@ export function formatCompositeReason(summary: CompositeSummary): string {
   const total = summary.components.length;
   if (summary.phase === "Degraded" || summary.phase === "Failed") {
     return total > 0
-      ? `composite ${summary.name} reports ${summary.phase} (${failed}/${total} components Failed), re-applying`
+      ? `composite ${summary.name} reports ${summary.phase} (${String(failed)}/${String(total)} components Failed), re-applying`
       : `composite ${summary.name} reports ${summary.phase}, re-applying`;
   }
-  return `composite ${summary.name} has ${failed}/${total} component(s) in Failed state, re-applying`;
+  return `composite ${summary.name} has ${String(failed)}/${String(total)} component(s) in Failed state, re-applying`;
 }

@@ -95,7 +95,7 @@ export async function probeFleetViaNova(toolClient: RunbookToolClient): Promise<
     arguments: {},
   })) as McpCallResult;
 
-  if (raw?.isError === true) {
+  if (raw.isError === true) {
     const text = firstTextBlock(raw) ?? "nova.ops.healthcheck returned isError";
     throw new Error(text.slice(0, 500));
   }
@@ -104,7 +104,7 @@ export async function probeFleetViaNova(toolClient: RunbookToolClient): Promise<
   const probes: ProbeResult[] = [];
 
   for (const g of env.gateways ?? []) {
-    const state = stateFromOk(Boolean(g.ok));
+    const state = stateFromOk(g.ok);
     const entry: ProbeResult = {
       name: g.name,
       kind: "gateway",
@@ -118,7 +118,7 @@ export async function probeFleetViaNova(toolClient: RunbookToolClient): Promise<
   }
 
   for (const p of env.siriusProviders ?? []) {
-    const state = stateFromOk(Boolean(p.ok));
+    const state = stateFromOk(p.ok);
     const entry: ProbeResult & { providerKind?: string } = {
       name: p.name,
       kind: "provider",

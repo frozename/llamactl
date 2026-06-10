@@ -76,8 +76,8 @@ export const costSnapshot: Runbook<Params> = {
     const topModels = snap.byModel.slice(0, params.topN);
 
     ctx.log(
-      `cost-snapshot: ${snap.totalRequests} requests / ${snap.totalTokens} tokens ` +
-        `across ${snap.filesScanned} file(s) in window ` +
+      `cost-snapshot: ${String(snap.totalRequests)} requests / ${String(snap.totalTokens)} tokens ` +
+        `across ${String(snap.filesScanned)} file(s) in window ` +
         `${snap.windowSince} → ${snap.windowUntil}`,
     );
 

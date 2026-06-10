@@ -51,7 +51,9 @@ export type CostJournalEntry =
 export function defaultCostJournalPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_COST_JOURNAL?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const devStorage = env.DEV_STORAGE?.trim();
+  const base =
+    devStorage !== undefined && devStorage.length > 0 ? devStorage : join(homedir(), ".llamactl");
   return join(base, "healer", "cost-journal.jsonl");
 }
 

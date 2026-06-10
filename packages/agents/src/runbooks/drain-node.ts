@@ -87,7 +87,7 @@ export const drainNode: Runbook<Params> = {
     }
 
     ctx.log(
-      `drain-node: removed ${matching.length} manifest(s) on ${params.node}` +
+      `drain-node: removed ${String(matching.length)} manifest(s) on ${params.node}` +
         (params.keepNode ? " (node kept)" : " + node"),
     );
 

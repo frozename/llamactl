@@ -343,7 +343,7 @@ export async function runCostGuardianTick(
     // success, and the tier-2 wet-run outcome. The protectedProviders
     // denylist runs before the wet-run and overrides the auto flag.
     if (ok && opts.config.auto_deregister && !tier2WetRunFailed) {
-      const protectedProviders = opts.config.protectedProviders ?? [];
+      const protectedProviders = opts.config.protectedProviders;
       if (protectedProviders.includes(provider)) {
         const refused: CostJournalActionEntry = {
           kind: "action",

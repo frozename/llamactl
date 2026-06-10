@@ -137,8 +137,8 @@ export const auditFleet: Runbook<Params> = {
     });
 
     ctx.log(
-      `audit-fleet: ${nodes.nodes.length} nodes, ${promotions.length} promotions, ` +
-        `${workloads.count} workloads, ${installedAndBenched.length} benched models`,
+      `audit-fleet: ${String(nodes.nodes.length)} nodes, ${String(promotions.length)} promotions, ` +
+        `${String(workloads.count)} workloads, ${String(installedAndBenched.length)} benched models`,
     );
 
     return {

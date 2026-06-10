@@ -82,7 +82,7 @@ function seedTempFleet(): {
   );
 
   const originalEnv = { ...process.env };
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv, {
     DEV_STORAGE: runtimeDir,
     LOCAL_AI_RUNTIME_DIR: runtimeDir,
@@ -96,7 +96,7 @@ function seedTempFleet(): {
     runtimeDir,
     auditDir,
     restore: () => {
-      for (const k of Object.keys(process.env)) delete process.env[k];
+      for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
       Object.assign(process.env, originalEnv);
       rmSync(runtimeDir, { recursive: true, force: true });
       rmSync(auditDir, { recursive: true, force: true });
@@ -150,7 +150,7 @@ async function main(): Promise<void> {
     banner("Step tape");
     for (const p of printed) {
       process.stdout.write(
-        `  ${p.tool.padEnd(32)} ok=${String(p.ok).padEnd(5)} bytes=${p.bytes}\n`,
+        `  ${p.tool.padEnd(32)} ok=${String(p.ok).padEnd(5)} bytes=${String(p.bytes)}\n`,
       );
     }
 
@@ -163,16 +163,18 @@ async function main(): Promise<void> {
       installedAndBenched: unknown[];
     };
     process.stdout.write(`  cluster:          ${summary.cluster ?? "(none)"}\n`);
-    process.stdout.write(`  nodes:            ${summary.nodes.length}\n`);
+    process.stdout.write(`  nodes:            ${String(summary.nodes.length)}\n`);
     for (const n of summary.nodes) {
       process.stdout.write(`    - ${n.name.padEnd(18)} ${n.kind.padEnd(10)} ${n.endpoint ?? ""}\n`);
     }
-    process.stdout.write(`  promotions:       ${summary.promotions.length}\n`);
-    process.stdout.write(`  workloads:        ${summary.workloads.length}\n`);
-    process.stdout.write(`  installed+bench:  ${summary.installedAndBenched.length}\n`);
+    process.stdout.write(`  promotions:       ${String(summary.promotions.length)}\n`);
+    process.stdout.write(`  workloads:        ${String(summary.workloads.length)}\n`);
+    process.stdout.write(`  installed+bench:  ${String(summary.installedAndBenched.length)}\n`);
 
     banner("Result");
-    process.stdout.write(`  ok=${result.ok}  steps=${result.steps.length}  total=${totalMs}ms\n`);
+    process.stdout.write(
+      `  ok=${String(result.ok)}  steps=${String(result.steps.length)}  total=${String(totalMs)}ms\n`,
+    );
     if (!result.ok) {
       process.stdout.write(`  error: ${result.error ?? "(no message)"}\n`);
       process.exitCode = 1;
@@ -183,7 +185,7 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+main().catch((err: unknown) => {
   console.error("demo-audit crashed:", err);
   process.exitCode = 1;
 });

@@ -95,27 +95,41 @@ function seedTempFleet(): {
 }
 
 function fakeFetchFactory(downHosts: Set<string>): typeof globalThis.fetch {
-  const impl = async (input: RequestInfo | URL): Promise<Response> => {
+  const impl = (input: RequestInfo | URL): Promise<Response> => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const hostname = new URL(url).hostname;
     if (downHosts.has(hostname)) {
-      return new Response("internal error", { status: 500 });
+      return Promise.resolve(new Response("internal error", { status: 500 }));
     }
-    return new Response("ok", { status: 200 });
+    return Promise.resolve(new Response("ok", { status: 200 }));
   };
   // Cast through unknown — typeof globalThis.fetch carries a
   // `preconnect` sibling we don't need for the probe.
   return impl as unknown as typeof globalThis.fetch;
 }
 
-function readJournal(path: string): { kind: string; ts: string; [k: string]: unknown }[] {
+interface DemoJournalEntry {
+  kind: string;
+  ts: string;
+  report?: { probes: { name: string; state: string }[] };
+  name?: string;
+  resourceKind?: string;
+  from?: string;
+  to?: string;
+  [k: string]: unknown;
+}
+
+function readJournal(path: string): DemoJournalEntry[] {
   if (!existsSync(path)) return [];
   const raw = readFileSync(path, "utf8");
   return raw
     .split("\n")
     .filter((l) => l.trim().length > 0)
-    .map((line) => JSON.parse(line));
+    .map((line) => {
+      const parsed: unknown = JSON.parse(line);
+      return parsed as DemoJournalEntry;
+    });
 }
 
 async function runTick(opts: {
@@ -134,7 +148,7 @@ async function runTick(opts: {
   });
   const transitions = stateTransitions(opts.previous, report);
   process.stdout.write(
-    `  probes: ${report.probes.length}  unhealthy: ${report.unhealthy}  transitions: ${transitions.length}\n`,
+    `  probes: ${String(report.probes.length)}  unhealthy: ${String(report.unhealthy)}  transitions: ${String(transitions.length)}\n`,
   );
   for (const t of transitions) {
     process.stdout.write(`    ! transition ${t.name} (${t.kind}): ${t.from} → ${t.to}\n`);
@@ -142,7 +156,7 @@ async function runTick(opts: {
   for (const p of report.probes) {
     const tag = p.state === "healthy" ? "✓" : "✗";
     process.stdout.write(
-      `    ${tag} ${p.name.padEnd(12)} ${p.baseUrl.padEnd(32)} status=${p.status} latency=${p.latencyMs}ms\n`,
+      `    ${tag} ${p.name.padEnd(12)} ${p.baseUrl.padEnd(32)} status=${String(p.status)} latency=${String(p.latencyMs)}ms\n`,
     );
   }
   // Same journal shape startHealerLoop writes — one transition line
@@ -200,14 +214,13 @@ async function main(): Promise<void> {
     const entries = readJournal(seeded.journalPath);
     for (const e of entries) {
       if (e.kind === "tick") {
-        const r = e.report as { probes: { name: string; state: string }[] };
-        const summary = r.probes
+        const summary = (e.report?.probes ?? [])
           .map((p) => `${p.name}=${p.state === "healthy" ? "✓" : "✗"}`)
           .join(" ");
         process.stdout.write(`  [${e.ts}] tick: ${summary}\n`);
       } else if (e.kind === "transition") {
         process.stdout.write(
-          `  [${e.ts}] transition: ${e.name} (${e.resourceKind}) ${e.from} → ${e.to}\n`,
+          `  [${e.ts}] transition: ${e.name ?? "?"} (${e.resourceKind ?? "?"}) ${e.from ?? "?"} → ${e.to ?? "?"}\n`,
         );
       } else {
         process.stdout.write(`  [${e.ts}] ${e.kind}: ${JSON.stringify(e)}\n`);
@@ -217,7 +230,9 @@ async function main(): Promise<void> {
     banner("Result");
     const transitions = entries.filter((e) => e.kind === "transition");
     const ticks = entries.filter((e) => e.kind === "tick");
-    process.stdout.write(`  ticks=${ticks.length}  transitions=${transitions.length}\n`);
+    process.stdout.write(
+      `  ticks=${String(ticks.length)}  transitions=${String(transitions.length)}\n`,
+    );
     // Expected journal content:
     //   tick 1 — 2 bootstrap transitions (unknown → healthy for each
     //            gateway; matches stateTransitions semantics when the
@@ -228,7 +243,7 @@ async function main(): Promise<void> {
       (t) => t.name === "sirius-b" && t.from === "healthy" && t.to === "unhealthy",
     );
     const ok = ticks.length === 2 && transitions.length === 3 && realFailover !== undefined;
-    process.stdout.write(`  ok=${ok}\n`);
+    process.stdout.write(`  ok=${String(ok)}\n`);
     if (!ok) process.exitCode = 1;
   } finally {
     seeded.restore();
@@ -236,7 +251,7 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+main().catch((err: unknown) => {
   console.error("demo-failover crashed:", err);
   process.exitCode = 1;
 });

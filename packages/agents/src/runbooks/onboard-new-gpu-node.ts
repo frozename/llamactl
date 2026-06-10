@@ -122,7 +122,7 @@ export const onboardNewGpuNode: Runbook<Params> = {
     steps.push({ tool: "llamactl.embersynth.sync", dryRun: false, result: sync });
 
     ctx.log(
-      `onboard-new-gpu-node: ${params.name} joined cluster ${nodeList.cluster ?? "?"} (${nodeList.nodes.length} total nodes)`,
+      `onboard-new-gpu-node: ${params.name} joined cluster ${nodeList.cluster ?? "?"} (${String(nodeList.nodes.length)} total nodes)`,
     );
 
     return {

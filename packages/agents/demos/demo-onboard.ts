@@ -85,7 +85,7 @@ function seedTempFleet(): {
   );
 
   const originalEnv = { ...process.env };
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv, {
     DEV_STORAGE: runtimeDir,
     LOCAL_AI_RUNTIME_DIR: runtimeDir,
@@ -101,7 +101,7 @@ function seedTempFleet(): {
     kubeconfigPath,
     embersynthPath,
     restore: () => {
-      for (const k of Object.keys(process.env)) delete process.env[k];
+      for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
       Object.assign(process.env, originalEnv);
       rmSync(runtimeDir, { recursive: true, force: true });
       rmSync(auditDir, { recursive: true, force: true });
@@ -120,7 +120,7 @@ async function runOnce(
   error?: string;
   summary?: unknown;
 }> {
-  banner(`${tag}: onboard-new-gpu-node (dryRun=${dryRun})`);
+  banner(`${tag}: onboard-new-gpu-node (dryRun=${String(dryRun)})`);
   const startedAt = Date.now();
   let lastTick = startedAt;
   const result = await runRunbook("onboard-new-gpu-node", params, {
@@ -144,7 +144,7 @@ async function runOnce(
   if (tape.length > 0) {
     process.stdout.write(tape.join("\n") + "\n");
   }
-  process.stdout.write(`  total=${totalMs}ms\n`);
+  process.stdout.write(`  total=${String(totalMs)}ms\n`);
   const out: {
     ok: boolean;
     stepsCount: number;
@@ -191,8 +191,10 @@ async function main(): Promise<void> {
     const wet = await runOnce("Step 2", { name: "gpu1-demo", bootstrap }, false);
 
     banner("State transition");
-    process.stdout.write(`  dry-run steps:       ${dry.stepsCount} (preview only, no writes)\n`);
-    process.stdout.write(`  wet-run steps:       ${wet.stepsCount}\n`);
+    process.stdout.write(
+      `  dry-run steps:       ${String(dry.stepsCount)} (preview only, no writes)\n`,
+    );
+    process.stdout.write(`  wet-run steps:       ${String(wet.stepsCount)}\n`);
     process.stdout.write(`  embersynth before:   ${embersynthBeforeWet ? "exists" : "absent"}\n`);
     process.stdout.write(
       `  embersynth after:    ${existsSync(seeded.embersynthPath) ? "exists" : "absent"}\n`,
@@ -200,12 +202,12 @@ async function main(): Promise<void> {
     if (wet.summary) {
       const s = wet.summary as { cluster?: string; totalNodes?: number; endpoint?: string };
       process.stdout.write(`  cluster:             ${s.cluster ?? "(none)"}\n`);
-      process.stdout.write(`  total nodes after:   ${s.totalNodes ?? "?"}\n`);
+      process.stdout.write(`  total nodes after:   ${String(s.totalNodes ?? "?")}\n`);
       process.stdout.write(`  new node endpoint:   ${s.endpoint ?? "(not reported)"}\n`);
     }
 
     banner("Result");
-    process.stdout.write(`  dry-run ok=${dry.ok}   wet-run ok=${wet.ok}\n`);
+    process.stdout.write(`  dry-run ok=${String(dry.ok)}   wet-run ok=${String(wet.ok)}\n`);
     if (!dry.ok || !wet.ok) {
       process.stdout.write(`  dry error: ${dry.error ?? "(none)"}\n`);
       process.stdout.write(`  wet error: ${wet.error ?? "(none)"}\n`);
@@ -217,7 +219,7 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+main().catch((err: unknown) => {
   console.error("demo-onboard crashed:", err);
   process.exitCode = 1;
 });

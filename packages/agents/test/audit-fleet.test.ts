@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-empty-function, @typescript-eslint/unbound-method -- Test doubles implement async tool/logger interfaces with synchronous fixtures. */
 import { describe, expect, test } from "bun:test";
 
 import { type RunbookToolClient, runRunbook, type ToolCallInput } from "../src/index.js";

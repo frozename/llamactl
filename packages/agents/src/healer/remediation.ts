@@ -76,6 +76,31 @@ export type AskPlannerResult =
   | { ok: false; reason: string; message: string };
 
 /**
+ * Untrusted view of the planner envelope. The payload is
+ * model-generated JSON crossing a trust boundary, so beyond "it parsed
+ * to an object" nothing about its shape is assumed — every field must
+ * be narrowed at runtime before it reaches the typed
+ * `AskPlannerResult`. `PlannerResult` above documents the shape the
+ * planner *promises*; this type encodes what we actually *trust*.
+ */
+interface UntrustedPlannerEnvelope {
+  ok?: unknown;
+  plan?: unknown;
+  reason?: unknown;
+  message?: unknown;
+  executor?: unknown;
+  toolsAvailable?: unknown;
+}
+
+/** Runtime check that an untrusted `plan` value is usable as
+ *  `PlanLike` — downstream consumers (`gatePlan`, `proposalId`,
+ *  `executePlan`) all require `steps` to be an array. */
+function isPlanLike(value: unknown): value is PlanLike {
+  if (value === null || typeof value !== "object") return false;
+  return Array.isArray((value as { steps?: unknown }).steps);
+}
+
+/**
  * Ask `nova.operator.plan` for a remediation plan. Unwraps the MCP
  * text-content envelope; any malformed envelope (missing content,
  * unparseable JSON, `isError:true`, etc.) becomes a typed
@@ -96,11 +121,11 @@ export async function askPlanner(
     return {
       ok: false,
       reason: "call-failed",
-      message: (err as Error).message ?? String(err),
+      message: err instanceof Error ? err.message : String(err),
     };
   }
 
-  if (raw?.isError === true) {
+  if (raw.isError === true) {
     const text = firstTextBlock(raw) ?? "nova.operator.plan returned isError";
     return { ok: false, reason: "call-failed", message: text.slice(0, 500) };
   }
@@ -130,15 +155,18 @@ export async function askPlanner(
       message: "nova.operator.plan: envelope is not an object",
     };
   }
-  const inner = parsed as PlannerResult;
-  if (!inner.ok) {
+  const inner = parsed as UntrustedPlannerEnvelope;
+  if (inner.ok !== true) {
     return {
       ok: false,
-      reason: inner.reason ?? "planner-failed",
-      message: inner.message ?? "planner returned ok:false with no message",
+      reason: typeof inner.reason === "string" ? inner.reason : "planner-failed",
+      message:
+        typeof inner.message === "string"
+          ? inner.message
+          : "planner returned ok:false with no message",
     };
   }
-  if (!inner.plan || !Array.isArray(inner.plan.steps)) {
+  if (!isPlanLike(inner.plan)) {
     return {
       ok: false,
       reason: "envelope-error",
@@ -146,8 +174,15 @@ export async function askPlanner(
     };
   }
   const result: AskPlannerResult = { ok: true, plan: inner.plan };
-  if (inner.executor) result.executor = inner.executor;
-  if (inner.toolsAvailable) result.toolsAvailable = inner.toolsAvailable;
+  if (typeof inner.executor === "string" && inner.executor.length > 0) {
+    result.executor = inner.executor;
+  }
+  const toolsAvailable: unknown = inner.toolsAvailable;
+  if (Array.isArray(toolsAvailable)) {
+    result.toolsAvailable = toolsAvailable.filter(
+      (tool): tool is string => typeof tool === "string",
+    );
+  }
   return result;
 }
 

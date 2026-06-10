@@ -90,7 +90,6 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
   const severityThreshold: Tier = opts.severityThreshold ?? 2;
   let stopped = false;
   let previous: ProbeReport | null = null;
-  let tickInFlight = false;
 
   const runDirectProbe = (): Promise<ProbeReport> =>
     probeFleet({
@@ -102,15 +101,18 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
     });
 
   const done = (async (): Promise<void> => {
-    do {
+    for (;;) {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Mutated through the returned handle between awaited ticks.
+      if (stopped) return;
       let report: ProbeReport;
-      let source: "nova" | "direct" = opts.toolClient ? "nova" : "direct";
+      const toolClient = opts.toolClient;
+      let source: "nova" | "direct" = toolClient ? "nova" : "direct";
       try {
-        if (opts.toolClient) {
+        if (toolClient) {
           try {
-            report = await probeFleetViaNova(opts.toolClient);
+            report = await probeFleetViaNova(toolClient);
           } catch (err) {
-            const msg = (err as Error).message ?? String(err);
+            const msg = err instanceof Error ? err.message : String(err);
             process.stderr.write(
               `healer: facade health call failed: ${msg}; falling back to direct probe\n`,
             );
@@ -155,47 +157,42 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
       // Remediation path — propose on every healthy→unhealthy/degraded
       // flip. Only fires when a toolClient is wired (the planner lives
       // under nova-mcp); operators running without the facade skip this
-      // block entirely. Wrapped in a "tick in progress" guard so a
-      // long-running executePlan never interleaves with the next tick
-      // that setInterval/sleep would otherwise schedule under it.
-      if (opts.toolClient && !tickInFlight) {
-        tickInFlight = true;
-        try {
-          await remediate({
-            toolClient: opts.toolClient,
-            transitions,
-            source,
-            mode,
-            severityThreshold,
-            writeJournal: (entry) => {
-              writeJournal(entry, journalPath);
-            },
-            onProposal: opts.onProposal,
-          });
-          // Slice D — composite remediation. Runs on the same tick as
-          // probe remediation and shares the propose/auto gating. Any
-          // composite in Degraded/Failed (or with a Failed component)
-          // gets a hardcoded tier-2 `llamactl.composite.apply` plan
-          // emitted against the journal, with the same executePlan +
-          // severity-gate path as the planner-produced variants.
-          await remediateComposites({
-            toolClient: opts.toolClient,
-            source,
-            mode,
-            severityThreshold,
-            writeJournal: (entry) => {
-              writeJournal(entry, journalPath);
-            },
-            onProposal: opts.onProposal,
-          });
-        } finally {
-          tickInFlight = false;
-        }
+      // block entirely. The scheduler is sequential, so a long-running
+      // executePlan completes before the loop sleeps and starts the next tick.
+      if (toolClient) {
+        await remediate({
+          toolClient,
+          transitions,
+          source,
+          mode,
+          severityThreshold,
+          writeJournal: (entry) => {
+            writeJournal(entry, journalPath);
+          },
+          onProposal: opts.onProposal,
+        });
+        // Slice D — composite remediation. Runs on the same tick as
+        // probe remediation and shares the propose/auto gating. Any
+        // composite in Degraded/Failed (or with a Failed component)
+        // gets a hardcoded tier-2 `llamactl.composite.apply` plan
+        // emitted against the journal, with the same executePlan +
+        // severity-gate path as the planner-produced variants.
+        await remediateComposites({
+          toolClient,
+          source,
+          mode,
+          severityThreshold,
+          writeJournal: (entry) => {
+            writeJournal(entry, journalPath);
+          },
+          onProposal: opts.onProposal,
+        });
       }
 
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Mutated through the returned handle between awaited ticks.
       if (opts.once || stopped) return;
       await sleep(intervalMs);
-    } while (!stopped);
+    }
   })();
 
   return {
@@ -211,18 +208,12 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** Predicate: which probe-state flips should trigger a remediation
- *  plan? Today the `ProbeState` type is just `'healthy' | 'unhealthy'`,
- *  but we accept `'degraded'` as a forward-compatible signal — the
- *  moment the probe layer grows a degraded tier, this predicate picks
- *  it up without further plumbing. Only fires on `healthy → X` or
- *  `unknown → X`; persistent unhealthy ticks are not re-proposed
- *  because `stateTransitions` only emits on actual flips. */
-function shouldRemediate(
-  from: ProbeState | "unknown" | "degraded",
-  to: ProbeState | "degraded",
-): boolean {
+ *  plan? Only fires on `healthy → unhealthy` or first-seen
+ *  `unknown → unhealthy`; persistent unhealthy ticks are not
+ *  re-proposed because `stateTransitions` only emits on actual flips. */
+function shouldRemediate(from: ProbeState | "unknown", to: ProbeState): boolean {
   if (from === to) return false;
-  if (to !== "unhealthy" && to !== ("degraded" as ProbeState | "degraded")) return false;
+  if (to !== "unhealthy") return false;
   // Only propose on the flip out of healthy (or first-seen unknown).
   return from === "healthy" || from === "unknown";
 }
@@ -369,7 +360,7 @@ async function remediateComposites(opts: RemediateCompositesOptions): Promise<vo
         to: "unknown",
       },
       reason: "composite-list-failed",
-      message: (err as Error).message ?? String(err),
+      message: err instanceof Error ? err.message : String(err),
     });
     return;
   }

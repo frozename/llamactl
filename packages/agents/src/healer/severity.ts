@@ -93,7 +93,8 @@ const TIER_3_SUFFIXES = [".remove", ".delete", ".drain", ".deregister", ".destro
  *      planner allowlist).
  */
 export function tierOf(toolName: string): Tier {
-  if (toolName in RUNBOOK_TIERS) return RUNBOOK_TIERS[toolName]!;
+  const runbookTier = RUNBOOK_TIERS[toolName];
+  if (runbookTier !== undefined) return runbookTier;
   if (toolName in RUNBOOKS) {
     // Runbook registered but not explicitly tiered — assume tier 2.
     return 2;

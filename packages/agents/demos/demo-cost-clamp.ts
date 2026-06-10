@@ -47,9 +47,9 @@ function banner(text: string): void {
  */
 function fakeToolClient(stage: { dailyUsd: number; weeklyUsd: number }): RunbookToolClient {
   return {
-    async callTool(input: ToolCallInput): Promise<unknown> {
+    callTool(input: ToolCallInput): Promise<unknown> {
       if (input.name === "nova.ops.cost.snapshot") {
-        const days = Number((input.arguments as { days?: number }).days ?? 1);
+        const days = (input.arguments as { days?: number }).days ?? 1;
         const total = days === 1 ? stage.dailyUsd : stage.weeklyUsd;
         const now = new Date();
         const payload = {
@@ -58,14 +58,14 @@ function fakeToolClient(stage: { dailyUsd: number; weeklyUsd: number }): Runbook
           windowUntil: now.toISOString(),
           byProvider: [{ key: "openai", estimatedCostUsd: total }],
         };
-        return { content: [{ type: "text", text: JSON.stringify(payload) }] };
+        return Promise.resolve({ content: [{ type: "text", text: JSON.stringify(payload) }] });
       }
       if (input.name === "llamactl.embersynth.set-default-profile") {
         // Tier-2 effect: guardian asks llamactl to remap the default
         // synthetic model to private-first. Return a success shape
         // the tick handler expects.
         const args = input.arguments as { profile?: string; syntheticModel?: string };
-        return {
+        return Promise.resolve({
           content: [
             {
               type: "text",
@@ -79,9 +79,9 @@ function fakeToolClient(stage: { dailyUsd: number; weeklyUsd: number }): Runbook
               }),
             },
           ],
-        };
+        });
       }
-      throw new Error(`demo-cost-clamp: unexpected tool call ${input.name}`);
+      return Promise.reject(new Error(`demo-cost-clamp: unexpected tool call ${input.name}`));
     },
   };
 }
@@ -147,7 +147,7 @@ async function main(): Promise<void> {
       tiers[1] === "warn" &&
       tiers[2] === "force_private";
     process.stdout.write(`  tier progression: ${tiers.join(" → ")}\n`);
-    process.stdout.write(`  ok=${ok}\n`);
+    process.stdout.write(`  ok=${String(ok)}\n`);
     if (!ok) process.exitCode = 1;
   } finally {
     rmSync(runtimeDir, { recursive: true, force: true });
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+main().catch((err: unknown) => {
   console.error("demo-cost-clamp crashed:", err);
   process.exitCode = 1;
 });

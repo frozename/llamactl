@@ -52,17 +52,37 @@ interface KubeconfigShape {
   clusters?: { name: string; nodes?: KubeconfigNode[] }[];
 }
 
-interface SiriusProvidersShape {
-  providers?: { name: string; kind: string; baseUrl?: string }[];
+interface SiriusProvider {
+  name: string;
+  kind: string;
+  baseUrl?: string;
 }
 
-function readYamlIfExists(path: string): unknown | null {
+interface SiriusProvidersShape {
+  providers?: SiriusProvider[];
+}
+
+function readYamlIfExists(path: string): unknown {
   if (!existsSync(path)) return null;
   try {
     return parseYaml(readFileSync(path, "utf8"));
   } catch {
     return null;
   }
+}
+
+function hasCloudBaseUrl(
+  n: KubeconfigNode,
+): n is KubeconfigNode & { cloud: { provider: string; baseUrl: string } } {
+  return (
+    resolveKind(n) === "gateway" &&
+    typeof n.cloud?.baseUrl === "string" &&
+    n.cloud.baseUrl.length > 0
+  );
+}
+
+function hasProviderBaseUrl(p: SiriusProvider): p is SiriusProvider & { baseUrl: string } {
+  return typeof p.baseUrl === "string" && p.baseUrl.length > 0;
 }
 
 function resolveKind(n: KubeconfigNode): "agent" | "gateway" | "provider" {
@@ -115,12 +135,10 @@ export async function probeFleet(opts: ProbeFleetOptions): Promise<ProbeReport> 
   const cluster = kube?.clusters?.find((c) => c.name === ctx?.cluster);
 
   const gateways = (cluster?.nodes ?? [])
-    .filter((n) => resolveKind(n) === "gateway" && n.cloud?.baseUrl)
-    .map((n) => ({ name: n.name, baseUrl: n.cloud!.baseUrl }));
+    .filter(hasCloudBaseUrl)
+    .map((n) => ({ name: n.name, baseUrl: n.cloud.baseUrl }));
 
-  const providers = (sirius?.providers ?? []).filter(
-    (p) => typeof p.baseUrl === "string" && p.baseUrl.length > 0,
-  );
+  const providers = (sirius?.providers ?? []).filter(hasProviderBaseUrl);
 
   const probes: ProbeResult[] = [];
   const gatewayProbes = await Promise.all(
@@ -141,14 +159,14 @@ export async function probeFleet(opts: ProbeFleetOptions): Promise<ProbeReport> 
   const providerProbes = await Promise.all(
     providers.map(async (p) => ({
       p,
-      probe: await probeOne(p.baseUrl!, timeoutMs, fetchImpl, now),
+      probe: await probeOne(p.baseUrl, timeoutMs, fetchImpl, now),
     })),
   );
   for (const { p, probe } of providerProbes) {
     probes.push({
       name: p.name,
       kind: "provider",
-      baseUrl: p.baseUrl!,
+      baseUrl: p.baseUrl,
       ...probe,
     });
   }

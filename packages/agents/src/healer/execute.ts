@@ -33,6 +33,8 @@ export interface ExecutePlanResult {
   stoppedAt?: number;
 }
 
+const noopLog = (_message: string): void => undefined;
+
 /**
  * Execute a single plan step. Catches every throw internally — the
  * return value is the canonical surface for success/failure.
@@ -45,8 +47,8 @@ export async function executePlanStep(
   const args = step.args ?? {};
   try {
     if (step.tool in RUNBOOKS) {
-      const log = opts.log ?? ((): void => {});
-      const result = await runRunbook(step.tool, args as never, {
+      const log = opts.log ?? noopLog;
+      const result = await runRunbook(step.tool, args, {
         toolClient: opts.toolClient,
         dryRun,
         log,
@@ -69,7 +71,7 @@ export async function executePlanStep(
       isError?: boolean;
       content?: { type: string; text?: string }[];
     };
-    if (envelope?.isError === true) {
+    if (envelope.isError === true) {
       const first = envelope.content?.[0];
       const msg =
         first?.type === "text" && typeof first.text === "string"
@@ -79,7 +81,7 @@ export async function executePlanStep(
     }
     return { ok: true, result: raw };
   } catch (err) {
-    return { ok: false, error: (err as Error).message ?? String(err) };
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -92,8 +94,7 @@ export async function executePlan(
   opts: ExecuteStepOptions,
 ): Promise<ExecutePlanResult> {
   const out: ExecutePlanResult["steps"] = [];
-  for (let i = 0; i < plan.steps.length; i++) {
-    const step = plan.steps[i]!;
+  for (const [i, step] of plan.steps.entries()) {
     const outcome = await executePlanStep(step, opts);
     out.push({ index: i, tool: step.tool, outcome });
     if (!outcome.ok) {

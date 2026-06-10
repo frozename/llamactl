@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- Test tool-client fakes implement Promise-returning interfaces with synchronous fixtures. */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

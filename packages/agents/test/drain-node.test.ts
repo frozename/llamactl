@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-empty-function, @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Test doubles implement async runbook interfaces and Bun's rejects matcher is typed as void. */
 import { describe, expect, test } from "bun:test";
 
 import { type RunbookToolClient, runRunbook, type ToolCallInput } from "../src/index.js";

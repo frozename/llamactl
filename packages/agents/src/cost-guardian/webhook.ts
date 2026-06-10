@@ -79,7 +79,7 @@ export async function postGuardianWebhook(
     return {
       ok: false,
       status: res.status,
-      error: errBody.slice(0, 300) || `HTTP ${res.status}`,
+      error: errBody.slice(0, 300) || `HTTP ${String(res.status)}`,
     };
   } catch (err) {
     return {

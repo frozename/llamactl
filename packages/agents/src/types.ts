@@ -74,6 +74,7 @@ export interface Runbook<Params = void> {
  * text: <json> }] }`; runbooks unwrap that shape through this helper
  * so the details stay in one place.
  */
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- Callers provide the expected MCP payload type at parse boundaries.
 export function parseToolJson<T = unknown>(result: unknown): T {
   const content = (result as { content?: { type: string; text: string }[] }).content ?? [];
   const text = content[0]?.text ?? "null";

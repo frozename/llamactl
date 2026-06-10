@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- Test doubles implement async tool interfaces with synchronous fixtures. */
 import { describe, expect, test } from "bun:test";
 
 import { type RunbookToolClient, runRunbook, type ToolCallInput } from "../src/index.js";
@@ -27,7 +28,7 @@ function makeClient(responses: Record<string, unknown>): {
 describe("cost-snapshot runbook", () => {
   test("passes days + topN through, trims groups to topN, composes summary", async () => {
     const providerGroups = Array.from({ length: 10 }, (_, i) => ({
-      key: `provider-${i}`,
+      key: `provider-${String(i)}`,
       requestCount: 10 - i,
       promptTokens: 10,
       completionTokens: 5,
@@ -35,7 +36,7 @@ describe("cost-snapshot runbook", () => {
       avgLatencyMs: 100 + i,
     }));
     const modelGroups = Array.from({ length: 10 }, (_, i) => ({
-      key: `provider/model-${i}`,
+      key: `provider/model-${String(i)}`,
       requestCount: 10 - i,
       promptTokens: 10,
       completionTokens: 5,
