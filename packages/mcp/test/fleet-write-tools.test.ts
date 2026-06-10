@@ -1,4 +1,4 @@
-import type { ChildProcess, SpawnOptions } from "node:child_process";
+import type { ChildProcess, spawn, SpawnOptions } from "node:child_process";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -12,7 +12,7 @@ import { PassThrough } from "node:stream";
 
 import { registerFleetTools } from "../src/tools/fleet.js";
 
-type SpawnFn = typeof import("node:child_process").spawn;
+type SpawnFn = typeof spawn;
 type SpawnMockOptions = {
   code: number;
   stdout?: string;

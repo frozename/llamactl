@@ -1,5 +1,5 @@
 import { listSyntheticModelIds, loadEmbersynthConfig } from "./embersynth.js";
-import { type ClusterNode, type Config, resolveNodeKind } from "./schema.js";
+import { type CliBinding, type ClusterNode, type Config, resolveNodeKind } from "./schema.js";
 import { loadSiriusProviders, type SiriusProvider } from "./sirius-providers.js";
 
 /**
@@ -144,7 +144,7 @@ export function parseProviderNodeName(
 export function findCliBindingForNode(
   cfg: Config,
   nodeName: string,
-): { agentName: string; binding: import("./schema.js").CliBinding } | null {
+): { agentName: string; binding: CliBinding } | null {
   const parsed = parseProviderNodeName(nodeName);
   if (!parsed) return null;
   const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);

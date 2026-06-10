@@ -1,8 +1,13 @@
 import type { AggregatorPeer } from "./aggregator.js";
+import type { FleetSnapshotEntry } from "./types.js";
 
 import { listPeers } from "../../remote/src/config/peers.js";
 import { defaultFleetJournalPath, readRecentMovesFromJournal } from "./journal.js";
-import { MigrationController, type MigrationControllerDeps } from "./migration-controller.js";
+import {
+  MigrationController,
+  type MigrationControllerDeps,
+  type NodeSnapshot,
+} from "./migration-controller.js";
 import { createPeerFetch } from "./peer-fetch.js";
 
 export * from "./aggregator-db.js";
@@ -37,7 +42,7 @@ export function createEnabledMigrationController(
   deps: Omit<MigrationControllerDeps, "peers" | "fetchSnapshot" | "leaseholder"> & {
     peers?: AggregatorPeer[];
     leaseholder: string;
-    fetchSnapshot: (node: string) => Promise<import("./migration-controller.js").NodeSnapshot>;
+    fetchSnapshot: (node: string) => Promise<NodeSnapshot>;
   },
 ): MigrationController | null {
   if (process.env.LLAMACTL_FLEET_MOVE_ENABLED !== "1") return null;
@@ -54,6 +59,6 @@ export function createEnabledMigrationController(
 
 export function createPeerSnapshotFetcher(
   peer: AggregatorPeer,
-): () => Promise<import("./types.js").FleetSnapshotEntry | null> {
+): () => Promise<FleetSnapshotEntry | null> {
   return createPeerFetch(peer);
 }

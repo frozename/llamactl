@@ -1,7 +1,7 @@
 import type { ClusterNode } from "../../config/schema.js";
 import type { ApplyEvent, ApplyResult, WorkloadClient } from "../apply.js";
 import type { ModelRun } from "../schema.js";
-import type { GatewayHandler } from "./types.js";
+import type { CompositeGatewayContext, GatewayHandler } from "./types.js";
 
 import { AGENT_GATEWAY_HANDLER_KIND, agentGatewayHandler } from "./agent-gateway.js";
 import { embersynthHandler } from "./embersynth.js";
@@ -32,7 +32,7 @@ export interface DispatchGatewayApplyOptions {
    * is the composite applier and the gateway entry declared
    * `upstreamWorkloads` / `providerConfig`.
    */
-  composite?: import("./types.js").CompositeGatewayContext;
+  composite?: CompositeGatewayContext;
 }
 
 /**

@@ -48,7 +48,10 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 
+import type { CompositeApplyEvent } from "./composite/types.js";
 import type { ClusterNode, Config } from "./config/schema.js";
+import type { RuntimeBackend } from "./runtime/backend.js";
+import type { RuntimeKind } from "./runtime/factory.js";
 
 import * as benchScheduleMod from "./bench/schedule.js";
 import * as benchScheduleLoopMod from "./bench/scheduleLoop.js";
@@ -67,7 +70,7 @@ import {
 } from "./ops-chat/dispatch.js";
 import { deleteSession } from "./ops-chat/sessions/delete.js";
 import { sessionEventBus } from "./ops-chat/sessions/event-bus.js";
-import { isTerminal } from "./ops-chat/sessions/journal-schema.js";
+import { isTerminal, type JournalEvent } from "./ops-chat/sessions/journal-schema.js";
 import { readJournal } from "./ops-chat/sessions/journal.js";
 import { getSessionSummary, listSessions } from "./ops-chat/sessions/list.js";
 import { createRagAdapter } from "./rag/index.js";
@@ -255,14 +258,9 @@ async function resolvePlannerProvider(nodeId: string): Promise<AiProvider> {
  * synthetic `RuntimeBackend`). The router-level tests stay on the
  * dry-run path so they never touch this helper.
  */
-const _compositeRuntimes = new Map<
-  import("./runtime/factory.js").RuntimeKind,
-  import("./runtime/backend.js").RuntimeBackend
->();
+const _compositeRuntimes = new Map<RuntimeKind, RuntimeBackend>();
 
-function resolveCompositeRuntimeKind(
-  requested?: import("./runtime/factory.js").RuntimeKind,
-): import("./runtime/factory.js").RuntimeKind {
+function resolveCompositeRuntimeKind(requested?: RuntimeKind): RuntimeKind {
   if (requested) return requested;
   const envHint = process.env.LLAMACTL_RUNTIME_BACKEND?.trim();
   if (envHint === "kubernetes") return "kubernetes";
@@ -270,9 +268,7 @@ function resolveCompositeRuntimeKind(
   return "docker";
 }
 
-async function getCompositeRuntime(
-  kind: import("./runtime/factory.js").RuntimeKind = "docker",
-): Promise<import("./runtime/backend.js").RuntimeBackend> {
+async function getCompositeRuntime(kind: RuntimeKind = "docker"): Promise<RuntimeBackend> {
   const cached = _compositeRuntimes.get(kind);
   if (cached) return cached;
   const { createRuntimeBackend } = await import("./runtime/factory.js");
@@ -2468,7 +2464,7 @@ export const router = t.router({
         };
         return;
       }
-      const queue: import("./ops-chat/sessions/journal-schema.js").JournalEvent[] = [];
+      const queue: JournalEvent[] = [];
       let resolve: (() => void) | null = null;
       const off = sessionEventBus.subscribe(input.sessionId, (event) => {
         queue.push(event);
@@ -3378,73 +3374,70 @@ export const router = t.router({
     .input(z.object({ name: z.string().min(1) }))
     .subscription(({ input, signal }) => {
       const clientSignal = signal ?? new AbortController().signal;
-      return bridgeEventStream<import("./composite/types.js").CompositeApplyEvent>(
-        clientSignal,
-        async (emit) => {
-          const { compositeEvents } = await import("./composite/event-bus.js");
-          const runBus = compositeEvents.currentRun(input.name);
-          if (runBus && !runBus.done) {
-            // Live path — replay the buffer + attach for future events.
-            // The returned Promise resolves on the terminal `done` event
-            // or when the client disconnects, whichever lands first.
-            await new Promise<void>((resolve) => {
-              let settled = false;
-              const finish = (): void => {
-                if (settled) return;
-                settled = true;
-                unsub();
-                resolve();
-              };
-              const unsub = compositeEvents.subscribe(input.name, (e) => {
-                emit(e);
-                if (e.type === "done") {
-                  finish();
-                }
-              });
-              clientSignal.addEventListener("abort", finish);
-            });
-            return;
-          }
-          // Fall back to the persisted-status synthesis path.
-          const { loadComposite } = await import("./composite/store.js");
-          const manifest = loadComposite(input.name);
-          if (!manifest) {
-            throw new TRPCError({
-              code: "NOT_FOUND",
-              message: `composite '${input.name}' not found`,
-            });
-          }
-          const status = manifest.status;
-          if (status) {
-            emit({ type: "phase", phase: status.phase });
-            for (const c of status.components) {
-              emit({ type: "component-start", ref: c.ref });
-              if (c.state === "Ready") {
-                emit({
-                  type: "component-ready",
-                  ref: c.ref,
-                  ...(c.message !== undefined && { message: c.message }),
-                });
-              } else if (c.state === "Failed") {
-                emit({
-                  type: "component-failed",
-                  ref: c.ref,
-                  message: c.message ?? "component failed",
-                });
+      return bridgeEventStream<CompositeApplyEvent>(clientSignal, async (emit) => {
+        const { compositeEvents } = await import("./composite/event-bus.js");
+        const runBus = compositeEvents.currentRun(input.name);
+        if (runBus && !runBus.done) {
+          // Live path — replay the buffer + attach for future events.
+          // The returned Promise resolves on the terminal `done` event
+          // or when the client disconnects, whichever lands first.
+          await new Promise<void>((resolve) => {
+            let settled = false;
+            const finish = (): void => {
+              if (settled) return;
+              settled = true;
+              unsub();
+              resolve();
+            };
+            const unsub = compositeEvents.subscribe(input.name, (e) => {
+              emit(e);
+              if (e.type === "done") {
+                finish();
               }
-            }
-            emit({
-              type: "done",
-              ok: status.phase === "Ready",
             });
-          } else {
-            // Manifest exists but was never applied — emit a pending
-            // phase so the UI can render an empty state cleanly.
-            emit({ type: "phase", phase: "Pending" });
-            emit({ type: "done", ok: false });
+            clientSignal.addEventListener("abort", finish);
+          });
+          return;
+        }
+        // Fall back to the persisted-status synthesis path.
+        const { loadComposite } = await import("./composite/store.js");
+        const manifest = loadComposite(input.name);
+        if (!manifest) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `composite '${input.name}' not found`,
+          });
+        }
+        const status = manifest.status;
+        if (status) {
+          emit({ type: "phase", phase: status.phase });
+          for (const c of status.components) {
+            emit({ type: "component-start", ref: c.ref });
+            if (c.state === "Ready") {
+              emit({
+                type: "component-ready",
+                ref: c.ref,
+                ...(c.message !== undefined && { message: c.message }),
+              });
+            } else if (c.state === "Failed") {
+              emit({
+                type: "component-failed",
+                ref: c.ref,
+                message: c.message ?? "component failed",
+              });
+            }
           }
-        },
-      );
+          emit({
+            type: "done",
+            ok: status.phase === "Ready",
+          });
+        } else {
+          // Manifest exists but was never applied — emit a pending
+          // phase so the UI can render an empty state cleanly.
+          emit({ type: "phase", phase: "Pending" });
+          emit({ type: "done", ok: false });
+        }
+      });
     }),
 
   globalSearchRagStatus: t.procedure.query(async () => {

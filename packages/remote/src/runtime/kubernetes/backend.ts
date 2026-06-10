@@ -35,6 +35,7 @@ import type {
 
 import type {
   ImageRef,
+  RemoveServiceOptions,
   RuntimeBackend,
   ServiceDeployment,
   ServiceFilter,
@@ -167,10 +168,7 @@ export class KubernetesBackend implements RuntimeBackend {
    * A not-found service is a no-op (matches Docker backend's
    * 404-tolerant semantics).
    */
-  async removeService(
-    ref: ServiceRef,
-    opts?: import("../backend.js").RemoveServiceOptions,
-  ): Promise<void> {
+  async removeService(ref: ServiceRef, opts?: RemoveServiceOptions): Promise<void> {
     const located = await this.locateService(ref.name);
     if (!located) return;
     const { namespace, controllerKind } = located;
@@ -526,7 +524,7 @@ export class KubernetesBackend implements RuntimeBackend {
    */
   async destroyCompositeBoundary(
     compositeName: string,
-    _opts?: import("../backend.js").RemoveServiceOptions,
+    _opts?: RemoveServiceOptions,
   ): Promise<void> {
     const namespace = this.namespaceFor(compositeName);
     try {

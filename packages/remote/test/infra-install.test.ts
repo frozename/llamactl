@@ -4,7 +4,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { installInfraPackage } from "../src/infra/install.js";
+import {
+  type InfraExtractor,
+  type InfraFetcher,
+  installInfraPackage,
+} from "../src/infra/install.js";
 import {
   infraCurrentSymlink,
   infraVersionDir,
@@ -23,10 +27,7 @@ let base = "";
 const FAKE_PAYLOAD = new TextEncoder().encode("fake-tarball-contents");
 const FAKE_SHA = createHash("sha256").update(FAKE_PAYLOAD).digest("hex");
 
-function stubFetcher(
-  url: string,
-  bytes: Uint8Array = FAKE_PAYLOAD,
-): import("../src/infra/install.js").InfraFetcher {
+function stubFetcher(url: string, bytes: Uint8Array = FAKE_PAYLOAD): InfraFetcher {
   return async (reqUrl: string) => {
     await Promise.resolve();
     if (reqUrl !== url) throw new Error(`unexpected fetch url: ${reqUrl}`);
@@ -34,9 +35,7 @@ function stubFetcher(
   };
 }
 
-function stubExtractor(
-  contents: Record<string, string>,
-): import("../src/infra/install.js").InfraExtractor {
+function stubExtractor(contents: Record<string, string>): InfraExtractor {
   return async (_tarballPath: string, destDir: string) => {
     await Promise.resolve();
     for (const [rel, body] of Object.entries(contents)) {
@@ -112,9 +111,8 @@ describe("installInfraPackage", () => {
   test("re-install skips extraction when version already present + still flips symlink", async () => {
     const url = "https://pkgs.example.com/x";
     let extractCalls = 0;
-    const fetcher: import("../src/infra/install.js").InfraFetcher = () =>
-      Promise.resolve(FAKE_PAYLOAD);
-    const extractor: import("../src/infra/install.js").InfraExtractor = async (_t, dest) => {
+    const fetcher: InfraFetcher = () => Promise.resolve(FAKE_PAYLOAD);
+    const extractor: InfraExtractor = async (_t, dest) => {
       await Promise.resolve();
       extractCalls++;
       writeFileSync(join(dest, "marker"), "a", "utf8");
@@ -153,9 +151,8 @@ describe("installInfraPackage", () => {
   test("skipIfPresent:false + re-install forces a fresh extract", async () => {
     const url = "https://pkgs.example.com/x";
     let extractCalls = 0;
-    const fetcher: import("../src/infra/install.js").InfraFetcher = () =>
-      Promise.resolve(FAKE_PAYLOAD);
-    const extractor: import("../src/infra/install.js").InfraExtractor = async (_t, dest) => {
+    const fetcher: InfraFetcher = () => Promise.resolve(FAKE_PAYLOAD);
+    const extractor: InfraExtractor = async (_t, dest) => {
       await Promise.resolve();
       extractCalls++;
       writeFileSync(join(dest, `v${String(extractCalls)}`), "x", "utf8");
@@ -244,8 +241,7 @@ describe("installInfraPackage", () => {
 
   test("two versions installed side-by-side + final activation pins the chosen one", async () => {
     const url = "https://pkgs.example.com/x";
-    const fetcher: import("../src/infra/install.js").InfraFetcher = () =>
-      Promise.resolve(FAKE_PAYLOAD);
+    const fetcher: InfraFetcher = () => Promise.resolve(FAKE_PAYLOAD);
     await installInfraPackage({
       pkg: "llama-cpp",
       version: "b4500",

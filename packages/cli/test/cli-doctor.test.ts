@@ -1,3 +1,5 @@
+import type * as nodeFs from "node:fs";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -50,7 +52,7 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{
 
 function writeConfig(yaml: string): void {
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- Preserve existing CLI/test semantics while clearing strict lint debt.
-  const fs = require("node:fs") as typeof import("node:fs");
+  const fs = require("node:fs") as typeof nodeFs;
   fs.writeFileSync(cfgPath, yaml, "utf8");
 }
 
