@@ -46,7 +46,7 @@ export function createPeerFetch(peer: AggregatorPeer): () => Promise<FleetSnapsh
     const result = await doRequest(peer);
     if (result.statusCode === 204) return null;
     if (result.statusCode !== 200) {
-      throw new Error(`peer ${peer.id} returned ${result.statusCode}`);
+      throw new Error(`peer ${peer.id} returned ${String(result.statusCode)}`);
     }
     return JSON.parse(result.body) as FleetSnapshotEntry;
   };

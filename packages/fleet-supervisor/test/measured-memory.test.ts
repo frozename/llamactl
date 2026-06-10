@@ -30,7 +30,7 @@ describe("readMeasuredMemoryCache", () => {
   });
 
   afterEach(() => {
-    delete process.env[ORIG_ENV_KEY];
+    Reflect.deleteProperty(process.env, ORIG_ENV_KEY);
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -83,7 +83,7 @@ describe("writeMeasuredMemoryCache", () => {
   });
 
   afterEach(() => {
-    delete process.env[ORIG_ENV_KEY];
+    Reflect.deleteProperty(process.env, ORIG_ENV_KEY);
     rmSync(tmpDir, { recursive: true, force: true });
   });
 

@@ -7,6 +7,7 @@ import type {
   FleetHeartbeatEntry,
   FleetJournalEntry,
   FleetProposalEntry,
+  FleetPressureStatusEntry,
   FleetSnapshotEntry,
   FleetTransitionEntry,
   NodeMemSnapshot,
@@ -136,7 +137,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
     });
 
   let stopped = false;
-  let resolveDone: () => void = () => {};
+  let resolveDone: (() => void) | undefined;
   const done = new Promise<void>((res) => {
     resolveDone = res;
   });
@@ -208,7 +209,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       enteredHighAt = ts;
       ticksInHigh = 0;
 
-      const statusEntry: import("./types.js").FleetPressureStatusEntry = {
+      const statusEntry: FleetPressureStatusEntry = {
         kind: "fleet-pressure-status",
         ts,
         node: opts.node,
@@ -256,13 +257,14 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       pressureStatusEveryTicks > 0 &&
       ticksInHigh % pressureStatusEveryTicks === 0
     ) {
-      const statusEntry: import("./types.js").FleetPressureStatusEntry = {
+      if (enteredHighAt === null) return;
+      const statusEntry: FleetPressureStatusEntry = {
         kind: "fleet-pressure-status",
         ts,
         node: opts.node,
         state: "HIGH",
-        enteredAt: enteredHighAt!,
-        durationMs: new Date(ts).getTime() - new Date(enteredHighAt!).getTime(),
+        enteredAt: enteredHighAt,
+        durationMs: new Date(ts).getTime() - new Date(enteredHighAt).getTime(),
         consecutiveClearTicks,
         clearTicksNeeded: pressureThresholds.clearTicks,
         free_mb: node_mem.free_mb,
@@ -331,14 +333,15 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const run = async (): Promise<void> => {
     try {
       await tick();
-      if (opts.once || stopped) return;
-      while (!stopped) {
+      const isStopped = () => stopped;
+      if (opts.once || isStopped()) return;
+      while (!isStopped()) {
         await new Promise<void>((res) => setTimeout(res, intervalMs));
-        if (stopped) break;
+        if (isStopped()) break;
         await tick();
       }
     } finally {
-      resolveDone();
+      resolveDone?.();
     }
   };
 

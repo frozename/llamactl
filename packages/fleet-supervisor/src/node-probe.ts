@@ -10,7 +10,8 @@ const PAGE_FIELDS: Record<string, keyof NodeMemSnapshot> = {
 
 export function parseVmStatOutput(raw: string): NodeMemSnapshot {
   const pageSizeMatch = /page size of (\d+) bytes/.exec(raw);
-  const pageSize = pageSizeMatch ? parseInt(pageSizeMatch[1]!, 10) : 4096;
+  const pageSizeText = pageSizeMatch?.[1];
+  const pageSize = pageSizeText ? parseInt(pageSizeText, 10) : 4096;
   const toMb = (pages: number) => (pages * pageSize) / 1024 / 1024;
 
   const snap: NodeMemSnapshot = {
@@ -26,8 +27,10 @@ export function parseVmStatOutput(raw: string): NodeMemSnapshot {
   for (const line of raw.split("\n")) {
     const pageMatch = /^(.+?):\s+([\d.]+)\./.exec(line);
     if (!pageMatch) continue;
-    const label = pageMatch[1]!.trim();
-    const count = parseFloat(pageMatch[2]!);
+    const [, rawLabel, rawCount] = pageMatch;
+    if (rawLabel === undefined || rawCount === undefined) continue;
+    const label = rawLabel.trim();
+    const count = parseFloat(rawCount);
 
     const field = PAGE_FIELDS[label];
     if (field) {
@@ -46,9 +49,9 @@ export async function probeNodeMem(opts?: {
 }): Promise<NodeMemSnapshot> {
   const exec =
     opts?.exec ??
-    (async (_cmd: string) => {
+    ((_cmd: string) => {
       const proc = Bun.spawnSync(["vm_stat"]);
-      return new TextDecoder().decode(proc.stdout);
+      return Promise.resolve(new TextDecoder().decode(proc.stdout));
     });
   return parseVmStatOutput(await exec("vm_stat"));
 }

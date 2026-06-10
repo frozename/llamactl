@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- Test fetch stub implements the async fetch contract without artificial scheduling. */
 import { describe, expect, it } from "bun:test";
 
 import {

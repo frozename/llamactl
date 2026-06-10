@@ -137,8 +137,8 @@ export interface FleetPressureStatusEntry {
   compressorBreach: boolean; // compressor_mb > compressorWarnMb
 }
 
+/** Legacy move entry. Moves are now represented by fleet-proposal entries where action.type === 'move'. */
 export interface FleetMoveEntry {
-  /** @deprecated Moves are now represented by fleet-proposal entries where action.type === 'move'. */
   kind: "fleet-move";
   workload: string;
   fromNode: string;
@@ -162,7 +162,7 @@ export interface MoveProposal {
   toNode: string;
   proposalId: string;
   expiresAt: string;
-  expiresAtMs: number;
+  expiresAtMs?: number;
   evictProposalId: string;
   workloadMemoryMb?: number;
 }

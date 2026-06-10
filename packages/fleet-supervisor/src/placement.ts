@@ -41,19 +41,7 @@ export function scoreNodes(
       };
     }
 
-    const snapshot = entry.snapshot;
-    if (!snapshot) {
-      return {
-        node: entry.node,
-        score: -Infinity,
-        freeAfterMb: 0,
-        freePenaltyMb: 0,
-        compressorMb: 0,
-        requestRate5m: 0,
-        eligible: false,
-        ineligibilityReason: "no_telemetry",
-      };
-    }
+    const { snapshot } = entry;
 
     const targetModel = input.targetModel.trim();
     const normalizedTarget = basename(targetModel);

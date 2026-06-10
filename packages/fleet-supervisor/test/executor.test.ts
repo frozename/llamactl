@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- Test doubles implement async executor contracts without artificial scheduling. */
 import { describe, expect, it } from "bun:test";
 
 import type { FleetExecutionEntry, FleetJournalEntry, FleetProposalEntry } from "../src/types.js";

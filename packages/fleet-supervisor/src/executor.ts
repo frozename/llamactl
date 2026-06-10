@@ -98,7 +98,7 @@ async function executeOne(
   if (!shouldExecute) {
     const reason = !opts.auto
       ? "--auto not set"
-      : `tier ${tier} exceeds threshold ${opts.severityThreshold}`;
+      : `tier ${String(tier)} exceeds threshold ${String(opts.severityThreshold)}`;
     const entry: FleetExecutionEntry = { ...base, status: "skipped", reason };
     opts.writeJournal(entry);
     return entry;

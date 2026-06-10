@@ -1,3 +1,4 @@
+/* eslint-disable no-console -- CLI output test temporarily captures console.log. */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,6 +6,7 @@ import { dirname, join } from "node:path";
 
 import { runFleet } from "../../cli/src/commands/fleet.js";
 import { collectLatestSnapshots, collectProposals } from "../../mcp/src/tools/fleet.js";
+import type { FleetJournalEntry } from "../src/types.js";
 
 let dir = "";
 
@@ -24,7 +26,7 @@ function writeJournal(lines: unknown[]): string {
 }
 
 describe("journal schema forward-compat", () => {
-  test("fleet_snapshot MCP tool tolerates fleet-placement entry", async () => {
+  test("fleet_snapshot MCP tool tolerates fleet-placement entry", () => {
     const entries = [
       { kind: "fleet-placement", ts: "2026-05-25T17:00:00Z", node: "local", decision: {} },
       {
@@ -43,12 +45,12 @@ describe("journal schema forward-compat", () => {
         workloads: [],
       },
     ];
-    const snapshots = collectLatestSnapshots(entries as any);
+    const snapshots = collectLatestSnapshots(entries as unknown as FleetJournalEntry[]);
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0]?.node).toBe("local");
   });
 
-  test("fleet_proposals MCP tool tolerates fleet-placement entries", async () => {
+  test("fleet_proposals MCP tool tolerates fleet-placement entries", () => {
     const entries = [
       { kind: "fleet-placement", ts: "2026-05-25T17:00:00Z", node: "local", decision: {} },
       {
@@ -66,7 +68,9 @@ describe("journal schema forward-compat", () => {
         action: { type: "evict", workload: "w1", reason: "test" },
       },
     ];
-    const proposals = collectProposals(entries as any, { pendingOnly: false });
+    const proposals = collectProposals(entries as unknown as FleetJournalEntry[], {
+      pendingOnly: false,
+    });
     expect(proposals).toHaveLength(1);
     expect(proposals[0]?.proposalId).toBe("p1");
   });

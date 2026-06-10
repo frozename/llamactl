@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- Test doubles implement async fetch contracts without artificial scheduling. */
 import { describe, expect, test } from "bun:test";
 
 import type { FleetSnapshotEntry } from "../src/types.js";

@@ -29,6 +29,17 @@ export interface AuditReadResult {
   malformedLines: number;
 }
 
+function isAuditEntry(value: unknown): value is AuditEntry {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as Partial<AuditEntry>;
+  return (
+    entry.kind === "mcp-audit" &&
+    typeof entry.ts === "string" &&
+    typeof entry.tool === "string" &&
+    (entry.outcome === "denied" || entry.outcome === "success" || entry.outcome === "error")
+  );
+}
+
 export async function readAuditEntries(opts?: AuditReadOptions): Promise<AuditReadResult> {
   const auditPath = opts?.auditPath ?? defaultFleetAuditPath();
   const limit = Math.max(1, Math.min(opts?.limit ?? 50, 500));
@@ -48,8 +59,8 @@ export async function readAuditEntries(opts?: AuditReadOptions): Promise<AuditRe
     for await (const line of rl) {
       if (!line.trim()) continue;
       try {
-        const entry = JSON.parse(line) as AuditEntry;
-        if (entry.kind !== "mcp-audit") continue;
+        const entry = JSON.parse(line) as unknown;
+        if (!isAuditEntry(entry)) continue;
 
         if (opts?.tool && entry.tool !== opts.tool) continue;
         if (opts?.outcome && entry.outcome !== opts.outcome) continue;

@@ -61,14 +61,18 @@ export function detectPressure(
   const allHot = tail.every((entry) => isPressureHot(entry, thresholds));
   if (!allHot) return null;
 
-  const lastWorkloads = tail[tail.length - 1]!.workloads;
+  const last = tail.at(-1);
+  if (!last) return null;
+  const lastWorkloads = last.workloads;
   const evictTarget = pickEvictionCandidate(lastWorkloads);
   if (!evictTarget) return null;
 
   const action: FleetProposalAction = {
     type: "evict",
     workload: evictTarget.name,
-    reason: `sustained memory pressure: ${thresholds.consecutiveTicks} ticks below headroom + above compressor threshold`,
+    reason: `sustained memory pressure: ${String(
+      thresholds.consecutiveTicks,
+    )} ticks below headroom + above compressor threshold`,
   };
   const transition = {
     subject: "node",
@@ -142,8 +146,10 @@ export function detectDegradation(
       workload: workload.name,
       reason:
         workload.consecutiveErrors >= thresholds.consecutiveErrorsForDegraded
-          ? `consecutive errors ${workload.consecutiveErrors} ≥ ${thresholds.consecutiveErrorsForDegraded}`
-          : `p95 ${workload.p95_ms}ms > ${thresholds.p95DegradedMs}ms`,
+          ? `consecutive errors ${String(workload.consecutiveErrors)} ≥ ${String(
+              thresholds.consecutiveErrorsForDegraded,
+            )}`
+          : `p95 ${String(workload.p95_ms)}ms > ${String(thresholds.p95DegradedMs)}ms`,
     };
     return { to: "degraded", transition, proposal: { transition, action } };
   }
@@ -204,8 +210,8 @@ export function projectAdmissionHeadroom(input: AdmissionInput): AdmissionResult
   const source: "measured" | "declared" =
     input.measuredPeakMb !== undefined ? "measured" : "declared";
   const projectedFreeGiB =
-    source === "measured"
-      ? input.currentFreeGiB - (input.measuredPeakMb! * 1.05) / 1024
+    input.measuredPeakMb !== undefined
+      ? input.currentFreeGiB - (input.measuredPeakMb * 1.05) / 1024
       : input.currentFreeGiB - input.expectedMemoryGiB * (input.safetyFactor ?? 1.3);
 
   if (projectedFreeGiB < input.headroomMinGiB) {

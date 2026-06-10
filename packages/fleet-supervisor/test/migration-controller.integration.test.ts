@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- Test doubles implement async migration contracts without artificial scheduling. */
 import { describe, expect, it } from "bun:test";
 
 import { createMigrationController, type FleetJournalEntry } from "../src/index.js";
@@ -32,9 +33,7 @@ describe("MigrationController integration", () => {
       },
     });
 
-    expect(controller).not.toBeNull();
-
-    const proposal = await controller?.onJournalEntry(
+    const proposal = await controller.onJournalEntry(
       {
         kind: "fleet-transition",
         ts: new Date(nowMs).toISOString(),
@@ -61,8 +60,9 @@ describe("MigrationController integration", () => {
     );
 
     expect(proposal).not.toBeNull();
+    if (proposal === null) throw new Error("expected proposal");
 
-    const result = await controller?.executeMove(proposal!, (entry) => journal.push(entry));
+    const result = await controller.executeMove(proposal, (entry) => journal.push(entry));
     expect(result).toBe("executed");
     expect(
       journal.some((entry) => entry.kind === "fleet-proposal" && entry.action.type === "move"),

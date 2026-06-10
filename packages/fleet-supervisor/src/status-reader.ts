@@ -46,16 +46,17 @@ export async function readSupervisorStatus(
   >();
 
   const ensureNode = (node: string) => {
-    if (!nodeStates.has(node)) {
-      nodeStates.set(node, {
-        state: "NORMAL",
-        enteredAt: null,
-        lastTransitionTs: null,
-        lastStatus: null,
-        recent: [],
-      });
-    }
-    return nodeStates.get(node)!;
+    const existing = nodeStates.get(node);
+    if (existing) return existing;
+    const created = {
+      state: "NORMAL" as const,
+      enteredAt: null,
+      lastTransitionTs: null,
+      lastStatus: null,
+      recent: [],
+    };
+    nodeStates.set(node, created);
+    return created;
   };
 
   if (!fs.existsSync(opts.journalPath)) {

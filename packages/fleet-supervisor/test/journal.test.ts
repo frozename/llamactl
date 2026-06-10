@@ -53,10 +53,13 @@ describe("appendFleetJournal", () => {
     appendFleetJournal(entry, path);
     const lines = readFileSync(path, "utf8").trim().split("\n");
     expect(lines).toHaveLength(1);
-    const parsed = JSON.parse(lines[0]!);
+    const parsed = JSON.parse(lines[0]!) as FleetSnapshotEntry;
+    const workload = parsed.workloads[0];
+    expect(workload).toBeDefined();
+    if (!workload) throw new Error("expected workload");
     expect(parsed.kind).toBe("fleet-snapshot");
     expect(parsed.node).toBe("local");
-    expect(parsed.workloads[0].name).toBe("qwen-host");
+    expect(workload.name).toBe("qwen-host");
     expect(parsed.node_mem.compressor_mb).toBe(2600);
   });
 

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- Test doubles implement async supervisor contracts without artificial scheduling. */
 import { afterEach, describe, expect, it } from "bun:test";
 
 import {

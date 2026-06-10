@@ -9,7 +9,7 @@ export interface NodeSnapshot {
   node?: string;
   schedulerLeaseHolder?: string;
   pressureState: "NORMAL" | "HIGH";
-  nodeMem: { freeMb: number };
+  nodeMem?: { freeMb: number };
   workloads?: { name: string; reachable: boolean }[];
 }
 
@@ -17,7 +17,7 @@ export interface MigrationWorkload {
   name: string;
   node?: string;
   spec?: {
-    placement?: "auto" | "pinned" | string;
+    placement?: string;
     resources?: {
       memoryMb?: number;
     };
@@ -30,7 +30,7 @@ export interface MigrationControllerDeps {
   fetchSnapshot: (node: string) => Promise<NodeSnapshot>;
   deployWorkload?: (workloadName: string, toNode: string) => Promise<void>;
   removeWorkload?: (workloadName: string, fromNode: string) => Promise<void>;
-  readRecentMoves?: () => Iterable<{ workload: string; movedAtMs: number }>;
+  readRecentMoves?: () => Iterable<unknown>;
   leaseholder: string;
   getNowMs?: () => number;
   getCurrentTick?: () => number;
@@ -59,11 +59,14 @@ export class MigrationController {
   constructor(private readonly deps: MigrationControllerDeps) {
     if (!deps.readRecentMoves) return;
     for (const recentMove of deps.readRecentMoves()) {
-      if (!recentMove || typeof recentMove.workload !== "string") continue;
-      if (!Number.isFinite(recentMove.movedAtMs)) continue;
-      const prior = this.inFlightMoves.get(recentMove.workload);
-      if (!prior || recentMove.movedAtMs > prior.movedAtMs) {
-        this.inFlightMoves.set(recentMove.workload, { movedAtMs: recentMove.movedAtMs });
+      if (typeof recentMove !== "object" || recentMove === null) continue;
+      const candidate = recentMove as { workload?: unknown; movedAtMs?: unknown };
+      if (typeof candidate.workload !== "string") continue;
+      if (typeof candidate.movedAtMs !== "number" || !Number.isFinite(candidate.movedAtMs))
+        continue;
+      const prior = this.inFlightMoves.get(candidate.workload);
+      if (!prior || candidate.movedAtMs > prior.movedAtMs) {
+        this.inFlightMoves.set(candidate.workload, { movedAtMs: candidate.movedAtMs });
       }
     }
   }
@@ -142,6 +145,7 @@ export class MigrationController {
       const freeMb = peerSnapshot.nodeMem?.freeMb;
       const isViable =
         peerSnapshot.pressureState === "NORMAL" &&
+        typeof freeMb === "number" &&
         Number.isFinite(freeMb) &&
         freeMb >= requiredFreeMb;
       if (!isViable) continue;
@@ -154,13 +158,13 @@ export class MigrationController {
 
     if (!bestNode) return null;
 
-    const proposalId = `move-${workload.name}-${this.nowMs}`;
+    const proposalId = `move-${workload.name}-${String(this.nowMs)}`;
     return {
       workload: workload.name,
       fromNode,
       toNode: bestNode,
       proposalId,
-      evictProposalId: workload.evictProposalId ?? `evict-${workload.name}-${this.nowMs}`,
+      evictProposalId: workload.evictProposalId ?? `evict-${workload.name}-${String(this.nowMs)}`,
       expiresAt: new Date(this.nowMs + MIGRATION_POLICY_DEFAULTS.moveProposalTtlMs).toISOString(),
       expiresAtMs: this.nowMs + MIGRATION_POLICY_DEFAULTS.moveProposalTtlMs,
       workloadMemoryMb,
@@ -206,6 +210,7 @@ export class MigrationController {
     const requiredFreeMb = this.minRequiredFreeMb(proposal.workloadMemoryMb);
     if (
       destinationSnapshot.pressureState !== "NORMAL" ||
+      typeof destFreeMb !== "number" ||
       !Number.isFinite(destFreeMb) ||
       destFreeMb < requiredFreeMb
     ) {

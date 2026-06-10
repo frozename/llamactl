@@ -225,7 +225,7 @@ describe("status-reader", () => {
       const res = await readSupervisorStatus({ journalPath });
       expect(res.nodes.length).toBe(1);
       expect(res.nodes[0]?.state).toBe("HIGH");
-      expect(res.nodes[0]?.recent?.length).toBe(2);
+      expect(res.nodes[0]?.recent.length).toBe(2);
     });
   });
 
@@ -352,8 +352,9 @@ describe("status-reader", () => {
       expect(recent1?.length).toBe(2);
 
       // Mutate the returned array
-      recent1?.push({} as any);
-      recent1?.reverse();
+      if (!recent1) throw new Error("expected recent statuses");
+      recent1.push(recent1[0]!);
+      recent1.reverse();
 
       const res2 = await readSupervisorStatus({ journalPath });
       const recent2 = res2.nodes[0]?.recent;

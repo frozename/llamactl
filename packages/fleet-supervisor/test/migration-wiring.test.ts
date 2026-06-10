@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- Test doubles implement async migration contracts without artificial scheduling. */
 import { afterEach, describe, expect, it } from "bun:test";
 
 import { createEnabledMigrationController } from "../src/index.js";

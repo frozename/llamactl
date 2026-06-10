@@ -1,7 +1,9 @@
+/* eslint-disable @typescript-eslint/require-await -- Test doubles implement async probe contracts without artificial scheduling. */
 import { describe, expect, it } from "bun:test";
 
 import type {
   FleetJournalEntry,
+  FleetPressureStatusEntry,
   FleetTransitionEntry,
   NodeMemSnapshot,
   WorkloadSnapshot,
@@ -46,7 +48,7 @@ function makeReachableLocal(t: WorkloadTarget): WorkloadSnapshot {
 
 describe("startSupervisorLoop", () => {
   it("emits fleet-pressure-status while HIGH at the configured cadence", async () => {
-    const entries: any[] = [];
+    const entries: FleetJournalEntry[] = [];
     let tickCount = 0;
     const handle = startSupervisorLoop({
       node: "local",
@@ -62,16 +64,21 @@ describe("startSupervisorLoop", () => {
     });
     await handle.done;
 
-    const statuses = entries.filter((e) => e.kind === "fleet-pressure-status");
+    const statuses = entries.filter(
+      (e): e is FleetPressureStatusEntry => e.kind === "fleet-pressure-status",
+    );
     expect(statuses.length).toBeGreaterThanOrEqual(2);
-    expect(statuses[0].state).toBe("HIGH");
-    expect(statuses[0].free_mb).toBe(100);
-    expect(statuses[0].durationMs).toBeGreaterThanOrEqual(0);
-    expect(statuses[0].consecutiveClearTicks).toBe(0);
+    const status = statuses[0];
+    expect(status).toBeDefined();
+    if (!status) throw new Error("expected pressure status");
+    expect(status.state).toBe("HIGH");
+    expect(status.free_mb).toBe(100);
+    expect(status.durationMs).toBeGreaterThanOrEqual(0);
+    expect(status.consecutiveClearTicks).toBe(0);
   });
 
   it("resets ticksInHigh on HIGH->NORMAL clear", async () => {
-    const entries: any[] = [];
+    const entries: FleetJournalEntry[] = [];
     let tickCount = 0;
     const handle = startSupervisorLoop({
       node: "local",
@@ -91,7 +98,7 @@ describe("startSupervisorLoop", () => {
     await handle.done;
 
     const transitions = entries.filter(
-      (e) => e.kind === "fleet-transition" && e.subjectKind === "node",
+      (e): e is FleetTransitionEntry => e.kind === "fleet-transition" && e.subjectKind === "node",
     );
     expect(transitions).toHaveLength(3); // NORMAL->HIGH, HIGH->NORMAL, NORMAL->HIGH
   });
@@ -151,7 +158,9 @@ describe("startSupervisorLoop", () => {
         calls.push(t.name);
         return makeReachable(t);
       },
-      writeJournal: () => {},
+      writeJournal: (entry) => {
+        void entry;
+      },
     });
     await handle.done;
     expect(calls.sort()).toEqual(["a", "b", "c"]);
@@ -219,11 +228,9 @@ describe("startSupervisorLoop", () => {
     const proposals = entries.filter((e) => e.kind === "fleet-proposal");
     expect(transitions.length).toBe(1);
     expect(proposals.length).toBe(1);
-    if (transitions[0]!.kind === "fleet-transition") {
-      expect(transitions[0]!.from).toBe("NORMAL");
-      expect(transitions[0]!.to).toBe("HIGH");
-    }
-    if (proposals[0]!.kind === "fleet-proposal" && proposals[0]!.action.type === "evict") {
+    expect(transitions[0]!.from).toBe("NORMAL");
+    expect(transitions[0]!.to).toBe("HIGH");
+    if (proposals[0]!.action.type === "evict") {
       expect(proposals[0]!.action.workload).toBe("qwen-host");
     }
   });
@@ -421,13 +428,11 @@ describe("startSupervisorLoop", () => {
     const proposals = entries.filter((e) => e.kind === "fleet-proposal");
     expect(transitions.length).toBe(1);
     expect(proposals.length).toBe(1);
-    if (transitions[0]!.kind === "fleet-transition") {
-      expect(transitions[0]!.signal).toBe("degraded");
-      expect(transitions[0]!.from).toBe("healthy");
-      expect(transitions[0]!.to).toBe("degraded");
-      expect(transitions[0]!.subject).toBe("qwen-host");
-    }
-    if (proposals[0]!.kind === "fleet-proposal" && proposals[0]!.action.type === "restart") {
+    expect(transitions[0]!.signal).toBe("degraded");
+    expect(transitions[0]!.from).toBe("healthy");
+    expect(transitions[0]!.to).toBe("degraded");
+    expect(transitions[0]!.subject).toBe("qwen-host");
+    if (proposals[0]!.action.type === "restart") {
       expect(proposals[0]!.action.workload).toBe("qwen-host");
     }
   });
@@ -440,7 +445,9 @@ describe("startSupervisorLoop", () => {
       workloads: [TARGET],
       probeNodeMem: async () => FAKE_NODE_MEM,
       probeWorkload: async (t) => makeReachable(t),
-      writeJournal: () => {},
+      writeJournal: (entry) => {
+        void entry;
+      },
       onTick: (snapshot) => {
         observed.push({ kind: snapshot.kind, node: snapshot.node });
       },
@@ -450,7 +457,7 @@ describe("startSupervisorLoop", () => {
   });
 
   it("emits a fleet-pressure-status entry on the same tick as the NORMAL->HIGH transition", async () => {
-    const entries: any[] = [];
+    const entries: FleetJournalEntry[] = [];
     let tickCount = 0;
     const handle = startSupervisorLoop({
       node: "local",
@@ -472,13 +479,22 @@ describe("startSupervisorLoop", () => {
     });
     await handle.done;
 
-    const transitions = entries.filter((e) => e.kind === "fleet-transition" && e.to === "HIGH");
-    const statuses = entries.filter((e) => e.kind === "fleet-pressure-status");
+    const transitions = entries.filter(
+      (e): e is FleetTransitionEntry => e.kind === "fleet-transition" && e.to === "HIGH",
+    );
+    const statuses = entries.filter(
+      (e): e is FleetPressureStatusEntry => e.kind === "fleet-pressure-status",
+    );
     expect(transitions.length).toBe(1);
     expect(statuses.length).toBe(1);
-    expect(statuses[0].ts).toBe(transitions[0].ts);
-    expect(statuses[0].enteredAt).toBe(transitions[0].ts);
-    expect(statuses[0].durationMs).toBe(0);
+    const status = statuses[0];
+    const transition = transitions[0];
+    expect(status).toBeDefined();
+    expect(transition).toBeDefined();
+    if (!status || !transition) throw new Error("expected transition and status");
+    expect(status.ts).toBe(transition.ts);
+    expect(status.enteredAt).toBe(transition.ts);
+    expect(status.durationMs).toBe(0);
   });
 });
 

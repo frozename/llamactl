@@ -80,7 +80,7 @@ export function validateProbeEndpoint(endpoint: string, allowPublic = false): vo
   const privateIPv4 =
     host.startsWith("10.") ||
     host.startsWith("192.168.") ||
-    /^172\.(1[6-9]|2[0-9]|3[01])\./.test(host);
+    /^172\.(?:1[6-9]|2[0-9]|3[01])\./.test(host);
   const localDomain =
     host.endsWith(".local") ||
     host.endsWith(".lan") ||
