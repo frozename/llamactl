@@ -168,7 +168,7 @@ async function runEvalRun(args: string[]): Promise<number> {
     for (const currentUb of ubs) {
       const server = remoteUrl
         ? { proc: null, url: remoteUrl, logPath: "" }
-        : await spawnServer(
+        : spawnServer(
             binary,
             { modelPath, port: 18181, ub: currentUb, ctxSize: 20480 },
             join(runDir, `server-ub${String(currentUb)}.log`),
