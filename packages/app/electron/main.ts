@@ -1,7 +1,8 @@
+import { env as envMod } from "@llamactl/core";
 import { app, BrowserWindow, ipcMain } from "electron";
 import { createIPCHandler } from "electron-trpc/main";
 import { join } from "node:path";
-import { env as envMod } from "@llamactl/core";
+
 import { buildDispatcherRouter } from "./trpc/dispatcher.js";
 
 type IPCHandlerOptions = Parameters<typeof createIPCHandler>[0];

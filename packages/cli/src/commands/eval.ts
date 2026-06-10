@@ -1,7 +1,6 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
-import { required } from "../required.js";
 
 import type {
   ContextRetrievalDetail,
@@ -26,6 +25,7 @@ import {
   waitForHealth,
 } from "../../../eval/src/index.js";
 import { getGlobals } from "../dispatcher.js";
+import { required } from "../required.js";
 
 const USAGE = `Usage: llamactl eval <subcommand>
 

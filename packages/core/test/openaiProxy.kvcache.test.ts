@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import type { ResolvedEnv } from "../src/types.js";
+
 import { resolveEnv } from "../src/env.js";
 import { openaiProxy } from "../src/index.js";
 import {
@@ -19,7 +21,6 @@ import {
   __getOpenAIProxyKvModelMismatchTotalForTests,
   isRouteKvEligible,
 } from "../src/openaiProxy.js";
-import type { ResolvedEnv } from "../src/types.js";
 
 interface TempRuntime {
   root: string;

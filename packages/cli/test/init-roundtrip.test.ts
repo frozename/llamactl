@@ -1,5 +1,6 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { NodeClient } from "@llamactl/remote";
+
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -135,14 +136,13 @@ afterAll(() => {
 function silence<T>(fn: () => Promise<T>): Promise<T> {
   const stdoutOrig = process.stdout.write.bind(process.stdout);
   const stderrOrig = process.stderr.write.bind(process.stderr);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   process.stdout.write = (_s: string | Uint8Array): boolean => true;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   process.stderr.write = (_s: string | Uint8Array): boolean => true;
   return fn().finally(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     process.stdout.write = stdoutOrig;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     process.stderr.write = stderrOrig;
   });
 }
@@ -180,7 +180,7 @@ describe.skipIf(!SHOULD_RUN)("init → apply → destroy round-trip", () => {
       // 3. List — composite should be present.
       let listed = "";
       const stdoutOrig = process.stdout.write.bind(process.stdout);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       process.stdout.write = (s: string | Uint8Array): boolean => {
         listed += typeof s === "string" ? s : String(s);
         return true;
@@ -189,7 +189,6 @@ describe.skipIf(!SHOULD_RUN)("init → apply → destroy round-trip", () => {
         const listRc = await runComposite(["list"]);
         expect(listRc).toBe(0);
       } finally {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         process.stdout.write = stdoutOrig;
       }
       expect(listed).toContain("init-e2e");
@@ -240,7 +239,7 @@ describe.skipIf(!SHOULD_RUN)("modelhost workload round-trip", () => {
 
       let stdout = "";
       const stdoutOrig = process.stdout.write.bind(process.stdout);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       process.stdout.write = (s: string | Uint8Array): boolean => {
         stdout += typeof s === "string" ? s : String(s);
         return true;
@@ -252,7 +251,6 @@ describe.skipIf(!SHOULD_RUN)("modelhost workload round-trip", () => {
         const listRc = await runGet(["workloads"]);
         expect(listRc).toBe(0);
       } finally {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         process.stdout.write = stdoutOrig;
       }
 

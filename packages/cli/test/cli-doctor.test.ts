@@ -29,12 +29,12 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{
   let err = "";
   const origOut = process.stdout.write.bind(process.stdout);
   const origErr = process.stderr.write.bind(process.stderr);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   process.stdout.write = (s: string | Uint8Array): boolean => {
     out += typeof s === "string" ? s : String(s);
     return true;
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   process.stderr.write = (s: string | Uint8Array): boolean => {
     err += typeof s === "string" ? s : String(s);
     return true;
@@ -42,9 +42,8 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{
   return fn()
     .then((result) => ({ result, out, err }))
     .finally(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       process.stdout.write = origOut;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       process.stderr.write = origErr;
     });
 }

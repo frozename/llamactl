@@ -12,7 +12,6 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { parse as parseYaml } from "yaml";
 
-import { required } from "../required.js";
 import { readModelHostState } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
 import { formatEndpoint, probeHealthEndpoint } from "../../../core/src/probe.js";
@@ -23,6 +22,7 @@ import {
 } from "../../../remote/src/workload/modelhost-schema.js";
 import { listModelHosts, saveModelHost } from "../../../remote/src/workload/modelhost-store.js";
 import { getNodeClientByName } from "../dispatcher.js";
+import { required } from "../required.js";
 import { makeSpecArtifactResolver } from "./noderun-helpers.js";
 
 const APPLY_USAGE = `Usage: llamactl apply -f <manifest.yaml> [--evict <name>]... [--force]

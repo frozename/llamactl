@@ -131,7 +131,7 @@ describe("tunnel-dispatch — fingerprint pinning", () => {
   test("insecure=true bypasses pin, warns exactly once across calls", async () => {
     const stderrWrites: string[] = [];
     const originalWrite = process.stderr.write.bind(process.stderr);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     process.stderr.write = (chunk: unknown): boolean => {
       stderrWrites.push(String(chunk));
       return true;
@@ -161,7 +161,6 @@ describe("tunnel-dispatch — fingerprint pinning", () => {
       expect(warnLines).toHaveLength(1);
       expect(warnLines[0]).toContain("--insecure-tunnel-relay");
     } finally {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       process.stderr.write = originalWrite;
     }
   });

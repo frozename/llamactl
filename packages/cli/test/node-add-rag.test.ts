@@ -31,7 +31,7 @@ afterEach(() => {
 function captureStderr<T>(fn: () => Promise<T>): Promise<{ result: T; err: string }> {
   const chunks: string[] = [];
   const original = process.stderr.write.bind(process.stderr);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   process.stderr.write = (s: string | Uint8Array): boolean => {
     chunks.push(typeof s === "string" ? s : String(s));
     return true;
@@ -39,17 +39,15 @@ function captureStderr<T>(fn: () => Promise<T>): Promise<{ result: T; err: strin
   return fn()
     .then((result) => ({ result, err: chunks.join("") }))
     .finally(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       process.stderr.write = original;
     });
 }
 
 function silenceStdout<T>(fn: () => Promise<T>): Promise<T> {
   const original = process.stdout.write.bind(process.stdout);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   process.stdout.write = (_s: string | Uint8Array): boolean => true;
   return fn().finally(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     process.stdout.write = original;
   });
 }

@@ -3,8 +3,9 @@ import * as childProcess from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { resolveEnv } from "../src/env.js";
 import type { ResolvedEnv } from "../src/types.js";
+
+import { resolveEnv } from "../src/env.js";
 import {
   advertisedEndpoint,
   endpoint,

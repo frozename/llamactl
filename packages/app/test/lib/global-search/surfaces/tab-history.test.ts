@@ -1,8 +1,9 @@
 // packages/app/test/lib/global-search/surfaces/tab-history.test.ts
 import { describe, expect, test } from "bun:test";
 
-import { matchTabHistory } from "../../../../src/lib/global-search/surfaces/tab-history";
 import type { TabEntry } from "../../../../src/stores/tab-store";
+
+import { matchTabHistory } from "../../../../src/lib/global-search/surfaces/tab-history";
 
 describe("matchTabHistory", () => {
   const state = {

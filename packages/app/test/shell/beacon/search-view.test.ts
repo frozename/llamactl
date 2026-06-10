@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
 import type { LucideIcon } from "lucide-react";
+
+import { describe, expect, test } from "bun:test";
 import { lazy } from "react";
 
 import { APP_MODULES, type AppModule } from "../../../src/modules/registry";

@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
 import type { NodeClient } from "@llamactl/remote";
+
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,12 +37,12 @@ function withCapturedIo<T>(
   let stderr = "";
   const stdoutOrig = process.stdout.write.bind(process.stdout);
   const stderrOrig = process.stderr.write.bind(process.stderr);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   process.stdout.write = (chunk: string | Uint8Array): boolean => {
     stdout += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   process.stderr.write = (chunk: string | Uint8Array): boolean => {
     stderr += typeof chunk === "string" ? chunk : String(chunk);
     return true;
@@ -49,9 +50,8 @@ function withCapturedIo<T>(
   return fn()
     .then((result) => ({ result, stdout, stderr }))
     .finally(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       process.stdout.write = stdoutOrig;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       process.stderr.write = stderrOrig;
     });
 }

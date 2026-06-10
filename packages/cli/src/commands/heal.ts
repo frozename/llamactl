@@ -13,9 +13,10 @@ import {
   type Tier,
 } from "@llamactl/agents";
 import { readFileSync } from "node:fs";
-import { required } from "../required.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { required } from "../required.js";
 
 const USAGE = `llamactl heal — observe + journal fleet health + propose/auto-remediate
 

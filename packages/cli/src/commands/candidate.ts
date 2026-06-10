@@ -1,5 +1,4 @@
 import { type bench, candidateTest, type pull } from "@llamactl/core";
-import { required } from "../required.js";
 
 import {
   getGlobals,
@@ -8,6 +7,7 @@ import {
   matchDoneEvent,
   subscribeRemote,
 } from "../dispatcher.js";
+import { required } from "../required.js";
 
 const USAGE = `Usage: llamactl candidate <subcommand>
 

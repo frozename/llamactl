@@ -1,8 +1,8 @@
 import { config as cfgMod, makePinnedFetch } from "@llamactl/remote";
-import { required } from "../required.js";
-import { hasBoolean, hasString, isRecord } from "../runtime-shape.js";
 
 import { getGlobals, isLocalDispatch } from "../dispatcher.js";
+import { required } from "../required.js";
+import { hasBoolean, hasString, isRecord } from "../runtime-shape.js";
 
 /**
  * `llamactl --node <n> agent rollback`

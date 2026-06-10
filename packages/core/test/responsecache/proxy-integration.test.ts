@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import type { PeerNode } from "../../../remote/src/config/peers.js";
 import type { AnthropicMessagesRequest } from "../../src/anthropic/types.js";
+import type { ResolvedEnv } from "../../src/types.js";
 import type { PeerSnapshot } from "../../src/workloadRuntime.js";
 
 import { translateAnthropicRequest } from "../../src/anthropic/translateRequest.js";
@@ -16,7 +17,6 @@ import {
   openResponseCacheStorage,
   ResponseCacheRegistry,
 } from "../../src/responsecache/index.js";
-import type { ResolvedEnv } from "../../src/types.js";
 
 interface TempRuntime {
   root: string;

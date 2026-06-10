@@ -29,6 +29,8 @@ export default tseslint.config(
       "bun.lock",
       "docs/notes/**",
       "packages/train/vendor/**",
+      "packages/train/.spike-work/**",
+      "**/.venv/**",
       "packages/app/release/**",
     ],
   },

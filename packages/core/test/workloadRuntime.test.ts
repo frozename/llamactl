@@ -3,8 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { writeModelHostState } from "../src/engines/state.js";
 import type { ResolvedEnv } from "../src/types.js";
+
+import { writeModelHostState } from "../src/engines/state.js";
 import {
   ensureWorkloadRuntimeDir,
   listLocalRoutes,

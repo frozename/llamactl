@@ -1,8 +1,9 @@
 // packages/app/test/lib/global-search/surfaces/workloads.test.ts
 import { describe, expect, test } from "bun:test";
 
-import { matchWorkloads } from "../../../../src/lib/global-search/surfaces/workloads";
 import type { TabEntry } from "../../../../src/stores/tab-store";
+
+import { matchWorkloads } from "../../../../src/lib/global-search/surfaces/workloads";
 
 describe("matchWorkloads", () => {
   const items = [

@@ -2,10 +2,10 @@ import { probeNodeMem, projectAdmissionHeadroom } from "@llamactl/fleet-supervis
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import yaml from "yaml";
-import { required } from "../required.js";
-import { isRecord } from "../runtime-shape.js";
 
 import { readMeasuredMemoryCache } from "../../../fleet-supervisor/src/measured-memory.js";
+import { required } from "../required.js";
+import { isRecord } from "../runtime-shape.js";
 import { runAdmitMeasure } from "./admit-measure.js";
 
 function requireFinite(value: number, flag: string): number {

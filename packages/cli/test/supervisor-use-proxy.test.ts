@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { ModelHostManifest } from "../../remote/src/workload/modelhost-schema.js";
 import type { ModelRun } from "../../remote/src/workload/schema.js";
+
 import { resolveWorkloadTargetsAtStartup, resolveWorkloadUrl } from "../src/commands/supervisor.js";
 
 function modelRun(useProxy: boolean | undefined): ModelRun {

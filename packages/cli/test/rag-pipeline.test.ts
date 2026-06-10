@@ -27,12 +27,12 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{ result: T; cap: Captur
   const chunks: Captured = { out: "", err: "" };
   const origOut = process.stdout.write.bind(process.stdout);
   const origErr = process.stderr.write.bind(process.stderr);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   process.stdout.write = (s: string | Uint8Array): boolean => {
     chunks.out += typeof s === "string" ? s : String(s);
     return true;
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   process.stderr.write = (s: string | Uint8Array): boolean => {
     chunks.err += typeof s === "string" ? s : String(s);
     return true;
@@ -40,9 +40,8 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{ result: T; cap: Captur
   return fn()
     .then((result) => ({ result, cap: chunks }))
     .finally(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       process.stdout.write = origOut;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       process.stderr.write = origErr;
     });
 }
@@ -128,7 +127,6 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
     ragPipelineGet: { query: stubs.ragPipelineGet },
     ragPipelineRemove: { mutate: stubs.ragPipelineRemove },
     ragPipelineDraft: { query: stubs.ragPipelineDraft },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as unknown as NodeClient;
 }
 

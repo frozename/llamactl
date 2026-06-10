@@ -54,12 +54,12 @@ async function capture(fn: () => Promise<number>): Promise<{
   const origErr = process.stderr.write;
   let stdout = "";
   let stderr = "";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   process.stdout.write = (chunk: unknown) => {
     stdout += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   process.stderr.write = (chunk: unknown) => {
     stderr += typeof chunk === "string" ? chunk : String(chunk);
     return true;

@@ -1,9 +1,9 @@
 import type { NodeClient } from "@llamactl/remote";
-import { required } from "../required.js";
 
 import { config as kubecfg, resolveNodeKind } from "@llamactl/remote";
 
 import { getNodeClient } from "../dispatcher.js";
+import { required } from "../required.js";
 
 const USAGE = `Usage: llamactl rag <subcommand>
 

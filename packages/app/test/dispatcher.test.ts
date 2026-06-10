@@ -6,8 +6,9 @@ import {
 } from "@llamactl/remote";
 import { afterAll, describe, expect, test } from "bun:test";
 
-import { type Cluster, makeCluster } from "../../remote/test/helpers";
 import type { buildDispatcherRouter } from "../electron/trpc/dispatcher";
+
+import { type Cluster, makeCluster } from "../../remote/test/helpers";
 
 let cluster: Cluster | null = null;
 

@@ -1,4 +1,5 @@
 import type { CuratedModel } from "./schemas.js";
+
 import { findByRel, listCatalog } from "./catalog.js";
 import { classifyRepo } from "./discovery.js";
 import { resolveEnv } from "./env.js";

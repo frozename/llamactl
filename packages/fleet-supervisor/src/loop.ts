@@ -6,8 +6,8 @@ import type {
 import type {
   FleetHeartbeatEntry,
   FleetJournalEntry,
-  FleetProposalEntry,
   FleetPressureStatusEntry,
+  FleetProposalEntry,
   FleetSnapshotEntry,
   FleetTransitionEntry,
   NodeMemSnapshot,

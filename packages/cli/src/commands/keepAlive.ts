@@ -1,8 +1,8 @@
 import { env as envMod, keepAlive } from "@llamactl/core";
 import { spawn } from "node:child_process";
-import { required } from "../required.js";
 
 import { getGlobals, getNodeClient, isLocalDispatch } from "../dispatcher.js";
+import { required } from "../required.js";
 import { resolveWorkloadName } from "./_workload-resolve.js";
 
 const USAGE = `Usage: llamactl keep-alive <subcommand>

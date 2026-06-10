@@ -1,12 +1,12 @@
-/* eslint-disable no-console -- CLI output test temporarily captures console.log. */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import type { FleetJournalEntry } from "../src/types.js";
+
 import { runFleet } from "../../cli/src/commands/fleet.js";
 import { collectLatestSnapshots, collectProposals } from "../../mcp/src/tools/fleet.js";
-import type { FleetJournalEntry } from "../src/types.js";
 
 let dir = "";
 
@@ -81,19 +81,22 @@ describe("journal schema forward-compat", () => {
       { kind: "fleet-heartbeat", ts: "2026-05-25T17:00:30Z", node: "local" },
     ]);
 
+    // journal-tail writes via process.stdout.write (no-console rule), so the
+    // capture must wrap stdout rather than console.log.
     const lines: string[] = [];
-    const orig = console.log;
-    console.log = ((...args: unknown[]) => {
-      lines.push(args.map((x) => String(x)).join(" "));
-    }) as typeof console.log;
+    const orig = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: string | Uint8Array) => {
+      lines.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
     try {
       const code = await runFleet(["journal-tail", "--journal", journalPath]);
       expect(code).toBe(0);
-      const out = lines.join("\n");
+      const out = lines.join("");
       expect(out).toContain("fleet-placement");
       expect(out).toContain("fleet-heartbeat");
     } finally {
-      console.log = orig;
+      process.stdout.write = orig;
     }
   });
 });

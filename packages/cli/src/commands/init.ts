@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { required } from "../required.js";
 /**
  * `llamactl init` — first-run onboarding.
  *
@@ -34,6 +33,8 @@ import { required } from "../required.js";
  */
 import { createInterface, type Interface as ReadlineInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+
+import { required } from "../required.js";
 
 type RuntimeKind = "docker" | "kubernetes";
 type TemplateKey = "chroma-only" | "pgvector-with-embedder" | "chroma-plus-workload";

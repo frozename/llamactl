@@ -1,10 +1,10 @@
 import { config as cfgMod, makePinnedFetch } from "@llamactl/remote";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { required } from "../required.js";
-import { hasBoolean, hasNumber, hasString, isRecord } from "../runtime-shape.js";
 
 import { getGlobals, isLocalDispatch } from "../dispatcher.js";
+import { required } from "../required.js";
+import { hasBoolean, hasNumber, hasString, isRecord } from "../runtime-shape.js";
 
 /**
  * `llamactl agent update --node <n> [--binary <path> | --from-release vX.Y]`

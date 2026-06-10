@@ -3,11 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { ResolvedEnv } from "../src/types.js";
 import type { PeerSnapshot } from "../src/workloadRuntime.js";
 
 import { resolveEnv } from "../src/env.js";
 import { openaiProxy } from "../src/index.js";
-import type { ResolvedEnv } from "../src/types.js";
 
 const originalFetch = globalThis.fetch;
 

@@ -1,7 +1,7 @@
-import { resolve } from "node:path";
-import { defineConfig } from "electron-vite";
-import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "electron-vite";
+import { resolve } from "node:path";
 
 // Bundle everything except `electron` itself into the main/preload
 // outputs. The historical default here is `externalizeDepsPlugin` (keep

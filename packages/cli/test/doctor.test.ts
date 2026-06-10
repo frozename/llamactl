@@ -18,7 +18,7 @@ import { type CheckResult, type DoctorDeps, runDoctor } from "../src/commands/do
 function captureStdout<T>(fn: () => Promise<T>): Promise<{ result: T; out: string }> {
   const chunks: string[] = [];
   const original = process.stdout.write.bind(process.stdout);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   process.stdout.write = (s: string | Uint8Array): boolean => {
     chunks.push(typeof s === "string" ? s : String(s));
     return true;
@@ -26,7 +26,6 @@ function captureStdout<T>(fn: () => Promise<T>): Promise<{ result: T; out: strin
   return fn()
     .then((result) => ({ result, out: chunks.join("") }))
     .finally(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       process.stdout.write = original;
     });
 }

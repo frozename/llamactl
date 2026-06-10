@@ -1,8 +1,9 @@
 // packages/app/test/lib/global-search/ranking.test.ts
 import { describe, expect, test } from "bun:test";
 
-import { applySurfaceBias, sortGroups } from "../../../src/lib/global-search/ranking";
 import type { Hit } from "../../../src/lib/global-search/types";
+
+import { applySurfaceBias, sortGroups } from "../../../src/lib/global-search/ranking";
 
 describe("ranking", () => {
   test("applySurfaceBias adds 0.1 to tier 1 surfaces", () => {

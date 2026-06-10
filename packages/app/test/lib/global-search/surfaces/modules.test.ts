@@ -1,8 +1,9 @@
 // packages/app/test/lib/global-search/surfaces/modules.test.ts
 import { describe, expect, test } from "bun:test";
 
-import { matchModules } from "../../../../src/lib/global-search/surfaces/modules";
 import type { TabEntry } from "../../../../src/stores/tab-store";
+
+import { matchModules } from "../../../../src/lib/global-search/surfaces/modules";
 
 describe("matchModules", () => {
   test("matches by prefix with higher score", () => {

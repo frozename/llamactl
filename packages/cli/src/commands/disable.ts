@@ -1,5 +1,5 @@
-import { setWorkloadEnabled } from "./setEnabled.js";
 import { required } from "../required.js";
+import { setWorkloadEnabled } from "./setEnabled.js";
 
 const USAGE = `Usage: llamactl disable <workload>
 

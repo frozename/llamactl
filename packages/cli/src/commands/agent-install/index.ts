@@ -1,5 +1,4 @@
 import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:child_process";
-import { required } from "../../required.js";
 
 import { infraArtifactsFetch } from "@llamactl/remote";
 import { spawnSync as nodeSpawnSync } from "node:child_process";
@@ -18,6 +17,7 @@ import {
 import { hostname, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 
+import { required } from "../../required.js";
 import {
   agentBinaryPath,
   ALLOWED_PLATFORMS,

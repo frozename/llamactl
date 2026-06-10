@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { APP_MODULES, type AppModule } from "@/modules/registry";
 import { useTabStore } from "@/stores/tab-store";
 
-import { useAppCommands } from "./commands";
 import { useCommandPaletteOpen } from "./command-palette-state";
+import { useAppCommands } from "./commands";
 
 /**
  * VSCode-style command palette. Opens on ⌘⇧P or ⌘K (Ctrl+Shift+P /

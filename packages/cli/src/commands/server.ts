@@ -1,6 +1,5 @@
 import { env as envMod, server, serverLogs as serverLogsMod } from "@llamactl/core";
 import { type workloadSchema, workloadStore } from "@llamactl/remote";
-import { required } from "../required.js";
 
 import {
   getGlobals,
@@ -10,6 +9,7 @@ import {
   resolveEffectiveNodeName,
   subscribeRemote,
 } from "../dispatcher.js";
+import { required } from "../required.js";
 import { resolveWorkloadName } from "./_workload-resolve.js";
 
 const USAGE = `Usage: llamactl server <subcommand>

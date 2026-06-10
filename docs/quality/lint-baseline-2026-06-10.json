@@ -1,156 +1,28 @@
 {
   "totals": {
-    "errors": 4249,
-    "warnings": 2644
+    "errors": 1709,
+    "warnings": 2588
   },
   "byRule": {
     "security/detect-non-literal-fs-filename": {
       "errors": 0,
-      "warnings": 1367
-    },
-    "@typescript-eslint/no-dynamic-delete": {
-      "errors": 63,
-      "warnings": 0
+      "warnings": 1369
     },
     "@typescript-eslint/explicit-function-return-type": {
       "errors": 0,
-      "warnings": 700
-    },
-    "@typescript-eslint/restrict-template-expressions": {
-      "errors": 705,
-      "warnings": 0
-    },
-    "@typescript-eslint/use-unknown-in-catch-callback-variable": {
-      "errors": 9,
-      "warnings": 0
-    },
-    "@typescript-eslint/require-await": {
-      "errors": 761,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-unnecessary-type-conversion": {
-      "errors": 17,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "errors": 71,
-      "warnings": 0
-    },
-    "@typescript-eslint/prefer-nullish-coalescing": {
-      "errors": 47,
-      "warnings": 0
+      "warnings": 703
     },
     "sonarjs/cognitive-complexity": {
       "errors": 0,
-      "warnings": 234
+      "warnings": 236
     },
     "max-lines-per-function": {
       "errors": 0,
-      "warnings": 105
-    },
-    "@typescript-eslint/no-unnecessary-condition": {
-      "errors": 288,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "errors": 125,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "errors": 449,
-      "warnings": 0
-    },
-    "regexp/no-unused-capturing-group": {
-      "errors": 8,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "errors": 274,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-unnecessary-type-parameters": {
-      "errors": 8,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-empty-function": {
-      "errors": 225,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-non-null-assertion": {
-      "errors": 190,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-redundant-type-constituents": {
-      "errors": 14,
-      "warnings": 0
-    },
-    "@typescript-eslint/unbound-method": {
-      "errors": 31,
-      "warnings": 0
-    },
-    "@typescript-eslint/await-thenable": {
-      "errors": 68,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-confusing-void-expression": {
-      "errors": 70,
-      "warnings": 0
-    },
-    "(no-rule-id)": {
-      "errors": 6,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-floating-promises": {
-      "errors": 31,
-      "warnings": 0
+      "warnings": 107
     },
     "@typescript-eslint/no-explicit-any": {
-      "errors": 129,
-      "warnings": 193
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "errors": 213,
-      "warnings": 0
-    },
-    "@typescript-eslint/only-throw-error": {
-      "errors": 5,
-      "warnings": 0
-    },
-    "react-hooks/set-state-in-effect": {
-      "errors": 9,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-misused-promises": {
-      "errors": 8,
-      "warnings": 0
-    },
-    "eqeqeq": {
-      "errors": 24,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-base-to-string": {
-      "errors": 20,
-      "warnings": 0
-    },
-    "no-constant-binary-expression": {
-      "errors": 1,
-      "warnings": 0
-    },
-    "@typescript-eslint/switch-exhaustiveness-check": {
-      "errors": 13,
-      "warnings": 0
-    },
-    "react-refresh/only-export-components": {
-      "errors": 9,
-      "warnings": 0
-    },
-    "react/jsx-no-comment-textnodes": {
-      "errors": 4,
-      "warnings": 0
-    },
-    "react/no-unescaped-entities": {
-      "errors": 8,
-      "warnings": 0
+      "errors": 0,
+      "warnings": 130
     },
     "unicorn/no-for-loop": {
       "errors": 0,
@@ -158,39 +30,11 @@
     },
     "react-hooks/exhaustive-deps": {
       "errors": 0,
-      "warnings": 2
-    },
-    "no-alert": {
-      "errors": 1,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-deprecated": {
-      "errors": 51,
-      "warnings": 0
-    },
-    "react-hooks/purity": {
-      "errors": 3,
-      "warnings": 0
-    },
-    "react-hooks/refs": {
-      "errors": 5,
-      "warnings": 0
+      "warnings": 3
     },
     "unicorn/prefer-set-has": {
       "errors": 0,
       "warnings": 2
-    },
-    "no-fallthrough": {
-      "errors": 2,
-      "warnings": 0
-    },
-    "no-useless-escape": {
-      "errors": 42,
-      "warnings": 0
-    },
-    "no-console": {
-      "errors": 73,
-      "warnings": 0
     },
     "@typescript-eslint/explicit-module-boundary-types": {
       "errors": 0,
@@ -200,56 +44,44 @@
       "errors": 0,
       "warnings": 7
     },
-    "@typescript-eslint/no-require-imports": {
-      "errors": 18,
-      "warnings": 0
-    },
     "no-warning-comments": {
       "errors": 0,
       "warnings": 3
     },
-    "@typescript-eslint/prefer-promise-reject-errors": {
-      "errors": 12,
-      "warnings": 0
-    },
     "@typescript-eslint/consistent-type-imports": {
       "errors": 0,
-      "warnings": 27
+      "warnings": 24
     },
-    "@typescript-eslint/restrict-plus-operands": {
-      "errors": 14,
+    "@typescript-eslint/prefer-nullish-coalescing": {
+      "errors": 26,
       "warnings": 0
     },
-    "no-empty": {
-      "errors": 50,
+    "@typescript-eslint/restrict-template-expressions": {
+      "errors": 166,
       "warnings": 0
     },
-    "@typescript-eslint/no-misused-spread": {
-      "errors": 19,
+    "@typescript-eslint/no-unnecessary-condition": {
+      "errors": 107,
       "warnings": 0
     },
-    "@typescript-eslint/no-unused-expressions": {
-      "errors": 2,
+    "@typescript-eslint/require-await": {
+      "errors": 412,
       "warnings": 0
     },
-    "import-x/no-duplicates": {
-      "errors": 2,
+    "@typescript-eslint/no-unsafe-assignment": {
+      "errors": 160,
       "warnings": 0
     },
-    "regexp/no-super-linear-backtracking": {
-      "errors": 10,
+    "@typescript-eslint/no-unsafe-member-access": {
+      "errors": 183,
       "warnings": 0
     },
-    "@typescript-eslint/prefer-optional-chain": {
-      "errors": 2,
+    "@typescript-eslint/no-unsafe-call": {
+      "errors": 67,
       "warnings": 0
     },
-    "@typescript-eslint/array-type": {
-      "errors": 1,
-      "warnings": 0
-    },
-    "@typescript-eslint/no-empty-object-type": {
-      "errors": 1,
+    "@typescript-eslint/no-unsafe-argument": {
+      "errors": 34,
       "warnings": 0
     },
     "perfectionist/sort-imports": {
@@ -260,11 +92,115 @@
       "errors": 1,
       "warnings": 0
     },
+    "@typescript-eslint/no-non-null-assertion": {
+      "errors": 83,
+      "warnings": 0
+    },
+    "@typescript-eslint/unbound-method": {
+      "errors": 20,
+      "warnings": 0
+    },
+    "@typescript-eslint/no-empty-function": {
+      "errors": 149,
+      "warnings": 0
+    },
+    "@typescript-eslint/use-unknown-in-catch-callback-variable": {
+      "errors": 1,
+      "warnings": 0
+    },
+    "@typescript-eslint/prefer-optional-chain": {
+      "errors": 1,
+      "warnings": 0
+    },
+    "@typescript-eslint/switch-exhaustiveness-check": {
+      "errors": 1,
+      "warnings": 0
+    },
+    "@typescript-eslint/no-deprecated": {
+      "errors": 3,
+      "warnings": 0
+    },
+    "@typescript-eslint/no-unsafe-return": {
+      "errors": 24,
+      "warnings": 0
+    },
+    "regexp/no-unused-capturing-group": {
+      "errors": 1,
+      "warnings": 0
+    },
+    "regexp/no-super-linear-backtracking": {
+      "errors": 1,
+      "warnings": 0
+    },
+    "@typescript-eslint/only-throw-error": {
+      "errors": 3,
+      "warnings": 0
+    },
+    "@typescript-eslint/no-require-imports": {
+      "errors": 10,
+      "warnings": 0
+    },
     "@typescript-eslint/prefer-as-const": {
       "errors": 1,
       "warnings": 0
     },
+    "@typescript-eslint/no-misused-spread": {
+      "errors": 18,
+      "warnings": 0
+    },
+    "@typescript-eslint/no-base-to-string": {
+      "errors": 2,
+      "warnings": 0
+    },
+    "@typescript-eslint/no-unnecessary-type-parameters": {
+      "errors": 2,
+      "warnings": 0
+    },
+    "no-useless-escape": {
+      "errors": 3,
+      "warnings": 0
+    },
+    "no-empty": {
+      "errors": 10,
+      "warnings": 0
+    },
+    "eqeqeq": {
+      "errors": 10,
+      "warnings": 0
+    },
+    "no-console": {
+      "errors": 12,
+      "warnings": 0
+    },
+    "@typescript-eslint/no-floating-promises": {
+      "errors": 22,
+      "warnings": 0
+    },
+    "@typescript-eslint/restrict-plus-operands": {
+      "errors": 1,
+      "warnings": 0
+    },
     "@typescript-eslint/no-invalid-void-type": {
+      "errors": 1,
+      "warnings": 0
+    },
+    "@typescript-eslint/prefer-promise-reject-errors": {
+      "errors": 11,
+      "warnings": 0
+    },
+    "@typescript-eslint/no-dynamic-delete": {
+      "errors": 31,
+      "warnings": 0
+    },
+    "@typescript-eslint/await-thenable": {
+      "errors": 48,
+      "warnings": 0
+    },
+    "@typescript-eslint/no-confusing-void-expression": {
+      "errors": 48,
+      "warnings": 0
+    },
+    "@typescript-eslint/no-misused-promises": {
       "errors": 1,
       "warnings": 0
     },
@@ -283,27 +219,27 @@
       "warnings": 0
     },
     "packages/agents/demos/demo-audit.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 2
     },
     "packages/agents/demos/demo-cost-clamp.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 2
     },
     "packages/agents/demos/demo-failover.ts": {
-      "errors": 16,
+      "errors": 0,
       "warnings": 5
     },
     "packages/agents/demos/demo-onboard.ts": {
-      "errors": 10,
+      "errors": 0,
       "warnings": 4
     },
     "packages/agents/src/cost-guardian/config.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/agents/src/cost-guardian/journal.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/agents/src/cost-guardian/state.ts": {
@@ -311,47 +247,47 @@
       "warnings": 1
     },
     "packages/agents/src/cost-guardian/tick.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/agents/src/cost-guardian/webhook.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/agents/src/harness.ts": {
-      "errors": 18,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 2
     },
     "packages/agents/src/healer/composites.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 1
     },
     "packages/agents/src/healer/execute.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/agents/src/healer/facade-probe.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 1
     },
     "packages/agents/src/healer/journal.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/agents/src/healer/loop.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 3
     },
     "packages/agents/src/healer/probe.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 3
     },
     "packages/agents/src/healer/remediation.ts": {
-      "errors": 5,
-      "warnings": 0
+      "errors": 0,
+      "warnings": 1
     },
     "packages/agents/src/healer/severity.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/agents/src/index.ts": {
@@ -359,15 +295,15 @@
       "warnings": 0
     },
     "packages/agents/src/runbooks/audit-fleet.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/agents/src/runbooks/cost-snapshot.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 0
     },
     "packages/agents/src/runbooks/drain-node.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/agents/src/runbooks/index.ts": {
@@ -375,63 +311,63 @@
       "warnings": 0
     },
     "packages/agents/src/runbooks/onboard-new-gpu-node.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/agents/src/runbooks/promote-fastest-vision-model.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 0
     },
     "packages/agents/src/types.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/agents/test/audit-fleet.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 1
     },
     "packages/agents/test/cost-guardian-webhook.test.ts": {
-      "errors": 33,
+      "errors": 0,
       "warnings": 7
     },
     "packages/agents/test/cost-guardian.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 4
     },
     "packages/agents/test/cost-snapshot.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 0
     },
     "packages/agents/test/drain-node.test.ts": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 0
     },
     "packages/agents/test/e2e-golden-path.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 1
     },
     "packages/agents/test/healer-composite-remediation.test.ts": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 3
     },
     "packages/agents/test/healer-e2e.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 4
     },
     "packages/agents/test/healer-remediation.test.ts": {
-      "errors": 8,
+      "errors": 0,
       "warnings": 5
     },
     "packages/agents/test/healer.test.ts": {
-      "errors": 18,
+      "errors": 0,
       "warnings": 3
     },
     "packages/agents/test/onboard-new-gpu-node.test.ts": {
-      "errors": 9,
+      "errors": 0,
       "warnings": 0
     },
     "packages/agents/test/promote-fastest-vision-model.test.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 1
     },
     "packages/agents/test/severity-composite.test.ts": {
@@ -443,23 +379,23 @@
       "warnings": 0
     },
     "packages/app/electron.vite.config.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/electron/main.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/electron/preload.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/electron/shims/bun-sqlite.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/electron/shims/bun.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/electron/trpc/cross-node-fan-out.ts": {
@@ -467,8 +403,8 @@
       "warnings": 0
     },
     "packages/app/electron/trpc/dispatcher.ts": {
-      "errors": 78,
-      "warnings": 14
+      "errors": 0,
+      "warnings": 8
     },
     "packages/app/electron/trpc/node-pinned-fetch.ts": {
       "errors": 0,
@@ -491,12 +427,12 @@
       "warnings": 0
     },
     "packages/app/src/hooks/workload-selection.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/lib/global-search/hooks/use-global-search.ts": {
-      "errors": 22,
-      "warnings": 13
+      "errors": 0,
+      "warnings": 5
     },
     "packages/app/src/lib/global-search/orchestrator.ts": {
       "errors": 0,
@@ -515,11 +451,11 @@
       "warnings": 0
     },
     "packages/app/src/lib/global-search/surfaces/logs-rag.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/lib/global-search/surfaces/logs.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/lib/global-search/surfaces/modules.ts": {
@@ -555,43 +491,47 @@
       "warnings": 1
     },
     "packages/app/src/lib/ipc-link.ts": {
-      "errors": 12,
-      "warnings": 8
+      "errors": 0,
+      "warnings": 2
     },
     "packages/app/src/lib/trpc.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/app/src/lib/use-ops-session.ts": {
-      "errors": 2,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/src/main.tsx": {
       "errors": 0,
       "warnings": 0
     },
     "packages/app/src/modules/bench/index.tsx": {
-      "errors": 15,
+      "errors": 0,
       "warnings": 7
     },
     "packages/app/src/modules/chat/index.tsx": {
-      "errors": 20,
-      "warnings": 17
+      "errors": 0,
+      "warnings": 18
     },
     "packages/app/src/modules/composites/index.tsx": {
-      "errors": 8,
+      "errors": 0,
       "warnings": 5
     },
     "packages/app/src/modules/cost/index.tsx": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 2
     },
     "packages/app/src/modules/dashboard/NodeMap.tsx": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/modules/dashboard/NodeMapVariants.tsx": {
-      "errors": 5,
+      "errors": 0,
+      "warnings": 0
+    },
+    "packages/app/src/modules/dashboard/NodeMapVariantsData.ts": {
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/modules/dashboard/ThemedNodeMap.tsx": {
@@ -599,43 +539,47 @@
       "warnings": 0
     },
     "packages/app/src/modules/dashboard/index.tsx": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 2
     },
     "packages/app/src/modules/knowledge/index.tsx": {
-      "errors": 11,
-      "warnings": 10
+      "errors": 0,
+      "warnings": 9
     },
     "packages/app/src/modules/knowledge/pipeline-wizard.tsx": {
-      "errors": 10,
+      "errors": 0,
       "warnings": 4
     },
     "packages/app/src/modules/knowledge/pipelines-tab.tsx": {
-      "errors": 15,
+      "errors": 0,
       "warnings": 5
     },
     "packages/app/src/modules/knowledge/quality-tab.tsx": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 1
     },
     "packages/app/src/modules/lmstudio/index.tsx": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 2
     },
     "packages/app/src/modules/logs/index.tsx": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/app/src/modules/models/index.tsx": {
-      "errors": 4,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 1
+    },
+    "packages/app/src/modules/models/store.ts": {
+      "errors": 0,
+      "warnings": 1
     },
     "packages/app/src/modules/nodes/index.tsx": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 4
     },
     "packages/app/src/modules/ops-chat/index.tsx": {
-      "errors": 17,
+      "errors": 0,
       "warnings": 2
     },
     "packages/app/src/modules/ops-sessions/delete-confirm.tsx": {
@@ -658,9 +602,13 @@
       "errors": 0,
       "warnings": 0
     },
-    "packages/app/src/modules/ops/detail/iteration-card.tsx": {
-      "errors": 4,
+    "packages/app/src/modules/ops/detail/iteration-card-helpers.ts": {
+      "errors": 0,
       "warnings": 0
+    },
+    "packages/app/src/modules/ops/detail/iteration-card.tsx": {
+      "errors": 0,
+      "warnings": 1
     },
     "packages/app/src/modules/ops/detail/node-detail.tsx": {
       "errors": 0,
@@ -675,7 +623,7 @@
       "warnings": 0
     },
     "packages/app/src/modules/ops/detail/session-header.tsx": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/modules/ops/detail/workload-detail.tsx": {
@@ -683,27 +631,27 @@
       "warnings": 0
     },
     "packages/app/src/modules/ops/ops-executor-picker.tsx": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/modules/pipelines/index.tsx": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 11
     },
     "packages/app/src/modules/plan/index.tsx": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 2
     },
     "packages/app/src/modules/presets/index.tsx": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 2
     },
     "packages/app/src/modules/projects/index.tsx": {
-      "errors": 10,
-      "warnings": 10
+      "errors": 0,
+      "warnings": 11
     },
     "packages/app/src/modules/pulls/index.tsx": {
-      "errors": 10,
+      "errors": 0,
       "warnings": 8
     },
     "packages/app/src/modules/registry.ts": {
@@ -711,11 +659,11 @@
       "warnings": 0
     },
     "packages/app/src/modules/server/index.tsx": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 6
     },
     "packages/app/src/modules/settings/index.tsx": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 3
     },
     "packages/app/src/modules/settings/project-scan-roots.ts": {
@@ -727,7 +675,7 @@
       "warnings": 1
     },
     "packages/app/src/modules/workloads/index.tsx": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 3
     },
     "packages/app/src/modules/workloads/placeholder.tsx": {
@@ -755,11 +703,11 @@
       "warnings": 0
     },
     "packages/app/src/shell/beacon/explorer-tree.tsx": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 1
     },
     "packages/app/src/shell/beacon/first-run-tip.tsx": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/shell/beacon/fleet-view.tsx": {
@@ -767,16 +715,16 @@
       "warnings": 0
     },
     "packages/app/src/shell/beacon/layout.tsx": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 2
     },
     "packages/app/src/shell/beacon/rail-views.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/shell/beacon/registry-view.ts": {
-      "errors": 1,
-      "warnings": 0
+      "errors": 0,
+      "warnings": 1
     },
     "packages/app/src/shell/beacon/search-modules.ts": {
       "errors": 0,
@@ -787,7 +735,7 @@
       "warnings": 0
     },
     "packages/app/src/shell/beacon/search-view.tsx": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/shell/beacon/session-buckets.ts": {
@@ -795,11 +743,11 @@
       "warnings": 0
     },
     "packages/app/src/shell/beacon/sessions-view.tsx": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/shell/beacon/status-bar.tsx": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/shell/beacon/tab-bar.tsx": {
@@ -815,24 +763,32 @@
       "warnings": 0
     },
     "packages/app/src/shell/beacon/workload-picker.tsx": {
-      "errors": 1,
+      "errors": 0,
+      "warnings": 0
+    },
+    "packages/app/src/shell/command-palette-state.ts": {
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/shell/command-palette.tsx": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 4
     },
     "packages/app/src/shell/commands.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 2
     },
     "packages/app/src/shell/match-snippet.tsx": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
+    "packages/app/src/shell/node-selection.ts": {
+      "errors": 0,
+      "warnings": 2
+    },
     "packages/app/src/shell/node-selector.tsx": {
-      "errors": 8,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/src/shell/theme-provider.tsx": {
       "errors": 0,
@@ -847,11 +803,11 @@
       "warnings": 2
     },
     "packages/app/src/stores/status-bar-store.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/app/src/stores/tab-store.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 9
     },
     "packages/app/src/stores/theme-store.ts": {
@@ -867,11 +823,11 @@
       "warnings": 1
     },
     "packages/app/src/themes/index.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/themes/migrate.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/ui/atmospheric-panel.tsx": {
@@ -882,12 +838,16 @@
       "errors": 0,
       "warnings": 0
     },
-    "packages/app/src/ui/button.tsx": {
-      "errors": 2,
+    "packages/app/src/ui/button-classes.ts": {
+      "errors": 0,
       "warnings": 2
     },
+    "packages/app/src/ui/button.tsx": {
+      "errors": 0,
+      "warnings": 0
+    },
     "packages/app/src/ui/card.tsx": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/ui/classes.ts": {
@@ -915,11 +875,15 @@
       "warnings": 0
     },
     "packages/app/src/ui/lockup.tsx": {
-      "errors": 1,
+      "errors": 0,
+      "warnings": 0
+    },
+    "packages/app/src/ui/sparkline.ts": {
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/ui/stat-card.tsx": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/src/ui/status-dot.tsx": {
@@ -939,35 +903,35 @@
       "warnings": 0
     },
     "packages/app/test/dispatcher.test.ts": {
-      "errors": 36,
+      "errors": 0,
       "warnings": 2
     },
     "packages/app/test/electron/trpc/cross-node-fan-out.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/test/electron/trpc/dispatcher-cross-node.test.ts": {
-      "errors": 31,
-      "warnings": 9
+      "errors": 0,
+      "warnings": 2
     },
     "packages/app/test/hooks/useActiveWorkload.test.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/app/test/lib/global-search/orchestrator.test.ts": {
-      "errors": 2,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/test/lib/global-search/query.test.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/app/test/lib/global-search/ranking.test.ts": {
-      "errors": 2,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/app/test/lib/global-search/surfaces/modules.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/test/lib/global-search/surfaces/sessions-rag.test.ts": {
@@ -975,19 +939,19 @@
       "warnings": 0
     },
     "packages/app/test/lib/global-search/surfaces/tab-history.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/test/lib/global-search/surfaces/workloads.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/test/lib/global-search/use-global-search.test.ts": {
-      "errors": 6,
-      "warnings": 6
+      "errors": 0,
+      "warnings": 3
     },
     "packages/app/test/modules/ops-detail/iteration-card-helpers.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 1
     },
     "packages/app/test/modules/settings/project-scan-roots.test.ts": {
@@ -995,15 +959,15 @@
       "warnings": 0
     },
     "packages/app/test/setup.ts": {
-      "errors": 3,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 2
     },
     "packages/app/test/shell/beacon/dynamic-tab-router.test.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/app/test/shell/beacon/search-view.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/test/shell/beacon/sessions-view.test.ts": {
@@ -1011,7 +975,7 @@
       "warnings": 0
     },
     "packages/app/test/shell/registry-view.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/test/stores/explorer-collapse-store.test.ts": {
@@ -1019,7 +983,7 @@
       "warnings": 0
     },
     "packages/app/test/stores/tab-store.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/app/test/themes/migrate.test.ts": {
@@ -1047,103 +1011,103 @@
       "warnings": 0
     },
     "packages/cli/src/bin.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/src/commands/_workload-resolve.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/src/commands/admit-measure.ts": {
-      "errors": 26,
+      "errors": 0,
       "warnings": 4
     },
     "packages/cli/src/commands/admit.ts": {
-      "errors": 19,
+      "errors": 0,
       "warnings": 3
     },
     "packages/cli/src/commands/agent-install/index.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 4
     },
     "packages/cli/src/commands/agent-install/templates.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/src/commands/agent-rollback.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 2
     },
     "packages/cli/src/commands/agent-rpc-doctor.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 1
     },
     "packages/cli/src/commands/agent-update.ts": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 6
     },
     "packages/cli/src/commands/agent.ts": {
-      "errors": 14,
+      "errors": 0,
       "warnings": 6
     },
     "packages/cli/src/commands/artifacts.ts": {
-      "errors": 15,
+      "errors": 0,
       "warnings": 6
     },
     "packages/cli/src/commands/bench.ts": {
-      "errors": 8,
+      "errors": 0,
       "warnings": 4
     },
     "packages/cli/src/commands/candidate.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 2
     },
     "packages/cli/src/commands/catalog.ts": {
-      "errors": 10,
+      "errors": 0,
       "warnings": 3
     },
     "packages/cli/src/commands/cli-doctor.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 1
     },
     "packages/cli/src/commands/composite.ts": {
-      "errors": 12,
+      "errors": 0,
       "warnings": 5
     },
     "packages/cli/src/commands/controller.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 3
     },
     "packages/cli/src/commands/cost-guardian.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 1
     },
     "packages/cli/src/commands/ctx.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 2
     },
     "packages/cli/src/commands/deploy.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 1
     },
     "packages/cli/src/commands/disable.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/src/commands/discover.ts": {
-      "errors": 4,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/cli/src/commands/doctor.ts": {
-      "errors": 13,
-      "warnings": 8
+      "errors": 0,
+      "warnings": 9
     },
     "packages/cli/src/commands/embersynth.ts": {
-      "errors": 13,
+      "errors": 0,
       "warnings": 1
     },
     "packages/cli/src/commands/enable.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/src/commands/env.ts": {
@@ -1151,79 +1115,79 @@
       "warnings": 0
     },
     "packages/cli/src/commands/eval.ts": {
-      "errors": 9,
-      "warnings": 6
+      "errors": 0,
+      "warnings": 5
     },
     "packages/cli/src/commands/expose.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 2
     },
     "packages/cli/src/commands/fleet.ts": {
-      "errors": 14,
+      "errors": 0,
       "warnings": 8
     },
     "packages/cli/src/commands/heal.ts": {
-      "errors": 8,
+      "errors": 0,
       "warnings": 2
     },
     "packages/cli/src/commands/infra.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 7
     },
     "packages/cli/src/commands/init.ts": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 7
     },
     "packages/cli/src/commands/keepAlive.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 5
     },
     "packages/cli/src/commands/lmstudio.ts": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 2
     },
     "packages/cli/src/commands/node.ts": {
-      "errors": 20,
+      "errors": 0,
       "warnings": 8
     },
     "packages/cli/src/commands/noderun-helpers.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/src/commands/plan.ts": {
-      "errors": 9,
+      "errors": 0,
       "warnings": 1
     },
     "packages/cli/src/commands/project.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 5
     },
     "packages/cli/src/commands/pull.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 2
     },
     "packages/cli/src/commands/rag-bench.ts": {
-      "errors": 10,
+      "errors": 0,
       "warnings": 4
     },
     "packages/cli/src/commands/rag-pipeline.ts": {
-      "errors": 17,
+      "errors": 0,
       "warnings": 12
     },
     "packages/cli/src/commands/rag.ts": {
-      "errors": 12,
+      "errors": 0,
       "warnings": 2
     },
     "packages/cli/src/commands/recommendations.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 1
     },
     "packages/cli/src/commands/runbook.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 1
     },
     "packages/cli/src/commands/server.ts": {
-      "errors": 15,
+      "errors": 0,
       "warnings": 5
     },
     "packages/cli/src/commands/setEnabled.ts": {
@@ -1231,15 +1195,15 @@
       "warnings": 1
     },
     "packages/cli/src/commands/sirius.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 3
     },
     "packages/cli/src/commands/supervisor.ts": {
-      "errors": 53,
-      "warnings": 12
+      "errors": 0,
+      "warnings": 11
     },
     "packages/cli/src/commands/tunnel.ts": {
-      "errors": 9,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/src/commands/uninstall.ts": {
@@ -1247,27 +1211,35 @@
       "warnings": 1
     },
     "packages/cli/src/commands/workload.ts": {
-      "errors": 9,
+      "errors": 0,
       "warnings": 11
     },
     "packages/cli/src/dispatcher.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 3
     },
+    "packages/cli/src/required.ts": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "packages/cli/src/runtime-shape.ts": {
+      "errors": 0,
+      "warnings": 0
+    },
     "packages/cli/src/tunnel-dispatch.ts": {
-      "errors": 8,
+      "errors": 0,
       "warnings": 4
     },
     "packages/cli/test/admit-measure.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 4
     },
     "packages/cli/test/agent-install-launchd.test.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 31
     },
     "packages/cli/test/agent-install-templates.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 4
     },
     "packages/cli/test/agent-noauth-validation.test.ts": {
@@ -1275,11 +1247,11 @@
       "warnings": 0
     },
     "packages/cli/test/agent-rotate-token.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 8
     },
     "packages/cli/test/agent-rpc-doctor.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 14
     },
     "packages/cli/test/agent-tunnel-central-flags.test.ts": {
@@ -1295,27 +1267,27 @@
       "warnings": 4
     },
     "packages/cli/test/benchRunner.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/test/candidate.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/test/catalog.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/test/cli-doctor.test.ts": {
-      "errors": 14,
+      "errors": 0,
       "warnings": 1
     },
     "packages/cli/test/composite.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 3
     },
     "packages/cli/test/controller-e2e.test.ts": {
-      "errors": 12,
+      "errors": 0,
       "warnings": 11
     },
     "packages/cli/test/describe-node.test.ts": {
@@ -1323,7 +1295,7 @@
       "warnings": 0
     },
     "packages/cli/test/dispatcher-tunnel.test.ts": {
-      "errors": 9,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/test/dispatcher.test.ts": {
@@ -1331,79 +1303,79 @@
       "warnings": 0
     },
     "packages/cli/test/doctor.test.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/test/enable-disable.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 5
     },
     "packages/cli/test/env.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/test/expose-e2e.test.ts": {
-      "errors": 17,
+      "errors": 0,
       "warnings": 12
     },
     "packages/cli/test/fleet.test.ts": {
-      "errors": 11,
-      "warnings": 0
+      "errors": 0,
+      "warnings": 1
     },
     "packages/cli/test/helpers.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 1
     },
     "packages/cli/test/infraRollout.test.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 15
     },
     "packages/cli/test/init-roundtrip.test.ts": {
-      "errors": 22,
-      "warnings": 15
+      "errors": 0,
+      "warnings": 14
     },
     "packages/cli/test/init.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 11
     },
     "packages/cli/test/multinode-e2e.test.ts": {
-      "errors": 13,
+      "errors": 0,
       "warnings": 9
     },
     "packages/cli/test/node-add-cloud.test.ts": {
-      "errors": 8,
+      "errors": 0,
       "warnings": 8
     },
     "packages/cli/test/node-add-rag.test.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 4
     },
     "packages/cli/test/node-add-reachability.test.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/test/plan.test.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 1
     },
     "packages/cli/test/project.test.ts": {
-      "errors": 23,
+      "errors": 0,
       "warnings": 1
     },
     "packages/cli/test/pull.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/test/rag-ask.test.ts": {
-      "errors": 31,
+      "errors": 0,
       "warnings": 4
     },
     "packages/cli/test/rag-bench.test.ts": {
-      "errors": 10,
+      "errors": 0,
       "warnings": 3
     },
     "packages/cli/test/rag-pipeline.test.ts": {
-      "errors": 26,
+      "errors": 0,
       "warnings": 7
     },
     "packages/cli/test/remote.test.ts": {
@@ -1411,7 +1383,11 @@
       "warnings": 4
     },
     "packages/cli/test/sirius.test.ts": {
-      "errors": 2,
+      "errors": 0,
+      "warnings": 1
+    },
+    "packages/cli/test/supervisor-audit.test.ts": {
+      "errors": 0,
       "warnings": 1
     },
     "packages/cli/test/supervisor-status.test.ts": {
@@ -1419,19 +1395,19 @@
       "warnings": 2
     },
     "packages/cli/test/supervisor-use-proxy.test.ts": {
-      "errors": 8,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/cli/test/tunnel-dispatch-pinning.test.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 0
     },
     "packages/cli/test/tunnel-dispatch-subscribe.test.ts": {
-      "errors": 20,
+      "errors": 0,
       "warnings": 3
     },
     "packages/cli/test/uninstall.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 13
     },
     "packages/cli/test/workload-apply.test.ts": {
@@ -1439,32 +1415,32 @@
       "warnings": 0
     },
     "packages/cli/test/workload-delete.test.ts": {
-      "errors": 6,
-      "warnings": 8
+      "errors": 0,
+      "warnings": 7
     },
     "packages/cli/test/workload-e2e.test.ts": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 13
     },
     "packages/cli/test/workload-resolve.test.ts": {
-      "errors": 9,
-      "warnings": 9
+      "errors": 0,
+      "warnings": 8
     },
     "packages/core/src/anthropic/index.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/core/src/anthropic/translateRequest.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 1
     },
     "packages/core/src/anthropic/translateResponse.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/src/anthropic/translateStream.ts": {
-      "errors": 10,
-      "warnings": 14
+      "errors": 0,
+      "warnings": 13
     },
     "packages/core/src/anthropic/types.ts": {
       "errors": 0,
@@ -1491,15 +1467,15 @@
       "warnings": 1
     },
     "packages/core/src/bench/runner.ts": {
-      "errors": 8,
+      "errors": 0,
       "warnings": 23
     },
     "packages/core/src/bench/store.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 3
     },
     "packages/core/src/build.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/core/src/cache-identity/canonical.ts": {
@@ -1507,15 +1483,15 @@
       "warnings": 0
     },
     "packages/core/src/candidateTest.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 3
     },
     "packages/core/src/catalog.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 2
     },
     "packages/core/src/catalogWriter.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 1
     },
     "packages/core/src/ctx.ts": {
@@ -1523,7 +1499,7 @@
       "warnings": 0
     },
     "packages/core/src/discovery.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 2
     },
     "packages/core/src/engines/index.ts": {
@@ -1531,35 +1507,35 @@
       "warnings": 0
     },
     "packages/core/src/engines/lifecycle.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/src/engines/llamacpp.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/src/engines/omlx.ts": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 8
     },
     "packages/core/src/engines/state.ts": {
-      "errors": 5,
-      "warnings": 5
+      "errors": 0,
+      "warnings": 6
     },
     "packages/core/src/engines/types.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/core/src/env.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 4
     },
     "packages/core/src/fsAtomic.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 5
     },
     "packages/core/src/hf.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 6
     },
     "packages/core/src/index.ts": {
@@ -1567,7 +1543,7 @@
       "warnings": 0
     },
     "packages/core/src/keepAlive.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 27
     },
     "packages/core/src/kvstore/evictionScore.ts": {
@@ -1591,23 +1567,23 @@
       "warnings": 1
     },
     "packages/core/src/kvstore/slotAllocator.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/core/src/kvstore/slotPath.ts": {
-      "errors": 3,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 2
     },
     "packages/core/src/kvstore/storage.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 3
     },
     "packages/core/src/kvstore/trailer.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 5
     },
     "packages/core/src/kvstore/upstreamSlots.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/src/kvstore/workloadEpoch.ts": {
@@ -1627,15 +1603,15 @@
       "warnings": 0
     },
     "packages/core/src/openaiProxy.ts": {
-      "errors": 23,
+      "errors": 0,
       "warnings": 19
     },
     "packages/core/src/presets.ts": {
-      "errors": 5,
-      "warnings": 4
+      "errors": 0,
+      "warnings": 3
     },
     "packages/core/src/probe.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/src/profile.ts": {
@@ -1643,7 +1619,7 @@
       "warnings": 1
     },
     "packages/core/src/pull.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 8
     },
     "packages/core/src/quant.ts": {
@@ -1651,7 +1627,7 @@
       "warnings": 0
     },
     "packages/core/src/recommendations.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/src/responsecache/deterministic.ts": {
@@ -1675,23 +1651,23 @@
       "warnings": 0
     },
     "packages/core/src/responsecache/storage.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 1
     },
     "packages/core/src/rpcServer.ts": {
-      "errors": 8,
+      "errors": 0,
       "warnings": 16
     },
     "packages/core/src/schemas.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/src/server.ts": {
-      "errors": 13,
+      "errors": 0,
       "warnings": 21
     },
     "packages/core/src/serverLogs.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 7
     },
     "packages/core/src/target.ts": {
@@ -1703,11 +1679,11 @@
       "warnings": 0
     },
     "packages/core/src/uninstall.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 10
     },
     "packages/core/src/workloadRuntime.ts": {
-      "errors": 16,
+      "errors": 0,
       "warnings": 22
     },
     "packages/core/test/advertisedEndpoint.test.ts": {
@@ -1715,19 +1691,19 @@
       "warnings": 0
     },
     "packages/core/test/anthropic.translateRequest.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/test/anthropic.translateResponse.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/test/anthropic.translateStream.test.ts": {
-      "errors": 8,
+      "errors": 0,
       "warnings": 3
     },
     "packages/core/test/autotune.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 5
     },
     "packages/core/test/bench.test.ts": {
@@ -1735,7 +1711,7 @@
       "warnings": 0
     },
     "packages/core/test/benchRunner.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 12
     },
     "packages/core/test/cache-identity/canonical.test.ts": {
@@ -1747,7 +1723,7 @@
       "warnings": 2
     },
     "packages/core/test/catalogWriter.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 2
     },
     "packages/core/test/clusterRoutes.test.ts": {
@@ -1763,23 +1739,23 @@
       "warnings": 0
     },
     "packages/core/test/engines/lifecycle.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 4
     },
     "packages/core/test/engines/llamacpp.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/test/engines/omlx-dflash.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 5
     },
     "packages/core/test/engines/omlx.test.ts": {
-      "errors": 18,
+      "errors": 0,
       "warnings": 12
     },
     "packages/core/test/engines/state.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 1
     },
     "packages/core/test/engines/types.test.ts": {
@@ -1787,11 +1763,11 @@
       "warnings": 0
     },
     "packages/core/test/env.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 17
     },
     "packages/core/test/fsAtomic.test.ts": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 6
     },
     "packages/core/test/helpers.ts": {
@@ -1823,7 +1799,7 @@
       "warnings": 6
     },
     "packages/core/test/kvstore.registry.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 22
     },
     "packages/core/test/kvstore.slotAllocator.test.ts": {
@@ -1835,15 +1811,15 @@
       "warnings": 0
     },
     "packages/core/test/kvstore.storage.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 14
     },
     "packages/core/test/kvstore.trailer.test.ts": {
-      "errors": 3,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 3
     },
     "packages/core/test/kvstore.upstreamSlots.test.ts": {
-      "errors": 14,
+      "errors": 0,
       "warnings": 1
     },
     "packages/core/test/kvstore.workloadEpoch.test.ts": {
@@ -1859,19 +1835,19 @@
       "warnings": 0
     },
     "packages/core/test/openaiProxy.kvcache.test.ts": {
-      "errors": 143,
-      "warnings": 67
+      "errors": 0,
+      "warnings": 66
     },
     "packages/core/test/openaiProxy.test.ts": {
-      "errors": 66,
+      "errors": 0,
       "warnings": 41
     },
     "packages/core/test/presets.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 4
     },
     "packages/core/test/probe.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/core/test/profile.test.ts": {
@@ -1879,7 +1855,7 @@
       "warnings": 0
     },
     "packages/core/test/pull.test.ts": {
-      "errors": 9,
+      "errors": 0,
       "warnings": 2
     },
     "packages/core/test/quant.test.ts": {
@@ -1887,7 +1863,7 @@
       "warnings": 0
     },
     "packages/core/test/recommendations.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 1
     },
     "packages/core/test/responsecache/policy.test.ts": {
@@ -1895,8 +1871,8 @@
       "warnings": 2
     },
     "packages/core/test/responsecache/proxy-integration.test.ts": {
-      "errors": 77,
-      "warnings": 10
+      "errors": 0,
+      "warnings": 8
     },
     "packages/core/test/responsecache/sha.test.ts": {
       "errors": 0,
@@ -1911,35 +1887,35 @@
       "warnings": 6
     },
     "packages/core/test/rpcServer.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 6
     },
     "packages/core/test/server-adoption.test.ts": {
-      "errors": 15,
+      "errors": 0,
       "warnings": 1
     },
     "packages/core/test/server.test.ts": {
-      "errors": 54,
+      "errors": 0,
       "warnings": 46
     },
     "packages/core/test/serverLogs.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 10
     },
     "packages/core/test/uninstall.test.ts": {
-      "errors": 9,
+      "errors": 0,
       "warnings": 23
     },
     "packages/core/test/workloadRuntime.test.ts": {
-      "errors": 16,
+      "errors": 0,
       "warnings": 31
     },
     "packages/eval/src/cli-stub.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 2
     },
     "packages/eval/src/client.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/eval/src/index.ts": {
@@ -1947,15 +1923,15 @@
       "warnings": 0
     },
     "packages/eval/src/matrix/cli.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 2
     },
     "packages/eval/src/matrix/diff.ts": {
-      "errors": 6,
+      "errors": 0,
       "warnings": 1
     },
     "packages/eval/src/matrix/lifecycle.ts": {
-      "errors": 14,
+      "errors": 0,
       "warnings": 6
     },
     "packages/eval/src/matrix/repo-root.ts": {
@@ -1963,31 +1939,31 @@
       "warnings": 2
     },
     "packages/eval/src/matrix/report.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 6
     },
     "packages/eval/src/matrix/runner.ts": {
-      "errors": 6,
-      "warnings": 11
+      "errors": 0,
+      "warnings": 9
     },
     "packages/eval/src/matrix/scoring.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/eval/src/matrix/store.ts": {
-      "errors": 2,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/eval/src/matrix/types.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/eval/src/matrix/workloads/common.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 3
     },
     "packages/eval/src/matrix/workloads/kv-warm-bench.ts": {
-      "errors": 11,
+      "errors": 0,
       "warnings": 3
     },
     "packages/eval/src/matrix/workloads/memory-efficacy-4way-balanced.ts": {
@@ -2003,43 +1979,43 @@
       "warnings": 0
     },
     "packages/eval/src/matrix/workloads/memory-recall.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 1
     },
     "packages/eval/src/matrix/workloads/project-brief-gen.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/eval/src/matrix/workloads/reasoning-mc.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 3
     },
     "packages/eval/src/matrix/workloads/task-refiner-rubric.ts": {
-      "errors": 4,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 2
     },
     "packages/eval/src/matrix/workloads/tool-call-grammar.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/eval/src/report/render-card.ts": {
-      "errors": 9,
+      "errors": 0,
       "warnings": 0
     },
     "packages/eval/src/runners/context-retrieval.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/eval/src/runners/json-output.ts": {
-      "errors": 11,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 2
     },
     "packages/eval/src/runners/throughput.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/eval/src/runners/tool-calling.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/eval/src/score/compose.ts": {
@@ -2047,32 +2023,32 @@
       "warnings": 0
     },
     "packages/eval/src/server.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 1
     },
     "packages/eval/src/store/sqlite.ts": {
-      "errors": 1,
-      "warnings": 1
+      "errors": 0,
+      "warnings": 0
     },
     "packages/eval/test/client.test.ts": {
       "errors": 0,
       "warnings": 0
     },
     "packages/eval/test/json-output.test.ts": {
-      "errors": 2,
-      "warnings": 2
+      "errors": 0,
+      "warnings": 0
     },
     "packages/eval/test/kv-warm-bench.test.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 0
     },
     "packages/eval/test/matrix-diff.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 0
     },
     "packages/eval/test/matrix-lifecycle.test.ts": {
-      "errors": 29,
-      "warnings": 7
+      "errors": 0,
+      "warnings": 5
     },
     "packages/eval/test/matrix-memory-recall.test.ts": {
       "errors": 0,
@@ -2087,7 +2063,7 @@
       "warnings": 0
     },
     "packages/eval/test/matrix-task-refiner.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 0
     },
     "packages/eval/test/matrix-tool-call-grammar.test.ts": {
@@ -2095,7 +2071,7 @@
       "warnings": 0
     },
     "packages/eval/test/matrix.test.ts": {
-      "errors": 13,
+      "errors": 0,
       "warnings": 0
     },
     "packages/eval/test/matrix/reasoning-mc.test.ts": {
@@ -2139,11 +2115,11 @@
       "warnings": 2
     },
     "packages/fleet-supervisor/src/audit-reader.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 3
     },
     "packages/fleet-supervisor/src/executor.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 3
     },
     "packages/fleet-supervisor/src/index.ts": {
@@ -2159,31 +2135,31 @@
       "warnings": 7
     },
     "packages/fleet-supervisor/src/loop.ts": {
-      "errors": 7,
-      "warnings": 8
+      "errors": 0,
+      "warnings": 7
     },
     "packages/fleet-supervisor/src/measured-memory.ts": {
       "errors": 0,
       "warnings": 4
     },
     "packages/fleet-supervisor/src/migration-controller.ts": {
-      "errors": 9,
+      "errors": 0,
       "warnings": 2
     },
     "packages/fleet-supervisor/src/node-probe.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 2
     },
     "packages/fleet-supervisor/src/peer-fetch.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/fleet-supervisor/src/placement.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/fleet-supervisor/src/policy.ts": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 0
     },
     "packages/fleet-supervisor/src/snapshot-reader.ts": {
@@ -2191,7 +2167,7 @@
       "warnings": 2
     },
     "packages/fleet-supervisor/src/status-reader.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 4
     },
     "packages/fleet-supervisor/src/types.ts": {
@@ -2199,7 +2175,7 @@
       "warnings": 0
     },
     "packages/fleet-supervisor/src/workload-probe.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/fleet-supervisor/test/admission-measured.test.ts": {
@@ -2207,7 +2183,7 @@
       "warnings": 0
     },
     "packages/fleet-supervisor/test/aggregator.test.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 12
     },
     "packages/fleet-supervisor/test/aggregatorDb.test.ts": {
@@ -2215,7 +2191,7 @@
       "warnings": 3
     },
     "packages/fleet-supervisor/test/arbitration-conflicts.test.ts": {
-      "errors": 7,
+      "errors": 0,
       "warnings": 5
     },
     "packages/fleet-supervisor/test/audit-reader.test.ts": {
@@ -2223,7 +2199,7 @@
       "warnings": 2
     },
     "packages/fleet-supervisor/test/executor.test.ts": {
-      "errors": 12,
+      "errors": 0,
       "warnings": 0
     },
     "packages/fleet-supervisor/test/fleetSnapshotRoute.test.ts": {
@@ -2231,35 +2207,35 @@
       "warnings": 2
     },
     "packages/fleet-supervisor/test/journal.test.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 2
     },
     "packages/fleet-supervisor/test/journalSchema.test.ts": {
-      "errors": 7,
-      "warnings": 4
-    },
-    "packages/fleet-supervisor/test/loop.test.ts": {
-      "errors": 54,
+      "errors": 0,
       "warnings": 3
     },
+    "packages/fleet-supervisor/test/loop.test.ts": {
+      "errors": 0,
+      "warnings": 0
+    },
     "packages/fleet-supervisor/test/measured-memory.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 5
     },
     "packages/fleet-supervisor/test/migration-controller.integration.test.ts": {
-      "errors": 8,
+      "errors": 0,
       "warnings": 0
     },
     "packages/fleet-supervisor/test/migration-controller.test.ts": {
-      "errors": 19,
+      "errors": 0,
       "warnings": 26
     },
     "packages/fleet-supervisor/test/migration-integration.test.ts": {
-      "errors": 10,
+      "errors": 0,
       "warnings": 0
     },
     "packages/fleet-supervisor/test/migration-wiring.test.ts": {
-      "errors": 4,
+      "errors": 0,
       "warnings": 0
     },
     "packages/fleet-supervisor/test/node-probe.test.ts": {
@@ -2267,7 +2243,7 @@
       "warnings": 0
     },
     "packages/fleet-supervisor/test/peer-fetch.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 5
     },
     "packages/fleet-supervisor/test/placement.test.ts": {
@@ -2283,23 +2259,23 @@
       "warnings": 0
     },
     "packages/fleet-supervisor/test/policy.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/fleet-supervisor/test/status-reader.test.ts": {
-      "errors": 2,
-      "warnings": 3
+      "errors": 0,
+      "warnings": 2
     },
     "packages/fleet-supervisor/test/workload-probe-validation.test.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 0
     },
     "packages/fleet-supervisor/test/workload-probe.test.ts": {
-      "errors": 5,
+      "errors": 0,
       "warnings": 5
     },
-    "packages/mcp/bin/llamactl-mcp.ts": {
-      "errors": 1,
+    "packages/mcp/src/bin.ts": {
+      "errors": 0,
       "warnings": 0
     },
     "packages/mcp/src/index.ts": {
@@ -2307,39 +2283,39 @@
       "warnings": 0
     },
     "packages/mcp/src/pipelines.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 3
     },
     "packages/mcp/src/server.ts": {
-      "errors": 25,
+      "errors": 0,
       "warnings": 1
     },
     "packages/mcp/src/tools/fleet.ts": {
-      "errors": 20,
+      "errors": 0,
       "warnings": 6
     },
     "packages/mcp/src/tools/models-leaderboard.ts": {
-      "errors": 1,
+      "errors": 0,
       "warnings": 1
     },
     "packages/mcp/test/fleet-tools.test.ts": {
-      "errors": 22,
-      "warnings": 9
+      "errors": 0,
+      "warnings": 6
     },
     "packages/mcp/test/fleet-write-tools.test.ts": {
-      "errors": 13,
-      "warnings": 7
+      "errors": 0,
+      "warnings": 5
     },
     "packages/mcp/test/server-composite.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 1
     },
     "packages/mcp/test/server-rag.test.ts": {
-      "errors": 2,
+      "errors": 0,
       "warnings": 1
     },
     "packages/mcp/test/smoke.test.ts": {
-      "errors": 3,
+      "errors": 0,
       "warnings": 13
     },
     "packages/remote/src/bench/schedule.ts": {

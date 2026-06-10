@@ -2,6 +2,7 @@ import * as React from "react";
 
 import { trpc } from "@/lib/trpc";
 import { useUIStore } from "@/stores/ui-store";
+
 import { useSyncActiveNode } from "./node-selection";
 
 /**

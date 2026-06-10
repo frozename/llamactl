@@ -1,5 +1,4 @@
 import type { ChildProcess } from "node:child_process";
-import { required } from "../required.js";
 
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -11,6 +10,7 @@ import type { MeasuredMemoryEntry } from "../../../fleet-supervisor/src/measured
 // Relative import so the worktree's measured-memory module is used directly,
 // bypassing the node_modules symlink that points at the main checkout.
 import { writeMeasuredMemoryCache } from "../../../fleet-supervisor/src/measured-memory.js";
+import { required } from "../required.js";
 
 const MEASURE_USAGE = `llamactl admit measure — probe real RSS of a workload under load
 
