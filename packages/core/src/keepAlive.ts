@@ -258,6 +258,80 @@ function logLine(resolved: ResolvedEnv, line: string): void {
  * so `keep-alive status` can show "ready / restart-pending / …"
  * without running commands itself.
  */
+function sleepWithAbort(s: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, s * 1000);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+function shouldStop(resolved: ResolvedEnv, signal?: AbortSignal): boolean {
+  return signal?.aborted === true || existsSync(keepAliveStopFile(resolved));
+}
+
+async function pollHealthUntilDown(
+  resolved: ResolvedEnv,
+  key: WorkloadKey,
+  intervalSeconds: number,
+  signal: AbortSignal | undefined,
+  rel: string,
+): Promise<void> {
+  while (!shouldStop(resolved, signal)) {
+    await sleepWithAbort(intervalSeconds, signal);
+    if (shouldStop(resolved, signal)) break;
+    let ok = false;
+    try {
+      const res = await fetch(`${endpoint(resolved)}/health`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      ok = res.status === 200;
+    } catch {
+      ok = false;
+    }
+    const pid = readServerPid(key, resolved);
+    if (!ok || pid === null) {
+      logLine(resolved, `health lost for rel=${rel}, will restart`);
+      break;
+    }
+  }
+}
+
+async function cleanupWorker(
+  resolved: ResolvedEnv,
+  key: WorkloadKey,
+  target: string,
+  restarts: number,
+  backoff: number,
+  rel: string,
+): Promise<void> {
+  logLine(resolved, `supervisor exiting state=stopped`);
+  writeState(resolved, {
+    target,
+    model: rel || "unknown",
+    state: "stopped",
+    restarts,
+    backoff_seconds: backoff,
+  });
+  await stopServer({ key, resolved });
+  try {
+    unlinkSync(keepAlivePidFile(resolved));
+  } catch {
+    // no-op
+  }
+  try {
+    unlinkSync(keepAliveStopFile(resolved));
+  } catch {
+    // no-op
+  }
+}
+
 export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promise<void> {
   const env = opts.env ?? process.env;
   const resolved = opts.resolved ?? resolveEnv(env);
@@ -272,7 +346,6 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
       Number.parseInt(env.LLAMA_CPP_KEEP_ALIVE_MAX_BACKOFF ?? "", 10) || 30,
     );
 
-  // Clear any prior stop file and write an initial state.
   try {
     unlinkSync(keepAliveStopFile(resolved));
   } catch {
@@ -289,46 +362,9 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
 
   let restarts = 0;
   let backoff = 1;
-  const sleep = (s: number): Promise<void> =>
-    new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, s * 1000);
-      opts.signal?.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer);
-          resolve();
-        },
-        { once: true },
-      );
-    });
-  const shouldStop = (): boolean =>
-    opts.signal?.aborted === true || existsSync(keepAliveStopFile(resolved));
-
-  const cleanup = async (finalState: KeepAliveState, rel: string): Promise<void> => {
-    logLine(resolved, `supervisor exiting state=${finalState}`);
-    writeState(resolved, {
-      target: opts.target,
-      model: rel || "unknown",
-      state: finalState,
-      restarts,
-      backoff_seconds: backoff,
-    });
-    await stopServer({ key, resolved });
-    try {
-      unlinkSync(keepAlivePidFile(resolved));
-    } catch {
-      // no-op
-    }
-    try {
-      unlinkSync(keepAliveStopFile(resolved));
-    } catch {
-      // no-op
-    }
-  };
-
   let lastRel = "";
   try {
-    while (!shouldStop()) {
+    while (!shouldStop(resolved, opts.signal)) {
       const rel = resolveTarget(opts.target, env);
       if (!rel) {
         logLine(resolved, `target=${opts.target} resolve-failed`);
@@ -339,7 +375,7 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
           restarts,
           backoff_seconds: backoff,
         });
-        await sleep(backoff);
+        await sleepWithAbort(backoff, opts.signal);
         backoff = Math.min(backoff * 2, maxBackoff);
         continue;
       }
@@ -371,7 +407,7 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
           restarts,
           backoff_seconds: backoff,
         });
-        await sleep(backoff);
+        await sleepWithAbort(backoff, opts.signal);
         backoff = Math.min(backoff * 2, maxBackoff);
         continue;
       }
@@ -386,26 +422,8 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
       });
       logLine(resolved, `ready rel=${rel} pid=${String(startRes.pid)}`);
 
-      // Poll /health.
-      while (!shouldStop()) {
-        await sleep(intervalSeconds);
-        if (shouldStop()) break;
-        let ok = false;
-        try {
-          const res = await fetch(`${endpoint(resolved)}/health`, {
-            signal: AbortSignal.timeout(2000),
-          });
-          ok = res.status === 200;
-        } catch {
-          ok = false;
-        }
-        const pid = readServerPid(key, resolved);
-        if (!ok || pid === null) {
-          logLine(resolved, `health lost for rel=${rel}, will restart`);
-          break;
-        }
-      }
-      if (shouldStop()) break;
+      await pollHealthUntilDown(resolved, key, intervalSeconds, opts.signal, rel);
+      if (shouldStop(resolved, opts.signal)) break;
 
       restarts += 1;
       writeState(resolved, {
@@ -415,10 +433,10 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
         restarts,
         backoff_seconds: backoff,
       });
-      await sleep(backoff);
+      await sleepWithAbort(backoff, opts.signal);
       backoff = Math.min(backoff * 2, maxBackoff);
     }
   } finally {
-    await cleanup("stopped", lastRel);
+    await cleanupWorker(resolved, key, opts.target, restarts, backoff, lastRel);
   }
 }

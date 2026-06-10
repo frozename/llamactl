@@ -82,6 +82,325 @@ type OpenBlockState =
       toolName: string;
     };
 
+type StreamState = {
+  messageStarted: boolean;
+  messageId: string;
+  model: string;
+  openBlock: OpenBlockState | null;
+  textBlockCount: number;
+  toolIndexMap: Map<number, number>;
+  lastFinishReason: string | null;
+  lastStopSequence: string | null;
+  outputTokens: number;
+  sawUsageCompletionTokens: boolean;
+};
+
+type StreamEmit = (event: string, payload: Record<string, unknown>) => void;
+
+function createStreamState(ctx: TranslatorContext): StreamState {
+  return {
+    messageStarted: false,
+    messageId: ctx.requestId ?? generateMessageId(),
+    model: ctx.model,
+    openBlock: null,
+    textBlockCount: 0,
+    toolIndexMap: new Map(),
+    lastFinishReason: null,
+    lastStopSequence: null,
+    outputTokens: 0,
+    sawUsageCompletionTokens: false,
+  };
+}
+
+function ensureMessageStart(state: StreamState, emit: StreamEmit): void {
+  if (state.messageStarted) return;
+  state.messageStarted = true;
+  emit("message_start", {
+    type: "message_start",
+    message: {
+      id: state.messageId,
+      type: "message",
+      role: "assistant",
+      content: [],
+      model: state.model,
+      stop_reason: null,
+      stop_sequence: null,
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+      },
+    },
+  });
+}
+
+function closeOpenBlock(state: StreamState, emit: StreamEmit): void {
+  if (!state.openBlock) return;
+  emit("content_block_stop", {
+    type: "content_block_stop",
+    index: state.openBlock.index,
+  });
+  state.openBlock = null;
+}
+
+function ensureTextBlock(
+  state: StreamState,
+  emit: StreamEmit,
+): Extract<OpenBlockState, { kind: "text" }> {
+  if (state.openBlock?.kind === "text") return state.openBlock;
+  closeOpenBlock(state, emit);
+  ensureMessageStart(state, emit);
+  const index = state.textBlockCount;
+  state.textBlockCount += 1;
+  state.openBlock = { kind: "text", index };
+  emit("content_block_start", {
+    type: "content_block_start",
+    index,
+    content_block: {
+      type: "text",
+      text: "",
+    },
+  });
+  return state.openBlock;
+}
+
+function computeToolBlockIndex(state: StreamState, toolIndex: number): number {
+  const existing = state.toolIndexMap.get(toolIndex);
+  if (existing !== undefined) return existing;
+  const computed = toolIndex + state.textBlockCount;
+  state.toolIndexMap.set(toolIndex, computed);
+  return computed;
+}
+
+function ensureToolBlock(
+  state: StreamState,
+  tool: UpstreamToolCall,
+  emit: StreamEmit,
+): Extract<OpenBlockState, { kind: "tool" }> {
+  const rawToolIndex = typeof tool.index === "number" ? tool.index : 0;
+  const index = computeToolBlockIndex(state, rawToolIndex);
+  const toolId = tool.id ?? `tool_${String(rawToolIndex)}`;
+  const toolName = tool.function?.name ?? `tool_${String(rawToolIndex)}`;
+
+  if (
+    state.openBlock?.kind === "tool" &&
+    state.openBlock.toolIndex === rawToolIndex &&
+    state.openBlock.index === index
+  ) {
+    if (!state.openBlock.toolId && toolId) state.openBlock.toolId = toolId;
+    if (!state.openBlock.toolName && toolName) state.openBlock.toolName = toolName;
+    return state.openBlock;
+  }
+
+  closeOpenBlock(state, emit);
+  ensureMessageStart(state, emit);
+  state.openBlock = {
+    kind: "tool",
+    index,
+    toolIndex: rawToolIndex,
+    toolId,
+    toolName,
+  };
+  emit("content_block_start", {
+    type: "content_block_start",
+    index,
+    content_block: {
+      type: "tool_use",
+      id: toolId,
+      name: toolName,
+      input: {},
+    },
+  });
+  return state.openBlock;
+}
+
+function addOutputEmission(state: StreamState): void {
+  if (!state.sawUsageCompletionTokens) state.outputTokens += 1;
+}
+
+function handleChunk(state: StreamState, parsed: UpstreamChunk, emit: StreamEmit): void {
+  if (parsed.id) state.messageId = parsed.id;
+  const usageTokens = parsed.usage?.completion_tokens;
+  if (typeof usageTokens === "number" && Number.isFinite(usageTokens)) {
+    state.sawUsageCompletionTokens = true;
+    state.outputTokens = usageTokens;
+  }
+
+  const choice = parsed.choices?.[0];
+  if (!choice) return;
+
+  if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
+    state.lastFinishReason = choice.finish_reason;
+  }
+  if (choice.stop_sequence !== undefined && choice.stop_sequence !== null) {
+    state.lastStopSequence = choice.stop_sequence;
+  }
+
+  const content = choice.delta?.content;
+  if (typeof content === "string" && content.length > 0) {
+    const block = ensureTextBlock(state, emit);
+    emit("content_block_delta", {
+      type: "content_block_delta",
+      index: block.index,
+      delta: {
+        type: "text_delta",
+        text: content,
+      },
+    });
+    addOutputEmission(state);
+  }
+
+  const toolCalls = choice.delta?.tool_calls;
+  if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+    for (const toolCall of toolCalls) {
+      const block = ensureToolBlock(state, toolCall, emit);
+      const partialJson = toolCall.function?.arguments;
+      if (typeof partialJson === "string" && partialJson.length > 0) {
+        emit("content_block_delta", {
+          type: "content_block_delta",
+          index: block.index,
+          delta: {
+            type: "input_json_delta",
+            partial_json: partialJson,
+          },
+        });
+        addOutputEmission(state);
+      }
+    }
+  }
+}
+
+function processEvent(
+  state: StreamState,
+  eventPayload: string,
+  emit: StreamEmit,
+): "continue" | "done" {
+  if (eventPayload.trim().length === 0) return "continue";
+
+  const { data, unknownLineCount } = __parseAnthropicSseEventPayloadForTests(eventPayload);
+  unknownEventTotal += unknownLineCount;
+  if (data === null) return "continue";
+  if (data === "[DONE]") {
+    return "done";
+  }
+
+  let parsed: UpstreamChunk;
+  try {
+    parsed = JSON.parse(data) as UpstreamChunk;
+  } catch {
+    unknownEventTotal += 1;
+    return "continue";
+  }
+
+  handleChunk(state, parsed, emit);
+  return "continue";
+}
+
+function emitTerminalDelta(
+  state: StreamState,
+  emit: StreamEmit,
+  stopReason: string | null | undefined,
+): void {
+  ensureMessageStart(state, emit);
+  closeOpenBlock(state, emit);
+  const normalized = normalizeFinishReason(stopReason);
+  emit("message_delta", {
+    type: "message_delta",
+    delta: {
+      stop_reason: normalized,
+      stop_sequence: normalized === "stop_sequence" ? (state.lastStopSequence ?? null) : null,
+    },
+    usage: {
+      output_tokens: state.outputTokens,
+    },
+  });
+}
+
+function emitMessageStop(emit: StreamEmit): void {
+  emit("message_stop", { type: "message_stop" });
+}
+
+async function processUpstreamStream(
+  upstream: ReadableStream<Uint8Array>,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  ctx: TranslatorContext,
+): Promise<void> {
+  const encoder = new TextEncoder();
+  const emit: StreamEmit = (event, payload) => {
+    controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`));
+  };
+
+  const state = createStreamState(ctx);
+  const reader = upstream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    let done = false;
+    let pendingRead: ReturnType<typeof reader.read> | null = reader.read();
+
+    while (!done) {
+      const readResult = await Promise.race([
+        pendingRead.then((value) => ({ kind: "read" as const, value })),
+        new Promise<{ kind: "ping" }>((resolve) => {
+          setTimeout(() => {
+            resolve({ kind: "ping" });
+          }, PING_INTERVAL_MS);
+        }),
+      ]);
+
+      if (readResult.kind === "ping") {
+        emit("ping", { type: "ping" });
+        continue;
+      }
+
+      pendingRead = null;
+      const { value, done: upstreamDone } = readResult.value;
+      if (upstreamDone) {
+        done = true;
+        break;
+      }
+
+      buffer += decoder
+        .decode(value, { stream: true })
+        .replaceAll("\r\n", "\n")
+        .replaceAll("\r", "\n");
+
+      pendingRead = reader.read();
+
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary !== -1) {
+        const eventPayload = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const status = processEvent(state, eventPayload, emit);
+        if (status === "done") {
+          done = true;
+          break;
+        }
+        boundary = buffer.indexOf("\n\n");
+      }
+    }
+
+    if (buffer.trim().length > 0) {
+      processEvent(state, buffer, emit);
+    }
+    emitTerminalDelta(state, emit, state.lastFinishReason);
+    emitMessageStop(emit);
+    controller.close();
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: "anthropic_stream_upstream_error",
+        error_class: maybeErrorClass(error),
+      }),
+    );
+    emitTerminalDelta(state, emit, "stop");
+    emitMessageStop(emit);
+    controller.close();
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+}
+
 export function translator_unknown_event_total(): number {
   return unknownEventTotal;
 }
@@ -124,289 +443,9 @@ export function translateOpenAIStreamToAnthropic(
   upstream: ReadableStream<Uint8Array>,
   ctx: TranslatorContext,
 ): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-
   return new ReadableStream<Uint8Array>({
     async start(controller): Promise<void> {
-      const reader = upstream.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      let messageStarted = false;
-      let messageId = ctx.requestId ?? generateMessageId();
-      let openBlock: OpenBlockState | null = null;
-      let textBlockCount = 0;
-      const toolIndexMap = new Map<number, number>();
-
-      let lastFinishReason: string | null = null;
-      let lastStopSequence: string | null = null;
-
-      let outputTokens = 0;
-      let sawUsageCompletionTokens = false;
-
-      const emit = (event: string, payload: Record<string, unknown>): void => {
-        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`));
-      };
-
-      const ensureMessageStart = (): void => {
-        if (messageStarted) return;
-        messageStarted = true;
-        emit("message_start", {
-          type: "message_start",
-          message: {
-            id: messageId,
-            type: "message",
-            role: "assistant",
-            content: [],
-            model: ctx.model,
-            stop_reason: null,
-            stop_sequence: null,
-            usage: {
-              input_tokens: 0,
-              output_tokens: 0,
-            },
-          },
-        });
-      };
-
-      const closeOpenBlock = (): void => {
-        if (!openBlock) return;
-        emit("content_block_stop", {
-          type: "content_block_stop",
-          index: openBlock.index,
-        });
-        openBlock = null;
-      };
-
-      const ensureTextBlock = (): Extract<OpenBlockState, { kind: "text" }> => {
-        if (openBlock?.kind === "text") return openBlock;
-        closeOpenBlock();
-        ensureMessageStart();
-        const index = textBlockCount;
-        textBlockCount += 1;
-        openBlock = { kind: "text", index };
-        emit("content_block_start", {
-          type: "content_block_start",
-          index,
-          content_block: {
-            type: "text",
-            text: "",
-          },
-        });
-        return openBlock;
-      };
-
-      const toolBlockIndex = (toolIndex: number): number => {
-        const existing = toolIndexMap.get(toolIndex);
-        if (existing !== undefined) return existing;
-        const computed = toolIndex + textBlockCount;
-        toolIndexMap.set(toolIndex, computed);
-        return computed;
-      };
-
-      const ensureToolBlock = (
-        tool: UpstreamToolCall,
-      ): Extract<OpenBlockState, { kind: "tool" }> => {
-        const rawToolIndex = typeof tool.index === "number" ? tool.index : 0;
-        const index = toolBlockIndex(rawToolIndex);
-        const toolId = tool.id ?? `tool_${String(rawToolIndex)}`;
-        const toolName = tool.function?.name ?? `tool_${String(rawToolIndex)}`;
-
-        if (
-          openBlock?.kind === "tool" &&
-          openBlock.toolIndex === rawToolIndex &&
-          openBlock.index === index
-        ) {
-          if (!openBlock.toolId && toolId) openBlock.toolId = toolId;
-          if (!openBlock.toolName && toolName) openBlock.toolName = toolName;
-          return openBlock;
-        }
-
-        closeOpenBlock();
-        ensureMessageStart();
-        openBlock = {
-          kind: "tool",
-          index,
-          toolIndex: rawToolIndex,
-          toolId,
-          toolName,
-        };
-        emit("content_block_start", {
-          type: "content_block_start",
-          index,
-          content_block: {
-            type: "tool_use",
-            id: toolId,
-            name: toolName,
-            input: {},
-          },
-        });
-        return openBlock;
-      };
-
-      const emitMessageStop = (): void => {
-        emit("message_stop", { type: "message_stop" });
-      };
-
-      const emitTerminalDelta = (stopReason: string | null | undefined): void => {
-        ensureMessageStart();
-        closeOpenBlock();
-        const normalized = normalizeFinishReason(stopReason);
-        emit("message_delta", {
-          type: "message_delta",
-          delta: {
-            stop_reason: normalized,
-            stop_sequence: normalized === "stop_sequence" ? (lastStopSequence ?? null) : null,
-          },
-          usage: {
-            output_tokens: outputTokens,
-          },
-        });
-      };
-
-      const addOutputEmission = (): void => {
-        if (!sawUsageCompletionTokens) outputTokens += 1;
-      };
-
-      const handleChunk = (parsed: UpstreamChunk): void => {
-        if (parsed.id) messageId = parsed.id;
-        const usageTokens = parsed.usage?.completion_tokens;
-        if (typeof usageTokens === "number" && Number.isFinite(usageTokens)) {
-          sawUsageCompletionTokens = true;
-          outputTokens = usageTokens;
-        }
-
-        const choice = parsed.choices?.[0];
-        if (!choice) return;
-
-        if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
-          lastFinishReason = choice.finish_reason;
-        }
-        if (choice.stop_sequence !== undefined && choice.stop_sequence !== null) {
-          lastStopSequence = choice.stop_sequence;
-        }
-
-        const content = choice.delta?.content;
-        if (typeof content === "string" && content.length > 0) {
-          const block = ensureTextBlock();
-          emit("content_block_delta", {
-            type: "content_block_delta",
-            index: block.index,
-            delta: {
-              type: "text_delta",
-              text: content,
-            },
-          });
-          addOutputEmission();
-        }
-
-        const toolCalls = choice.delta?.tool_calls;
-        if (Array.isArray(toolCalls) && toolCalls.length > 0) {
-          for (const toolCall of toolCalls) {
-            const block = ensureToolBlock(toolCall);
-            const partialJson = toolCall.function?.arguments;
-            if (typeof partialJson === "string" && partialJson.length > 0) {
-              emit("content_block_delta", {
-                type: "content_block_delta",
-                index: block.index,
-                delta: {
-                  type: "input_json_delta",
-                  partial_json: partialJson,
-                },
-              });
-              addOutputEmission();
-            }
-          }
-        }
-      };
-
-      const processEvent = (eventPayload: string): "continue" | "done" => {
-        if (eventPayload.trim().length === 0) return "continue";
-
-        const { data, unknownLineCount } = __parseAnthropicSseEventPayloadForTests(eventPayload);
-        unknownEventTotal += unknownLineCount;
-        if (data === null) return "continue";
-        if (data === "[DONE]") {
-          return "done";
-        }
-
-        let parsed: UpstreamChunk;
-        try {
-          parsed = JSON.parse(data) as UpstreamChunk;
-        } catch {
-          unknownEventTotal += 1;
-          return "continue";
-        }
-
-        handleChunk(parsed);
-        return "continue";
-      };
-
-      try {
-        let done = false;
-        let pendingRead: ReturnType<typeof reader.read> | null = reader.read();
-
-        while (!done) {
-          const readResult = await Promise.race([
-            pendingRead.then((value) => ({ kind: "read" as const, value })),
-            new Promise<{ kind: "ping" }>((resolve) => {
-              setTimeout(() => {
-                resolve({ kind: "ping" });
-              }, PING_INTERVAL_MS);
-            }),
-          ]);
-
-          if (readResult.kind === "ping") {
-            emit("ping", { type: "ping" });
-            continue;
-          }
-
-          pendingRead = null;
-          const { value, done: upstreamDone } = readResult.value;
-          if (upstreamDone) {
-            done = true;
-            break;
-          }
-
-          buffer += decoder
-            .decode(value, { stream: true })
-            .replaceAll("\r\n", "\n")
-            .replaceAll("\r", "\n");
-
-          pendingRead = reader.read();
-
-          let boundary = buffer.indexOf("\n\n");
-          while (boundary !== -1) {
-            const eventPayload = buffer.slice(0, boundary);
-            buffer = buffer.slice(boundary + 2);
-            const status = processEvent(eventPayload);
-            if (status === "done") {
-              done = true;
-              break;
-            }
-            boundary = buffer.indexOf("\n\n");
-          }
-        }
-
-        if (buffer.trim().length > 0) {
-          processEvent(buffer);
-        }
-        emitTerminalDelta(lastFinishReason);
-        emitMessageStop();
-        controller.close();
-      } catch (error) {
-        console.error(
-          JSON.stringify({
-            event: "anthropic_stream_upstream_error",
-            error_class: maybeErrorClass(error),
-          }),
-        );
-        emitTerminalDelta("stop");
-        emitMessageStop();
-        controller.close();
-      } finally {
-        await reader.cancel().catch(() => undefined);
-      }
+      await processUpstreamStream(upstream, controller, ctx);
     },
   });
 }

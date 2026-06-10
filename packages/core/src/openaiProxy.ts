@@ -1136,6 +1136,153 @@ async function maybeInjectOmlxSaveHandle(
   logSlotInjectionEvent("save_handle_injected", { workload, model, request_handle: sha });
 }
 
+function buildKvRequestState(
+  metadata: ReturnType<typeof resolveRouteKvMetadata> & object,
+  runtime: KvRuntime,
+  sha: string,
+  prefixMetric: number,
+  enforceFirstTokenEquivalence: boolean,
+  overrides?: Partial<KvRequestState>,
+): KvRequestState {
+  return {
+    runtime,
+    workload: metadata.workload,
+    slotDir: metadata.slotDir,
+    host: metadata.host,
+    port: metadata.port,
+    quantBits: metadata.quantBits,
+    ctxSize: metadata.ctxSize,
+    workloadEpoch: metadata.workloadEpoch,
+    sha,
+    prefixMetric,
+    shouldPersist: false,
+    warmHitSha: null,
+    warmHitLease: null,
+    warmHitExpectedFirstResponseToken: null,
+    enforceFirstTokenEquivalence,
+    ...overrides,
+  };
+}
+
+async function applyWarmKvHit(
+  context: ProxyContext,
+  metadata: NonNullable<ReturnType<typeof resolveRouteKvMetadata>>,
+  runtime: KvRuntime,
+  hit: NonNullable<ReturnType<typeof longestPrefixLookup>>,
+  sha: string,
+  prefixMetric: number,
+  enforceFirstTokenEquivalence: boolean,
+): Promise<ProxyContext | null> {
+  const reserveState = { reserved: false };
+  const reserveWrite = runtime.storage.safeWrite(() => {
+    reserveState.reserved = runtime.registry.reserve(hit.sha);
+  });
+  if (!reserveWrite.ok || !reserveState.reserved) return null;
+  const lease = slotAllocatorFor(runtime, metadata.workload).acquire();
+  if (!lease) {
+    runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
+    return null;
+  }
+  const slotClient = slotClientFor(
+    runtime,
+    metadata.workload,
+    metadata.host,
+    metadata.port,
+    context.route?.engine,
+  );
+  const restore = await slotClient.restore(
+    lease.slotId,
+    basename(hit.upstreamSlotFile),
+    context.route?.engine === "omlx" ? { model: metadata.model } : undefined,
+  );
+  const activateState = { activated: false };
+  const activateWrite = runtime.storage.safeWrite(() => {
+    activateState.activated = runtime.registry.activate(hit.sha);
+  });
+  if (!(activateWrite.ok && restore.ok && activateState.activated)) {
+    runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
+    lease.release();
+    if (!restore.ok) runtime.storage.safeWrite(() => runtime.registry.delete(hit.sha));
+    return null;
+  }
+  if (context.isAnthropic && context.anthropicRequest && (hit.extFlags & EXT_FLAG_TOOL_MAP) !== 0) {
+    const trailer = readTrailer(hit.upstreamSlotFile);
+    const toolMap = trailer?.toolMap;
+    if (toolMap && Object.keys(toolMap).length > 0) {
+      const replayBodyText = JSON.stringify(
+        translateAnthropicRequest(context.anthropicRequest, { toolMap }),
+      );
+      const replaySha = boundaryNaiveBytePrefixSha(replayBodyText);
+      if (replaySha !== hit.sha) {
+        runtime.storage.kv_replay_mismatch_total += 1;
+        console.warn(
+          JSON.stringify({
+            event: "kv_replay_mismatch",
+            workload: metadata.workload,
+            expected: hit.sha,
+            got: replaySha,
+          }),
+        );
+        runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
+        lease.release();
+        runtime.storage.safeWrite(() => runtime.registry.tryDelete(hit.sha));
+        return null;
+      }
+      context.bodyText = replayBodyText;
+      context.init = {
+        ...context.init,
+        body: replayBodyText,
+      };
+      await maybeInjectOmlxRestoreBind(
+        context,
+        slotClient,
+        metadata.workload,
+        metadata.model,
+        hit.sha,
+        hit.upstreamSlotFile,
+        restore.restore_epoch,
+      );
+      runtime.registry.bumpHit(hit.sha, Date.now());
+      context.kv = buildKvRequestState(
+        metadata,
+        runtime,
+        replaySha,
+        Buffer.byteLength(replayBodyText, "utf8"),
+        enforceFirstTokenEquivalence,
+        {
+          warmHitSha: hit.sha,
+          warmHitLease: lease,
+          warmHitExpectedFirstResponseToken: hit.firstResponseToken,
+        },
+      );
+      return context;
+    }
+  }
+  await maybeInjectOmlxRestoreBind(
+    context,
+    slotClient,
+    metadata.workload,
+    metadata.model,
+    hit.sha,
+    hit.upstreamSlotFile,
+    restore.restore_epoch,
+  );
+  runtime.registry.bumpHit(hit.sha, Date.now());
+  context.kv = buildKvRequestState(
+    metadata,
+    runtime,
+    sha,
+    prefixMetric,
+    enforceFirstTokenEquivalence,
+    {
+      warmHitSha: hit.sha,
+      warmHitLease: lease,
+      warmHitExpectedFirstResponseToken: hit.firstResponseToken,
+    },
+  );
+  return context;
+}
+
 async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   if (!shouldUseKvPath(context)) return context;
   const metadata = resolveRouteKvMetadata(context);
@@ -1144,8 +1291,8 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   const bodyText = context.bodyText;
   if (bodyText === undefined) return context;
   const enforceFirstTokenEquivalence = shouldEnforceFirstTokenEquivalence(bodyText);
-  let prefixMetric = Buffer.byteLength(bodyText, "utf8");
-  let sha = boundaryNaiveBytePrefixSha(bodyText);
+  const prefixMetric = Buffer.byteLength(bodyText, "utf8");
+  const sha = boundaryNaiveBytePrefixSha(bodyText);
 
   // Phase 6 is boundary-naive: use byte length as both byte prefix and token guard until token accounting lands.
   let hit = longestPrefixLookup(runtime.registry, {
@@ -1157,10 +1304,6 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   });
 
   if (hit && hit.model !== null && hit.model !== metadata.model) {
-    // Defense-in-depth: a slot saved under a different model id must never be
-    // restored into another model. The sha already encodes the request body
-    // (model included) and one oMLX ModelHost serves one model, so this should
-    // be unreachable — log it and fall through to a cold prefill if it ever is.
     runtime.storage.kv_model_mismatch_total += 1;
     console.warn(
       JSON.stringify({
@@ -1175,165 +1318,16 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   }
 
   if (hit) {
-    let replayMismatch = false;
-    const reserveState = { reserved: false };
-    const reserveWrite = runtime.storage.safeWrite(() => {
-      reserveState.reserved = runtime.registry.reserve(hit.sha);
-    });
-    if (reserveWrite.ok && reserveState.reserved) {
-      const lease = slotAllocatorFor(runtime, metadata.workload).acquire();
-      if (lease) {
-        const slotClient = slotClientFor(
-          runtime,
-          metadata.workload,
-          metadata.host,
-          metadata.port,
-          context.route?.engine,
-        );
-        // llama-server's slot API only accepts a bare filename (relative to its
-        // --slot-save-path). We store the absolute path in the registry for
-        // orphan sweep + integrity scan, but pass basename to the upstream call.
-        // oMLX additionally requires `model` in the payload (HTTP 400 otherwise).
-        const restore = await slotClient.restore(
-          lease.slotId,
-          basename(hit.upstreamSlotFile),
-          context.route?.engine === "omlx" ? { model: metadata.model } : undefined,
-        );
-        const activateState = { activated: false };
-        const activateWrite = runtime.storage.safeWrite(() => {
-          activateState.activated = runtime.registry.activate(hit.sha);
-        });
-        if (activateWrite.ok && restore.ok && activateState.activated) {
-          if (
-            context.isAnthropic &&
-            context.anthropicRequest &&
-            (hit.extFlags & EXT_FLAG_TOOL_MAP) !== 0
-          ) {
-            const trailer = readTrailer(hit.upstreamSlotFile);
-            const toolMap = trailer?.toolMap;
-            if (toolMap && Object.keys(toolMap).length > 0) {
-              const replayBodyText = JSON.stringify(
-                translateAnthropicRequest(context.anthropicRequest, { toolMap }),
-              );
-              const replaySha = boundaryNaiveBytePrefixSha(replayBodyText);
-              const replayPrefixMetric = Buffer.byteLength(replayBodyText, "utf8");
-              if (replaySha !== hit.sha) {
-                runtime.storage.kv_replay_mismatch_total += 1;
-                console.warn(
-                  JSON.stringify({
-                    event: "kv_replay_mismatch",
-                    workload: metadata.workload,
-                    expected: hit.sha,
-                    got: replaySha,
-                  }),
-                );
-                replayMismatch = true;
-              } else {
-                context.bodyText = replayBodyText;
-                context.init = {
-                  ...context.init,
-                  body: replayBodyText,
-                };
-                await maybeInjectOmlxRestoreBind(
-                  context,
-                  slotClient,
-                  metadata.workload,
-                  metadata.model,
-                  hit.sha,
-                  hit.upstreamSlotFile,
-                  restore.restore_epoch,
-                );
-                sha = replaySha;
-                prefixMetric = replayPrefixMetric;
-                runtime.registry.bumpHit(hit.sha, Date.now());
-                context.kv = {
-                  runtime,
-                  workload: metadata.workload,
-                  slotDir: metadata.slotDir,
-                  host: metadata.host,
-                  port: metadata.port,
-                  quantBits: metadata.quantBits,
-                  ctxSize: metadata.ctxSize,
-                  workloadEpoch: metadata.workloadEpoch,
-                  sha,
-                  prefixMetric,
-                  shouldPersist: false,
-                  warmHitSha: hit.sha,
-                  warmHitLease: lease,
-                  warmHitExpectedFirstResponseToken: hit.firstResponseToken,
-                  enforceFirstTokenEquivalence,
-                };
-                return context;
-              }
-            } else {
-              await maybeInjectOmlxRestoreBind(
-                context,
-                slotClient,
-                metadata.workload,
-                metadata.model,
-                hit.sha,
-                hit.upstreamSlotFile,
-                restore.restore_epoch,
-              );
-              runtime.registry.bumpHit(hit.sha, Date.now());
-              context.kv = {
-                runtime,
-                workload: metadata.workload,
-                slotDir: metadata.slotDir,
-                host: metadata.host,
-                port: metadata.port,
-                quantBits: metadata.quantBits,
-                ctxSize: metadata.ctxSize,
-                workloadEpoch: metadata.workloadEpoch,
-                sha,
-                prefixMetric,
-                shouldPersist: false,
-                warmHitSha: hit.sha,
-                warmHitLease: lease,
-                warmHitExpectedFirstResponseToken: hit.firstResponseToken,
-                enforceFirstTokenEquivalence,
-              };
-              return context;
-            }
-          } else {
-            await maybeInjectOmlxRestoreBind(
-              context,
-              slotClient,
-              metadata.workload,
-              metadata.model,
-              hit.sha,
-              hit.upstreamSlotFile,
-              restore.restore_epoch,
-            );
-            runtime.registry.bumpHit(hit.sha, Date.now());
-            context.kv = {
-              runtime,
-              workload: metadata.workload,
-              slotDir: metadata.slotDir,
-              host: metadata.host,
-              port: metadata.port,
-              quantBits: metadata.quantBits,
-              ctxSize: metadata.ctxSize,
-              workloadEpoch: metadata.workloadEpoch,
-              sha,
-              prefixMetric,
-              shouldPersist: false,
-              warmHitSha: hit.sha,
-              warmHitLease: lease,
-              warmHitExpectedFirstResponseToken: hit.firstResponseToken,
-              enforceFirstTokenEquivalence,
-            };
-            return context;
-          }
-        }
-        runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
-        lease.release();
-        if (replayMismatch) runtime.storage.safeWrite(() => runtime.registry.tryDelete(hit.sha));
-        if (!restore.ok) runtime.storage.safeWrite(() => runtime.registry.delete(hit.sha));
-      } else {
-        runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
-      }
-    }
+    const warmResult = await applyWarmKvHit(
+      context,
+      metadata,
+      runtime,
+      hit,
+      sha,
+      prefixMetric,
+      enforceFirstTokenEquivalence,
+    );
+    if (warmResult) return warmResult;
   }
 
   // L4: cold-miss path for a save-eligible oMLX route — inject the save handle
@@ -1564,6 +1558,145 @@ async function forward(context: ProxyContext): Promise<Response> {
   return upstream;
 }
 
+function checkFalseHit(kv: KvRequestState, firstResponseToken: string | null): boolean {
+  if (
+    !kv.warmHitSha ||
+    !kv.enforceFirstTokenEquivalence ||
+    kv.warmHitExpectedFirstResponseToken === null ||
+    firstResponseToken === null ||
+    kv.warmHitExpectedFirstResponseToken === firstResponseToken
+  ) {
+    return false;
+  }
+  kv.runtime.storage.kv_false_hit_total += 1;
+  console.warn(
+    JSON.stringify({
+      event: "kv_false_hit",
+      workload: kv.workload,
+      sha: kv.warmHitSha,
+      expected: kv.warmHitExpectedFirstResponseToken,
+      got: firstResponseToken,
+    }),
+  );
+  const staleSha = kv.warmHitSha;
+  kv.warmHitSha = null;
+  kv.runtime.storage.safeWrite(() => {
+    kv.runtime.registry.release(staleSha);
+    kv.runtime.registry.tryDelete(staleSha);
+  });
+  kv.warmHitLease?.release();
+  kv.warmHitSha = null;
+  kv.warmHitLease = null;
+  return true;
+}
+
+/**
+ * Write the slot trailer + registry row for a freshly saved slot.
+ * Returns the insert timestamp, or null when the registry write
+ * failed (callers skip eviction/sweep in that case).
+ */
+function commitSlotToRegistry(
+  context: ProxyContext,
+  kv: KvRequestState,
+  slotFile: string,
+  firstResponseToken: string | null,
+  upstreamJson: unknown,
+): { now: number } | null {
+  const now = Date.now();
+  const trailer: KvTrailer = { extFlags: 0 };
+  let extFlags = 0;
+  const toolMap = extractToolMapFromJson(upstreamJson);
+  if (Object.keys(toolMap).length > 0) {
+    extFlags |= EXT_FLAG_TOOL_MAP;
+    trailer.toolMap = toolMap;
+  }
+  const sessionTitle = deriveSessionTitle(context.anthropicRequest);
+  if (sessionTitle) {
+    extFlags |= EXT_FLAG_SESSION_TITLE;
+    trailer.sessionTitle = sessionTitle;
+  }
+  if (extFlags !== 0) {
+    trailer.extFlags = extFlags;
+    const wroteTrailer = writeTrailer(slotFile, trailer, kv.runtime.storage);
+    if (!wroteTrailer.ok) {
+      extFlags = 0;
+      console.warn(
+        `[kvstore] trailer save skipped for workload='${kv.workload}' sha='${kv.sha}': ${wroteTrailer.reason}`,
+      );
+    }
+  }
+  const wrote = kv.runtime.storage.safeWrite(() => {
+    kv.runtime.registry.insert({
+      sha: kv.sha,
+      workload: kv.workload,
+      model: kv.model ?? null,
+      upstreamSlotFile: slotFile,
+      quantBits: kv.quantBits,
+      tokens: kv.prefixMetric,
+      ctxSize: kv.ctxSize,
+      hits: 0,
+      createdAt: now,
+      lastUsed: now,
+      payloadBytes: ((): number => {
+        try {
+          return statSync(slotFile).size;
+        } catch {
+          return kv.prefixMetric;
+        }
+      })(),
+      textBytes: kv.prefixMetric,
+      reason: "cold",
+      prefixByteLength: kv.prefixMetric,
+      workloadEpoch: kv.workloadEpoch,
+      quarantined: 0,
+      state: "idle",
+      firstResponseToken,
+      extFlags,
+    });
+  });
+  if (!wrote.ok) return null;
+  return { now };
+}
+
+/**
+ * Serialize the upstream KV slot to disk for the given lease slot.
+ * Returns the absolute slot file path, or null when the upstream
+ * save was skipped or failed.
+ */
+async function saveSlotUpstream(
+  context: ProxyContext,
+  kv: KvRequestState,
+  slotId: number,
+): Promise<string | null> {
+  const slotDir = kv.slotDir;
+  mkdirSync(slotDir, { recursive: true });
+  const slotBasename = `${kv.sha}.kvslot`;
+  const slotFile = join(slotDir, slotBasename);
+  const slotClient = slotClientFor(
+    kv.runtime,
+    kv.workload,
+    kv.host,
+    kv.port,
+    context.route?.engine,
+  );
+  // llama-server's slot API only accepts a bare filename (relative to its
+  // --slot-save-path). We store the absolute path in the registry for
+  // orphan sweep + integrity scan, but pass basename to the upstream call.
+  // oMLX additionally requires `model` in the payload (HTTP 400 otherwise).
+  const saved = await slotClient.save(
+    slotId,
+    slotBasename,
+    context.route?.engine === "omlx" ? { model: context.route.model } : undefined,
+  );
+  if (!saved.ok) {
+    console.warn(
+      `[kvstore] slot save skipped for workload='${kv.workload}' sha='${kv.sha}': ${saved.reason}`,
+    );
+    return null;
+  }
+  return slotFile;
+}
+
 async function maybePersistKv(context: ProxyContext, upstream: Response): Promise<void> {
   const kv = context.kv;
   if (!kv) return;
@@ -1581,33 +1714,7 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
     ? extractFirstResponseTokenFromJson(upstreamJson)
     : await readFirstResponseToken(upstream);
   try {
-    if (
-      kv.warmHitSha &&
-      kv.enforceFirstTokenEquivalence &&
-      kv.warmHitExpectedFirstResponseToken !== null &&
-      firstResponseToken !== null &&
-      kv.warmHitExpectedFirstResponseToken !== firstResponseToken
-    ) {
-      kv.runtime.storage.kv_false_hit_total += 1;
-      console.warn(
-        JSON.stringify({
-          event: "kv_false_hit",
-          workload: kv.workload,
-          sha: kv.warmHitSha,
-          expected: kv.warmHitExpectedFirstResponseToken,
-          got: firstResponseToken,
-        }),
-      );
-      const staleSha = kv.warmHitSha;
-      kv.warmHitSha = null;
-      kv.runtime.storage.safeWrite(() => {
-        kv.runtime.registry.release(staleSha);
-        kv.runtime.registry.tryDelete(staleSha);
-      });
-      kv.warmHitLease?.release();
-      kv.warmHitSha = null;
-      kv.warmHitLease = null;
-    }
+    checkFalseHit(kv, firstResponseToken);
 
     if (!kv.shouldPersist) return;
     // TODO(phase9): defer KV save for streams until exact replay boundaries are captured.
@@ -1631,86 +1738,17 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
     const lease = allocator.acquire();
     if (!lease) return;
     try {
-      const slotDir = kv.slotDir;
-      mkdirSync(slotDir, { recursive: true });
-      const slotBasename = `${kv.sha}.kvslot`;
-      const slotFile = join(slotDir, slotBasename);
-      const slotClient = slotClientFor(
-        kv.runtime,
-        kv.workload,
-        kv.host,
-        kv.port,
-        context.route?.engine,
+      const slotFile = await saveSlotUpstream(context, kv, lease.slotId);
+      if (slotFile === null) return;
+      const committed = commitSlotToRegistry(
+        context,
+        kv,
+        slotFile,
+        firstResponseToken,
+        upstreamJson,
       );
-      // llama-server's slot API only accepts a bare filename (relative to its
-      // --slot-save-path). We store the absolute path in the registry for
-      // orphan sweep + integrity scan, but pass basename to the upstream call.
-      // oMLX additionally requires `model` in the payload (HTTP 400 otherwise).
-      const saved = await slotClient.save(
-        lease.slotId,
-        slotBasename,
-        context.route?.engine === "omlx" ? { model: context.route.model } : undefined,
-      );
-      if (!saved.ok) {
-        console.warn(
-          `[kvstore] slot save skipped for workload='${kv.workload}' sha='${kv.sha}': ${saved.reason}`,
-        );
-        return;
-      }
-
-      const now = Date.now();
-      const trailer: KvTrailer = { extFlags: 0 };
-      let extFlags = 0;
-      const toolMap = extractToolMapFromJson(upstreamJson);
-      if (Object.keys(toolMap).length > 0) {
-        extFlags |= EXT_FLAG_TOOL_MAP;
-        trailer.toolMap = toolMap;
-      }
-      const sessionTitle = deriveSessionTitle(context.anthropicRequest);
-      if (sessionTitle) {
-        extFlags |= EXT_FLAG_SESSION_TITLE;
-        trailer.sessionTitle = sessionTitle;
-      }
-      if (extFlags !== 0) {
-        trailer.extFlags = extFlags;
-        const wroteTrailer = writeTrailer(slotFile, trailer, kv.runtime.storage);
-        if (!wroteTrailer.ok) {
-          extFlags = 0;
-          console.warn(
-            `[kvstore] trailer save skipped for workload='${kv.workload}' sha='${kv.sha}': ${wroteTrailer.reason}`,
-          );
-        }
-      }
-      const wrote = kv.runtime.storage.safeWrite(() => {
-        kv.runtime.registry.insert({
-          sha: kv.sha,
-          workload: kv.workload,
-          model: kv.model ?? null,
-          upstreamSlotFile: slotFile,
-          quantBits: kv.quantBits,
-          tokens: kv.prefixMetric,
-          ctxSize: kv.ctxSize,
-          hits: 0,
-          createdAt: now,
-          lastUsed: now,
-          payloadBytes: ((): number => {
-            try {
-              return statSync(slotFile).size;
-            } catch {
-              return kv.prefixMetric;
-            }
-          })(),
-          textBytes: kv.prefixMetric,
-          reason: "cold",
-          prefixByteLength: kv.prefixMetric,
-          workloadEpoch: kv.workloadEpoch,
-          quarantined: 0,
-          state: "idle",
-          firstResponseToken,
-          extFlags,
-        });
-      });
-      if (!wrote.ok) return;
+      if (committed === null) return;
+      const { now } = committed;
 
       const eviction = runEvictionIfOverBudget(
         kv.runtime.registry,

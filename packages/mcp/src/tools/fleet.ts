@@ -265,6 +265,159 @@ async function handleFleetAudit({
   return toTextContent(result);
 }
 
+function handleFleetPressure({ node, journalPath }: { node?: string; journalPath?: string }): {
+  content: { type: "text"; text: string }[];
+} {
+  const path = journalPath ?? defaultFleetJournalPath();
+  const entries = readJournal(path);
+
+  const knownNodes = new Set<string>();
+  const latestTransition = new Map<string, { state: string; ts: string }>();
+
+  for (const e of entries) {
+    if (node !== undefined && e.node !== node) continue;
+    if (e.kind === "fleet-snapshot") {
+      knownNodes.add(e.node);
+    } else if (
+      e.kind === "fleet-transition" &&
+      e.subjectKind === "node" &&
+      (e.signal === "pressure" || e.signal === "pressure-cleared")
+    ) {
+      const cur = latestTransition.get(e.node);
+      if (!cur || e.ts > cur.ts) {
+        latestTransition.set(e.node, { state: e.to, ts: e.ts });
+      }
+    }
+  }
+  for (const node of latestTransition.keys()) knownNodes.add(node);
+
+  const nodes = [...knownNodes].map((nodeName) => {
+    const t = latestTransition.get(nodeName);
+    return {
+      name: nodeName,
+      state: t?.state === "HIGH" ? "HIGH" : "NORMAL",
+      lastTransitionAt: t?.ts ?? null,
+    };
+  });
+
+  return toTextContent({ nodes });
+}
+
+async function handleAdmitMeasure(
+  spawnFn: SpawnFn,
+  input: { workload: string; node?: string; timeoutMs?: number },
+): Promise<{ content: { type: "text"; text: string }[] }> {
+  const { workload, node, timeoutMs } = input;
+  const snapshot = snapshotInput({ workload, node });
+  const key = `${workload}:${node ?? ""}`;
+  if (admitMeasureInFlight.has(key)) {
+    const outcome = {
+      ok: false,
+      error: "admit measure already running for this workload",
+      preview: snapshot,
+    };
+    appendAudit("llamactl_admit_measure", snapshot, "denied", outcome);
+    return toTextContent(outcome);
+  }
+  admitMeasureInFlight.add(key);
+  const boundedTimeoutMs = toTimeoutMs(timeoutMs, MAX_TIMEOUT_MS_ADMIT);
+  try {
+    ensureCliBin();
+    const args = [CLI_BIN_PATH, "admit", "measure", workload];
+    if (node) args.push(`--node=${node}`);
+    const result = await runProcess(spawnFn, "bun", args, boundedTimeoutMs);
+    if (!result.ok) {
+      const error = makeResultError(getRunProcessFailureMessage(result), result);
+      const outcome = { ...error, preview: snapshot };
+      appendAudit("llamactl_admit_measure", snapshot, "error", outcome);
+      return toTextContent(error);
+    }
+    appendAudit("llamactl_admit_measure", snapshot, "success", result);
+    return toTextContent(result);
+  } finally {
+    admitMeasureInFlight.delete(key);
+  }
+}
+
+async function handleSupervisorExecute(
+  spawnFn: SpawnFn,
+  detectExistingSupervisor: DetectExistingSupervisor,
+  input: {
+    proposalId?: string;
+    auto?: boolean;
+    severityThreshold?: number;
+    node?: string;
+    confirm?: boolean;
+    timeoutMs?: number;
+  },
+): Promise<{ content: { type: "text"; text: string }[] }> {
+  const { proposalId, auto, severityThreshold, node, confirm, timeoutMs } = input;
+  const hasProposalId = proposalId !== undefined;
+  const hasAuto = auto === true;
+  if (hasProposalId === hasAuto) {
+    const outcome = {
+      ok: false,
+      error: "must specify exactly one of proposalId or auto",
+      preview: snapshotInput({ proposalId, auto, severityThreshold, node }),
+    };
+    appendAudit(
+      "llamactl_supervisor_execute",
+      snapshotInput({ proposalId, auto, severityThreshold, node }),
+      "denied",
+      outcome,
+    );
+    return toTextContent(outcome);
+  }
+  if (confirm !== true) {
+    const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
+    const outcome = {
+      ok: false,
+      error: "destructive operation requires confirm:true",
+      preview,
+    };
+    appendAudit("llamactl_supervisor_execute", preview, "denied", outcome);
+    return toTextContent(outcome);
+  }
+
+  const running = await detectExistingSupervisor();
+  if (running.running) {
+    const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
+    const outcome = {
+      ok: false,
+      error: "supervisor execute blocked by running supervisor",
+      preview: { ...preview, runningPid: running.pid },
+    };
+    appendAudit("llamactl_supervisor_execute", preview, "denied", outcome);
+    return toTextContent(outcome);
+  }
+
+  ensureCliBin();
+  const args = [CLI_BIN_PATH, "supervisor", "tick"];
+  if (node) args.push(`--node=${node}`);
+  if (hasAuto) {
+    args.push("--auto");
+    if (severityThreshold !== undefined) {
+      args.push("--severity-threshold=" + severityThreshold.toString());
+    }
+  } else {
+    args.push("--execute=" + (proposalId ?? ""));
+  }
+  const boundedTimeoutMs = toTimeoutMs(timeoutMs, MAX_TIMEOUT_MS_EXECUTE);
+  const result = await runProcess(spawnFn, "bun", args, boundedTimeoutMs);
+  const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
+  if (!result.ok) {
+    const outcome = makeResultError(getRunProcessFailureMessage(result), result);
+    appendAudit("llamactl_supervisor_execute", preview, "error", outcome);
+    return toTextContent({
+      ...outcome,
+      preview,
+    });
+  }
+
+  appendAudit("llamactl_supervisor_execute", preview, "success", result);
+  return toTextContent({ ...result, preview });
+}
+
 export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): void {
   const spawnFn = deps?.spawn ?? spawn;
   const detectExistingSupervisor =
@@ -310,41 +463,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         journalPath: z.string().optional(),
       },
     },
-    ({ node, journalPath }) => {
-      const path = journalPath ?? defaultFleetJournalPath();
-      const entries = readJournal(path);
-
-      const knownNodes = new Set<string>();
-      const latestTransition = new Map<string, { state: string; ts: string }>();
-
-      for (const e of entries) {
-        if (node !== undefined && e.node !== node) continue;
-        if (e.kind === "fleet-snapshot") {
-          knownNodes.add(e.node);
-        } else if (
-          e.kind === "fleet-transition" &&
-          e.subjectKind === "node" &&
-          (e.signal === "pressure" || e.signal === "pressure-cleared")
-        ) {
-          const cur = latestTransition.get(e.node);
-          if (!cur || e.ts > cur.ts) {
-            latestTransition.set(e.node, { state: e.to, ts: e.ts });
-          }
-        }
-      }
-      for (const node of latestTransition.keys()) knownNodes.add(node);
-
-      const nodes = [...knownNodes].map((nodeName) => {
-        const t = latestTransition.get(nodeName);
-        return {
-          name: nodeName,
-          state: t?.state === "HIGH" ? "HIGH" : "NORMAL",
-          lastTransitionAt: t?.ts ?? null,
-        };
-      });
-
-      return toTextContent({ nodes });
-    },
+    (input) => handleFleetPressure(input),
   );
 
   server.registerTool(
@@ -504,37 +623,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         timeoutMs: z.number().int().positive().optional(),
       },
     },
-    async ({ workload, node, timeoutMs }) => {
-      const input = snapshotInput({ workload, node });
-      const key = `${workload}:${node ?? ""}`;
-      if (admitMeasureInFlight.has(key)) {
-        const outcome = {
-          ok: false,
-          error: "admit measure already running for this workload",
-          preview: input,
-        };
-        appendAudit("llamactl_admit_measure", input, "denied", outcome);
-        return toTextContent(outcome);
-      }
-      admitMeasureInFlight.add(key);
-      const boundedTimeoutMs = toTimeoutMs(timeoutMs, MAX_TIMEOUT_MS_ADMIT);
-      try {
-        ensureCliBin();
-        const args = [CLI_BIN_PATH, "admit", "measure", workload];
-        if (node) args.push(`--node=${node}`);
-        const result = await runProcess(spawnFn, "bun", args, boundedTimeoutMs);
-        if (!result.ok) {
-          const error = makeResultError(getRunProcessFailureMessage(result), result);
-          const outcome = { ...error, preview: input };
-          appendAudit("llamactl_admit_measure", input, "error", outcome);
-          return toTextContent(error);
-        }
-        appendAudit("llamactl_admit_measure", input, "success", result);
-        return toTextContent(result);
-      } finally {
-        admitMeasureInFlight.delete(key);
-      }
-    },
+    (input) => handleAdmitMeasure(spawnFn, input),
   );
 
   server.registerTool(
@@ -551,72 +640,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         timeoutMs: z.number().int().positive().optional(),
       },
     },
-    async ({ proposalId, auto, severityThreshold, node, confirm, timeoutMs }) => {
-      const hasProposalId = proposalId !== undefined;
-      const hasAuto = auto === true;
-      if (hasProposalId === hasAuto) {
-        const outcome = {
-          ok: false,
-          error: "must specify exactly one of proposalId or auto",
-          preview: snapshotInput({ proposalId, auto, severityThreshold, node }),
-        };
-        appendAudit(
-          "llamactl_supervisor_execute",
-          snapshotInput({ proposalId, auto, severityThreshold, node }),
-          "denied",
-          outcome,
-        );
-        return toTextContent(outcome);
-      }
-      if (confirm !== true) {
-        const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
-        const outcome = {
-          ok: false,
-          error: "destructive operation requires confirm:true",
-          preview,
-        };
-        appendAudit("llamactl_supervisor_execute", preview, "denied", outcome);
-        return toTextContent(outcome);
-      }
-
-      const running = await detectExistingSupervisor();
-      if (running.running) {
-        const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
-        const outcome = {
-          ok: false,
-          error: "supervisor execute blocked by running supervisor",
-          preview: { ...preview, runningPid: running.pid },
-        };
-        appendAudit("llamactl_supervisor_execute", preview, "denied", outcome);
-        return toTextContent(outcome);
-      }
-
-      ensureCliBin();
-      const args = [CLI_BIN_PATH, "supervisor", "tick"];
-      if (node) args.push(`--node=${node}`);
-      if (hasAuto) {
-        args.push("--auto");
-        if (severityThreshold !== undefined) {
-          args.push("--severity-threshold=" + severityThreshold.toString());
-        }
-      } else {
-        args.push("--execute=" + (proposalId ?? ""));
-      }
-      const boundedTimeoutMs = toTimeoutMs(timeoutMs, MAX_TIMEOUT_MS_EXECUTE);
-      const result = await runProcess(spawnFn, "bun", args, boundedTimeoutMs);
-      const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
-      if (!result.ok) {
-        const outcome = makeResultError(getRunProcessFailureMessage(result), result);
-        appendAudit("llamactl_supervisor_execute", preview, "error", outcome);
-        return toTextContent({
-          ...outcome,
-          preview,
-        });
-      }
-
-      appendAudit("llamactl_supervisor_execute", preview, "success", result);
-      return toTextContent({ ...result, preview });
-    },
+    (input) => handleSupervisorExecute(spawnFn, detectExistingSupervisor, input),
   );
 }
 

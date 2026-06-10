@@ -222,24 +222,39 @@ export class MigrationController {
     try {
       await this.deps.deployWorkload(proposal.workload, proposal.toNode);
     } catch (err) {
-      writeJournalEntry({
-        kind: "fleet-execution",
-        ts: new Date(this.nowMs).toISOString(),
-        node: this.deps.leaseholder,
-        proposalId: proposal.proposalId,
-        action: {
-          type: "move",
-          workload: proposal.workload,
-          fromNode: proposal.fromNode,
-          toNode: proposal.toNode,
-          reason: "rebalance",
-        },
-        status: "failed",
-        reason: `apply failed: ${(err as Error).message}`,
-      });
+      writeJournalEntry(this.buildDeployFailedEntry(proposal, (err as Error).message));
       return "apply_failed";
     }
 
+    this.writeSkippedEvictAndMoveProposal(proposal, ts, writeJournalEntry);
+    this.markMoveInFlight(proposal.workload);
+
+    return await this.pollDestinationHealth(proposal, this.deps.removeWorkload, writeJournalEntry);
+  }
+
+  private buildDeployFailedEntry(proposal: MoveProposal, errorMsg: string): FleetExecutionEntry {
+    return {
+      kind: "fleet-execution",
+      ts: new Date(this.nowMs).toISOString(),
+      node: this.deps.leaseholder,
+      proposalId: proposal.proposalId,
+      action: {
+        type: "move",
+        workload: proposal.workload,
+        fromNode: proposal.fromNode,
+        toNode: proposal.toNode,
+        reason: "rebalance",
+      },
+      status: "failed",
+      reason: `apply failed: ${errorMsg}`,
+    };
+  }
+
+  private writeSkippedEvictAndMoveProposal(
+    proposal: MoveProposal,
+    ts: string,
+    writeJournalEntry: (entry: FleetJournalEntry) => void,
+  ): void {
     const skippedEvict: FleetExecutionEntry = {
       kind: "fleet-execution",
       ts,
@@ -277,9 +292,13 @@ export class MigrationController {
       expiresAt: proposal.expiresAt,
     };
     writeJournalEntry(moveProposalEntry);
+  }
 
-    this.markMoveInFlight(proposal.workload);
-
+  private async pollDestinationHealth(
+    proposal: MoveProposal,
+    removeWorkload: (workloadName: string, fromNode: string) => Promise<void>,
+    writeJournalEntry: (entry: FleetJournalEntry) => void,
+  ): Promise<"executed" | "timed_out"> {
     const deadline = this.nowMs + this.healthTimeoutMs;
     while (this.nowMs <= deadline) {
       const snapshot = await this.safeFetchSnapshot(proposal.toNode);
@@ -287,7 +306,7 @@ export class MigrationController {
         (entry) => entry.name === proposal.workload && entry.reachable,
       );
       if (reachable) {
-        await this.deps.removeWorkload(proposal.workload, proposal.fromNode);
+        await removeWorkload(proposal.workload, proposal.fromNode);
         writeJournalEntry({
           kind: "fleet-execution",
           ts: new Date(this.nowMs).toISOString(),

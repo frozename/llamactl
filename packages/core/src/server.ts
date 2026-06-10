@@ -644,125 +644,120 @@ async function pollReady(
   return result;
 }
 
+/** Build the success result for `startServer`, emitting the `ready` event. */
+function startServerSuccess(
+  resolved: ResolvedEnv,
+  launchEndpoint: StartServerOptions["endpoint"],
+  tunedProfile: string | null,
+  retried: boolean,
+  pid: number,
+  onEvent?: (e: ServerEvent) => void,
+): StartServerResult {
+  onEvent?.({ type: "ready", pid, endpoint: endpoint(resolved, launchEndpoint) });
+  return {
+    ok: true,
+    pid,
+    endpoint: endpoint(resolved, launchEndpoint),
+    advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
+    tunedProfile,
+    retried,
+  };
+}
+
+/** Build a failure result for `startServer`. */
+function startServerError(
+  resolved: ResolvedEnv,
+  launchEndpoint: StartServerOptions["endpoint"],
+  tunedProfile: string | null,
+  retried: boolean,
+  error: string,
+  pid: number | null = null,
+): StartServerResult {
+  return {
+    ok: false,
+    pid,
+    endpoint: endpoint(resolved, launchEndpoint),
+    advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
+    tunedProfile,
+    retried,
+    error,
+  };
+}
+
+interface ResolvedLaunchTarget {
+  rel: string;
+  modelPath: string;
+  bin: string;
+}
+
 /**
- * Start llama-server in the background. Mirrors the shell `llama-start`:
- *
- *   1. Resolve the target to a rel + model path; fail if missing.
- *   2. Stop any previous instance, then spawn llama-server detached,
- *      redirecting stdout/stderr to `$LLAMA_CPP_LOGS/server.log`.
- *   3. Apply tuned launch args from bench-profiles.tsv when a record
- *      exists for (machine, rel, mode, ctx, build); otherwise use the
- *      `default` profile args.
- *   4. Poll `/health` until 200 or timeout; retry once with safe-flag
- *      mmproj args if the first attempt didn't come up and mmproj was
- *      in the arg set.
- *
- * Returns a structured result; non-null `error` indicates a hard
- * failure the caller should surface.
+ * Resolve the start target to a rel + model path + binary, failing
+ * fast (as a ready-to-return `StartServerResult`) when any of them
+ * is missing on disk.
  */
-export async function startServer(opts: StartServerOptions): Promise<StartServerResult> {
-  const env = opts.env ?? process.env;
-  const resolved = opts.resolved ?? resolveEnv(env);
-  const key = opts.key;
-  const launchEndpoint = opts.endpoint;
-  const launchHost = launchEndpoint?.host ?? resolved.LLAMA_CPP_HOST;
-  const launchPort = launchEndpoint?.port ?? resolved.LLAMA_CPP_PORT;
+function resolveAndValidateTarget(
+  opts: StartServerOptions,
+  resolved: ResolvedEnv,
+  launchEndpoint: StartServerOptions["endpoint"],
+  env: NodeJS.ProcessEnv,
+): ResolvedLaunchTarget | { result: StartServerResult } {
   const rel = resolveTarget(opts.target, env);
   if (!rel) {
     return {
-      ok: false,
-      pid: null,
-      endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
-      tunedProfile: null,
-      retried: false,
-      error: `Unknown target: ${opts.target}`,
+      result: startServerError(
+        resolved,
+        launchEndpoint,
+        null,
+        false,
+        `Unknown target: ${opts.target}`,
+      ),
     };
   }
   const modelPath = join(resolved.LLAMA_CPP_MODELS, rel);
   if (!existsSync(modelPath)) {
     return {
-      ok: false,
-      pid: null,
-      endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
-      tunedProfile: null,
-      retried: false,
-      error: `Model file not found: ${modelPath}`,
+      result: startServerError(
+        resolved,
+        launchEndpoint,
+        null,
+        false,
+        `Model file not found: ${modelPath}`,
+      ),
     };
   }
   const bin = opts.binary ?? join(resolved.LLAMA_CPP_BIN, "llama-server");
   if (!existsSync(bin)) {
     return {
-      ok: false,
-      pid: null,
-      endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
-      tunedProfile: null,
-      retried: false,
-      error: `llama-server binary not found: ${bin}`,
+      result: startServerError(
+        resolved,
+        launchEndpoint,
+        null,
+        false,
+        `llama-server binary not found: ${bin}`,
+      ),
     };
   }
+  return { rel, modelPath, bin };
+}
 
-  // Stop any existing instance — best effort.
-  await stopServer({ key, resolved });
+interface PreparedLaunchArgs {
+  launchArgs: string[];
+  tunedProfile: string | null;
+  slotPathResolved: { args: string[]; slotSavePath: string | null };
+}
 
-  // Pre-flight port-collision check. After our own stopServer, the
-  // configured port should be free. If something still answers on
-  // /health, it's a foreign process (Colima docker forwards, an old
-  // Ollama, a stray docker container) and llama-server's bind would
-  // either fail silently or land on a duplicate port that the
-  // readiness probe would never resolve correctly. Fail fast with
-  // the offending HTTP code so the operator knows what to kill.
-  const portConflictHint = await detectPortConflict(endpoint(resolved, launchEndpoint));
-  if (portConflictHint) {
-    // Something already answers on our endpoint. If it's serving OUR model,
-    // adopt it (record pid + state so it's managed + routable) instead of
-    // failing — a spawn could not win the held port anyway. Only a genuine
-    // foreign listener falls through to the error.
-    const adoptedPid = await tryAdoptExistingServer({
-      resolved,
-      key,
-      endpointUrl: endpoint(resolved, launchEndpoint),
-      host: launchHost,
-      port: Number(launchPort),
-      rel,
-      extraArgs: opts.extraArgs ?? [],
-      binary: bin,
-    });
-    if (adoptedPid !== null) {
-      opts.onEvent?.({
-        type: "ready",
-        pid: adoptedPid,
-        endpoint: endpoint(resolved, launchEndpoint),
-      });
-      return {
-        ok: true,
-        pid: adoptedPid,
-        endpoint: endpoint(resolved, launchEndpoint),
-        advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
-        tunedProfile: null,
-        retried: false,
-      };
-    }
-    return {
-      ok: false,
-      pid: null,
-      endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
-      tunedProfile: null,
-      retried: false,
-      error: portConflictHint,
-    };
-  }
-
-  mkdirSync(resolved.LLAMA_CPP_MODELS, { recursive: true });
-  mkdirSync(resolved.LLAMA_CPP_CACHE, { recursive: true });
-  mkdirSync(resolved.LLAMA_CPP_LOGS, { recursive: true });
-
-  // Tuned-profile lookup. Profile args are skipped when the user has
-  // already specified the same flag in extraArgs, so a manifest that
-  // sets e.g. `-ub 1024` isn't doubled up with the profile's `-ub 512`.
+/**
+ * Tuned-profile lookup. Profile args are skipped when the user has
+ * already specified the same flag in extraArgs, so a manifest that
+ * sets e.g. `-ub 1024` isn't doubled up with the profile's `-ub 512`.
+ */
+function prepareLaunchArgs(
+  opts: StartServerOptions,
+  rel: string,
+  resolved: ResolvedEnv,
+  env: NodeJS.ProcessEnv,
+  key: WorkloadKey,
+): PreparedLaunchArgs {
   let tunedProfile: string | null = null;
   const extra = opts.extraArgs ?? [];
   const slotPathResolved = resolveSlotSavePathArgs(extra, resolved.LOCAL_AI_RUNTIME_DIR, key.name);
@@ -789,31 +784,230 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
   }
   launchArgs.push(...filterProfileArgs(profileArgs, slotPathResolved.args));
   launchArgs.push(...slotPathResolved.args);
+  return { launchArgs, tunedProfile, slotPathResolved };
+}
 
-  validateHostBind(launchArgs, opts.allowExternalBind);
-  const pid = await launchBackground({
-    bin,
-    modelPath,
-    args: launchArgs,
+interface MmprojRetryContext {
+  bin: string;
+  modelPath: string;
+  launchArgs: string[];
+  resolved: ResolvedEnv;
+  key: WorkloadKey;
+  launchEndpoint: StartServerOptions["endpoint"];
+  launchHost: string;
+  launchPort: number | string;
+  healthUrl: string;
+  timeoutSeconds: number;
+  tunedProfile: string | null;
+  killOnAbort: () => void;
+}
+
+interface MmprojRetryOutcome {
+  /** Final result when the retry resolved the start (ready/aborted); null to keep going. */
+  result: StartServerResult | null;
+  readyResult: PollReadyResult;
+}
+
+/**
+ * Retry path: relaunch with mmproj-safe flags appended, then poll
+ * readiness again. Returns a final `result` for the terminal ready /
+ * aborted outcomes; otherwise the caller falls through to the shared
+ * timeout / exited handling with the updated `readyResult`.
+ */
+async function retryWithMmprojSafeFlags(
+  opts: StartServerOptions,
+  ctx: MmprojRetryContext,
+): Promise<MmprojRetryOutcome> {
+  const { resolved, key, launchEndpoint, tunedProfile } = ctx;
+  opts.onEvent?.({ type: "retry", reason: "mmproj safe-flag retry" });
+  await stopServer({ key, resolved });
+  const retryArgs = [...ctx.launchArgs, ...safeRetryArgs()];
+  const retryPid = await launchBackground({
+    bin: ctx.bin,
+    modelPath: ctx.modelPath,
+    args: retryArgs,
     resolved,
     key,
+    allowExternalBind: opts.allowExternalBind,
+    host: ctx.launchHost,
+    port: ctx.launchPort,
+    onEvent: opts.onEvent,
+  });
+  writeServerPid(resolved, key, retryPid);
+  const readyResult = await pollReady(
+    retryPid,
+    ctx.healthUrl,
+    ctx.timeoutSeconds,
+    opts.onEvent,
+    opts.signal,
+  );
+  if (readyResult.outcome === "aborted") {
+    try {
+      if (isProcessAlive(retryPid)) process.kill(retryPid, "SIGTERM");
+    } catch {
+      // already gone
+    }
+    removeServerPid(resolved, key);
+    opts.signal?.removeEventListener("abort", ctx.killOnAbort);
+    return {
+      result: startServerError(
+        resolved,
+        launchEndpoint,
+        tunedProfile,
+        true,
+        "Start aborted by caller",
+      ),
+      readyResult,
+    };
+  }
+  if (readyResult.outcome === "ready") {
+    opts.signal?.removeEventListener("abort", ctx.killOnAbort);
+    return {
+      result: startServerSuccess(
+        resolved,
+        launchEndpoint,
+        tunedProfile,
+        true,
+        retryPid,
+        opts.onEvent,
+      ),
+      readyResult,
+    };
+  }
+  return { result: null, readyResult };
+}
+
+/**
+ * Pre-flight port-collision check. After our own stopServer, the
+ * configured port should be free. If something still answers on
+ * /health, it's a foreign process (Colima docker forwards, an old
+ * Ollama, a stray docker container) and llama-server's bind would
+ * either fail silently or land on a duplicate port that the
+ * readiness probe would never resolve correctly. Fail fast with
+ * the offending HTTP code so the operator knows what to kill.
+ * Returns null when the port is clear and the start should proceed.
+ */
+async function handlePortConflict(
+  opts: StartServerOptions,
+  resolved: ResolvedEnv,
+  launchEndpoint: StartServerOptions["endpoint"],
+  target: ResolvedLaunchTarget,
+  launchHost: string,
+  launchPort: number | string,
+): Promise<StartServerResult | null> {
+  const portConflictHint = await detectPortConflict(endpoint(resolved, launchEndpoint));
+  if (!portConflictHint) return null;
+  // Something already answers on our endpoint. If it's serving OUR model,
+  // adopt it (record pid + state so it's managed + routable) instead of
+  // failing — a spawn could not win the held port anyway. Only a genuine
+  // foreign listener falls through to the error.
+  const adoptedPid = await tryAdoptExistingServer({
+    resolved,
+    key: opts.key,
+    endpointUrl: endpoint(resolved, launchEndpoint),
+    host: launchHost,
+    port: Number(launchPort),
+    rel: target.rel,
+    extraArgs: opts.extraArgs ?? [],
+    binary: target.bin,
+  });
+  if (adoptedPid !== null) {
+    return startServerSuccess(resolved, launchEndpoint, null, false, adoptedPid, opts.onEvent);
+  }
+  return startServerError(resolved, launchEndpoint, null, false, portConflictHint);
+}
+
+/** Spawn llama-server detached and record the pid + state sidecars. */
+async function launchAndRecordServer(
+  opts: StartServerOptions,
+  resolved: ResolvedEnv,
+  target: ResolvedLaunchTarget,
+  prepared: PreparedLaunchArgs,
+  launchHost: string,
+  launchPort: number | string,
+): Promise<number> {
+  const pid = await launchBackground({
+    bin: target.bin,
+    modelPath: target.modelPath,
+    args: prepared.launchArgs,
+    resolved,
+    key: opts.key,
     allowExternalBind: opts.allowExternalBind,
     host: launchHost,
     port: launchPort,
     onEvent: opts.onEvent,
   });
-  writeServerPid(resolved, key, pid);
-  writeServerState(resolved, key, {
-    rel,
-    extraArgs: extra,
-    slotSavePath: slotPathResolved.slotSavePath,
+  writeServerPid(resolved, opts.key, pid);
+  writeServerState(resolved, opts.key, {
+    rel: target.rel,
+    extraArgs: opts.extraArgs ?? [],
+    slotSavePath: prepared.slotPathResolved.slotSavePath,
     host: launchHost,
     port: String(launchPort),
-    binary: bin,
+    binary: target.bin,
     pid,
     startedAt: new Date().toISOString(),
-    tunedProfile,
+    tunedProfile: prepared.tunedProfile,
   });
+  return pid;
+}
+
+/**
+ * Start llama-server in the background. Mirrors the shell `llama-start`:
+ *
+ *   1. Resolve the target to a rel + model path; fail if missing.
+ *   2. Stop any previous instance, then spawn llama-server detached,
+ *      redirecting stdout/stderr to `$LLAMA_CPP_LOGS/server.log`.
+ *   3. Apply tuned launch args from bench-profiles.tsv when a record
+ *      exists for (machine, rel, mode, ctx, build); otherwise use the
+ *      `default` profile args.
+ *   4. Poll `/health` until 200 or timeout; retry once with safe-flag
+ *      mmproj args if the first attempt didn't come up and mmproj was
+ *      in the arg set.
+ *
+ * Returns a structured result; non-null `error` indicates a hard
+ * failure the caller should surface.
+ */
+export async function startServer(opts: StartServerOptions): Promise<StartServerResult> {
+  const env = opts.env ?? process.env;
+  const resolved = opts.resolved ?? resolveEnv(env);
+  const key = opts.key;
+  const launchEndpoint = opts.endpoint;
+  const launchHost = launchEndpoint?.host ?? resolved.LLAMA_CPP_HOST;
+  const launchPort = launchEndpoint?.port ?? resolved.LLAMA_CPP_PORT;
+  const validation = resolveAndValidateTarget(opts, resolved, launchEndpoint, env);
+  if ("result" in validation) return validation.result;
+  const { rel, modelPath, bin } = validation;
+
+  // Stop any existing instance — best effort.
+  await stopServer({ key, resolved });
+
+  const conflictResult = await handlePortConflict(
+    opts,
+    resolved,
+    launchEndpoint,
+    validation,
+    launchHost,
+    launchPort,
+  );
+  if (conflictResult) return conflictResult;
+
+  mkdirSync(resolved.LLAMA_CPP_MODELS, { recursive: true });
+  mkdirSync(resolved.LLAMA_CPP_CACHE, { recursive: true });
+  mkdirSync(resolved.LLAMA_CPP_LOGS, { recursive: true });
+
+  const prepared = prepareLaunchArgs(opts, rel, resolved, env, key);
+  const { launchArgs, tunedProfile } = prepared;
+
+  validateHostBind(launchArgs, opts.allowExternalBind);
+  const pid = await launchAndRecordServer(
+    opts,
+    resolved,
+    validation,
+    prepared,
+    launchHost,
+    launchPort,
+  );
 
   // Wire the caller's abort signal to SIGTERM the detached child so
   // a tRPC unsubscribe or Ctrl-C doesn't leave an orphan server.
@@ -837,84 +1031,40 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
     opts.signal?.removeEventListener("abort", killOnAbort);
     killOnAbort();
     removeServerPid(resolved, key);
-    return {
-      ok: false,
-      pid: null,
-      endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
+    return startServerError(
+      resolved,
+      launchEndpoint,
       tunedProfile,
-      retried: false,
-      error: "Start aborted by caller",
-    };
+      false,
+      "Start aborted by caller",
+    );
   }
   if (outcome === "ready") {
     opts.signal?.removeEventListener("abort", killOnAbort);
-    opts.onEvent?.({ type: "ready", pid, endpoint: endpoint(resolved, launchEndpoint) });
-    return {
-      ok: true,
-      pid,
-      endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
-      tunedProfile,
-      retried: false,
-    };
+    return startServerSuccess(resolved, launchEndpoint, tunedProfile, false, pid, opts.onEvent);
   }
 
   // Retry path: mmproj-safe flags.
   let retried = false;
   if (hasMmprojArg(launchArgs)) {
-    opts.onEvent?.({ type: "retry", reason: "mmproj safe-flag retry" });
-    await stopServer({ key, resolved });
-    const retryArgs = [...launchArgs, ...safeRetryArgs()];
-    const retryPid = await launchBackground({
+    const retry = await retryWithMmprojSafeFlags(opts, {
       bin,
       modelPath,
-      args: retryArgs,
+      launchArgs,
       resolved,
       key,
-      allowExternalBind: opts.allowExternalBind,
-      host: launchHost,
-      port: launchPort,
-      onEvent: opts.onEvent,
+      launchEndpoint,
+      launchHost,
+      launchPort,
+      healthUrl,
+      timeoutSeconds,
+      tunedProfile,
+      killOnAbort,
     });
-    writeServerPid(resolved, key, retryPid);
-    readyResult = await pollReady(retryPid, healthUrl, timeoutSeconds, opts.onEvent, opts.signal);
+    if (retry.result) return retry.result;
+    readyResult = retry.readyResult;
     outcome = readyResult.outcome;
     retried = true;
-    if (outcome === "aborted") {
-      try {
-        if (isProcessAlive(retryPid)) process.kill(retryPid, "SIGTERM");
-      } catch {
-        // already gone
-      }
-      removeServerPid(resolved, key);
-      opts.signal?.removeEventListener("abort", killOnAbort);
-      return {
-        ok: false,
-        pid: null,
-        endpoint: endpoint(resolved, launchEndpoint),
-        advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
-        tunedProfile,
-        retried: true,
-        error: "Start aborted by caller",
-      };
-    }
-    if (outcome === "ready") {
-      opts.signal?.removeEventListener("abort", killOnAbort);
-      opts.onEvent?.({
-        type: "ready",
-        pid: retryPid,
-        endpoint: endpoint(resolved, launchEndpoint),
-      });
-      return {
-        ok: true,
-        pid: retryPid,
-        endpoint: endpoint(resolved, launchEndpoint),
-        advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
-        tunedProfile,
-        retried: true,
-      };
-    }
   }
 
   opts.signal?.removeEventListener("abort", killOnAbort);
@@ -929,27 +1079,24 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
       readyResult.portConflict && readyResult.lastHttpCode
         ? ` \u2014 health endpoint returned HTTP ${readyResult.lastHttpCode} repeatedly; another process is likely bound to this port (try: lsof -P -iTCP:PORT)`
         : "";
-    return {
-      ok: false,
-      pid,
-      endpoint: endpoint(resolved, launchEndpoint),
-      advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
+    return startServerError(
+      resolved,
+      launchEndpoint,
       tunedProfile,
       retried,
-      error: `llama-server readiness check timed out after ${String(timeoutSeconds)}s${conflictHint}`,
-    };
+      `llama-server readiness check timed out after ${String(timeoutSeconds)}s${conflictHint}`,
+      pid,
+    );
   }
 
   opts.onEvent?.({ type: "exited", code: null });
-  return {
-    ok: false,
-    pid: null,
-    endpoint: endpoint(resolved, launchEndpoint),
-    advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
+  return startServerError(
+    resolved,
+    launchEndpoint,
     tunedProfile,
     retried,
-    error: "llama-server exited before becoming ready",
-  };
+    "llama-server exited before becoming ready",
+  );
 }
 
 interface LaunchArgs {
