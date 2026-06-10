@@ -1,5 +1,6 @@
 import { env as envMod, keepAlive } from "@llamactl/core";
 import { spawn } from "node:child_process";
+import { required } from "../required.js";
 
 import { getGlobals, getNodeClient, isLocalDispatch } from "../dispatcher.js";
 import { resolveWorkloadName } from "./_workload-resolve.js";
@@ -53,7 +54,9 @@ async function runStart(args: string[]): Promise<number> {
       } else if (!res.ok) {
         process.stderr.write(`${res.error ?? "keep-alive failed to start"}\n`);
       } else {
-        process.stdout.write(`keep-alive started pid=${res.pid} target=${target} (remote)\n`);
+        process.stdout.write(
+          `keep-alive started pid=${String(res.pid)} target=${target} (remote)\n`,
+        );
       }
       return res.ok ? 0 : 1;
     } catch (err) {
@@ -66,7 +69,7 @@ async function runStart(args: string[]): Promise<number> {
 
   const existing = keepAlive.readKeepAlivePid();
   if (existing !== null) {
-    const msg = `keep-alive already running (pid=${existing})`;
+    const msg = `keep-alive already running (pid=${String(existing)})`;
     if (json) process.stdout.write(`${JSON.stringify({ error: msg, pid: existing }, null, 2)}\n`);
     else process.stderr.write(`${msg}\n`);
     return 1;
@@ -111,7 +114,9 @@ async function runStart(args: string[]): Promise<number> {
     if (pid === null) {
       process.stderr.write("keep-alive supervisor did not register a PID within 2s\n");
     } else {
-      process.stdout.write(`keep-alive started pid=${pid} target=${target} log=${report.log}\n`);
+      process.stdout.write(
+        `keep-alive started pid=${String(pid)} target=${target} log=${report.log}\n`,
+      );
     }
   }
   return pid !== null ? 0 : 1;
@@ -122,7 +127,7 @@ async function runStop(args: string[]): Promise<number> {
   let graceSeconds = 10;
   let name: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "--json") json = true;
     else if (arg.startsWith("--grace=")) {
       const n = Number.parseInt(arg.slice("--grace=".length), 10);
@@ -177,7 +182,7 @@ async function runStop(args: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else {
     process.stdout.write(
-      `stopped pid=${result.pid ?? "none"}${result.killed ? " (SIGTERM)" : ""}\n`,
+      `stopped pid=${String(result.pid ?? "none")}${result.killed ? " (SIGTERM)" : ""}\n`,
     );
   }
   return 0;
@@ -213,7 +218,7 @@ async function runStatus(args: string[]): Promise<number> {
     return status.running ? 0 : 1;
   }
   process.stdout.write(
-    `keep-alive: ${status.running ? `running (pid=${status.pid})` : "stopped"}\n`,
+    `keep-alive: ${status.running ? `running (pid=${String(status.pid)})` : "stopped"}\n`,
   );
   if (status.state) {
     for (const [k, v] of Object.entries(status.state)) {

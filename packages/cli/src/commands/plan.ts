@@ -8,6 +8,7 @@ import {
   runPlanner,
   stubPlannerExecutor,
 } from "@nova/mcp";
+import { required } from "../required.js";
 
 const USAGE = `llamactl plan — LLM-backed operator planner
 
@@ -158,7 +159,7 @@ async function confirm(prompt: string): Promise<boolean> {
       if (joined.includes("\n")) {
         process.stdin.off("data", onData);
         process.stdin.pause();
-        resolve(joined.split("\n")[0]!);
+        resolve(required(joined.split("\n")[0]));
       }
     };
     process.stdin.on("data", onData);
@@ -170,16 +171,16 @@ async function confirm(prompt: string): Promise<boolean> {
 function renderPlan(plan: Plan, toolsAvailable: string[], executor: string): string {
   const lines: string[] = [];
   lines.push(`executor: ${executor}`);
-  lines.push(`tools (allowlisted): ${toolsAvailable.length}`);
-  lines.push(`requires confirmation: ${plan.requiresConfirmation}`);
+  lines.push(`tools (allowlisted): ${String(toolsAvailable.length)}`);
+  lines.push(`requires confirmation: ${String(plan.requiresConfirmation)}`);
   lines.push(`reasoning: ${plan.reasoning}`);
-  lines.push(`steps (${plan.steps.length}):`);
+  lines.push(`steps (${String(plan.steps.length)}):`);
   for (let i = 0; i < plan.steps.length; i++) {
-    const s = plan.steps[i]!;
+    const s = required(plan.steps[i]);
     const dryRun = s.dryRun === true ? " [dry-run]" : "";
-    lines.push(`  ${i + 1}. ${s.tool}${dryRun}`);
+    lines.push(`  ${String(i + 1)}. ${s.tool}${dryRun}`);
     lines.push(`     ${s.annotation}`);
-    if (s.args && Object.keys(s.args).length > 0) {
+    if (Object.keys(s.args).length > 0) {
       lines.push(`     args: ${JSON.stringify(s.args)}`);
     }
   }
@@ -198,6 +199,7 @@ async function runPlanRun(argv: string[]): Promise<number> {
     return 1;
   }
 
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const { client: _client, listPlannerTools, dispose } = await createDefaultToolClient();
   try {
     const tools = await listPlannerTools();

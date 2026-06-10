@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runAgent } from "../src/commands/agent.js";
+import { parseJsonRecord } from "./helpers.js";
 
 let tmp = "";
 const originalEnv = { ...process.env };
@@ -34,7 +35,7 @@ beforeAll(() => {
 
 afterAll(() => {
   if (tmp) rmSync(tmp, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
 });
 
@@ -91,8 +92,8 @@ describe("agent rotate-token", () => {
       expect(keyStatAfter.mtimeMs).toBe(keyStatBefore.mtimeMs);
 
       // 4. blob decodes to a different token but the same fingerprint + cert
-      const decode = (b: string): { token: string; fingerprint: string; certificate: string } =>
-        JSON.parse(Buffer.from(b, "base64url").toString("utf8"));
+      const decode = (b: string): Record<string, unknown> =>
+        parseJsonRecord(Buffer.from(b, "base64url").toString("utf8"));
       const initBlob = decode(initRecord.blob);
       const rotatedBlob = decode(rotatedRecord.blob);
       expect(rotatedBlob.token).not.toBe(initBlob.token);

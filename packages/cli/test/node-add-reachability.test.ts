@@ -40,10 +40,10 @@ function runCliAsync(
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => {
-      stdout += d.toString();
+      stdout += String(d);
     });
     child.stderr.on("data", (d) => {
-      stderr += d.toString();
+      stderr += String(d);
     });
     const killer = setTimeout(() => {
       child.kill("SIGKILL");

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
-import { makeTempRuntime, runCli } from "./helpers.js";
+import { makeTempRuntime, parseJsonRecord, runCli } from "./helpers.js";
 
 describe("llamactl bench preset / vision (usage + binary-missing paths)", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
@@ -25,14 +25,14 @@ describe("llamactl bench preset / vision (usage + binary-missing paths)", () => 
   test("bench preset --json emits a structured error when the binary is missing", () => {
     const r = runCli(["bench", "preset", "Demo/demo.gguf", "--json"], temp.env);
     expect(r.code).not.toBe(0);
-    const parsed = JSON.parse(r.stdout);
+    const parsed = parseJsonRecord(r.stdout);
     expect(parsed.error).toBeDefined();
   });
 
   test("bench vision --json emits a structured error when the binary is missing", () => {
     const r = runCli(["bench", "vision", "Demo/demo.gguf", "--json"], temp.env);
     expect(r.code).not.toBe(0);
-    const parsed = JSON.parse(r.stdout);
+    const parsed = parseJsonRecord(r.stdout);
     expect(parsed.error).toBeDefined();
   });
 

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { ResolvedEnv } from "@llamactl/core";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ const tempEnv = () => {
   const dir = mkdtempSync(join(tmpdir(), "workload-resolve-"));
   return {
     runtimeDir: dir,
-    resolved: { LOCAL_AI_RUNTIME_DIR: dir } as any,
+    resolved: { LOCAL_AI_RUNTIME_DIR: dir } as ResolvedEnv,
     cleanup: () => {
       rmSync(dir, { recursive: true, force: true });
     },

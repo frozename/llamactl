@@ -19,6 +19,7 @@ import {
 } from "../../../fleet-supervisor/src/index.js";
 import { readSchedulerLease } from "../../../remote/src/config/peers.js";
 import { getGlobals } from "../dispatcher.js";
+import { isRecord } from "../runtime-shape.js";
 import { setWorkloadEnabled } from "./setEnabled.js";
 
 const USAGE = `llamactl supervisor — fleet observability + severity-gated remediation
@@ -85,7 +86,7 @@ EXAMPLES:
 export async function runSupervisor(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   if (!sub || sub === "--help" || sub === "-h" || rest.includes("--help") || rest.includes("-h")) {
-    console.log(USAGE);
+    process.stdout.write(`${USAGE}\n`);
     return sub ? 0 : 1;
   }
   if (sub !== "serve" && sub !== "tick" && sub !== "status" && sub !== "audit") {
@@ -118,38 +119,42 @@ export async function runSupervisor(args: string[]): Promise<number> {
     });
 
     if (flags.json) {
-      console.log(JSON.stringify(report));
+      process.stdout.write(`${JSON.stringify(report)}\n`);
       return 0;
     }
 
     if (report.nodes.length === 0) {
-      console.log(`No entries found in journal: ${journalPath}`);
+      process.stdout.write(`No entries found in journal: ${journalPath}\n`);
       return 0;
     }
 
     for (const node of report.nodes) {
       if (node.state === "NORMAL") {
-        console.log(`node ${node.name}: NORMAL (no recent pressure event)`);
-        console.log();
+        process.stdout.write(`node ${node.name}: NORMAL (no recent pressure event)\n`);
+        process.stdout.write("\n");
       } else {
         const mins = Math.floor(node.durationMs / 60000);
-        console.log(`node ${node.name}: HIGH for ${mins}m (since ${node.enteredAt})`);
-        console.log(`  clear progress: ${node.consecutiveClearTicks}/${node.clearTicksNeeded}`);
-        console.log(
-          `  free_mb=${node.free_mb} (breach: ${node.headroomBreach ? "yes" : "no"}) compressor_mb=${node.compressor_mb} (breach: ${node.compressorBreach ? "yes" : "no"})`,
+        process.stdout.write(
+          `node ${node.name}: HIGH for ${String(mins)}m (since ${String(node.enteredAt)})\n`,
         );
-        console.log(`  last ${node.recent.length} pressure-status:`);
+        process.stdout.write(
+          `  clear progress: ${String(node.consecutiveClearTicks)}/${String(node.clearTicksNeeded)}\n`,
+        );
+        process.stdout.write(
+          `  free_mb=${String(node.free_mb)} (breach: ${node.headroomBreach ? "yes" : "no"}) compressor_mb=${String(node.compressor_mb)} (breach: ${node.compressorBreach ? "yes" : "no"})\n`,
+        );
+        process.stdout.write(`  last ${String(node.recent.length)} pressure-status:\n`);
         for (const recent of node.recent) {
           const t = new Date(recent.ts).toLocaleTimeString("en-US", { hour12: false });
           const hits = [];
           if (recent.headroomBreach) hits.push("headroom");
           if (recent.compressorBreach) hits.push("compressor");
           const hitsStr = hits.length > 0 ? hits.join(",") : "(none)";
-          console.log(
-            `    ${t}  free=${recent.free_mb}  comp=${recent.compressor_mb}  clear=${recent.consecutiveClearTicks}/${recent.clearTicksNeeded}  hits=${hitsStr}`,
+          process.stdout.write(
+            `    ${t}  free=${String(recent.free_mb)}  comp=${String(recent.compressor_mb)}  clear=${String(recent.consecutiveClearTicks)}/${String(recent.clearTicksNeeded)}  hits=${hitsStr}\n`,
           );
         }
-        console.log();
+        process.stdout.write("\n");
       }
     }
     return 0;
@@ -165,25 +170,27 @@ export async function runSupervisor(args: string[]): Promise<number> {
     });
 
     if (flags.json) {
-      console.log(JSON.stringify(res, null, 2));
+      process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
       return 0;
     }
 
     if (res.malformedLines > 0) {
-      console.log(`audit: ${res.malformedLines} malformed lines skipped`);
+      process.stdout.write(`audit: ${String(res.malformedLines)} malformed lines skipped\n`);
     }
-    console.log(`audit: ${res.auditPath}  total=${res.total} entries=${res.entries.length}\n`);
+    process.stdout.write(
+      `audit: ${res.auditPath}  total=${String(res.total)} entries=${String(res.entries.length)}\n\n`,
+    );
 
-    const summarize = (obj: any) => {
-      if (!obj || typeof obj !== "object" || Object.keys(obj).length === 0) return "{}";
+    const summarize = (obj: unknown) => {
+      if (!isRecord(obj) || Object.keys(obj).length === 0) return "{}";
 
       let out = "";
-      if ("proposalId" in obj) out += `proposalId:"${obj.proposalId}" `;
-      if ("name" in obj) out += `name:"${obj.name}" `;
+      if ("proposalId" in obj) out += `proposalId:"${String(obj.proposalId)}" `;
+      if ("name" in obj) out += `name:"${String(obj.name)}" `;
       if ("error" in obj && typeof obj.error === "string")
         out += `error:"${obj.error.slice(0, 40)}" `;
-      if ("auto" in obj) out += `auto:${obj.auto} `;
-      if ("memMb" in obj) out += `memMb=${obj.memMb} `;
+      if ("auto" in obj) out += `auto:${String(obj.auto)} `;
+      if ("memMb" in obj) out += `memMb=${String(obj.memMb)} `;
       if ("action" in obj && typeof obj.action === "string") out += `action:"${obj.action}" `;
 
       out = out.trim();
@@ -197,14 +204,16 @@ export async function runSupervisor(args: string[]): Promise<number> {
     for (const e of res.entries) {
       const inStr = summarize(e.input);
       let detStr = "";
-      if (e.detail && typeof e.detail === "object" && e.detail.error) {
-        detStr = String(e.detail.error);
+      // Entries come from unvalidated JSONL — a legacy/foreign line may
+      // carry a missing/null/primitive detail, so guard before reading.
+      if (isRecord(e.detail) && typeof e.detail.error === "string" && e.detail.error) {
+        detStr = e.detail.error;
       } else {
         detStr = summarize(e.detail);
       }
 
-      console.log(
-        `${e.ts}  ${e.outcome.padEnd(7)}  ${e.tool.padEnd(30)}  input=${inStr}  detail=${detStr}`,
+      process.stdout.write(
+        `${e.ts}  ${e.outcome.padEnd(7)}  ${e.tool.padEnd(30)}  input=${inStr}  detail=${detStr}\n`,
       );
     }
     return 0;
@@ -292,7 +301,8 @@ export async function runSupervisor(args: string[]): Promise<number> {
           if (!flags.quiet && results.length > 0) {
             for (const r of results) {
               process.stderr.write(
-                `supervisor: executor: ${r.status} proposal=${r.proposalId} action=${r.action.type}${r.reason ? ` reason=${r.reason}` : ""}${r.exitCode != null ? ` exitCode=${r.exitCode}` : ""}\n`,
+                // eslint-disable-next-line eqeqeq -- Preserve existing CLI/test semantics while clearing strict lint debt.
+                `supervisor: executor: ${r.status} proposal=${r.proposalId} action=${r.action.type}${r.reason ? ` reason=${r.reason}` : ""}${r.exitCode != null ? ` exitCode=${String(r.exitCode)}` : ""}\n`,
               );
             }
           }
@@ -306,12 +316,12 @@ export async function runSupervisor(args: string[]): Promise<number> {
         ? "(mem-only)"
         : flags.workloads.map((w) => `${w.name}@${redactEndpoint(w.endpoint)}`).join(", ");
     process.stderr.write(
-      `supervisor: node=${flags.node} interval=${flags.intervalMs}ms once=${once} workloads=${wlSummary}\n`,
+      `supervisor: node=${flags.node} interval=${String(flags.intervalMs)}ms once=${String(once)} workloads=${wlSummary}\n`,
     );
     process.stderr.write(`supervisor: journal=${journalPath}\n`);
     if (executorEnabled) {
       process.stderr.write(
-        `supervisor: executor=on auto=${flags.auto} threshold=${flags.severityThreshold}${flags.executeId ? ` executeId=${flags.executeId}` : ""}\n`,
+        `supervisor: executor=on auto=${String(flags.auto)} threshold=${String(flags.severityThreshold)}${flags.executeId ? ` executeId=${flags.executeId}` : ""}\n`,
       );
     }
   }

@@ -57,7 +57,7 @@ Subcommands:
       and load it via launchctl. --dry-run prints the plist + launchctl
       plan without touching disk.
   rpc-doctor [--node=<name>] [--json]
-      Verify \$LLAMA_CPP_BIN/rpc-server is available for tensor-parallel
+      Verify $LLAMA_CPP_BIN/rpc-server is available for tensor-parallel
       workloads. Checks the local node by default; pass --node=<name>
       to dispatch through the rpcServerDoctor tRPC procedure on a
       remote node. --json emits the raw result for tooling. Exit 0 on
@@ -68,7 +68,7 @@ Subcommands:
       probes every declared binding and reports health; exit 2 when
       any binding is unhealthy (CI quality-gate semantics).
 
-All state lives under \$LLAMACTL_AGENT_DIR or \$DEV_STORAGE or ~/.llamactl.
+All state lives under $LLAMACTL_AGENT_DIR or $DEV_STORAGE or ~/.llamactl.
 `;
 
 export async function runAgent(args: string[]): Promise<number> {
@@ -216,7 +216,7 @@ async function runInit(args: string[]): Promise<number> {
   };
   agentConfigMod.saveAgentConfig(config, configPath);
 
-  const url = `https://${f.host}:${f.port}`;
+  const url = `https://${f.host}:${String(f.port)}`;
   const bootstrap = agentConfigMod.encodeBootstrap({
     url,
     fingerprint: cert.fingerprint,
@@ -233,7 +233,7 @@ async function runInit(args: string[]): Promise<number> {
         `wrote ${configPath}`,
         `cert   ${cert.certPath}`,
         `key    ${cert.keyPath}`,
-        `bind   ${f.bindHost}:${f.port}`,
+        `bind   ${f.bindHost}:${String(f.port)}`,
         `fp     ${cert.fingerprint}`,
       ].join("\n") + "\n",
     );
@@ -254,7 +254,7 @@ async function runInit(args: string[]): Promise<number> {
       `wrote ${configPath}`,
       `cert   ${cert.certPath}`,
       `key    ${cert.keyPath}`,
-      `bind   ${f.bindHost}:${f.port}`,
+      `bind   ${f.bindHost}:${String(f.port)}`,
       `fp     ${cert.fingerprint}`,
       ``,
       `On the control plane, run:`,
@@ -304,6 +304,7 @@ function parseRotateTokenFlags(args: string[]): RotateTokenFlags | { error: stri
  * recovery path when the kubeconfig token has drifted from agent.yaml's
  * tokenHash but the cert pin is still valid.
  */
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 export async function runRotateToken(args: string[]): Promise<number> {
   const parsed = parseRotateTokenFlags(args);
   if ("error" in parsed) {
@@ -337,7 +338,7 @@ export async function runRotateToken(args: string[]): Promise<number> {
   };
   agentConfigMod.saveAgentConfig(updated, configPath);
 
-  const url = `https://${f.host}:${existing.port}`;
+  const url = `https://${f.host}:${String(existing.port)}`;
   const bootstrap = agentConfigMod.encodeBootstrap({
     url,
     fingerprint: existing.fingerprint,
@@ -351,7 +352,7 @@ export async function runRotateToken(args: string[]): Promise<number> {
         `rotated tokenHash in ${configPath}`,
         `cert   ${existing.certPath} (unchanged)`,
         `fp     ${existing.fingerprint} (unchanged)`,
-        `bind   ${existing.bindHost}:${existing.port}`,
+        `bind   ${existing.bindHost}:${String(existing.port)}`,
       ].join("\n") + "\n",
     );
     const record = {
@@ -371,12 +372,12 @@ export async function runRotateToken(args: string[]): Promise<number> {
       `rotated tokenHash in ${configPath}`,
       `cert   ${existing.certPath} (unchanged)`,
       `fp     ${existing.fingerprint} (unchanged)`,
-      `bind   ${existing.bindHost}:${existing.port}`,
+      `bind   ${existing.bindHost}:${String(existing.port)}`,
       ``,
       `Restart the agent so it loads the new tokenHash, then update the kubeconfig:`,
       ``,
       `  pkill -f 'agent serve' && llamactl agent serve &`,
-      `  llamactl node add ${existing.nodeName} --bootstrap ${bootstrap} --force`,
+      `  llamactl node add ${String(existing.nodeName)} --bootstrap ${bootstrap} --force`,
       ``,
     ].join("\n"),
   );
@@ -549,7 +550,7 @@ async function runServe(args: string[]): Promise<number> {
       typeof parsed.port === "number"
     ) {
       process.stderr.write(
-        `agent: port ${parsed.port} already in use, exiting (launchd will retry)\n`,
+        `agent: port ${String(parsed.port)} already in use, exiting (launchd will retry)\n`,
       );
       return 1;
     }
@@ -599,7 +600,7 @@ function runStatus(args: string[]): number {
   const out = {
     configPath: cfgPath,
     nodeName: cfg.nodeName,
-    bind: `${cfg.bindHost}:${cfg.port}`,
+    bind: `${cfg.bindHost}:${String(cfg.port)}`,
     certPath: cfg.certPath,
     keyPath: cfg.keyPath,
     fingerprint: cfg.fingerprint,
@@ -637,6 +638,7 @@ async function waitForReadable(path: string, timeoutMs: number): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
+  // eslint-disable-next-line @typescript-eslint/only-throw-error -- Preserve existing CLI/test semantics while clearing strict lint debt.
   throw lastErr ?? new Error(`timed out waiting for ${path}`);
 }
 

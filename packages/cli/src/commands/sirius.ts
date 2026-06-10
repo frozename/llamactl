@@ -32,7 +32,7 @@ connect — register a sirius gateway as a cloud node, making every
   sirius's \`/v1\` root (e.g. \`http://localhost:3000/v1\`).
 
   --name <n>           Node name for kubeconfig (default: "sirius").
-  --api-key-ref <ref>  Env var reference (\`\$FOO\`) or file path.
+  --api-key-ref <ref>  Env var reference (\`$FOO\`) or file path.
                        Omit for anonymous sirius (localhost dev).
 
 add-provider — register an AI provider with sirius. Stored in
@@ -42,7 +42,7 @@ add-provider — register an AI provider with sirius. Stored in
   groq, mistral, openai-compatible.
 
   --name <n>           Provider name sirius exposes (default: <kind>).
-  --api-key-ref <ref>  Env var (\`\$FOO\`) or file path. Required for
+  --api-key-ref <ref>  Env var (\`$FOO\`) or file path. Required for
                        named providers; optional for openai-compatible.
   --base-url <url>     Override the default (required for
                        openai-compatible).
@@ -117,6 +117,7 @@ function renderEnv(entries: NodeEntry[]): string {
   return `export LLAMACTL_NODES='${compact.replaceAll("'", "'\\''")}'`;
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runConnect(argv: string[]): Promise<number> {
   const url = argv[0];
   if (!url || url.startsWith("--")) {
@@ -139,7 +140,7 @@ async function runConnect(argv: string[]): Promise<number> {
       process.stdout.write(USAGE);
       return 0;
     } else {
-      process.stderr.write(`unknown flag: ${arg}\n\n${USAGE}`);
+      process.stderr.write(`unknown flag: ${String(arg)}\n\n${USAGE}`);
       return 1;
     }
   }
@@ -170,6 +171,7 @@ async function runConnect(argv: string[]): Promise<number> {
   return 0;
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runAddProvider(argv: string[]): Promise<number> {
   const kind = argv[0];
   if (!kind || kind.startsWith("--")) {
@@ -202,10 +204,11 @@ async function runAddProvider(argv: string[]): Promise<number> {
       process.stdout.write(USAGE);
       return 0;
     } else {
-      process.stderr.write(`unknown flag: ${arg}\n`);
+      process.stderr.write(`unknown flag: ${String(arg)}\n`);
       return 1;
     }
   }
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Preserve existing CLI/test semantics while clearing strict lint debt.
   if (!baseUrl) {
     baseUrl =
       siriusProviders.SIRIUS_PROVIDER_DEFAULT_BASE_URLS[kind as siriusProviders.SiriusProviderKind];
@@ -237,6 +240,7 @@ async function runAddProvider(argv: string[]): Promise<number> {
   return 0;
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runListProviders(argv: string[]): Promise<number> {
   let format: "json" | "yaml" = "json";
   for (let i = 0; i < argv.length; i++) {
@@ -252,7 +256,7 @@ async function runListProviders(argv: string[]): Promise<number> {
       process.stdout.write(USAGE);
       return 0;
     } else {
-      process.stderr.write(`unknown flag: ${arg}\n`);
+      process.stderr.write(`unknown flag: ${String(arg)}\n`);
       return 1;
     }
   }
@@ -264,6 +268,7 @@ async function runListProviders(argv: string[]): Promise<number> {
   return 0;
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runRemoveProvider(argv: string[]): Promise<number> {
   const name = argv[0];
   if (!name) {
@@ -313,7 +318,7 @@ export async function runSirius(argv: string[]): Promise<number> {
       process.stdout.write(USAGE);
       return 0;
     } else {
-      process.stderr.write(`unknown flag: ${arg}\n\n${USAGE}`);
+      process.stderr.write(`unknown flag: ${String(arg)}\n\n${USAGE}`);
       return 1;
     }
   }

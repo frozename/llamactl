@@ -16,6 +16,7 @@ import {
   config as kubecfg,
   resolveNodeKind,
 } from "@llamactl/remote";
+import { required } from "../required.js";
 
 const USAGE = `Usage: llamactl agent cli <subcommand>
 
@@ -52,7 +53,7 @@ function parseDoctor(args: string[]): DoctorOpts | { error: string } {
   let node: string | undefined;
   let json = false;
   for (let i = 0; i < args.length; i++) {
-    const a = args[i]!;
+    const a = required(args[i]);
     if (a === "--node" || a === "-n") node = args[++i];
     else if (a.startsWith("--node=")) node = a.slice("--node=".length);
     else if (a === "--json") json = true;
@@ -162,7 +163,7 @@ async function runDoctor(args: string[]): Promise<number> {
     } else {
       for (const r of results) {
         const mark = r.state === "healthy" ? "ok" : r.state;
-        const latency = r.latencyMs !== null ? `${r.latencyMs}ms` : "—";
+        const latency = r.latencyMs !== null ? `${String(r.latencyMs)}ms` : "—";
         process.stdout.write(
           `[${mark}] ${r.agent}.${r.binding} (${r.preset}) · ${latency}${r.error ? ` · ${r.error}` : ""}\n`,
         );

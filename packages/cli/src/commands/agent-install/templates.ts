@@ -11,6 +11,8 @@
  * to write the rendered XML to disk and then invoke `launchctl`.
  */
 
+import { required } from "../../required.js";
+
 /**
  * LaunchAgent (user-scope) plist template. Written to
  * `~/Library/LaunchAgents/<label>.plist` and loaded via
@@ -137,7 +139,7 @@ export function renderEnvDict(env: Record<string, string>, indent = "    "): str
 export function renderPlist(template: string, vars: Record<string, string>): string {
   const out = template.replaceAll(/\{\{(\w+)\}\}/g, (_m, k: string) => {
     if (!(k in vars)) throw new Error(`plist template missing var: ${k}`);
-    return vars[k]!;
+    return required(vars[k]);
   });
   if (/\{\{\w+\}\}/.test(out)) {
     throw new Error("plist template has unresolved placeholders");

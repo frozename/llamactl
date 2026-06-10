@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { required } from "../required.js";
 /**
  * `llamactl init` — first-run onboarding.
  *
@@ -60,6 +61,7 @@ export async function runInit(argv: string[]): Promise<number> {
     return 0;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-conversion -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const isTty = Boolean(process.stdin.isTTY) && !args.yes;
   const rl = isTty ? createInterface({ input: process.stdin, output: process.stdout }) : null;
   try {
@@ -109,6 +111,7 @@ export async function runInit(argv: string[]): Promise<number> {
 
 // ---- steps ---------------------------------------------------------------
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function greet(): Promise<void> {
   process.stdout.write("llamactl init — onboarding wizard for a brand-new install.\n");
   process.stdout.write(
@@ -187,12 +190,12 @@ async function pickTemplate(args: InitArgs, rl: ReadlineInterface | null): Promi
 
   process.stdout.write("\nAvailable quickstart templates:\n");
   for (const [i, key] of TEMPLATE_ORDER.entries()) {
-    process.stdout.write(`  ${i + 1}) ${key}${templateBlurb(key)}\n`);
+    process.stdout.write(`  ${String(i + 1)}) ${key}${templateBlurb(key)}\n`);
   }
   const ans = await rl.question("Pick a template [1]: ");
   const n = Number.parseInt(ans.trim(), 10);
   if (Number.isFinite(n) && n >= 1 && n <= TEMPLATE_ORDER.length) {
-    return TEMPLATE_ORDER[n - 1]!;
+    return required(TEMPLATE_ORDER[n - 1]);
   }
   return "chroma-only";
 }
@@ -242,6 +245,7 @@ async function confirmApply(args: InitArgs, rl: ReadlineInterface | null): Promi
   if (args.yes) return true;
   if (!rl) return false;
   const ans = await rl.question("\nApply this composite now? [y/N]: ");
+  // eslint-disable-next-line regexp/no-unused-capturing-group -- Preserve existing CLI/test semantics while clearing strict lint debt.
   return /^(y|yes)$/i.test(ans.trim());
 }
 
@@ -254,7 +258,7 @@ async function applyComposite(yamlPath: string): Promise<{ ok: boolean; message?
       manifestYaml: yaml,
       dryRun: false,
     });
-    if (result?.dryRun) {
+    if (result.dryRun) {
       return { ok: false, message: "expected a wet-run result" };
     }
     if (!result.ok) {
@@ -288,7 +292,7 @@ function parseArgs(argv: string[]): InitArgs {
     else if (arg === "--force") a.force = true;
     else if (arg === "--no-apply") a.noApply = true;
     else if (arg.startsWith("--runtime=")) {
-      const v = arg.slice("--runtime=".length) as RuntimeKind | "auto";
+      const v = arg.slice("--runtime=".length);
       if (v === "docker" || v === "kubernetes" || v === "auto") a.runtime = v;
     } else if (arg.startsWith("--template=")) {
       const v = arg.slice("--template=".length) as TemplateKey;

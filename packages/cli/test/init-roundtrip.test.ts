@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import type { NodeClient } from "@llamactl/remote";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +38,7 @@ let dockerReachable = false;
 function makeModelHostClient() {
   return {
     serverStatus: {
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       query: async () => ({
         state: "down",
         rel: null,
@@ -48,9 +50,18 @@ function makeModelHostClient() {
         endpoint: "",
       }),
     },
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     serverStop: { mutate: async () => ({ ok: true }) },
-    serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
+    serverStart: {
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
+      subscribe: async () => ({
+        unsubscribe() {
+          return;
+        },
+      }),
+    },
     modelHostStart: {
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       subscribe: async (
         _input: unknown,
         callbacks: { onData: (data: unknown) => void; onComplete: () => void },
@@ -62,15 +73,30 @@ function makeModelHostClient() {
           });
           callbacks.onComplete();
         });
-        return { unsubscribe() {} };
+        return {
+          unsubscribe() {
+            return;
+          },
+        };
       },
     },
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     modelHostStop: { mutate: async () => ({ ok: true }) },
     modelHostStatus: {
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       query: async () => ({ state: "Running", pid: 3333 }),
     },
-    rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
+    rpcServerStart: {
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
+      subscribe: async () => ({
+        unsubscribe() {
+          return;
+        },
+      }),
+    },
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     rpcServerStop: { mutate: async () => ({ ok: true }) },
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
   };
 }
@@ -83,7 +109,7 @@ beforeAll(async () => {
   process.env.LLAMACTL_COMPOSITES_DIR = compositesDir;
   process.env.LLAMACTL_CONFIG = configPath;
   __setWorkloadTestSeams({
-    getNodeClientByName: () => makeModelHostClient() as any,
+    getNodeClientByName: () => makeModelHostClient() as unknown as NodeClient,
   });
 
   try {
@@ -101,7 +127,7 @@ beforeAll(async () => {
 afterAll(() => {
   if (!SHOULD_RUN) return;
   if (tmp) rmSync(tmp, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
   __resetWorkloadTestSeams();
 });
@@ -110,14 +136,14 @@ function silence<T>(fn: () => Promise<T>): Promise<T> {
   const stdoutOrig = process.stdout.write.bind(process.stdout);
   const stderrOrig = process.stderr.write.bind(process.stderr);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout as any).write = (_s: string | Uint8Array): boolean => true;
+  process.stdout.write = (_s: string | Uint8Array): boolean => true;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stderr as any).write = (_s: string | Uint8Array): boolean => true;
+  process.stderr.write = (_s: string | Uint8Array): boolean => true;
   return fn().finally(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (process.stdout as any).write = stdoutOrig;
+    process.stdout.write = stdoutOrig;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (process.stderr as any).write = stderrOrig;
+    process.stderr.write = stderrOrig;
   });
 }
 
@@ -155,7 +181,7 @@ describe.skipIf(!SHOULD_RUN)("init → apply → destroy round-trip", () => {
       let listed = "";
       const stdoutOrig = process.stdout.write.bind(process.stdout);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stdout as any).write = (s: string | Uint8Array): boolean => {
+      process.stdout.write = (s: string | Uint8Array): boolean => {
         listed += typeof s === "string" ? s : String(s);
         return true;
       };
@@ -164,7 +190,7 @@ describe.skipIf(!SHOULD_RUN)("init → apply → destroy round-trip", () => {
         expect(listRc).toBe(0);
       } finally {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (process.stdout as any).write = stdoutOrig;
+        process.stdout.write = stdoutOrig;
       }
       expect(listed).toContain("init-e2e");
 
@@ -215,7 +241,7 @@ describe.skipIf(!SHOULD_RUN)("modelhost workload round-trip", () => {
       let stdout = "";
       const stdoutOrig = process.stdout.write.bind(process.stdout);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stdout as any).write = (s: string | Uint8Array): boolean => {
+      process.stdout.write = (s: string | Uint8Array): boolean => {
         stdout += typeof s === "string" ? s : String(s);
         return true;
       };
@@ -227,7 +253,7 @@ describe.skipIf(!SHOULD_RUN)("modelhost workload round-trip", () => {
         expect(listRc).toBe(0);
       } finally {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (process.stdout as any).write = stdoutOrig;
+        process.stdout.write = stdoutOrig;
       }
 
       expect(stdout).toContain("modelhost/mlx-host-local");

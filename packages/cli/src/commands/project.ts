@@ -1,4 +1,5 @@
 import type { NodeClient } from "@llamactl/remote";
+import { required } from "../required.js";
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -136,7 +137,7 @@ function parseAddFlags(args: string[]): AddOpts | { error: string } {
   let ragSchedule: string | undefined;
   const routes: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "--path") {
       path = args[++i] ?? "";
     } else if (arg.startsWith("--path=")) {
@@ -275,7 +276,7 @@ interface ApplyOpts {
 function parseApplyFlags(args: string[]): ApplyOpts | { error: string } {
   let file = "";
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "-f" || arg === "--file") {
       file = args[++i] ?? "";
     } else if (arg.startsWith("--file=")) {
@@ -364,7 +365,7 @@ async function runList(args: string[]): Promise<number> {
       const ragLine = p.spec.rag ? `rag=${p.spec.rag.node}/${p.spec.rag.collection}` : "rag=<none>";
       const routeCount = Object.keys(p.spec.routing).length;
       process.stdout.write(
-        `${p.metadata.name}\n  path: ${p.spec.path}\n  ${ragLine}  routes=${routeCount}\n`,
+        `${p.metadata.name}\n  path: ${p.spec.path}\n  ${ragLine}  routes=${String(routeCount)}\n`,
       );
     }
     return 0;

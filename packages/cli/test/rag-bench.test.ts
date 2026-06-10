@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 import { __resetRagBenchTestSeams, __setRagBenchTestSeams } from "../src/commands/rag-bench.js";
 import { runRag } from "../src/commands/rag.js";
+import { parseJsonRecord } from "./helpers.js";
 
 /**
  * CLI coverage for `llamactl rag bench`. Tests run against a
@@ -26,12 +27,12 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{ result: T; cap: Captur
   const origOut = process.stdout.write.bind(process.stdout);
   const origErr = process.stderr.write.bind(process.stderr);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout as any).write = (s: string | Uint8Array): boolean => {
+  process.stdout.write = (s: string | Uint8Array): boolean => {
     chunks.out += typeof s === "string" ? s : String(s);
     return true;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stderr as any).write = (s: string | Uint8Array): boolean => {
+  process.stderr.write = (s: string | Uint8Array): boolean => {
     chunks.err += typeof s === "string" ? s : String(s);
     return true;
   };
@@ -39,18 +40,16 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{ result: T; cap: Captur
     .then((result) => ({ result, cap: chunks }))
     .finally(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stdout as any).write = origOut;
+      process.stdout.write = origOut;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stderr as any).write = origErr;
+      process.stderr.write = origErr;
     });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function makeStubClient(benchResult: any): NodeClient {
+function makeStubClient(benchResult: unknown): NodeClient {
   return {
-    ragBench: { mutate: async () => benchResult },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any as NodeClient;
+    ragBench: { mutate: () => Promise.resolve(benchResult) },
+  } as unknown as NodeClient;
 }
 
 let tmp = "";
@@ -149,7 +148,7 @@ describe("rag bench", () => {
     __setRagBenchTestSeams({ nodeClient: makeStubClient(FULL_HIT_REPORT) });
     const { result, cap } = await captureStdio(() => runRag(["bench", "-f", p, "--json"]));
     expect(result).toBe(0);
-    const parsed = JSON.parse(cap.out.trim());
+    const parsed = parseJsonRecord(cap.out.trim());
     expect(parsed.hitRate).toBe(1);
     expect(parsed.perQuery).toHaveLength(1);
   });
@@ -160,13 +159,14 @@ describe("rag bench", () => {
       readStdinYaml: () => MANIFEST_YAML,
       nodeClient: {
         ragBench: {
+          // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
           mutate: async (i: { manifestYaml: string }) => {
             sawYaml = i.manifestYaml;
             return FULL_HIT_REPORT;
           },
         },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any as NodeClient,
+      } as unknown as NodeClient,
     });
     const { result } = await captureStdio(() => runRag(["bench", "-f", "-"]));
     expect(result).toBe(0);

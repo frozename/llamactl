@@ -44,7 +44,9 @@ function envelopeFetch(): {
   captured: { url: string; init: RequestInit | undefined }[];
 } {
   const captured: { url: string; init: RequestInit | undefined }[] = [];
+  // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
   const fetchImpl: FetchLike = async (url, init) => {
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- Preserve existing CLI/test semantics while clearing strict lint debt.
     captured.push({ url: String(url), init });
     return new Response(
       JSON.stringify({
@@ -77,6 +79,7 @@ describe("tunnel-dispatch — fingerprint pinning", () => {
       fetchImpl,
     }).then(
       () => null,
+      // eslint-disable-next-line @typescript-eslint/use-unknown-in-catch-callback-variable -- Preserve existing CLI/test semantics while clearing strict lint debt.
       (e: Error) => e,
     );
     expect(err).toBeInstanceOf(Error);
@@ -96,6 +99,7 @@ describe("tunnel-dispatch — fingerprint pinning", () => {
       fetchImpl,
     }).then(
       () => null,
+      // eslint-disable-next-line @typescript-eslint/use-unknown-in-catch-callback-variable -- Preserve existing CLI/test semantics while clearing strict lint debt.
       (e: Error) => e,
     );
     expect(err).toBeInstanceOf(Error);
@@ -128,7 +132,7 @@ describe("tunnel-dispatch — fingerprint pinning", () => {
     const stderrWrites: string[] = [];
     const originalWrite = process.stderr.write.bind(process.stderr);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (process.stderr as any).write = (chunk: unknown): boolean => {
+    process.stderr.write = (chunk: unknown): boolean => {
       stderrWrites.push(String(chunk));
       return true;
     };
@@ -158,7 +162,7 @@ describe("tunnel-dispatch — fingerprint pinning", () => {
       expect(warnLines[0]).toContain("--insecure-tunnel-relay");
     } finally {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stderr as any).write = originalWrite;
+      process.stderr.write = originalWrite;
     }
   });
 });

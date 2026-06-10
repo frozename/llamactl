@@ -1,14 +1,16 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
+import { required } from "../required.js";
 
 import type {
   ContextRetrievalDetail,
   JsonOutputFailure,
+  LeaderboardRow,
   SubBenchDetail,
   ThroughputDetail,
   ToolCallingFailure,
-} from "../../../eval/src/report/render-card.js";
+} from "../../../eval/src/index.js";
 
 import {
   composite,
@@ -128,7 +130,7 @@ async function runEvalRun(args: string[]): Promise<number> {
   let all = false;
   let remoteUrl: string | null = null;
   for (let i = 1; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "--ub") ub = parseUb(args[++i]);
     else if (arg.startsWith("--ub=")) ub = parseUb(arg.slice("--ub=".length));
     else if (arg === "--all") all = true;
@@ -169,7 +171,7 @@ async function runEvalRun(args: string[]): Promise<number> {
         : await spawnServer(
             binary,
             { modelPath, port: 18181, ub: currentUb, ctxSize: 20480 },
-            join(runDir, `server-ub${currentUb}.log`),
+            join(runDir, `server-ub${String(currentUb)}.log`),
           );
       try {
         if (!remoteUrl && server.proc) await waitForHealth(server.url, server.proc);
@@ -198,7 +200,7 @@ async function runEvalRun(args: string[]): Promise<number> {
         };
         upsertRow(db, row);
         await Bun.write(
-          join(runDir, `${basename(model)}-ub${currentUb}.json`),
+          join(runDir, `${basename(model)}-ub${String(currentUb)}.json`),
           JSON.stringify({ throughput, toolCalling, contextRetrieval, jsonOutput, row }, null, 2),
         );
         const subBenches: SubBenchDetail[] = [
@@ -235,7 +237,7 @@ async function runEvalRun(args: string[]): Promise<number> {
         const card = renderCard({
           modelId: model,
           source: {
-            ggufPath: modelPath || `(remote: ${remoteUrl})`,
+            ggufPath: modelPath || `(remote: ${String(remoteUrl)})`,
             fileSizeBytes: modelPath ? Bun.file(modelPath).size : 0,
             hfRepo: null,
             hfSha: null,
@@ -313,20 +315,22 @@ async function runEvalReport(args: string[]): Promise<number> {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runEvalLeaderboard(args: string[]): Promise<number> {
   let node = "";
-  let sortBy = "composite";
+  let sortBy: keyof LeaderboardRow = "composite";
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "--node") node = args[++i] ?? "";
     else if (arg.startsWith("--node=")) node = arg.slice("--node=".length);
-    else if (arg === "--sort-by") sortBy = args[++i] ?? sortBy;
-    else if (arg.startsWith("--sort-by=")) sortBy = arg.slice("--sort-by=".length);
+    else if (arg === "--sort-by") sortBy = parseLeaderboardSort(args[++i] ?? sortBy);
+    else if (arg.startsWith("--sort-by="))
+      sortBy = parseLeaderboardSort(arg.slice("--sort-by=".length));
   }
   const evalRoot = ensureEvalRoot();
   const db = new Database(join(evalRoot, "leaderboard.sqlite"), { readonly: true });
   try {
-    const rows = queryRows(db, { node: node || undefined, sort_by: sortBy as any });
+    const rows = queryRows(db, { node: node || undefined, sort_by: sortBy });
     const cols = [
       "model",
       "node",
@@ -343,13 +347,34 @@ async function runEvalLeaderboard(args: string[]): Promise<number> {
     process.stdout.write(`| ${cols.map(() => "---").join(" | ")} |\n`);
     for (const row of rows) {
       process.stdout.write(
-        `| ${row.model} | ${row.node} | ${row.ub} | ${row.throughput_tps.toFixed(2)} | ${row.tool_call_score.toFixed(3)} | ${row.context_8k_score.toFixed(3)} | ${row.context_16k_score == null ? "n/a" : row.context_16k_score.toFixed(3)} | ${row.json_score.toFixed(3)} | ${row.composite.toFixed(3)} | ${row.asof} |\n`,
+        // eslint-disable-next-line eqeqeq -- Preserve existing CLI/test semantics while clearing strict lint debt.
+        `| ${row.model} | ${row.node} | ${String(row.ub)} | ${row.throughput_tps.toFixed(2)} | ${row.tool_call_score.toFixed(3)} | ${row.context_8k_score.toFixed(3)} | ${row.context_16k_score == null ? "n/a" : row.context_16k_score.toFixed(3)} | ${row.json_score.toFixed(3)} | ${row.composite.toFixed(3)} | ${row.asof} |\n`,
       );
     }
     return 0;
   } finally {
     db.close();
   }
+}
+
+const LEADERBOARD_SORT_KEYS = new Set<keyof LeaderboardRow>([
+  "model",
+  "node",
+  "ub",
+  "throughput_tps",
+  "ttft_ms",
+  "tool_call_score",
+  "context_8k_score",
+  "context_16k_score",
+  "json_score",
+  "composite",
+  "asof",
+]);
+
+function parseLeaderboardSort(value: string): keyof LeaderboardRow {
+  return LEADERBOARD_SORT_KEYS.has(value as keyof LeaderboardRow)
+    ? (value as keyof LeaderboardRow)
+    : "composite";
 }
 
 export async function runEval(argv: string[]): Promise<number> {

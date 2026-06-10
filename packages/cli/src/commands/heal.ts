@@ -13,6 +13,7 @@ import {
   type Tier,
 } from "@llamactl/agents";
 import { readFileSync } from "node:fs";
+import { required } from "../required.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -52,7 +53,7 @@ FLAGS:
   --once                 One tick then exit.
   --timeout=<ms>         Per-probe timeout. Default 1500.
   --journal=<path>       Override the journal file. Default:
-                         \$LLAMACTL_HEALER_JOURNAL or
+                         $LLAMACTL_HEALER_JOURNAL or
                          ~/.llamactl/healer/journal.jsonl.
   --kubeconfig=<path>    Override kubeconfig (default ~/.llamactl/config).
   --providers-file=<path> Override sirius-providers.yaml.
@@ -96,14 +97,17 @@ interface HealFlags {
 }
 
 function parseFlags(argv: string[]): HealFlags | null {
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const base = process.env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
   const flags: HealFlags = {
     intervalSec: 30,
     once: false,
     timeoutMs: 1500,
     journalPath: defaultHealerJournalPath(),
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Preserve existing CLI/test semantics while clearing strict lint debt.
     kubeconfigPath: process.env.LLAMACTL_CONFIG?.trim() || join(base, "config"),
     providersPath:
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Preserve existing CLI/test semantics while clearing strict lint debt.
       process.env.LLAMACTL_PROVIDERS_FILE?.trim() || join(base, "sirius-providers.yaml"),
     quiet: false,
     useFacade: true,
@@ -216,7 +220,7 @@ function readProposalFromJournal(
 }
 
 async function runExecuteProposal(flags: HealFlags): Promise<number> {
-  const id = flags.executeProposalId!;
+  const id = required(flags.executeProposalId);
   const entry = readProposalFromJournal(flags.journalPath, id);
   if (!entry) {
     process.stderr.write(
@@ -299,7 +303,7 @@ export async function runHeal(argv: string[]): Promise<number> {
     severityThreshold: flags.severityThreshold,
     onTick: (report: ProbeReport, transitions: ReturnType<typeof stateTransitions>): void => {
       if (flags.quiet) return;
-      const summary = `healer: ${report.probes.length} probes, ${report.unhealthy} unhealthy`;
+      const summary = `healer: ${String(report.probes.length)} probes, ${String(report.unhealthy)} unhealthy`;
       process.stderr.write(`${report.ts}  ${summary}\n`);
       for (const t of transitions) {
         process.stderr.write(`  ${t.kind}/${t.name}: ${t.from} → ${t.to}\n`);
@@ -308,7 +312,7 @@ export async function runHeal(argv: string[]): Promise<number> {
     onProposal: (entry: JournalProposalEntry): void => {
       if (flags.quiet) return;
       process.stderr.write(
-        `healer: proposal ${entry.proposalId} — ${entry.plan.steps.length} step(s) for ${entry.transition.resourceKind}/${entry.transition.name}\n`,
+        `healer: proposal ${entry.proposalId} — ${String(entry.plan.steps.length)} step(s) for ${entry.transition.resourceKind}/${entry.transition.name}\n`,
       );
     },
     ...(toolHandle ? { toolClient: toolHandle.client } : {}),

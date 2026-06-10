@@ -1,6 +1,7 @@
 import { type Config, config as kubecfg, tls } from "@llamactl/remote";
 import * as tlsModule from "node:tls";
 import { URL } from "node:url";
+import { required } from "../required.js";
 
 const { computeFingerprint } = tls;
 
@@ -37,11 +38,12 @@ export async function runTunnel(argv: string[]): Promise<number> {
   }
   const sub = argv[0];
   const rest = argv.slice(1);
+  // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- Preserve existing CLI/test semantics while clearing strict lint debt.
   switch (sub) {
     case "pin-central":
       return await runPinCentral(rest);
     default:
-      process.stderr.write(`unknown subcommand: tunnel ${sub}\n\n${USAGE}`);
+      process.stderr.write(`unknown subcommand: tunnel ${String(sub)}\n\n${USAGE}`);
       return 1;
   }
 }
@@ -99,7 +101,7 @@ async function runPinCentral(argv: string[]): Promise<number> {
     process.stderr.write(`tunnel pin-central: context '${ctxName}' not found in ${cfgPath}\n`);
     return 1;
   }
-  const ctx = cfg.contexts[ctxIndex]!;
+  const ctx = required(cfg.contexts[ctxIndex]);
 
   const urlStr = parsed.url ?? ctx.tunnelCentralUrl;
   if (!urlStr) {
@@ -139,7 +141,7 @@ async function runPinCentral(argv: string[]): Promise<number> {
     captured = await capturePeerCert(host, port);
   } catch (err) {
     process.stderr.write(
-      `tunnel pin-central: failed to capture cert from ${host}:${port}: ${(err as Error).message}\n`,
+      `tunnel pin-central: failed to capture cert from ${host}:${String(port)}: ${(err as Error).message}\n`,
     );
     return 1;
   }
@@ -152,7 +154,7 @@ async function runPinCentral(argv: string[]): Promise<number> {
   };
   kubecfg.saveConfig(cfg, cfgPath);
   // Fingerprint only — never log the full PEM or any key material.
-  process.stderr.write(`pinned ${host}:${port} -> ${captured.fingerprint}\n`);
+  process.stderr.write(`pinned ${host}:${String(port)} -> ${captured.fingerprint}\n`);
   return 0;
 }
 
@@ -189,8 +191,10 @@ function capturePeerCert(
       fn();
     };
     socket.on("secureConnect", () => {
-      const cert = socket.getPeerCertificate(true);
-      if (!cert?.raw || cert.raw.length === 0) {
+      // Node hands back an empty object (no `raw`) when the peer presented
+      // no certificate, despite the non-nullable static type.
+      const cert: { raw?: Buffer } = socket.getPeerCertificate(true);
+      if (!cert.raw || cert.raw.length === 0) {
         done(() => {
           reject(new Error("no peer cert received"));
         });
@@ -202,6 +206,7 @@ function capturePeerCert(
         fingerprint = computeFingerprint(pem);
       } catch (err) {
         done(() => {
+          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Preserve existing CLI/test semantics while clearing strict lint debt.
           reject(err);
         });
         return;
@@ -217,7 +222,7 @@ function capturePeerCert(
     });
     socket.on("timeout", () => {
       done(() => {
-        reject(new Error(`timeout connecting to ${host}:${port}`));
+        reject(new Error(`timeout connecting to ${host}:${String(port)}`));
       });
     });
   });

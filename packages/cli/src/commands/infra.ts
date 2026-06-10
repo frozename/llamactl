@@ -202,7 +202,7 @@ async function runActivate(argv: string[]): Promise<number> {
   const client = getNodeClient();
   const result = await client.infraActivate.mutate({ pkg, version });
   process.stdout.write(`${JSON.stringify(result)}\n`);
-  return result.ok ? 0 : 1;
+  return 0;
 }
 
 async function runUninstall(argv: string[]): Promise<number> {
@@ -343,6 +343,7 @@ async function runRolloutMain(argv: string[]): Promise<number> {
 
   const globals = getGlobals();
   const peers = filterPeers(kv.get("nodes") ?? undefined);
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const groups = planRollout(peers, globals.nodeName || "local", strategy);
   const res = await runRollout(groups, makeInfraClient, {
     pkg,

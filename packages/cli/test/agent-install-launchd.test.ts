@@ -161,6 +161,7 @@ function makeTestDeps(over: Partial<InstallLaunchdDeps> = {}): {
       signal: null,
     }),
     fs: defaultFs(),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     fetchAgentRelease: async () => ({
       ok: true,
       version: "v1.2.3",
@@ -170,6 +171,7 @@ function makeTestDeps(over: Partial<InstallLaunchdDeps> = {}): {
       bytes: 0,
       signature: { verified: null, reason: "skipped" },
     }),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     buildAgentBinary: async () => ({ ok: true, outPath: "/tmp/fake-built-binary", code: 0 }),
     stdout: (c) => {
       stdoutChunks.push(c);
@@ -187,7 +189,7 @@ function makeTestDeps(over: Partial<InstallLaunchdDeps> = {}): {
     ...over,
   };
   return {
-    deps: { ...defaults, ...over, env: { ...(defaults.env ?? {}), ...(over.env ?? {}) } },
+    deps: { ...defaults, ...over, env: { ...defaults.env, ...(over.env ?? {}) } },
     stdoutChunks,
     stderrChunks,
   };
@@ -338,6 +340,7 @@ describe("resolveBinary --binary", () => {
         existsSync: () => false,
       } as unknown as FsLike,
     });
+    // eslint-disable-next-line @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Preserve existing CLI/test semantics while clearing strict lint debt.
     await expect(
       resolveBinary({
         source: { kind: "binary", path: "/no/such/binary" },
@@ -360,6 +363,7 @@ describe("resolveBinary --binary", () => {
         },
       } as unknown as FsLike,
     });
+    // eslint-disable-next-line @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Preserve existing CLI/test semantics while clearing strict lint debt.
     await expect(
       resolveBinary({
         source: { kind: "binary", path: "/tmp/not-exec" },
@@ -387,6 +391,7 @@ describe("resolveBinary --binary", () => {
         ...defaultFs(),
         existsSync: () => true,
       } as unknown as FsLike,
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       fetchAgentRelease: async (opts) => {
         capturedArgs = {
           repo: opts.repo,
@@ -429,6 +434,7 @@ describe("resolveBinary --binary", () => {
         ...defaultFs(),
         existsSync: () => true,
       } as unknown as FsLike,
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       buildAgentBinary: async (opts) => {
         capturedTarget = opts.target;
         return { ok: true, outPath: "/tmp/built-binary", code: 0 };
@@ -451,6 +457,7 @@ describe("resolveBinary --binary", () => {
 
   test("system scope with privileged path and non-root uid fails fast", async () => {
     const { deps } = makeTestDeps({ getuid: () => 501, platform: "darwin" });
+    // eslint-disable-next-line @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Preserve existing CLI/test semantics while clearing strict lint debt.
     await expect(
       resolveBinary({
         source: { kind: "source" },

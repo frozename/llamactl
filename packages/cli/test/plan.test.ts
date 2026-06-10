@@ -13,10 +13,7 @@ import { runPlan } from "../src/commands/plan.js";
  * the underlying planner + executor are all pure + injectable.
  */
 
-function captureWrites(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  target: any,
-): { restore: () => void; output: () => string } {
+function captureWrites(target: NodeJS.WriteStream): { restore: () => void; output: () => string } {
   const chunks: string[] = [];
   const original = target.write.bind(target);
   target.write = (chunk: unknown): boolean => {

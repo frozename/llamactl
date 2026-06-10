@@ -1,4 +1,4 @@
-import { configSchema, config as kubecfg } from "@llamactl/remote";
+import { configSchema, config as kubecfg, type NodeClient } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,6 +6,12 @@ import { join } from "node:path";
 
 import { __resetRagTestSeams, __setRagTestSeams, runRag } from "../src/commands/rag.js";
 import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
+import {
+  parseJsonRecord,
+  requireArrayField,
+  requireRecord,
+  requireRecordField,
+} from "./helpers.js";
 
 /**
  * `llamactl rag ask` chains ragSearch + chatComplete. The tests stub
@@ -21,7 +27,7 @@ const originalEnv = { ...process.env };
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-rag-ask-"));
   configPath = join(tmp, "config");
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv, {
     DEV_STORAGE: tmp,
     LLAMACTL_CONFIG: configPath,
@@ -31,7 +37,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
   resetGlobals();
   __resetRagTestSeams();
@@ -42,17 +48,19 @@ async function capture(fn: () => Promise<number>): Promise<{
   stdout: string;
   stderr: string;
 }> {
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const origOut = process.stdout.write;
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const origErr = process.stderr.write;
   let stdout = "";
   let stderr = "";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout.write as any) = (chunk: unknown) => {
+  process.stdout.write = (chunk: unknown) => {
     stdout += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stderr.write as any) = (chunk: unknown) => {
+  process.stderr.write = (chunk: unknown) => {
     stderr += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };
@@ -85,12 +93,16 @@ function installStubClient(opts: {
   }[];
   searchCollection?: string;
   answer?: string;
+  /** Override the chat response's `choices` array verbatim (e.g. `[]` to
+   *  simulate a degenerate remote payload). Takes precedence over `answer`. */
+  chatChoices?: unknown[];
   throwOnSearch?: Error;
   throwOnChat?: Error;
 }): StubCalls {
   const calls: StubCalls = { ragSearch: [], chatComplete: [] };
   const fake = {
     ragSearch: {
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       query: async (input: { node: string; query: string; topK: number; collection?: string }) => {
         calls.ragSearch.push(input);
         if (opts.throwOnSearch) throw opts.throwOnSearch;
@@ -108,6 +120,7 @@ function installStubClient(opts: {
       },
     },
     chatComplete: {
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       mutate: async (input: { node: string; request: Record<string, unknown> }) => {
         calls.chatComplete.push(input);
         if (opts.throwOnChat) throw opts.throwOnChat;
@@ -116,7 +129,7 @@ function installStubClient(opts: {
           object: "chat.completion",
           model: input.request.model,
           created: 0,
-          choices: [
+          choices: opts.chatChoices ?? [
             {
               index: 0,
               message: { role: "assistant", content: opts.answer ?? "stub-answer" },
@@ -127,8 +140,7 @@ function installStubClient(opts: {
       },
     },
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  __setRagTestSeams({ nodeClient: fake as any });
+  __setRagTestSeams({ nodeClient: fake as unknown as NodeClient });
   return calls;
 }
 
@@ -191,18 +203,18 @@ describe("rag ask — happy path", () => {
     expect(calls.chatComplete).toHaveLength(1);
     const chatReq = calls.chatComplete[0]!;
     expect(chatReq.node).toBe("sirius-gw");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const request = chatReq.request as any;
+    const request = chatReq.request;
+    const messages = requireMessages(request);
     expect(request.model).toBe("gpt-4o-mini");
     expect(request.max_tokens).toBe(2048);
     expect(request.temperature).toBe(0);
-    expect(request.messages).toHaveLength(2);
-    expect(request.messages[0].role).toBe("system");
-    expect(request.messages[1].role).toBe("user");
+    expect(messages).toHaveLength(2);
+    expect(messages[0]!.role).toBe("system");
+    expect(messages[1]!.role).toBe("user");
     // User prompt must quote the retrieved docs.
-    expect(request.messages[1].content).toContain("[1] The magic number is 4823.");
-    expect(request.messages[1].content).toContain("[2] Another fact about llamactl.");
-    expect(request.messages[1].content).toContain("Question: What is the magic number?");
+    expect(String(messages[1]!.content)).toContain("[1] The magic number is 4823.");
+    expect(String(messages[1]!.content)).toContain("[2] Another fact about llamactl.");
+    expect(String(messages[1]!.content)).toContain("Question: What is the magic number?");
   });
 
   test("--top-k, --max-tokens, --temperature, --collection all pass through", async () => {
@@ -230,8 +242,7 @@ describe("rag ask — happy path", () => {
     expect(code).toBe(0);
     expect(calls.ragSearch[0]!.topK).toBe(7);
     expect(calls.ragSearch[0]!.collection).toBe("my-coll");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const req = calls.chatComplete[0]!.request as any;
+    const req = calls.chatComplete[0]!.request;
     expect(req.max_tokens).toBe(512);
     expect(req.temperature).toBe(0.25);
   });
@@ -253,9 +264,8 @@ describe("rag ask — happy path", () => {
       ]),
     );
     expect(code).toBe(0);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const msgs = (calls.chatComplete[0]!.request as any).messages;
-    expect(msgs[0].content).toBe("be terse");
+    const msgs = requireMessages(calls.chatComplete[0]!.request);
+    expect(msgs[0]!.content).toBe("be terse");
   });
 });
 
@@ -341,11 +351,14 @@ describe("rag ask — --json rendering", () => {
       runRag(["ask", "q", "--kb", "kb-json", "--via", "gw", "--model", "gpt-x", "--json"]),
     );
     expect(code).toBe(0);
-    const parsed = JSON.parse(stdout.trim());
-    expect(parsed.retrieval.node).toBe("kb-json");
-    expect(parsed.retrieval.collection).toBe("docs");
-    expect(parsed.retrieval.results).toHaveLength(1);
-    expect(parsed.retrieval.results[0].document.content).toBe("Document content.");
+    const parsed = parseJsonRecord(stdout.trim());
+    const retrieval = requireRecordField(parsed, "retrieval");
+    const results = requireArrayField(retrieval, "results");
+    const first = requireRecord(results[0]);
+    expect(retrieval.node).toBe("kb-json");
+    expect(retrieval.collection).toBe("docs");
+    expect(results).toHaveLength(1);
+    expect(requireRecordField(first, "document").content).toBe("Document content.");
     expect(parsed.answer).toBe("JSON-ready answer.");
     expect(parsed.model).toBe("gpt-x");
     expect(parsed.via).toBe("gw");
@@ -363,9 +376,15 @@ describe("rag ask — --json rendering", () => {
     // No human-readable "Retrieved N passage(s)" header.
     expect(stdout).not.toContain("Retrieved");
     // Pure JSON on stdout.
-    JSON.parse(stdout.trim());
+    parseJsonRecord(stdout.trim());
   });
 });
+
+function requireMessages(request: Record<string, unknown>): Record<string, unknown>[] {
+  const messages = request.messages;
+  if (!Array.isArray(messages)) throw new Error("expected messages array");
+  return messages.map(requireRecord);
+}
 
 describe("rag ask — validation", () => {
   test("missing --via → exit 1", async () => {
@@ -473,6 +492,28 @@ describe("rag ask — error propagation", () => {
     expect(code).toBe(0);
     expect(stdout.trim()).toBe("I don't know.");
     expect(calls.chatComplete).toHaveLength(1);
+  });
+});
+
+describe("rag ask — degenerate chat payloads", () => {
+  test("empty choices array renders an empty answer instead of crashing", async () => {
+    installStubClient({ chatChoices: [] });
+    const { code, stdout, stderr } = await capture(() =>
+      runRag(["ask", "q", "--kb", "kb", "--via", "gw", "--model", "m"]),
+    );
+    expect(stderr).toBe("");
+    expect(code).toBe(0);
+    expect(stdout).toBe("\n");
+  });
+
+  test("choice without a message renders an empty answer instead of crashing", async () => {
+    installStubClient({ chatChoices: [{ index: 0, finish_reason: "stop" }] });
+    const { code, stdout, stderr } = await capture(() =>
+      runRag(["ask", "q", "--kb", "kb", "--via", "gw", "--model", "m"]),
+    );
+    expect(stderr).toBe("");
+    expect(code).toBe(0);
+    expect(stdout).toBe("\n");
   });
 });
 

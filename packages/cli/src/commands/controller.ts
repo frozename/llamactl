@@ -16,7 +16,7 @@ Flags:
   --interval=<s>   Seconds between reconcile passes (default 10).
   --once           Run one pass then exit (useful for cron-driven setups).
 
-A lock file at \$LLAMACTL_WORKLOADS_DIR/.controller.lock guards against
+A lock file at $LLAMACTL_WORKLOADS_DIR/.controller.lock guards against
 two controllers racing on the same directory. Stale locks from
 crashed controllers are stolen automatically when their PID is gone.
 `;
@@ -68,7 +68,7 @@ export async function runController(args: string[]): Promise<number> {
   const cfgPath = process.env.LLAMACTL_CONFIG ?? kubecfg.defaultConfigPath();
   const workloadsDir =
     process.env.LLAMACTL_WORKLOADS_DIR ??
-    path.join(process.env.DEV_STORAGE ?? `${process.env.HOME}/.llamactl`, "workloads");
+    path.join(process.env.DEV_STORAGE ?? `${String(process.env.HOME)}/.llamactl`, "workloads");
   const cfg = kubecfg.loadConfig(cfgPath);
   const resolveNodeIdentity = (n: string): string | null => {
     try {
@@ -84,17 +84,18 @@ export async function runController(args: string[]): Promise<number> {
     return 1;
   }
   process.stdout.write(
-    `controller started pid=${process.pid} workloads=${workloadsDir} cfg=${cfgPath}\n`,
+    `controller started pid=${String(process.pid)} workloads=${workloadsDir} cfg=${cfgPath}\n`,
   );
 
-  let stopping = false;
+  const stopping = { value: false };
   let wake: (() => void) | null = null;
   const onSignal = (sig: NodeJS.Signals): void => {
-    if (stopping) return;
-    stopping = true;
+    if (stopping.value) return;
+    stopping.value = true;
     process.stdout.write(`controller: received ${sig}, exiting after current reconcile\n`);
     wake?.();
   };
+  const isStopping = (): boolean => stopping.value;
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
 
@@ -118,7 +119,7 @@ export async function runController(args: string[]): Promise<number> {
         }),
       onReport: (r) => {
         const tail = r.error ? ` error=${r.error}` : "";
-        const actions = r.actions > 0 ? ` actions=${r.actions}` : "";
+        const actions = r.actions > 0 ? ` actions=${String(r.actions)}` : "";
         process.stdout.write(
           `[${new Date().toISOString()}] noderun/${r.name} on ${r.node}: ${r.phase}${actions}${tail}\n`,
         );
@@ -145,7 +146,7 @@ export async function runController(args: string[]): Promise<number> {
     }
     // Loop forever. Interval is measured between pass START times so
     // slow passes don't bunch up on a naive "sleep N after finish".
-    while (!stopping) {
+    while (!stopping.value) {
       const start = Date.now();
       try {
         await runOnePass();
@@ -154,7 +155,7 @@ export async function runController(args: string[]): Promise<number> {
           `[${new Date().toISOString()}] reconcile error: ${(err as Error).message}\n`,
         );
       }
-      if (stopping) break;
+      if (isStopping()) break;
       const elapsed = Date.now() - start;
       const sleepMs = Math.max(100, parsed.intervalMs - elapsed);
       // Race the sleep against a SIGTERM-triggered `wake()` so the

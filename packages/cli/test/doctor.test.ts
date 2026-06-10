@@ -19,7 +19,7 @@ function captureStdout<T>(fn: () => Promise<T>): Promise<{ result: T; out: strin
   const chunks: string[] = [];
   const original = process.stdout.write.bind(process.stdout);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout as any).write = (s: string | Uint8Array): boolean => {
+  process.stdout.write = (s: string | Uint8Array): boolean => {
     chunks.push(typeof s === "string" ? s : String(s));
     return true;
   };
@@ -27,7 +27,7 @@ function captureStdout<T>(fn: () => Promise<T>): Promise<{ result: T; out: strin
     .then((result) => ({ result, out: chunks.join("") }))
     .finally(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stdout as any).write = original;
+      process.stdout.write = original;
     });
 }
 
@@ -100,8 +100,11 @@ describe("doctor --skip=<system> suppresses the named probe", () => {
 describe("doctor probes (via injected deps)", () => {
   function stubDeps(overrides: Partial<DoctorDeps> = {}): DoctorDeps {
     return {
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       checkAgent: async () => [{ system: "agent", status: "ok", message: "stub agent ok" }],
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       checkDocker: async () => [{ system: "docker", status: "ok", message: "stub docker ok" }],
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       checkKubernetes: async () => [{ system: "kubernetes", status: "ok", message: "stub k8s ok" }],
       checkSecrets: () => [{ system: "secrets", status: "ok", message: "stub secrets ok" }],
       ...overrides,
@@ -123,6 +126,7 @@ describe("doctor probes (via injected deps)", () => {
       runDoctor(
         [],
         stubDeps({
+          // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
           checkDocker: async () => [
             {
               system: "docker",
@@ -145,7 +149,9 @@ describe("doctor probes (via injected deps)", () => {
       runDoctor(
         [],
         stubDeps({
+          // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
           checkAgent: async () => [{ system: "agent", status: "fail", message: "probe blew up" }],
+          // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
           checkKubernetes: async () => [
             {
               system: "kubernetes",
@@ -167,6 +173,7 @@ describe("doctor probes (via injected deps)", () => {
       runDoctor(
         [],
         stubDeps({
+          // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
           checkDocker: async () => {
             throw new Error("unexpected crash");
           },
@@ -201,6 +208,7 @@ describe("doctor probes (via injected deps)", () => {
       runDoctor(
         ["--verbose"],
         stubDeps({
+          // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
           checkAgent: async () => [
             {
               system: "agent",
@@ -225,6 +233,7 @@ describe("doctor probes (via injected deps)", () => {
       runDoctor(
         [],
         stubDeps({
+          // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
           checkKubernetes: async () => multi,
         }),
       ),

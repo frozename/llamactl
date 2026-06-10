@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { makeTempRuntime, runCli } from "./helpers.js";
+import { makeTempRuntime, parseJsonRecord, runCli } from "./helpers.js";
 
 describe("llamactl env", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
@@ -23,7 +23,7 @@ describe("llamactl env", () => {
   test("env --json is valid JSON", () => {
     const r = runCli(["env", "--json"], temp.env);
     expect(r.code).toBe(0);
-    const parsed = JSON.parse(r.stdout);
+    const parsed = parseJsonRecord(r.stdout);
     expect(parsed.LLAMA_CPP_MACHINE_PROFILE).toBe("macbook-pro-48g");
     expect(parsed.LOCAL_AI_RUNTIME_DIR).toBe(temp.runtimeDir);
   });

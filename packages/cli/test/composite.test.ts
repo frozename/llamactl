@@ -29,7 +29,7 @@ beforeEach(() => {
   // never leaks in. The dispatcher resolves paths against env at
   // call time; pinning LLAMACTL_CONFIG at a non-existent path causes
   // `loadConfig` to fall back to `freshConfig` → local node.
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv, {
     DEV_STORAGE: runtimeDir,
     LLAMACTL_COMPOSITES_DIR: compositesDir,
@@ -39,7 +39,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
   resetGlobals();
   rmSync(runtimeDir, { recursive: true, force: true });
@@ -56,17 +56,19 @@ async function capture(fn: () => Promise<number>): Promise<{
   stdout: string;
   stderr: string;
 }> {
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const origOut = process.stdout.write;
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const origErr = process.stderr.write;
   let stdout = "";
   let stderr = "";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout.write as any) = (chunk: unknown) => {
+  process.stdout.write = (chunk: unknown) => {
     stdout += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stderr.write as any) = (chunk: unknown) => {
+  process.stderr.write = (chunk: unknown) => {
     stderr += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };

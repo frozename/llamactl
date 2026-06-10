@@ -24,7 +24,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
 });
 
@@ -32,7 +32,7 @@ function captureStderr<T>(fn: () => Promise<T>): Promise<{ result: T; err: strin
   const chunks: string[] = [];
   const original = process.stderr.write.bind(process.stderr);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stderr as any).write = (s: string | Uint8Array): boolean => {
+  process.stderr.write = (s: string | Uint8Array): boolean => {
     chunks.push(typeof s === "string" ? s : String(s));
     return true;
   };
@@ -40,17 +40,17 @@ function captureStderr<T>(fn: () => Promise<T>): Promise<{ result: T; err: strin
     .then((result) => ({ result, err: chunks.join("") }))
     .finally(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stderr as any).write = original;
+      process.stderr.write = original;
     });
 }
 
 function silenceStdout<T>(fn: () => Promise<T>): Promise<T> {
   const original = process.stdout.write.bind(process.stdout);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout as any).write = (_s: string | Uint8Array): boolean => true;
+  process.stdout.write = (_s: string | Uint8Array): boolean => true;
   return fn().finally(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (process.stdout as any).write = original;
+    process.stdout.write = original;
   });
 }
 

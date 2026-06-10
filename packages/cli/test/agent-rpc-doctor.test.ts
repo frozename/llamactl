@@ -194,6 +194,7 @@ describe("runRpcDoctor (--node remote mode)", () => {
       calls.push(opts.nodeName);
       return {
         rpcServerDoctor: {
+          // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
           async query() {
             return {
               ok: true,
@@ -218,6 +219,7 @@ describe("runRpcDoctor (--node remote mode)", () => {
       >;
     deps.createNodeClient = (): RpcDoctorRemoteClient => ({
       rpcServerDoctor: {
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         async query() {
           return {
             ok: false,
@@ -246,6 +248,7 @@ describe("runRpcDoctor (--node remote mode)", () => {
       >;
     deps.createNodeClient = (): RpcDoctorRemoteClient => ({
       rpcServerDoctor: {
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         async query() {
           throw new Error("connection refused");
         },
@@ -265,6 +268,7 @@ describe("runRpcDoctor (--node remote mode)", () => {
       >;
     deps.createNodeClient = (): RpcDoctorRemoteClient => ({
       rpcServerDoctor: {
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         async query() {
           return {
             ok: true,

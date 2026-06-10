@@ -60,8 +60,8 @@ function printShow(opts: {
       `ctx=${ctx}`,
       `build=${build}`,
       `profile=${profile}`,
-      `gen_tps=${gen_ts}`,
-      `prompt_tps=${prompt_ts}`,
+      `gen_tps=${String(gen_ts)}`,
+      `prompt_tps=${String(prompt_ts)}`,
       `updated_at=${updated_at}`,
       `launch_args=${launch_args}`,
       "",
@@ -69,6 +69,7 @@ function printShow(opts: {
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runShow(args: string[]): Promise<number> {
   if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(USAGE);
@@ -133,6 +134,7 @@ async function runShow(args: string[]): Promise<number> {
   return 1;
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runHistory(args: string[]): Promise<number> {
   if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(USAGE);
@@ -191,6 +193,7 @@ function padRight(value: string, width: number): string {
   return value.length >= width ? value : value + " ".repeat(width - value.length);
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runCompare(args: string[]): Promise<number> {
   if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(USAGE);
@@ -289,7 +292,7 @@ function forwardBenchEvent(e: bench.BenchEvent): void {
       `-- profile=${e.profile} gen_ts=${e.gen_ts} prompt_ts=${e.prompt_ts} --\n`,
     );
   } else if (e.type === "profile-fail") {
-    process.stderr.write(`-- profile=${e.profile} failed (code=${e.code}) --\n`);
+    process.stderr.write(`-- profile=${e.profile} failed (code=${String(e.code)}) --\n`);
   }
 }
 
@@ -307,7 +310,7 @@ async function runPreset(args: string[]): Promise<number> {
     } else positional.push(arg);
   }
   const target = positional[0] ?? "current";
-  const modeRaw = (positional[1] ?? "auto") as "auto" | "text" | "vision";
+  const modeRaw = positional[1] ?? "auto";
   if (modeRaw !== "auto" && modeRaw !== "text" && modeRaw !== "vision") {
     process.stderr.write(`Unknown bench mode: ${modeRaw}\n`);
     return 1;

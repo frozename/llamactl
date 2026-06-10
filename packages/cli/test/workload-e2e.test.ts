@@ -43,10 +43,10 @@ function runCliAsync(
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => {
-      stdout += d.toString();
+      stdout += String(d);
     });
     child.stderr.on("data", (d) => {
-      stderr += d.toString();
+      stderr += String(d);
     });
     const killer = setTimeout(() => {
       child.kill("SIGKILL");
@@ -169,7 +169,9 @@ afterEach(async () => {
     if (Number.isFinite(pid) && pid > 0) {
       try {
         process.kill(pid, "SIGTERM");
-      } catch {}
+      } catch {
+        /* Intentionally empty. */
+      }
     }
   }
   process.env = { ...originalEnv };

@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import { required } from "../required.js";
 
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -19,7 +20,7 @@ USAGE:
 Launches the workload on an ephemeral sandbox port, waits for the
 server to report healthy, samples RSS over a steady-state window,
 then terminates the process and writes the result to
-~/.llamactl/measured-memory.json (or \$LLAMACTL_MEASURED_MEMORY_PATH).
+~/.llamactl/measured-memory.json (or $LLAMACTL_MEASURED_MEMORY_PATH).
 
 Future calls to \`llamactl admit\` automatically use the measured peak
 instead of spec.resources.expectedMemoryGiB, preventing false ADMITs
@@ -40,7 +41,7 @@ function findFreePort(start: number): Promise<number> {
   return new Promise((resolve, reject) => {
     function tryPort(p: number) {
       if (p > start + 200) {
-        reject(new Error(`No free port found in range ${start}–${start + 200}`));
+        reject(new Error(`No free port found in range ${String(start)}–${String(start + 200)}`));
         return;
       }
       const srv = createServer();
@@ -68,11 +69,16 @@ async function waitForHealth(url: string, timeoutMs: number): Promise<void> {
     }
     await new Promise<void>((r) => setTimeout(r, 1000));
   }
-  throw new Error(`Health check timed out after ${timeoutMs}ms: ${url}`);
+  throw new Error(`Health check timed out after ${String(timeoutMs)}ms: ${url}`);
 }
 
 function sampleRssMb(pid: number): number | null {
-  const r = spawnSync("ps", ["-o", "rss=", "-p", String(pid)], { encoding: "utf8" });
+  // spawnSync types stdout as string when an encoding is set, but it is
+  // null at runtime when the spawn itself fails — never throw here, or
+  // the caller skips killGracefully and leaks the sandbox server.
+  const r: { stdout: string | null } = spawnSync("ps", ["-o", "rss=", "-p", String(pid)], {
+    encoding: "utf8",
+  });
   const kb = parseInt((r.stdout ?? "").trim(), 10);
   return Number.isFinite(kb) && kb > 0 ? kb / 1024 : null;
 }
@@ -83,7 +89,7 @@ function stripPortHost(args: string[]): string[] {
   const out: string[] = [];
   let i = 0;
   while (i < args.length) {
-    const a = args[i]!;
+    const a = required(args[i]);
     if (PAIR_FLAGS.has(a)) {
       i += 2;
       continue;
@@ -115,7 +121,7 @@ function killGracefully(proc: ChildProcess): Promise<boolean> {
 export async function runAdmitMeasure(args: string[]): Promise<number> {
   const target = args[0];
   if (!target || target === "--help" || target === "-h") {
-    console.log(MEASURE_USAGE);
+    process.stdout.write(`${MEASURE_USAGE}\n`);
     return target ? 0 : 2;
   }
 
@@ -193,10 +199,10 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
   }
 
   const port = overridePort ?? (await findFreePort(18000));
-  const healthUrl = `http://127.0.0.1:${port}${healthPath}`;
+  const healthUrl = `http://127.0.0.1:${String(port)}${healthPath}`;
   const cmdArgs = [...launchArgs, "--port", String(port), "--host", "127.0.0.1"];
 
-  console.log(`launching: ${binary} ... --port ${port}`);
+  process.stdout.write(`launching: ${binary} ... --port ${String(port)}\n`);
 
   const proc = spawn(binary, cmdArgs, { stdio: "ignore", detached: false });
   const pid = proc.pid;
@@ -205,13 +211,16 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
     return 1;
   }
 
-  let exitedEarly = false;
+  const exitedEarly = { value: false };
   proc.once("exit", () => {
-    exitedEarly = true;
+    exitedEarly.value = true;
   });
+  const hasExitedEarly = (): boolean => exitedEarly.value;
 
   try {
-    console.log(`waiting for health at ${healthUrl} (pid ${pid}, timeout ${timeoutSecs}s)...`);
+    process.stdout.write(
+      `waiting for health at ${healthUrl} (pid ${String(pid)}, timeout ${String(timeoutSecs)}s)...\n`,
+    );
     await waitForHealth(healthUrl, timeoutSecs * 1000);
   } catch (err) {
     console.error(`admit measure: ${(err as Error).message}`);
@@ -219,23 +228,25 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
     return 1;
   }
 
-  if (exitedEarly) {
+  if (exitedEarly.value) {
     console.error("admit measure: process exited before health check passed");
     return 1;
   }
 
-  console.log(`sampling RSS over ${steadyStateSecs}s (${samples} samples)...`);
+  process.stdout.write(
+    `sampling RSS over ${String(steadyStateSecs)}s (${String(samples)} samples)...\n`,
+  );
   const intervalMs = Math.max(1000, Math.round((steadyStateSecs * 1000) / Math.max(samples, 1)));
   const rssSamples: number[] = [];
 
   for (let i = 0; i < samples; i++) {
     if (i > 0) await new Promise<void>((r) => setTimeout(r, intervalMs));
-    if (exitedEarly) break;
+    if (hasExitedEarly()) break;
     const rss = sampleRssMb(pid);
     if (rss !== null) rssSamples.push(rss);
   }
 
-  console.log("terminating sandbox...");
+  process.stdout.write("terminating sandbox...\n");
   const cleanExit = await killGracefully(proc);
   if (!cleanExit) console.warn("admit measure: process did not exit cleanly (SIGKILL sent)");
 
@@ -261,11 +272,11 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
 
   const cachePath =
     process.env["LLAMACTL_MEASURED_MEMORY_PATH"] ?? "~/.llamactl/measured-memory.json";
-  console.log(`\nmeasured: ${workloadName}`);
-  console.log(`  model key:  ${modelKey}`);
-  console.log(`  peak RSS:   ${rssPeakMb.toFixed(1)} MiB`);
-  console.log(`  mean RSS:   ${rssMeanMb.toFixed(1)} MiB`);
-  console.log(`  samples:    ${rssSamples.length}`);
-  console.log(`  cached:     ${cachePath}`);
+  process.stdout.write(`\nmeasured: ${workloadName}\n`);
+  process.stdout.write(`  model key:  ${modelKey}\n`);
+  process.stdout.write(`  peak RSS:   ${rssPeakMb.toFixed(1)} MiB\n`);
+  process.stdout.write(`  mean RSS:   ${rssMeanMb.toFixed(1)} MiB\n`);
+  process.stdout.write(`  samples:    ${String(rssSamples.length)}\n`);
+  process.stdout.write(`  cached:     ${cachePath}\n`);
   return 0;
 }

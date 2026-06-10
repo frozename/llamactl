@@ -11,6 +11,7 @@ import {
   __setProjectTestSeams,
   runProject,
 } from "../src/commands/project.js";
+import { parseJsonRecord, requireRecordField } from "./helpers.js";
 
 /**
  * CLI coverage for `llamactl project …`. Tests run against a stubbed
@@ -29,12 +30,12 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{ result: T; cap: Captur
   const origOut = process.stdout.write.bind(process.stdout);
   const origErr = process.stderr.write.bind(process.stderr);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout as any).write = (s: string | Uint8Array): boolean => {
+  process.stdout.write = (s: string | Uint8Array): boolean => {
     chunks.out += typeof s === "string" ? s : String(s);
     return true;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stderr as any).write = (s: string | Uint8Array): boolean => {
+  process.stderr.write = (s: string | Uint8Array): boolean => {
     chunks.err += typeof s === "string" ? s : String(s);
     return true;
   };
@@ -42,9 +43,9 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{ result: T; cap: Captur
     .then((result) => ({ result, cap: chunks }))
     .finally(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stdout as any).write = origOut;
+      process.stdout.write = origOut;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stderr as any).write = origErr;
+      process.stderr.write = origErr;
     });
 }
 
@@ -72,12 +73,14 @@ interface StubProcs {
 
 function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
   const stubs: StubProcs = {
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     projectApply: async () => ({
       ok: true,
       name: "test",
       path: "/tmp/projects.yaml",
       created: true,
     }),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     projectList: async () => ({
       ok: true,
       projects: [
@@ -94,6 +97,7 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
         },
       ],
     }),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     projectGet: async ({ name }) => ({
       ok: true,
       project: {
@@ -107,13 +111,16 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
         },
       },
     }),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     projectRemove: async () => ({ ok: true, removed: true }),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     projectIndex: async ({ name }) => ({
       ok: true,
       pipelineName: `project-${name}`,
       path: `/tmp/rag-pipelines/project-${name}/spec.yaml`,
       created: true,
     }),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     projectResolveRouting: async ({ project, taskKind }) => ({
       ok: true,
       project,
@@ -122,6 +129,7 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
       matched: true,
       reason: "matched",
     }),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     projectRoutePreview: async ({ node }) => {
       // Parse `project:<name>/<taskKind>`; stub defaults to a
       // "matched" decision pointing at mac-mini.claude-pro so the
@@ -153,7 +161,7 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
     projectResolveRouting: { query: stubs.projectResolveRouting },
     projectRoutePreview: { query: stubs.projectRoutePreview },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any as NodeClient;
+  } as unknown as NodeClient;
 }
 
 let tmp = "";
@@ -207,6 +215,7 @@ describe("project add", () => {
     let sawYaml = "";
     __setProjectTestSeams({
       nodeClient: makeStubClient({
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         projectApply: async (i) => {
           sawYaml = i.manifestYaml;
           return { ok: true, name: "novaflow", path: "/tmp/projects.yaml", created: true };
@@ -308,6 +317,7 @@ describe("project list", () => {
   test("empty registry → informative message", async () => {
     __setProjectTestSeams({
       nodeClient: makeStubClient({
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         projectList: async () => ({ ok: true, projects: [] }),
       }),
     });
@@ -317,7 +327,7 @@ describe("project list", () => {
 
   test("--json emits structured doc", async () => {
     const { cap } = await captureStdio(() => runProject(["list", "--json"]));
-    const parsed = JSON.parse(cap.out.trim());
+    const parsed = parseJsonRecord(cap.out.trim());
     expect(Array.isArray(parsed.projects)).toBe(true);
   });
 });
@@ -338,8 +348,8 @@ describe("project get", () => {
 
   test("--json emits JSON", async () => {
     const { cap } = await captureStdio(() => runProject(["get", "demo", "--json"]));
-    const parsed = JSON.parse(cap.out.trim());
-    expect(parsed.metadata.name).toBe("demo");
+    const parsed = parseJsonRecord(cap.out.trim());
+    expect(requireRecordField(parsed, "metadata").name).toBe("demo");
   });
 });
 
@@ -353,6 +363,7 @@ describe("project rm", () => {
   test("not found → exit 1", async () => {
     __setProjectTestSeams({
       nodeClient: makeStubClient({
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         projectRemove: async () => ({ ok: true, removed: false }),
       }),
     });
@@ -400,6 +411,7 @@ describe("project route", () => {
   test("prints fallback-default reason when policy falls back", async () => {
     __setProjectTestSeams({
       nodeClient: makeStubClient({
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         projectRoutePreview: async ({ node }) => {
           const m = /^project:([^/]+)\/(.+)$/.exec(node);
           return {
@@ -429,14 +441,15 @@ describe("project route", () => {
       runProject(["route", "demo", "quick_qna", "--json"]),
     );
     expect(result).toBe(0);
-    const parsed = JSON.parse(cap.out.trim());
-    expect(parsed.decision.reason).toBe("matched");
+    const parsed = parseJsonRecord(cap.out.trim());
+    expect(requireRecordField(parsed, "decision").reason).toBe("matched");
     expect(parsed.node).toBe("mac-mini.claude-pro");
   });
 
   test("over-budget reason surfaces the budget annotation", async () => {
     __setProjectTestSeams({
       nodeClient: makeStubClient({
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         projectRoutePreview: async ({ node }) => {
           const m = /^project:([^/]+)\/(.+)$/.exec(node);
           return {

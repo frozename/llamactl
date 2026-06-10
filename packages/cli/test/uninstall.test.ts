@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { makeTempRuntime, runCli } from "./helpers.js";
@@ -63,10 +63,7 @@ describe("llamactl uninstall", () => {
     );
     const r = runCli(["uninstall", rel, "--force"], temp.env);
     expect(r.code).toBe(0);
-    const promos = require("node:fs").readFileSync(
-      join(temp.runtimeDir, "preset-overrides.tsv"),
-      "utf8",
-    );
+    const promos = readFileSync(join(temp.runtimeDir, "preset-overrides.tsv"), "utf8");
     expect(promos).not.toContain(rel);
     expect(promos).toContain("other/model.gguf");
   });

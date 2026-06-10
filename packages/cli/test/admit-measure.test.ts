@@ -85,7 +85,7 @@ describe("llamactl admit measure", () => {
     );
 
     // If python3 isn't available, skip rather than fail hard.
-    if (r.status !== 0 && (r.stderr ?? "").includes("python3")) {
+    if (r.status !== 0 && r.stderr.includes("python3")) {
       console.warn("admit-measure: python3 unavailable — skipping live-server test");
       return;
     }

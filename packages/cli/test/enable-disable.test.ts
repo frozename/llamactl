@@ -91,6 +91,7 @@ function deps() {
     loadConfig: () => ({ currentContext: "default", contexts: [], clusters: [], users: [] }),
     resolveNode: (_cfg: unknown, node: string) => ({ node: { endpoint: `https://${node}` } }),
     getNodeClientByName: () => ({}),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     applyOne: async (manifest: ModelRun) => {
       applyCalls++;
       return {
@@ -105,6 +106,7 @@ function deps() {
         error: null,
       };
     },
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     applyOneModelHost: async () => {
       applyCalls++;
       return { error: null };

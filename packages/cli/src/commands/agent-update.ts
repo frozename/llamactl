@@ -1,6 +1,8 @@
 import { config as cfgMod, makePinnedFetch } from "@llamactl/remote";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { required } from "../required.js";
+import { hasBoolean, hasNumber, hasString, isRecord } from "../runtime-shape.js";
 
 import { getGlobals, isLocalDispatch } from "../dispatcher.js";
 
@@ -123,7 +125,7 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
     process.stderr.write(`agent update: --node is required + must point at a non-local agent\n`);
     return 1;
   }
-  const nodeName = globals.nodeName!;
+  const nodeName = required(globals.nodeName);
   const cfg = cfgMod.loadConfig();
   const ctx = cfg.contexts.find((c) => c.name === (globals.contextName ?? cfg.currentContext));
   if (!ctx) {
@@ -172,7 +174,7 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
     binaryPath = fetchResult.path;
   }
   if (!binaryPath || !existsSync(binaryPath)) {
-    process.stderr.write(`agent update: binary not found at ${binaryPath}\n`);
+    process.stderr.write(`agent update: binary not found at ${String(binaryPath)}\n`);
     return 1;
   }
   const bytes = readFileSync(binaryPath);
@@ -194,8 +196,7 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
         "content-type": "application/octet-stream",
         "x-sha256": sha256,
       },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      body: bytes as any,
+      body: bytes,
     });
   } catch (err) {
     process.stderr.write(`agent update: push failed: ${(err as Error).message}\n`);
@@ -203,7 +204,7 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
   }
   const text = await res.text();
   if (!res.ok) {
-    process.stderr.write(`agent update: agent rejected push (${res.status}): ${text}\n`);
+    process.stderr.write(`agent update: agent rejected push (${String(res.status)}): ${text}\n`);
     return 1;
   }
   let result: {
@@ -216,7 +217,9 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
     previousAt: string;
   };
   try {
-    result = JSON.parse(text);
+    const parsed: unknown = JSON.parse(text);
+    if (!isAgentUpdateResponse(parsed)) throw new Error("invalid update response");
+    result = parsed;
   } catch {
     process.stderr.write(`agent update: invalid response from agent: ${text}\n`);
     return 1;
@@ -230,7 +233,7 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
   // respawned binary comes up (or fall back to a clear timeout
   // message that points at .previous for rollback).
   process.stderr.write(
-    `agent update: waiting for respawn (timeout ${parsed.readinessTimeoutSec}s)…\n`,
+    `agent update: waiting for respawn (timeout ${String(parsed.readinessTimeoutSec)}s)…\n`,
   );
   const healthUrl = `${node.endpoint.replace(/\/$/, "")}/healthz`;
   const deadline = Date.now() + parsed.readinessTimeoutSec * 1000;
@@ -252,7 +255,7 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
   }
   if (!healthy) {
     process.stderr.write(
-      `agent update: WARNING — agent did not come back within ${parsed.readinessTimeoutSec}s.\n` +
+      `agent update: WARNING — agent did not come back within ${String(parsed.readinessTimeoutSec)}s.\n` +
         `  rollback hint (run on the target node):\n` +
         `    mv ${result.previousAt} ${result.installedAt} && launchctl kickstart -k gui/$(id -u)/com.llamactl.agent\n`,
     );
@@ -266,4 +269,25 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify({ ...result, healthy: true }, null, 2)}\n`);
   }
   return 0;
+}
+
+function isAgentUpdateResponse(value: unknown): value is {
+  ok: boolean;
+  oldSha256: string;
+  newSha256: string;
+  oldSize: number;
+  newSize: number;
+  installedAt: string;
+  previousAt: string;
+} {
+  return (
+    isRecord(value) &&
+    hasBoolean(value, "ok") &&
+    hasString(value, "oldSha256") &&
+    hasString(value, "newSha256") &&
+    hasNumber(value, "oldSize") &&
+    hasNumber(value, "newSize") &&
+    hasString(value, "installedAt") &&
+    hasString(value, "previousAt")
+  );
 }

@@ -1,4 +1,5 @@
 import { embersynth as embersynthMod, config as kubecfg, resolveNodeKind } from "@llamactl/remote";
+import { required } from "../required.js";
 
 const USAGE = `llamactl embersynth — embersynth orchestrator integration
 
@@ -65,12 +66,13 @@ function parseCommonOpts(argv: string[]): { opts: CommonOpts; rest: string[] } |
       process.stdout.write(USAGE);
       return null;
     } else {
-      rest.push(a!);
+      rest.push(required(a));
     }
   }
   return { opts: { path }, rest };
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runInit(argv: string[]): Promise<number> {
   const parsed = parseCommonOpts(argv);
   if (!parsed) return 0;
@@ -87,14 +89,15 @@ async function runInit(argv: string[]): Promise<number> {
   const synthList = embersynthMod.listSyntheticModelIds(cfg);
   process.stdout.write(
     `wrote ${path}\n` +
-      `  nodes: ${cfg.nodes.length}\n` +
-      `  profiles: ${cfg.profiles.length}\n` +
+      `  nodes: ${String(cfg.nodes.length)}\n` +
+      `  profiles: ${String(cfg.profiles.length)}\n` +
       `  synthetic models: ${synthList.join(", ") || "(none)"}\n` +
       `  start embersynth with \`--config ${path}\`.\n`,
   );
   return 0;
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runSync(argv: string[]): Promise<number> {
   const parsed = parseCommonOpts(argv);
   if (!parsed) return 0;
@@ -106,12 +109,13 @@ async function runSync(argv: string[]): Promise<number> {
   embersynthMod.saveEmbersynthConfig(next, path);
   process.stdout.write(
     `synced ${path}\n` +
-      `  nodes: ${next.nodes.length}\n` +
-      `  profiles: ${next.profiles.length} (preserved)\n`,
+      `  nodes: ${String(next.nodes.length)}\n` +
+      `  profiles: ${String(next.profiles.length)} (preserved)\n`,
   );
   return 0;
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runShow(argv: string[]): Promise<number> {
   const parsed = parseCommonOpts(argv);
   if (!parsed) return 0;
@@ -126,6 +130,7 @@ async function runShow(argv: string[]): Promise<number> {
   return 0;
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runConnect(argv: string[]): Promise<number> {
   const url = argv[0];
   if (!url || url.startsWith("--")) {
@@ -148,7 +153,7 @@ async function runConnect(argv: string[]): Promise<number> {
       process.stdout.write(USAGE);
       return 0;
     } else {
-      process.stderr.write(`unknown flag: ${arg}\n\n${USAGE}`);
+      process.stderr.write(`unknown flag: ${String(arg)}\n\n${USAGE}`);
       return 1;
     }
   }
@@ -175,6 +180,7 @@ async function runConnect(argv: string[]): Promise<number> {
   return 0;
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runPromotePrivate(argv: string[]): Promise<number> {
   const rel = argv[0];
   if (!rel || rel.startsWith("--")) {
@@ -230,8 +236,8 @@ async function runPromotePrivate(argv: string[]): Promise<number> {
 
   process.stdout.write(
     `model '${rel}' is routable under fusion-private-first.\n` +
-      `  private-first profile: ${profile.label ?? profile.id} (${(profile.preferredTags ?? []).join(",")})\n` +
-      `  eligible private-tagged nodes (${privateAgents.length}):\n` +
+      `  private-first profile: ${profile.label} (${preferred.join(",")})\n` +
+      `  eligible private-tagged nodes (${String(privateAgents.length)}):\n` +
       privateAgents.map((n) => `    - ${n.id} → ${n.endpoint}`).join("\n") +
       `\n  request the model via: POST /v1/chat/completions { "model": "fusion-private-first", ... }\n` +
       `  embersynth routes to a private-tagged node first; falls back to others only when no private node is healthy.\n`,

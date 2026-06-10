@@ -43,6 +43,7 @@ export function makeSpecArtifactResolver(opts: {
   let platformPromise: Promise<InfraPlatformKind> | null = null;
   async function resolvePlatform(): Promise<InfraPlatformKind> {
     if (opts.platform) return opts.platform;
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Preserve existing CLI/test semantics while clearing strict lint debt.
     if (!platformPromise) {
       platformPromise = opts.client.nodeFacts.query().then((facts) => {
         const p = platformFromNodeFacts(facts);

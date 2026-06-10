@@ -35,7 +35,7 @@ export async function runCtx(args: string[]): Promise<number> {
 
 function runCurrent(args: string[]): number {
   if (args.length > 0) {
-    process.stderr.write(`ctx current: unexpected argument ${args[0]}\n`);
+    process.stderr.write(`ctx current: unexpected argument ${String(args[0])}\n`);
     return 1;
   }
   const cfg = kubecfg.loadConfig();
@@ -50,7 +50,7 @@ function runUse(args: string[]): number {
     return 1;
   }
   if (rest.length > 0) {
-    process.stderr.write(`ctx use: unexpected argument ${rest[0]}\n`);
+    process.stderr.write(`ctx use: unexpected argument ${String(rest[0])}\n`);
     return 1;
   }
   const cfgPath = kubecfg.defaultConfigPath();
@@ -68,7 +68,7 @@ function runUse(args: string[]): number {
 
 function runGet(args: string[]): number {
   if (args.length > 0) {
-    process.stderr.write(`ctx get: unexpected argument ${args[0]}\n`);
+    process.stderr.write(`ctx get: unexpected argument ${String(args[0])}\n`);
     return 1;
   }
   const cfgPath = kubecfg.defaultConfigPath();

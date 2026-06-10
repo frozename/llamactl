@@ -42,14 +42,15 @@ const snap = (
 
 function captureStdout<T>(fn: () => Promise<T>): Promise<{ result: T; out: string }> {
   let out = "";
-  const orig = console.log;
-  console.log = ((...args: unknown[]) => {
-    out += `${args.map((x) => String(x)).join(" ")}\n`;
-  }) as typeof console.log;
+  const orig = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (chunk: string | Uint8Array) => {
+    out += typeof chunk === "string" ? chunk : String(chunk);
+    return true;
+  };
   return fn()
     .then((result) => ({ result, out }))
     .finally(() => {
-      console.log = orig;
+      process.stdout.write = orig;
     });
 }
 
@@ -70,8 +71,10 @@ describe("fleet command", () => {
   test("fleet snapshot prints local node latest snapshot JSON", async () => {
     const { result, out } = await captureStdout(() =>
       runFleet(["snapshot"], {
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         readLocalSnapshot: async () => snap("local", 2048, 100),
         readPeers: () => [],
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         fetchPeerSnapshot: async () => null,
       }),
     );
@@ -86,8 +89,10 @@ describe("fleet command", () => {
     const peers = [{ id: "mac-mini", endpoint: "https://mac-mini" }];
     const { result, out } = await captureStdout(() =>
       runFleet(["snapshot", "--all"], {
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         readLocalSnapshot: async () => snap("local", 2048, 100),
         readPeers: () => peers,
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         fetchPeerSnapshot: async () => snap("mac-mini", 3000, 90),
       }),
     );
@@ -102,8 +107,10 @@ describe("fleet command", () => {
     const peers = [{ id: "mac-mini", endpoint: "https://mac-mini" }];
     const { result, out } = await captureStdout(() =>
       runFleet(["status"], {
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         readLocalSnapshot: async () => snap("local", 200, 3000),
         readPeers: () => peers,
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         fetchPeerSnapshot: async () => snap("mac-mini", 3000, 90),
       }),
     );
@@ -118,8 +125,10 @@ describe("fleet command", () => {
   test("fleet snapshot exits non-zero when local snapshot is missing", async () => {
     const { result, out } = await captureStderr(() =>
       runFleet(["snapshot"], {
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         readLocalSnapshot: async () => null,
         readPeers: () => [],
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         fetchPeerSnapshot: async () => null,
       }),
     );

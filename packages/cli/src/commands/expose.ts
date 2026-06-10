@@ -6,6 +6,7 @@ import {
 } from "@llamactl/remote";
 
 import { getNodeClientByName, resolveEffectiveNodeName } from "../dispatcher.js";
+import { required } from "../required.js";
 
 const USAGE = `Usage: llamactl expose <target> [--node <name>]
                       [--name <workload>] [--extra-args="..."]
@@ -60,7 +61,7 @@ function parseFlags(args: string[]): ExposeFlags | { error: string } {
   let json = false;
 
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "--json") {
       json = true;
       continue;
@@ -186,7 +187,11 @@ export async function runExpose(args: string[]): Promise<number> {
   // advertised one for ember synth.
   let advertised = result.statusSection.endpoint ?? null;
   try {
-    const status = await getNodeClientByName(node).serverStatus.query({ workload: workloadName });
+    // A version-skewed agent can omit the field over the wire despite the
+    // non-optional static type; never clear the endpoint we already have.
+    const status: { advertisedEndpoint?: string | null } = await getNodeClientByName(
+      node,
+    ).serverStatus.query({ workload: workloadName });
     advertised = status.advertisedEndpoint ?? advertised;
   } catch {
     // Not fatal — fall back to whatever applyOne recorded.
@@ -214,7 +219,7 @@ export async function runExpose(args: string[]): Promise<number> {
   process.stdout.write(`${result.action} modelrun/${workloadName} on node ${node}\n`);
   process.stdout.write(`  manifest:  ${savedPath}\n`);
   if (result.statusSection.serverPid) {
-    process.stdout.write(`  pid:       ${result.statusSection.serverPid}\n`);
+    process.stdout.write(`  pid:       ${String(result.statusSection.serverPid)}\n`);
   }
   if (advertised) process.stdout.write(`  endpoint:  ${advertised}\n`);
   if (openaiUrl) {

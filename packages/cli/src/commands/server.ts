@@ -1,5 +1,6 @@
 import { env as envMod, server, serverLogs as serverLogsMod } from "@llamactl/core";
 import { type workloadSchema, workloadStore } from "@llamactl/remote";
+import { required } from "../required.js";
 
 import {
   getGlobals,
@@ -38,27 +39,29 @@ function forwardEvent(e: server.ServerEvent): void {
   switch (e.type) {
     case "launch":
       process.stderr.write(`$ ${e.command} ${e.args.join(" ")}\n`);
-      process.stderr.write(`launched pid=${e.pid}\n`);
+      process.stderr.write(`launched pid=${String(e.pid)}\n`);
       break;
     case "waiting":
       // Quiet by default — a dot would help but spams stderr. Emit
       // one line every ~10 attempts so the user sees forward progress
       // without drowning in httpCode logs.
       if (e.attempt % 10 === 0) {
-        process.stderr.write(`waiting ... attempt=${e.attempt} http=${e.httpCode ?? "n/a"}\n`);
+        process.stderr.write(
+          `waiting ... attempt=${String(e.attempt)} http=${e.httpCode ?? "n/a"}\n`,
+        );
       }
       break;
     case "retry":
       process.stderr.write(`retrying: ${e.reason}\n`);
       break;
     case "ready":
-      process.stderr.write(`ready pid=${e.pid} endpoint=${e.endpoint}\n`);
+      process.stderr.write(`ready pid=${String(e.pid)} endpoint=${e.endpoint}\n`);
       break;
     case "timeout":
-      process.stderr.write(`timeout pid=${e.pid}\n`);
+      process.stderr.write(`timeout pid=${String(e.pid)}\n`);
       break;
     case "exited":
-      process.stderr.write(`exited code=${e.code ?? "?"}\n`);
+      process.stderr.write(`exited code=${String(e.code ?? "?")}\n`);
       break;
   }
 }
@@ -72,7 +75,7 @@ async function runStart(args: string[]): Promise<number> {
   let sawDashDash = false;
   let workloadExplicit: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (sawDashDash) {
       extra.push(arg);
       continue;
@@ -195,7 +198,7 @@ async function runStart(args: string[]): Promise<number> {
     process.stderr.write(`${result.error ?? "server failed to start"}\n`);
   } else {
     process.stdout.write(
-      `llama-server up pid=${result.pid} endpoint=${result.endpoint}${result.tunedProfile ? ` tuned=${result.tunedProfile}` : ""}${result.retried ? " (retried)" : ""}\n`,
+      `llama-server up pid=${String(result.pid)} endpoint=${result.endpoint}${result.tunedProfile ? ` tuned=${result.tunedProfile}` : ""}${result.retried ? " (retried)" : ""}\n`,
     );
   }
   return result.ok ? 0 : 1;
@@ -206,7 +209,7 @@ async function runStop(args: string[]): Promise<number> {
   let graceSeconds = 5;
   let name: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "--json") json = true;
     else if (arg.startsWith("--grace=")) {
       const n = Number.parseInt(arg.slice("--grace=".length), 10);
@@ -259,7 +262,7 @@ async function runStop(args: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else {
     process.stdout.write(
-      `stopped pid=${result.pid ?? "none"}${result.killed ? " (SIGKILL)" : ""}\n`,
+      `stopped pid=${String(result.pid ?? "none")}${result.killed ? " (SIGKILL)" : ""}\n`,
     );
   }
   return 0;
@@ -269,7 +272,7 @@ async function runStatus(args: string[]): Promise<number> {
   let json = false;
   let name: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "--json") json = true;
     else if (arg === "--name") {
       name = args[i + 1];
@@ -320,8 +323,8 @@ async function runStatus(args: string[]): Promise<number> {
   if (status.advertisedEndpoint && status.advertisedEndpoint !== status.endpoint) {
     lines.push(`advertised=${status.advertisedEndpoint}`);
   }
-  lines.push(`pid=${status.pid ?? "none"}`);
-  lines.push(`http=${status.health.httpCode ?? "unreachable"}`);
+  lines.push(`pid=${String(status.pid ?? "none")}`);
+  lines.push(`http=${String(status.health.httpCode ?? "unreachable")}`);
   if (status.rel) lines.push(`rel=${status.rel}`);
   lines.push("");
   process.stdout.write(lines.join("\n"));
@@ -333,7 +336,7 @@ async function runLogs(args: string[]): Promise<number> {
   let follow = false;
   let name: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "--follow" || arg === "-f") follow = true;
     else if (arg === "--name") {
       name = args[i + 1];
@@ -407,7 +410,7 @@ async function runLogs(args: string[]): Promise<number> {
       {
         onData: (e: unknown) => {
           const evt = e as serverLogsMod.LogLineEvent;
-          if (evt.type === "line") onLine(evt);
+          onLine(evt);
         },
         onError: (err: unknown) => {
           cleanup();
@@ -430,6 +433,7 @@ async function runLogs(args: string[]): Promise<number> {
     };
     process.on("SIGINT", abort);
     process.on("SIGTERM", abort);
+    // eslint-disable-next-line @typescript-eslint/use-unknown-in-catch-callback-variable -- Preserve existing CLI/test semantics while clearing strict lint debt.
   }).catch((err: Error) => {
     process.stderr.write(
       `server logs: remote call to '${getGlobals().nodeName ?? ""}' failed: ${err.message}\n`,

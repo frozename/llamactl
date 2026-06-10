@@ -22,7 +22,7 @@ const originalFetch = globalThis.fetch;
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-node-add-cloud-"));
   configPath = join(tmp, "config");
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv, {
     DEV_STORAGE: tmp,
     LLAMACTL_CONFIG: configPath,
@@ -32,7 +32,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
   resetGlobals();
   globalThis.fetch = originalFetch;
@@ -43,17 +43,19 @@ async function capture(fn: () => Promise<number>): Promise<{
   stdout: string;
   stderr: string;
 }> {
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const origOut = process.stdout.write;
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const origErr = process.stderr.write;
   let stdout = "";
   let stderr = "";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout.write as any) = (chunk: unknown) => {
+  process.stdout.write = (chunk: unknown) => {
     stdout += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stderr.write as any) = (chunk: unknown) => {
+  process.stderr.write = (chunk: unknown) => {
     stderr += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };
@@ -71,17 +73,16 @@ async function capture(fn: () => Promise<number>): Promise<{
  * shaped empty-list response (200). Records the URL hit so tests
  * can assert the probe did (or did not) run.
  */
-function urlOf(input: unknown): string {
+function urlOf(input: string | URL | Request): string {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.toString();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (input as any)?.url ?? String(input);
+  return input.url;
 }
 
 function installHealthyFetch(): { calls: string[] } {
   const calls: string[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  globalThis.fetch = (async (input: any, _init?: unknown) => {
+  // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
+  globalThis.fetch = (async (input: string | URL | Request, _init?: RequestInit) => {
     calls.push(urlOf(input));
     return new Response(JSON.stringify({ data: [] }), {
       status: 200,
@@ -93,8 +94,8 @@ function installHealthyFetch(): { calls: string[] } {
 
 function installUnreachableFetch(): { calls: string[] } {
   const calls: string[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  globalThis.fetch = (async (input: any): Promise<Response> => {
+  // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
+  globalThis.fetch = (async (input: string | URL | Request): Promise<Response> => {
     calls.push(urlOf(input));
     throw new Error("fetch failed: ECONNREFUSED");
   }) as typeof globalThis.fetch;

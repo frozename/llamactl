@@ -68,7 +68,7 @@ function forwardStream(e: pull.PullEvent | bench.BenchEvent): void {
       `-- profile=${e.profile} gen_ts=${e.gen_ts} prompt_ts=${e.prompt_ts} --\n`,
     );
   } else if (e.type === "profile-fail") {
-    process.stderr.write(`-- profile=${e.profile} failed (code=${e.code}) --\n`);
+    process.stderr.write(`-- profile=${e.profile} failed (code=${String(e.code)}) --\n`);
   }
 }
 
@@ -190,7 +190,7 @@ async function runPullFile(args: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify({ ...result, tune }, null, 2)}\n`);
   } else {
     process.stdout.write(
-      `Pulled ${result.rel} (wasMissing=${result.wasMissing}${result.mmproj ? `, mmproj=${result.mmproj}` : ""})\n`,
+      `Pulled ${result.rel} (wasMissing=${String(result.wasMissing)}${result.mmproj ? `, mmproj=${result.mmproj}` : ""})\n`,
     );
     if (tune) printTuneSummary(tune);
   }
@@ -286,7 +286,7 @@ async function runPullCandidate(args: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify({ ...result, tune }, null, 2)}\n`);
   } else {
     process.stdout.write(
-      `Pulled ${result.rel} (source=${result.picked.source}, profile=${result.picked.profile}, wasMissing=${result.wasMissing}${result.mmproj ? `, mmproj=${result.mmproj}` : ""})\n`,
+      `Pulled ${result.rel} (source=${result.picked.source}, profile=${result.picked.profile}, wasMissing=${String(result.wasMissing)}${result.mmproj ? `, mmproj=${result.mmproj}` : ""})\n`,
     );
     if (tune) printTuneSummary(tune);
   }

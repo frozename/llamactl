@@ -10,6 +10,7 @@ import { existsSync, readFileSync, statSync, unwatchFile, watchFile } from "node
 import { resolve } from "node:path";
 
 import { getNodeClient } from "../dispatcher.js";
+import { required } from "../required.js";
 
 const USAGE = `Usage: llamactl rag pipeline <subcommand>
 
@@ -127,7 +128,7 @@ interface ApplyOpts {
 function parseApplyFlags(args: string[]): ApplyOpts | { error: string } {
   let file = "";
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "-f" || arg === "--file") {
       file = args[++i] ?? "";
     } else if (arg.startsWith("--file=")) {
@@ -244,13 +245,16 @@ async function runRun(args: string[]): Promise<number> {
     }
     const s = res.summary;
     process.stdout.write(
-      `${parsed.dryRun ? "dry-ran" : "ran"} pipeline '${parsed.name}' in ${s.elapsed_ms}ms\n` +
-        `  total_docs: ${s.total_docs} (skipped ${s.skipped_docs})\n` +
-        `  total_chunks: ${s.total_chunks}\n` +
-        `  errors: ${s.errors}\n` +
+      `${parsed.dryRun ? "dry-ran" : "ran"} pipeline '${parsed.name}' in ${String(s.elapsed_ms)}ms\n` +
+        `  total_docs: ${String(s.total_docs)} (skipped ${String(s.skipped_docs)})\n` +
+        `  total_chunks: ${String(s.total_chunks)}\n` +
+        `  errors: ${String(s.errors)}\n` +
         `  per_source:\n` +
         s.per_source
-          .map((p) => `    - ${p.source}  docs=${p.docs} chunks=${p.chunks} errors=${p.errors}`)
+          .map(
+            (p) =>
+              `    - ${p.source}  docs=${String(p.docs)} chunks=${String(p.chunks)} errors=${String(p.errors)}`,
+          )
           .join("\n") +
         "\n",
     );
@@ -289,7 +293,7 @@ async function runList(args: string[]): Promise<number> {
       const dest = `${p.manifest.spec.destination.ragNode}/${p.manifest.spec.destination.collection}`;
       const sources = p.manifest.spec.sources.map((s) => s.kind).join(",");
       const last = p.lastRun
-        ? `last=${p.lastRun.at} docs=${p.lastRun.summary.total_docs} chunks=${p.lastRun.summary.total_chunks}`
+        ? `last=${p.lastRun.at} docs=${String(p.lastRun.summary.total_docs)} chunks=${String(p.lastRun.summary.total_chunks)}`
         : "never-run";
       process.stdout.write(`${p.name}\n  → ${dest}  (sources: ${sources})  ${last}\n`);
     }
@@ -359,7 +363,7 @@ function parseLogsFlags(args: string[]): LogsOpts | { error: string } {
   let follow = false;
   let tail = 50;
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "--follow" || arg === "-f") follow = true;
     else if (arg.startsWith("--tail=")) {
       const n = Number.parseInt(arg.slice("--tail=".length), 10);
@@ -408,7 +412,7 @@ async function runLogs(args: string[]): Promise<number> {
   const lines = contents.split("\n").filter((l) => l.trim().length > 0);
   const start = parsed.tail === 0 ? 0 : Math.max(0, lines.length - parsed.tail);
   for (let i = start; i < lines.length; i++) {
-    process.stdout.write(`${lines[i]}\n`);
+    process.stdout.write(`${String(lines[i])}\n`);
   }
   if (!parsed.follow) return 0;
 
@@ -446,7 +450,7 @@ function parseSchedulerFlags(args: string[]): SchedulerOpts | { error: string } 
   let intervalSec = 60;
   let quiet = false;
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "--once") once = true;
     else if (arg === "--quiet") quiet = true;
     else if (arg === "--interval" || arg === "-i") {
@@ -482,7 +486,7 @@ async function runScheduler(args: string[]): Promise<number> {
     tickIntervalMs: parsed.intervalSec * 1000,
     onTick: (report: TickReport): void => {
       if (parsed.quiet) return;
-      const line = `rag-pipeline-scheduler: tick ${report.ts} considered=${report.considered} fired=${report.fired.length}`;
+      const line = `rag-pipeline-scheduler: tick ${report.ts} considered=${String(report.considered)} fired=${String(report.fired.length)}`;
       process.stderr.write(`${line}\n`);
       for (const name of report.fired) {
         process.stderr.write(`  fired: ${name}\n`);
@@ -530,7 +534,7 @@ function parseDraftFlags(args: string[]): DraftOpts | { error: string } {
   let nodeOverride: string | undefined;
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "--name") {
       nameOverride = args[++i] ?? "";
     } else if (arg.startsWith("--name=")) {

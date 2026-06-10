@@ -1,4 +1,5 @@
 import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:child_process";
+import { required } from "../../required.js";
 
 import { infraArtifactsFetch } from "@llamactl/remote";
 import { spawnSync as nodeSpawnSync } from "node:child_process";
@@ -50,9 +51,9 @@ Flags (all --key=value):
   --install-path=<path>        target install path
                                default: /usr/local/bin/llamactl-agent
   --dir=<path>                 agent data dir (passed to \`agent serve --dir=\`)
-                               default: \$DEV_STORAGE/agent/<node-name-or-hostname>
+                               default: $DEV_STORAGE/agent/<node-name-or-hostname>
   --log-dir=<path>             launchd stdout/stderr log dir
-                               default: \$HOME/.llamactl-launchd-logs
+                               default: $HOME/.llamactl-launchd-logs
   --env=KEY=VAL                additional env vars for the plist;
                                repeatable: --env=HF_HOME=/foo --env=DEV_STORAGE=/bar
   --label=<label>              service label
@@ -488,7 +489,7 @@ async function resolveBinaryFromSource(
     dir: artifactsDir,
   });
   if (!result.ok) {
-    const why = result.reason ?? `bun build exited ${result.code}`;
+    const why = result.reason ?? `bun build exited ${String(result.code)}`;
     throw new Error(`agent install-launchd: local build failed — ${why}`);
   }
   deps.fs.mkdirSync(dirname(installPath), { recursive: true });
@@ -596,16 +597,22 @@ export async function pollLaunchctlHealthy(
   pollIntervalMs = 500,
 ): Promise<PollResult> {
   const deadline = deps.now() + timeoutMs;
-  const target = scope === "system" ? `system/${label}` : `gui/${deps.getuid()}/${label}`;
+  const target = scope === "system" ? `system/${label}` : `gui/${String(deps.getuid())}/${label}`;
   let lastStdout = "";
   while (deps.now() < deadline) {
-    const res = deps.spawnSync("launchctl", ["print", target], { encoding: "utf8" });
+    // stdout is typed string via the encoding overload but is null at
+    // runtime when the spawn itself fails; keep polling instead of throwing.
+    const res: { status: number | null; stdout: string | null } = deps.spawnSync(
+      "launchctl",
+      ["print", target],
+      { encoding: "utf8" },
+    );
     lastStdout = res.stdout ?? "";
     if (res.status === 0) {
       const pidMatch = /\bpid = (\d+)\b/.exec(lastStdout);
       const stateRunning = lastStdout.includes("state = running");
       if (stateRunning && pidMatch) {
-        const pid = Number.parseInt(pidMatch[1]!, 10);
+        const pid = Number.parseInt(required(pidMatch[1]), 10);
         if (Number.isFinite(pid) && pid > 0) {
           return { ok: true, pid };
         }
@@ -750,7 +757,7 @@ export async function runAgentInstallLaunchd(
       }
       deps.stderr(
         `plutil -lint rejected the plist; deleted ${plistPath}. Output:\n${
-          (lint.stdout ?? "") + (lint.stderr ?? "")
+          lint.stdout + lint.stderr
         }\n`,
       );
       return 1;
@@ -786,7 +793,7 @@ export async function runAgentInstallLaunchd(
     const tail = readStderrTail(logDir, deps);
     const tailBlock = tail.length > 0 ? `\nstderr.log (first 500 chars):\n${tail}\n` : "";
     deps.stderr(
-      `agent install-launchd: service did not become healthy — ${pollResult.reason}${tailBlock}`,
+      `agent install-launchd: service did not become healthy — ${String(pollResult.reason)}${tailBlock}`,
     );
     return 1;
   }
@@ -798,7 +805,7 @@ export async function runAgentInstallLaunchd(
       `  label:      ${label}\n` +
       `  log dir:    ${logDir}\n` +
       `  scope:      ${parsed.scope}\n` +
-      `  pid:        ${pollResult.pid}\n` +
+      `  pid:        ${String(pollResult.pid)}\n` +
       `\n` +
       `Tail logs with:\n` +
       `  tail -f ${join(logDir, "stderr.log")}\n` +
@@ -813,7 +820,7 @@ export async function runAgentInstallLaunchd(
 
 function defaultAgentDir(deps: InstallLaunchdDeps, homeDir: string): string {
   const devStorage = deps.env.DEV_STORAGE;
-  const node = (deps.env.LLAMACTL_NODE_NAME ?? hostname() ?? "local").trim() || "local";
+  const node = (deps.env.LLAMACTL_NODE_NAME ?? hostname()).trim() || "local";
   if (devStorage) return join(devStorage, "agent", node);
   if (homeDir) return join(homeDir, ".llamactl", "agent", node);
   return join("/tmp", ".llamactl", "agent", node);

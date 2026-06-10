@@ -6,13 +6,13 @@ const USAGE = `Usage: llamactl lmstudio <subcommand>
 
 Subcommands:
   scan [--root=<dir>] [--json]
-      Walk \$LMSTUDIO_MODELS_DIR (or ~/.lmstudio/models) for .gguf
+      Walk $LMSTUDIO_MODELS_DIR (or ~/.lmstudio/models) for .gguf
       files and print one row per model. No state changes.
 
   import [--root=<dir>] [--apply] [--no-link] [--json]
       Preview (default) or materialize an import of LM Studio models
       into the llamactl custom catalog. By default \`--apply\` also
-      symlinks each model into \$LLAMA_CPP_MODELS/<rel> so existing
+      symlinks each model into $LLAMA_CPP_MODELS/<rel> so existing
       bench / pull commands find it. \`--no-link\` registers the
       catalog row but leaves the file in place.
 `;
@@ -74,7 +74,7 @@ async function runScan(args: string[]): Promise<number> {
     );
     return 1;
   }
-  process.stdout.write(`root=${scan.root} (${scan.models.length} models)\n`);
+  process.stdout.write(`root=${scan.root} (${String(scan.models.length)} models)\n`);
   for (const m of scan.models) {
     process.stdout.write(
       `  ${m.rel.padEnd(40)} size=${hf.humanSize(m.sizeBytes)} repo=${m.repo} path=${m.path}\n`,
@@ -124,7 +124,7 @@ async function runImport(args: string[]): Promise<number> {
       );
       return 1;
     }
-    process.stdout.write(`root=${plan.root} (${plan.items.length} candidates)\n`);
+    process.stdout.write(`root=${plan.root} (${String(plan.items.length)} candidates)\n`);
     for (const item of plan.items) {
       const suffix = item.reason ? ` — ${item.reason}` : "";
       process.stdout.write(
@@ -160,7 +160,7 @@ async function runImport(args: string[]): Promise<number> {
     return 1;
   }
   process.stdout.write(
-    `root=${result.root} applied=${result.applied.length} skipped=${result.skipped.length} errors=${result.errors.length}\n`,
+    `root=${result.root} applied=${String(result.applied.length)} skipped=${String(result.skipped.length)} errors=${String(result.errors.length)}\n`,
   );
   for (const a of result.applied) {
     process.stdout.write(`  ${a.action.padEnd(16)} rel=${a.rel}\n`);

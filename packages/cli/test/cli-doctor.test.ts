@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runAgent } from "../src/commands/agent.js";
+import { parseJsonRecord, requireArrayField, requireRecord } from "./helpers.js";
 
 /**
  * CLI-side coverage for `llamactl agent cli doctor`. Runs against an
@@ -29,12 +30,12 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{
   const origOut = process.stdout.write.bind(process.stdout);
   const origErr = process.stderr.write.bind(process.stderr);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout as any).write = (s: string | Uint8Array): boolean => {
+  process.stdout.write = (s: string | Uint8Array): boolean => {
     out += typeof s === "string" ? s : String(s);
     return true;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stderr as any).write = (s: string | Uint8Array): boolean => {
+  process.stderr.write = (s: string | Uint8Array): boolean => {
     err += typeof s === "string" ? s : String(s);
     return true;
   };
@@ -42,13 +43,14 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{
     .then((result) => ({ result, out, err }))
     .finally(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stdout as any).write = origOut;
+      process.stdout.write = origOut;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stderr as any).write = origErr;
+      process.stderr.write = origErr;
     });
 }
 
 function writeConfig(yaml: string): void {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const fs = require("node:fs") as typeof import("node:fs");
   fs.writeFileSync(cfgPath, yaml, "utf8");
 }
@@ -118,11 +120,12 @@ users:
 `);
     const { result, out } = await captureStdio(() => runAgent(["cli", "doctor", "--json"]));
     expect(result).toBe(2);
-    const parsed = JSON.parse(out.trim());
-    expect(parsed.results).toHaveLength(1);
-    expect(parsed.results[0].state).toBe("unhealthy");
-    expect(parsed.results[0].agent).toBe("mac-mini");
-    expect(parsed.results[0].binding).toBe("missing-probe");
+    const parsed = parseJsonRecord(out.trim());
+    const firstResult = requireRecord(requireArrayField(parsed, "results")[0]);
+    expect(requireArrayField(parsed, "results")).toHaveLength(1);
+    expect(firstResult.state).toBe("unhealthy");
+    expect(firstResult.agent).toBe("mac-mini");
+    expect(firstResult.binding).toBe("missing-probe");
   });
 
   test("--node filter restricts the probe to a single agent", async () => {
@@ -159,10 +162,11 @@ users:
     const { out } = await captureStdio(() =>
       runAgent(["cli", "doctor", "--node=laptop", "--json"]),
     );
-    const parsed = JSON.parse(out.trim());
-    expect(parsed.results).toHaveLength(1);
-    expect(parsed.results[0].agent).toBe("laptop");
-    expect(parsed.results[0].binding).toBe("binding-b");
+    const parsed = parseJsonRecord(out.trim());
+    const result = requireRecord(requireArrayField(parsed, "results")[0]);
+    expect(requireArrayField(parsed, "results")).toHaveLength(1);
+    expect(result.agent).toBe("laptop");
+    expect(result.binding).toBe("binding-b");
   });
 
   test("no agents + no bindings renders a clean empty result (exit 0)", async () => {

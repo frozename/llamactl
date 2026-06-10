@@ -44,10 +44,10 @@ function runCliAsync(
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => {
-      stdout += d.toString();
+      stdout += String(d);
     });
     child.stderr.on("data", (d) => {
-      stderr += d.toString();
+      stderr += String(d);
     });
     const killer = setTimeout(() => {
       child.kill("SIGKILL");
@@ -163,7 +163,9 @@ afterEach(async () => {
     if (Number.isFinite(pid) && pid > 0) {
       try {
         process.kill(pid, "SIGTERM");
-      } catch {}
+      } catch {
+        /* Intentionally empty. */
+      }
     }
   }
   process.env = { ...originalEnv };
@@ -212,16 +214,16 @@ describe("controller reconcile loop", () => {
     const first = spawn("bun", [CLI_ENTRY, "controller", "serve", "--interval=30"], {
       env: testEnv(),
     });
-    let seenStarted = false;
+    const seenStarted = { value: false };
     first.stdout.on("data", (d) => {
-      if (d.toString().includes("controller started")) seenStarted = true;
+      if (String(d).includes("controller started")) seenStarted.value = true;
     });
     // Wait for it to acquire the lock + print the start banner.
     for (let i = 0; i < 50; i++) {
-      if (seenStarted) break;
+      if (seenStarted.value) break;
       await new Promise((r) => setTimeout(r, 100));
     }
-    expect(seenStarted).toBe(true);
+    expect(seenStarted.value).toBe(true);
 
     try {
       const second = await runCliAsync(["controller", "serve", "--once"], testEnv(), 8_000);

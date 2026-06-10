@@ -1,4 +1,6 @@
 import { config as cfgMod, makePinnedFetch } from "@llamactl/remote";
+import { required } from "../required.js";
+import { hasBoolean, hasString, isRecord } from "../runtime-shape.js";
 
 import { getGlobals, isLocalDispatch } from "../dispatcher.js";
 
@@ -80,7 +82,7 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
     process.stderr.write(`agent rollback: --node is required + must point at a non-local agent\n`);
     return 1;
   }
-  const nodeName = globals.nodeName!;
+  const nodeName = required(globals.nodeName);
   const cfg = cfgMod.loadConfig();
   const ctx = cfg.contexts.find((c) => c.name === (globals.contextName ?? cfg.currentContext));
   if (!ctx) {
@@ -122,7 +124,7 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
   }
   const text = await res.text();
   if (!res.ok) {
-    process.stderr.write(`agent rollback: agent rejected (${res.status}): ${text}\n`);
+    process.stderr.write(`agent rollback: agent rejected (${String(res.status)}): ${text}\n`);
     return 1;
   }
   let result: {
@@ -132,7 +134,9 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
     rolledOutSha256: string;
   };
   try {
-    result = JSON.parse(text);
+    const parsed: unknown = JSON.parse(text);
+    if (!isAgentRollbackResponse(parsed)) throw new Error("invalid rollback response");
+    result = parsed;
   } catch {
     process.stderr.write(`agent rollback: invalid response: ${text}\n`);
     return 1;
@@ -144,7 +148,7 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
 
   const healthUrl = `${node.endpoint.replace(/\/$/, "")}/healthz`;
   process.stderr.write(
-    `agent rollback: waiting for respawn (timeout ${parsed.readinessTimeoutSec}s)\u2026\n`,
+    `agent rollback: waiting for respawn (timeout ${String(parsed.readinessTimeoutSec)}s)\u2026\n`,
   );
   const deadline = Date.now() + parsed.readinessTimeoutSec * 1000;
   let healthy = false;
@@ -165,7 +169,7 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
   }
   if (!healthy) {
     process.stderr.write(
-      `agent rollback: WARNING \u2014 agent did not come back within ${parsed.readinessTimeoutSec}s.\n` +
+      `agent rollback: WARNING \u2014 agent did not come back within ${String(parsed.readinessTimeoutSec)}s.\n` +
         `  the rolled-out binary may have been corrupt; manual intervention required.\n`,
     );
     if (parsed.json) {
@@ -178,4 +182,19 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify({ ...result, healthy: true }, null, 2)}\n`);
   }
   return 0;
+}
+
+function isAgentRollbackResponse(value: unknown): value is {
+  ok: boolean;
+  restoredAt: string;
+  newSha256: string;
+  rolledOutSha256: string;
+} {
+  return (
+    isRecord(value) &&
+    hasBoolean(value, "ok") &&
+    hasString(value, "restoredAt") &&
+    hasString(value, "newSha256") &&
+    hasString(value, "rolledOutSha256")
+  );
 }

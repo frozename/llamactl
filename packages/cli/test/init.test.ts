@@ -25,7 +25,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
-  for (const k of Object.keys(process.env)) delete process.env[k];
+  for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
 });
 
@@ -33,7 +33,7 @@ function captureStdout<T>(fn: () => Promise<T>): Promise<{ result: T; out: strin
   const chunks: string[] = [];
   const original = process.stdout.write.bind(process.stdout);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout as any).write = (s: string | Uint8Array): boolean => {
+  process.stdout.write = (s: string | Uint8Array): boolean => {
     chunks.push(typeof s === "string" ? s : String(s));
     return true;
   };
@@ -41,7 +41,7 @@ function captureStdout<T>(fn: () => Promise<T>): Promise<{ result: T; out: strin
     .then((result) => ({ result, out: chunks.join("") }))
     .finally(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stdout as any).write = original;
+      process.stdout.write = original;
     });
 }
 

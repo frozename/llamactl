@@ -1,4 +1,5 @@
 import { type bench, candidateTest, type pull } from "@llamactl/core";
+import { required } from "../required.js";
 
 import {
   getGlobals,
@@ -29,7 +30,7 @@ function forwardStream(e: pull.PullEvent | bench.BenchEvent): void {
       `-- profile=${e.profile} gen_ts=${e.gen_ts} prompt_ts=${e.prompt_ts} --\n`,
     );
   } else if (e.type === "profile-fail") {
-    process.stderr.write(`-- profile=${e.profile} failed (code=${e.code}) --\n`);
+    process.stderr.write(`-- profile=${e.profile} failed (code=${String(e.code)}) --\n`);
   }
 }
 
@@ -38,7 +39,7 @@ function printCompareTable(rows: readonly bench.BenchCompareRow[]): void {
   const pad = (s: string, w: number) => (s.length >= w ? s : s + " ".repeat(w - s.length));
   const tuned = rows.filter((r) => r.tuned);
   for (const row of tuned) {
-    const t = row.tuned!;
+    const t = required(row.tuned);
     process.stdout.write(
       `${pad(row.label, 24)} class=${pad(row.class, 11)} gen=${pad(t.gen_tps, 10)} prompt=${pad(t.prompt_tps, 10)} tuned=${pad(t.profile, 12)} mode=${pad(row.mode, 6)} ctx=${pad(row.ctx, 6)} model=${row.rel}\n`,
     );
@@ -119,7 +120,7 @@ async function runTest(args: string[]): Promise<number> {
       `rel=${result.rel}`,
       `machine=${result.machine} mode=${result.mode} ctx=${result.ctx} build=${result.build}`,
       `curated_added=${result.curatedAdded ? "yes" : "no"}`,
-      `pull_code=${result.pull.code} wasMissing=${result.pull.wasMissing}${result.pull.mmproj ? ` mmproj=${result.pull.mmproj}` : ""}`,
+      `pull_code=${String(result.pull.code)} wasMissing=${String(result.pull.wasMissing)}${result.pull.mmproj ? ` mmproj=${result.pull.mmproj}` : ""}`,
       "",
     ].join("\n"),
   );

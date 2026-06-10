@@ -12,6 +12,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { parse as parseYaml } from "yaml";
 
+import { required } from "../required.js";
 import { readModelHostState } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
 import { formatEndpoint, probeHealthEndpoint } from "../../../core/src/probe.js";
@@ -33,7 +34,7 @@ Reconcile a ModelRun manifest against the target node:
     the new spec is started in its place.
   * If no server is running, the spec is started fresh.
 
-The accepted manifest is persisted under \$DEV_STORAGE/workloads/<name>.yaml
+The accepted manifest is persisted under $DEV_STORAGE/workloads/<name>.yaml
 so 'llamactl get workloads' can list it afterwards.
 `;
 
@@ -100,6 +101,7 @@ export function renderNodeBudget(budget: NodeBudgetView): string {
       name: row.name,
       endpoint: row.endpoint ?? "-",
       phase: row.phase.toLowerCase(),
+      // eslint-disable-next-line eqeqeq -- Preserve existing CLI/test semantics while clearing strict lint debt.
       memory: row.expectedMemoryGiB == null ? "-" : `${row.expectedMemoryGiB.toFixed(1)} GiB`,
     }));
     const nameW = Math.max(4, ...rows.map((r) => r.name.length));
@@ -132,7 +134,7 @@ function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
   const evict: string[] = [];
   let force = false;
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "-f" || arg === "--file") {
       file = args[++i] ?? "";
     } else if (arg.startsWith("--file=")) {
@@ -289,7 +291,7 @@ async function applyModelRunFromRaw(
       process.stdout.write(`  endpoint: ${result.statusSection.endpoint}\n`);
     }
     if (result.statusSection.serverPid) {
-      process.stdout.write(`  pid:      ${result.statusSection.serverPid}\n`);
+      process.stdout.write(`  pid:      ${String(result.statusSection.serverPid)}\n`);
     }
     if (gatewayIncomplete) {
       process.stderr.write(
@@ -412,7 +414,7 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
       );
     } else {
       process.stdout.write(
-        `modelhost/${outcome.manifest.metadata.name}: ModelHost ready at ${outcome.endpoint}${typeof outcome.pid === "number" ? ` pid=${outcome.pid}` : " pid=remote"}\n`,
+        `modelhost/${outcome.manifest.metadata.name}: ModelHost ready at ${outcome.endpoint}${typeof outcome.pid === "number" ? ` pid=${String(outcome.pid)}` : " pid=remote"}\n`,
       );
     }
     return 0;
@@ -462,7 +464,7 @@ async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> 
       node: manifest.spec.node,
       phase,
       rel: desired,
-      endpoint: status.endpoint ?? null,
+      endpoint: status.endpoint,
       gateway: false,
     };
   } catch {
@@ -604,7 +606,7 @@ export async function runDescribe(args: string[]): Promise<number> {
   process.stdout.write(`RestartPolicy: ${manifest.spec.restartPolicy}\n`);
   if (manifest.status) {
     process.stdout.write(
-      `Status:     phase=${manifest.status.phase} endpoint=${manifest.status.endpoint ?? "none"} pid=${manifest.status.serverPid ?? "none"} since=${manifest.status.lastTransitionTime}\n`,
+      `Status:     phase=${manifest.status.phase} endpoint=${manifest.status.endpoint ?? "none"} pid=${String(manifest.status.serverPid ?? "none")} since=${manifest.status.lastTransitionTime}\n`,
     );
   }
   process.stdout.write(
@@ -670,10 +672,8 @@ export async function runDelete(args: string[]): Promise<number> {
     if (!keepRunning) {
       try {
         const client = getWorkloadNodeClient(manifest.spec.node);
-        if (client.modelHostStop) {
-          await client.modelHostStop.mutate({ workload: manifest.metadata.name });
-          process.stdout.write(`stopped modelhost on node ${manifest.spec.node}\n`);
-        }
+        await client.modelHostStop.mutate({ workload: manifest.metadata.name });
+        process.stdout.write(`stopped modelhost on node ${manifest.spec.node}\n`);
       } catch (err) {
         process.stderr.write(
           `warning: failed to reach node ${manifest.spec.node}: ${(err as Error).message}\n`,
@@ -739,6 +739,7 @@ export async function runDelete(args: string[]): Promise<number> {
 
 // ---- NodeRun handlers --------------------------------------------
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runGetNodeRuns(json: boolean): Promise<number> {
   const manifests = noderunStore.listNodeRuns();
   if (json) {

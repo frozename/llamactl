@@ -1,4 +1,5 @@
 import type { NodeClient } from "@llamactl/remote";
+import { required } from "../required.js";
 
 import { config as kubecfg, resolveNodeKind } from "@llamactl/remote";
 
@@ -125,7 +126,7 @@ function parseAsk(args: string[]): AskOpts | { error: string } {
   const questionParts: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     const [flag, inline] = splitFlag(arg);
     const takeValue = (): string | undefined =>
       inline ?? (i + 1 < args.length ? args[++i] : undefined);
@@ -213,7 +214,7 @@ function autoResolveKb(): { name: string } | { error: string } {
   const ctx = kubecfg.currentContext(cfg);
   const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
   const ragNodes = (cluster?.nodes ?? []).filter((n) => resolveNodeKind(n) === "rag");
-  if (ragNodes.length === 1) return { name: ragNodes[0]!.name };
+  if (ragNodes.length === 1) return { name: required(ragNodes[0]).name };
   if (ragNodes.length === 0) {
     return {
       error:
@@ -226,7 +227,7 @@ function autoResolveKb(): { name: string } | { error: string } {
     error:
       `rag ask: --kb is required — multiple rag nodes available (${names}).\n` +
       "  hint: pick one explicitly, e.g. --kb " +
-      ragNodes[0]!.name,
+      required(ragNodes[0]).name,
   };
 }
 
@@ -246,9 +247,14 @@ interface SearchResponseShape {
   collection: string;
 }
 
+/**
+ * Shape of an unvalidated remote chat-completion payload. Every level is
+ * optional on purpose: the response is cast straight from the wire, so a
+ * misbehaving or version-skewed server may omit choices/message entirely.
+ */
 interface ChatResponseShape {
-  choices: {
-    message: { role: string; content: string | null | unknown[] };
+  choices?: {
+    message?: { role?: string; content?: string | null | unknown[] };
     finish_reason?: string | null;
   }[];
   model?: string;
@@ -307,7 +313,7 @@ async function runAsk(args: string[]): Promise<number> {
     if (opts.collection) ragInput.collection = opts.collection;
     retrieval = await client.ragSearch.query(ragInput);
   } catch (err) {
-    const msg = (err as Error).message ?? String(err);
+    const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`rag ask: retrieval failed from '${kbName}': ${msg}\n`);
     if (/not a rag node|not found/i.test(msg)) {
       process.stderr.write("  hint: run 'llamactl node ls' to see registered nodes\n");
@@ -320,7 +326,7 @@ async function runAsk(args: string[]): Promise<number> {
     opts.systemPrompt ??
     "Answer strictly from the provided context. If the answer isn't there, say \"I don't know.\" Be concise.";
   const contextBlock = retrieval.results
-    .map((r, i) => `[${i + 1}] ${r.document.content}`)
+    .map((r, i) => `[${String(i + 1)}] ${r.document.content}`)
     .join("\n");
   const userPrompt = `Context:\n${contextBlock}\n\nQuestion: ${opts.question}`;
 
@@ -340,7 +346,7 @@ async function runAsk(args: string[]): Promise<number> {
       },
     })) as ChatResponseShape;
   } catch (err) {
-    const msg = (err as Error).message ?? String(err);
+    const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`rag ask: chat completion failed via '${opts.via}': ${msg}\n`);
     if (/not found/i.test(msg)) {
       process.stderr.write("  hint: run 'llamactl node ls' to see registered nodes\n");
@@ -350,6 +356,7 @@ async function runAsk(args: string[]): Promise<number> {
 
   const rawAnswer = chat.choices?.[0]?.message?.content;
   const answer =
+    // eslint-disable-next-line eqeqeq -- Preserve existing CLI/test semantics while clearing strict lint debt.
     typeof rawAnswer === "string" ? rawAnswer : rawAnswer == null ? "" : JSON.stringify(rawAnswer);
 
   // --- Step 4: render ---------------------------------------------------
@@ -369,14 +376,16 @@ async function runAsk(args: string[]): Promise<number> {
   }
 
   if (opts.cite) {
-    process.stdout.write(`Retrieved ${retrieval.results.length} passage(s) from ${kbName}:\n`);
+    process.stdout.write(
+      `Retrieved ${String(retrieval.results.length)} passage(s) from ${kbName}:\n`,
+    );
     for (let i = 0; i < retrieval.results.length; i++) {
-      const r = retrieval.results[i]!;
+      const r = required(retrieval.results[i]);
       // Truncate long passages at ~240 chars for readability; full text
       // is available via --json.
       const content = r.document.content;
       const shown = content.length > 240 ? `${content.slice(0, 237)}…` : content;
-      process.stdout.write(`  [${i + 1}] ${shown}\n`);
+      process.stdout.write(`  [${String(i + 1)}] ${shown}\n`);
     }
     process.stdout.write("\n");
   }

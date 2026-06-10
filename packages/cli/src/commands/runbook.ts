@@ -44,7 +44,7 @@ function parseRunArgs(argv: string[]): {
         return null;
       }
       try {
-        const parsed = JSON.parse(next);
+        const parsed: unknown = JSON.parse(next);
         if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
           process.stderr.write("--params must be a JSON object\n");
           return null;
@@ -58,7 +58,7 @@ function parseRunArgs(argv: string[]): {
       process.stdout.write(USAGE);
       return null;
     } else {
-      process.stderr.write(`unknown flag: ${arg}\n\n${USAGE}`);
+      process.stderr.write(`unknown flag: ${String(arg)}\n\n${USAGE}`);
       return null;
     }
   }

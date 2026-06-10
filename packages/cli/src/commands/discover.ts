@@ -43,7 +43,7 @@ export async function runDiscover(args: string[]): Promise<number> {
   // actually run. Local dispatch keeps the original in-process call.
   const result = !isLocalDispatch()
     ? await getNodeClient().discover.query({
-        ...(filter !== undefined ? { filter } : {}),
+        filter,
         ...(requestedProfile !== undefined ? { profile: requestedProfile } : {}),
         ...(limit !== undefined ? { limit } : {}),
       })
@@ -59,7 +59,7 @@ export async function runDiscover(args: string[]): Promise<number> {
   }
 
   process.stdout.write(
-    `filter=${result.filter} profile=${result.profile} author=${result.author} limit=${result.limit}\n`,
+    `filter=${result.filter} profile=${result.profile} author=${result.author} limit=${String(result.limit)}\n`,
   );
 
   if (result.rows.length === 0) {
@@ -78,7 +78,7 @@ export async function runDiscover(args: string[]): Promise<number> {
       `  ${cls} ${fit} status=${status} quant=${quant} size=${size} vision=${vision} repo=${row.repo}\n`,
     );
     process.stdout.write(
-      `             file=${row.file} downloads=${row.downloads} likes=${row.likes} updated=${row.updated} task=${row.pipeline} rel=${row.rel}\n`,
+      `             file=${row.file} downloads=${String(row.downloads)} likes=${String(row.likes)} updated=${row.updated} task=${row.pipeline} rel=${row.rel}\n`,
     );
     if (row.catalogStatus === "new") {
       // Keep the shell-compatible hint until `llamactl candidate test`

@@ -55,7 +55,6 @@ export async function runRecommendations(args: string[]): Promise<number> {
   const profiles = recommendations.expandRequestedProfile(requested);
 
   for (const profile of profiles) {
-    if (!profile) continue;
     const rows = await recommendations.recommendationsWithHf(profile);
     process.stdout.write(`profile=${profile}\n`);
     for (const row of rows) {

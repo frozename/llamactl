@@ -33,7 +33,7 @@ interface DeployFlags {
 function inferCentralUrl(): string | null {
   try {
     const agent = agentConfigMod.loadAgentConfig();
-    return `https://${agent.bindHost}:${agent.port}`;
+    return `https://${agent.bindHost}:${String(agent.port)}`;
   } catch {
     return null;
   }
@@ -110,6 +110,7 @@ function formatList(): void {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 export async function runDeployNode(argv: string[]): Promise<number> {
   const parsed = parseFlags(argv);
   if (!parsed) return 0;
@@ -120,7 +121,7 @@ export async function runDeployNode(argv: string[]): Promise<number> {
   }
   if (parsed.mode === "prune") {
     const removed = bootstrapTokens.pruneBootstrapTokens();
-    process.stdout.write(`pruned ${removed} used+expired token(s)\n`);
+    process.stdout.write(`pruned ${String(removed)} used+expired token(s)\n`);
     return 0;
   }
 
@@ -142,7 +143,7 @@ export async function runDeployNode(argv: string[]): Promise<number> {
   const installUrl = `${centralUrl}/install-agent.sh?token=${token}`;
   process.stdout.write(
     `Bootstrap token minted for node '${record.nodeName}'.\n` +
-      `Expires: ${record.expiresAt}  (${parsed.flags.ttlMinutes} minute(s))\n` +
+      `Expires: ${record.expiresAt}  (${String(parsed.flags.ttlMinutes)} minute(s))\n` +
       `\n` +
       `On the target host, run:\n` +
       `  curl -fsSL '${installUrl}' | sh\n` +

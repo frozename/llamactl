@@ -74,7 +74,7 @@ async function runList(args: string[]): Promise<number> {
     }
     for (const r of results) {
       if (!r.ok) {
-        process.stderr.write(`[${r.node}] error: ${r.error}\n`);
+        process.stderr.write(`[${r.node}] error: ${String(r.error)}\n`);
         continue;
       }
       const rows = r.data as CuratedModel[];
@@ -236,7 +236,7 @@ async function runStatus(args: string[]): Promise<number> {
   }
 
   const resolved = envMod.resolveEnv();
-  const installed = (await Bun.file(`${resolved.LLAMA_CPP_MODELS}/${rel}`).exists()) ?? false;
+  const installed = await Bun.file(`${resolved.LLAMA_CPP_MODELS}/${rel}`).exists();
   const entry = catalog.findByRel(rel);
   const klass = await resolveLayeredClass(rel);
 
@@ -270,11 +270,16 @@ async function runStatus(args: string[]): Promise<number> {
       `quant=${report.quant}`,
       `catalog=${c.hit}`,
       ...(c.hit !== "none"
-        ? [`  label=${c.label}`, `  family=${c.family}`, `  scope=${c.scope}`, `  repo=${c.repo}`]
+        ? [
+            `  label=${String(c.label)}`,
+            `  family=${String(c.family)}`,
+            `  scope=${String(c.scope)}`,
+            `  repo=${String(c.repo)}`,
+          ]
         : []),
       `class=${report.class.value}`,
       `class_source=${report.class.source}`,
-      `hf_enabled=${report.hf.enabled}`,
+      `hf_enabled=${String(report.hf.enabled)}`,
       ...(report.hf.repo ? [`hf_repo=${report.hf.repo}`] : []),
       ...(report.hf.pipeline_tag ? [`hf_pipeline=${report.hf.pipeline_tag}`] : []),
       "",
@@ -322,11 +327,13 @@ async function runPromote(args: string[]): Promise<number> {
   const [profileArg, preset, targetArg] = args;
   const normalized = profileMod.normalizeProfile(profileArg);
   if (!normalized) {
-    process.stderr.write(`Unknown profile: ${profileArg}\n`);
+    process.stderr.write(`Unknown profile: ${String(profileArg)}\n`);
     return 1;
   }
   if (preset !== "best" && preset !== "vision" && preset !== "balanced" && preset !== "fast") {
-    process.stderr.write(`Unknown preset: ${preset} (expected best|vision|balanced|fast)\n`);
+    process.stderr.write(
+      `Unknown preset: ${String(preset)} (expected best|vision|balanced|fast)\n`,
+    );
     return 1;
   }
 
@@ -336,7 +343,7 @@ async function runPromote(args: string[]): Promise<number> {
   } else {
     const resolved = targetMod.resolveTarget(targetArg);
     if (!resolved) {
-      process.stderr.write(`Unknown model target: ${targetArg}\n`);
+      process.stderr.write(`Unknown model target: ${String(targetArg)}\n`);
       return 1;
     }
     rel = resolved;

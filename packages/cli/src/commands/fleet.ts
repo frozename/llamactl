@@ -63,7 +63,7 @@ async function buildRows(deps: Required<FleetDeps>): Promise<SnapshotRow[]> {
   const local = await deps.readLocalSnapshot();
   if (local) rows.push(toRow(local.node, local));
 
-  const peers = deps.readPeers ? deps.readPeers() : listPeers();
+  const peers = deps.readPeers();
   await Promise.all(
     peers.map(async (peer) => {
       const s = await deps.fetchPeerSnapshot(peer);
@@ -75,18 +75,18 @@ async function buildRows(deps: Required<FleetDeps>): Promise<SnapshotRow[]> {
 }
 
 function printRowsTable(rows: SnapshotRow[]): void {
-  console.log("node | free_mb | compressor_mb | workloads | pressure");
+  process.stdout.write("node | free_mb | compressor_mb | workloads | pressure\n");
   for (const row of rows) {
-    console.log(
-      `${row.node} | ${row.free_mb} | ${row.compressor_mb} | ${row.workloads} | ${row.pressure}`,
+    process.stdout.write(
+      `${row.node} | ${String(row.free_mb)} | ${String(row.compressor_mb)} | ${String(row.workloads)} | ${row.pressure}\n`,
     );
   }
 }
 
 function printStatusRows(rows: SnapshotRow[]): void {
   for (const row of rows) {
-    console.log(
-      `${row.node}: free_mb=${row.free_mb} compressor_mb=${row.compressor_mb} workloads=${row.workloads} pressure=${row.pressure}`,
+    process.stdout.write(
+      `${row.node}: free_mb=${String(row.free_mb)} compressor_mb=${String(row.compressor_mb)} workloads=${String(row.workloads)} pressure=${row.pressure}\n`,
     );
   }
 }
@@ -113,6 +113,7 @@ function readJournalEntries(
 export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<number> {
   const readLocalSnapshot =
     deps.readLocalSnapshot ??
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     (async () => readLatestFleetSnapshotFromJournal(defaultFleetJournalPath()));
   const readPeers = deps.readPeers ?? listPeers;
   const fetchPeerSnapshot =
@@ -129,7 +130,7 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
 
   const [sub, ...rest] = args;
   if (!sub || sub === "--help" || sub === "-h") {
-    console.log(USAGE);
+    process.stdout.write(`${USAGE}\n`);
     return sub ? 0 : 1;
   }
 
@@ -141,7 +142,7 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
         console.error("fleet snapshot: no local fleet-snapshot entry found");
         return 1;
       }
-      console.log(JSON.stringify(local));
+      process.stdout.write(`${JSON.stringify(local)}\n`);
       return 0;
     }
 
@@ -166,7 +167,7 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
       .slice(-Math.max(1, limit));
     for (const entry of entries) {
       const prefix = `${entry.ts ?? "-"} ${entry.kind ?? "unknown"} ${entry.node ?? "-"}`;
-      console.log(`${prefix} ${entry.raw}`);
+      process.stdout.write(`${prefix} ${entry.raw}\n`);
     }
     return 0;
   }

@@ -53,6 +53,85 @@ export interface RunResult {
   stderr: string;
 }
 
+export interface CapturedIo {
+  out: string;
+  err: string;
+}
+
+export async function captureProcessIo<T>(
+  fn: () => Promise<T>,
+): Promise<{ result: T; cap: CapturedIo }> {
+  const cap: CapturedIo = { out: "", err: "" };
+  const origOut = process.stdout.write.bind(process.stdout);
+  const origErr = process.stderr.write.bind(process.stderr);
+  process.stdout.write = makeWriteStub((chunk) => {
+    cap.out += chunkToString(chunk);
+  });
+  process.stderr.write = makeWriteStub((chunk) => {
+    cap.err += chunkToString(chunk);
+  });
+  try {
+    return { result: await fn(), cap };
+  } finally {
+    process.stdout.write = origOut;
+    process.stderr.write = origErr;
+  }
+}
+
+export async function captureProcessStreams<T>(
+  fn: () => Promise<T>,
+): Promise<{ result: T; stdout: string; stderr: string }> {
+  const { result, cap } = await captureProcessIo(fn);
+  return { result, stdout: cap.out, stderr: cap.err };
+}
+
+export function makeWriteStub(
+  onChunk: (chunk: string | Uint8Array) => void,
+): typeof process.stdout.write {
+  return (chunk: string | Uint8Array): boolean => {
+    onChunk(chunk);
+    return true;
+  };
+}
+
+export function chunkToString(chunk: string | Uint8Array): string {
+  return typeof chunk === "string" ? chunk : String(chunk);
+}
+
+export function parseJsonRecord(text: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(text);
+  if (!isPlainRecord(parsed)) throw new Error("expected JSON object");
+  return parsed;
+}
+
+export function parseJsonArray(text: string): unknown[] {
+  const parsed: unknown = JSON.parse(text);
+  if (!Array.isArray(parsed)) throw new Error("expected JSON array");
+  return parsed;
+}
+
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function requireRecord(value: unknown): Record<string, unknown> {
+  if (!isPlainRecord(value)) throw new Error("expected object");
+  return value;
+}
+
+export function requireArrayField(record: Record<string, unknown>, key: string): unknown[] {
+  const value = record[key];
+  if (!Array.isArray(value)) throw new Error(`expected array field ${key}`);
+  return value;
+}
+
+export function requireRecordField(
+  record: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> {
+  return requireRecord(record[key]);
+}
+
 /**
  * Spawn `bun src/bin.ts <args>` with the given env. Synchronous — the
  * tests are short enough that streaming would be pointless.
@@ -65,7 +144,7 @@ export function runCli(args: string[], env: NodeJS.ProcessEnv): RunResult {
   });
   return {
     code: proc.status ?? -1,
-    stdout: proc.stdout ?? "",
-    stderr: proc.stderr ?? "",
+    stdout: proc.stdout,
+    stderr: proc.stderr,
   };
 }

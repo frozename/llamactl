@@ -7,9 +7,11 @@ import {
   providerForNode,
   resolveNodeKind,
 } from "@llamactl/remote";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 import { getNodeClient } from "../dispatcher.js";
+import { required } from "../required.js";
 
 const USAGE = `Usage: llamactl node <subcommand>
 
@@ -44,7 +46,7 @@ By default, 'add' verifies the node is reachable with the supplied
 credentials before persisting. Pass --force to skip the check
 (useful when registering a node that isn't online yet).
 
-Kubeconfig path: \$LLAMACTL_CONFIG, or \$DEV_STORAGE/config, or ~/.llamactl/config.
+Kubeconfig path: $LLAMACTL_CONFIG, or $DEV_STORAGE/config, or ~/.llamactl/config.
 `;
 
 export async function runNode(args: string[]): Promise<number> {
@@ -127,7 +129,7 @@ function parseAdd(args: string[]): AddFlags | { error: string } {
   if (!name || name.startsWith("-")) return { error: "node add: missing <name>" };
   const flags: AddFlags = { name, force: false };
   for (let i = 0; i < rest.length; i++) {
-    const arg = rest[i]!;
+    const arg = required(rest[i]);
     if (arg === "--force") {
       flags.force = true;
       continue;
@@ -264,10 +266,8 @@ async function runAdd(args: string[]): Promise<number> {
         // user-managed path semantics.
         const tokenRef = u.tokenRef.replace(/^~(?=$|\/)/, process.env.HOME ?? "");
         try {
-          const fs = require("node:fs");
-          const path = require("node:path");
-          fs.mkdirSync(path.dirname(tokenRef), { recursive: true });
-          fs.writeFileSync(tokenRef, token, { mode: 0o600 });
+          mkdirSync(dirname(tokenRef), { recursive: true });
+          writeFileSync(tokenRef, token, { mode: 0o600 });
         } catch {
           // fall through: inline the token as a fallback.
           updated.token = token;
@@ -316,7 +316,7 @@ function runRm(args: string[]): number {
     return 1;
   }
   if (rest.length > 0) {
-    process.stderr.write(`node rm: unexpected argument ${rest[0]}\n`);
+    process.stderr.write(`node rm: unexpected argument ${String(rest[0])}\n`);
     return 1;
   }
   const cfgPath = kubecfg.defaultConfigPath();
@@ -340,7 +340,7 @@ async function runTest(args: string[]): Promise<number> {
     return 1;
   }
   if (rest.length > 0) {
-    process.stderr.write(`node test: unexpected argument ${rest[0]}\n`);
+    process.stderr.write(`node test: unexpected argument ${String(rest[0])}\n`);
     return 1;
   }
   const cfgPath = kubecfg.defaultConfigPath();
@@ -426,10 +426,13 @@ function runAddRag(args: string[]): number {
   const extraArgs: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     const [flag, inline] = splitFlag(arg);
-    const takeValue = (): string | undefined =>
-      inline ?? (args[i + 1] && !args[i + 1]!.startsWith("-") ? args[++i] : undefined);
+    const takeValue = (): string | undefined => {
+      // Truthiness on purpose: an empty-string value is deliberately treated as unset.
+      const next = args[i + 1];
+      return inline ?? (next && !next.startsWith("-") ? required(args[++i]) : undefined);
+    };
     if (!flag.startsWith("-")) {
       if (name === undefined) {
         name = flag;
@@ -575,10 +578,13 @@ async function runAddCloud(args: string[]): Promise<number> {
   let force = false;
 
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     const [flag, inline] = splitFlag(arg);
-    const takeValue = (): string | undefined =>
-      inline ?? (args[i + 1] && !args[i + 1]!.startsWith("-") ? args[++i] : undefined);
+    const takeValue = (): string | undefined => {
+      // Truthiness on purpose: an empty-string value is deliberately treated as unset.
+      const next = args[i + 1];
+      return inline ?? (next && !next.startsWith("-") ? required(args[++i]) : undefined);
+    };
     if (!flag.startsWith("-")) {
       if (name === undefined) {
         name = flag;
@@ -666,7 +672,7 @@ async function runAddCloud(args: string[]): Promise<number> {
     process.stdout.write(`${lines.join("\n")}\n`);
     return 0;
   } catch (err) {
-    const message = (err as Error).message ?? String(err);
+    const message = err instanceof Error ? err.message : String(err);
     // The router wraps probe failures as `cloud node probe failed: …`.
     // Mirror add-rag's error UX: surface the message, suggest --force
     // when we're confident the failure is reachability-flavoured.

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
+import { required } from "../required.js";
 
 import { getNodeClient } from "../dispatcher.js";
 
@@ -61,7 +62,7 @@ function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
   let file = "";
   let dryRun = false;
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "-f" || arg === "--file") {
       file = args[++i] ?? "";
     } else if (arg.startsWith("--file=")) {
@@ -117,16 +118,16 @@ async function runApply(args: string[]): Promise<number> {
       }[];
     };
     process.stdout.write(`dry-run composite/${r.manifest.metadata.name}\n`);
-    process.stdout.write(`  topological order (${r.order.length} components):\n`);
+    process.stdout.write(`  topological order (${String(r.order.length)} components):\n`);
     if (r.order.length === 0) {
       process.stdout.write(`    (none)\n`);
     } else {
       for (const [i, ref] of r.order.entries()) {
-        process.stdout.write(`    ${i + 1}. ${ref.kind}/${ref.name}\n`);
+        process.stdout.write(`    ${String(i + 1)}. ${ref.kind}/${ref.name}\n`);
       }
     }
     if (r.impliedEdges.length > 0) {
-      process.stdout.write(`  implied edges (${r.impliedEdges.length}):\n`);
+      process.stdout.write(`  implied edges (${String(r.impliedEdges.length)}):\n`);
       for (const edge of r.impliedEdges) {
         process.stdout.write(
           `    ${edge.from.kind}/${edge.from.name} → ${edge.to.kind}/${edge.to.name}\n`,
@@ -227,12 +228,12 @@ async function runDestroy(args: string[]): Promise<number> {
       wouldRemove: { kind: string; name: string }[];
     };
     process.stdout.write(`dry-run destroy composite/${r.name}\n`);
-    process.stdout.write(`  would remove (reverse-topo, ${r.wouldRemove.length}):\n`);
+    process.stdout.write(`  would remove (reverse-topo, ${String(r.wouldRemove.length)}):\n`);
     if (r.wouldRemove.length === 0) {
       process.stdout.write(`    (none)\n`);
     } else {
       for (const [i, ref] of r.wouldRemove.entries()) {
-        process.stdout.write(`    ${i + 1}. ${ref.kind}/${ref.name}\n`);
+        process.stdout.write(`    ${String(i + 1)}. ${ref.kind}/${ref.name}\n`);
       }
     }
     return 0;
@@ -246,13 +247,13 @@ async function runDestroy(args: string[]): Promise<number> {
   };
   process.stdout.write(`destroyed composite/${parsed.name}\n`);
   if (r.removed.length > 0) {
-    process.stdout.write(`  removed (${r.removed.length}):\n`);
+    process.stdout.write(`  removed (${String(r.removed.length)}):\n`);
     for (const ref of r.removed) {
       process.stdout.write(`    ✓ ${ref.kind}/${ref.name}\n`);
     }
   }
   if (r.errors.length > 0) {
-    process.stdout.write(`  errors (${r.errors.length}):\n`);
+    process.stdout.write(`  errors (${String(r.errors.length)}):\n`);
     for (const e of r.errors) {
       process.stdout.write(`    ✗ ${e.ref.kind}/${e.ref.name} — ${e.message}\n`);
     }
@@ -385,11 +386,12 @@ export function formatStatusEvent(e: unknown): string | null {
     }
     case "component-failed": {
       const ref = ev.ref as { kind: string; name: string };
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string -- Preserve existing CLI/test semantics while clearing strict lint debt.
       return `  ✗ ${ref.kind}/${ref.name}: ${String(ev.message ?? "failed")}`;
     }
     case "rollback-start": {
-      const refs = (ev.refs as unknown[]) ?? [];
-      return `⇢ rolling back ${refs.length} components`;
+      const refs = ev.refs as unknown[];
+      return `⇢ rolling back ${String(refs.length)} components`;
     }
     case "rollback-complete":
       return `⇠ rollback done`;
@@ -447,15 +449,15 @@ async function runStatus(args: string[]): Promise<number> {
     Symbol.asyncIterator in (streamable as Record<PropertyKey, unknown>)
   ) {
     const iter = streamable as AsyncIterable<unknown>;
-    let aborted = false;
+    const aborted = { value: false };
     const abort = (): void => {
-      aborted = true;
+      aborted.value = true;
     };
     process.on("SIGINT", abort);
     process.on("SIGTERM", abort);
     try {
       for await (const ev of iter) {
-        if (aborted) break;
+        if (aborted.value) break;
         const line = formatStatusEvent(ev);
         if (line !== null) process.stdout.write(`${line}\n`);
       }

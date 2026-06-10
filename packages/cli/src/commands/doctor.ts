@@ -109,6 +109,7 @@ export async function runDoctor(argv: string[], deps: DoctorDeps = {}): Promise<
   if (!opts.skip.has("secrets")) {
     await withBudget(
       opts.timeoutMs,
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
       async () => {
         results.push(...secretsProbe());
       },
@@ -129,6 +130,7 @@ export async function runDoctor(argv: string[], deps: DoctorDeps = {}): Promise<
 
 // ---- checks ----
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function checkAgent(): Promise<CheckResult[]> {
   const out: CheckResult[] = [];
   const cfgPath = process.env.LLAMACTL_CONFIG ?? join(homedir(), ".llamactl", "config");
@@ -246,8 +248,7 @@ function hasKubernetesIntent(env: NodeJS.ProcessEnv = process.env): boolean {
 async function checkKubernetes(): Promise<CheckResult[]> {
   const intent = hasKubernetesIntent();
   const out: CheckResult[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let backend: any;
+  let backend: { ping: () => Promise<void>; currentContext: string };
   try {
     const { KubernetesBackend } = await import("@llamactl/remote");
     backend = new KubernetesBackend();
@@ -308,7 +309,9 @@ async function checkKubernetes(): Promise<CheckResult[]> {
           },
         },
       });
-      await client.core.deleteNamespace({ name: probeName }).catch(() => {});
+      await client.core.deleteNamespace({ name: probeName }).catch(() => {
+        return;
+      });
       out.push({
         system: "kubernetes",
         status: "ok",
@@ -340,9 +343,9 @@ async function checkKubernetes(): Promise<CheckResult[]> {
       const res = await client.core.listNode({
         labelSelector: "llamactl.io/node",
       });
-      const count = (res.items ?? []).length;
+      const count = res.items.length;
       if (count > 0) {
-        const names = (res.items ?? [])
+        const names = res.items
           .map(
             (n: { metadata?: { labels?: Record<string, string> } }) =>
               n.metadata?.labels?.["llamactl.io/node"] ?? "<unlabeled>",
@@ -351,7 +354,7 @@ async function checkKubernetes(): Promise<CheckResult[]> {
         out.push({
           system: "kubernetes",
           status: "ok",
-          message: `${count} llamactl-labelled node(s): ${names.join(", ")}`,
+          message: `${String(count)} llamactl-labelled node(s): ${names.join(", ")}`,
         });
       } else {
         out.push({
@@ -433,8 +436,8 @@ function print(results: CheckResult[], verbose: boolean): void {
   const failed = results.filter((r) => r.status === "fail").length;
   const warned = results.filter((r) => r.status === "warn").length;
   process.stdout.write(
-    `\n${results.length} check${results.length === 1 ? "" : "s"} — ${
-      failed + warned === 0 ? "all clear" : `${failed} fail, ${warned} warn`
+    `\n${String(results.length)} check${results.length === 1 ? "" : "s"} — ${
+      failed + warned === 0 ? "all clear" : `${String(failed)} fail, ${String(warned)} warn`
     }\n`,
   );
 }

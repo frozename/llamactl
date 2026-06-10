@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { makeTempRuntime, runCli } from "./helpers.js";
+import { makeTempRuntime, parseJsonArray, requireRecord, runCli } from "./helpers.js";
 
 describe("llamactl catalog", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
@@ -24,9 +24,8 @@ describe("llamactl catalog", () => {
   test("catalog list --json returns a JSON array", () => {
     const r = runCli(["catalog", "list", "--json"], temp.env);
     expect(r.code).toBe(0);
-    const parsed = JSON.parse(r.stdout);
-    expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed[0].rel).toContain(".gguf");
+    const parsed = parseJsonArray(r.stdout);
+    expect(requireRecord(parsed[0]).rel).toContain(".gguf");
   });
 
   test("catalog list bogus scope exits non-zero", () => {

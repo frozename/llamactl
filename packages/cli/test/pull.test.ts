@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { makeTempRuntime, runCli } from "./helpers.js";
+import { makeTempRuntime, parseJsonRecord, runCli } from "./helpers.js";
 
 describe("llamactl pull (usage + arg wiring)", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
@@ -39,7 +39,7 @@ describe("llamactl pull (usage + arg wiring)", () => {
   test("pull candidate --json with HF disabled returns structured error on stdout", () => {
     const r = runCli(["pull", "candidate", "--json", "unsloth/not-a-real-repo"], temp.env);
     expect(r.code).not.toBe(0);
-    const parsed = JSON.parse(r.stdout);
+    const parsed = parseJsonRecord(r.stdout);
     expect(parsed.error).toContain("Unable to resolve a candidate file");
   });
 

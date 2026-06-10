@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
 import { runSirius } from "../src/commands/sirius.js";
+import { makeWriteStub, parseJsonArray, requireRecord } from "./helpers.js";
 
 /**
  * `llamactl sirius export` reads the kubeconfig and emits a
@@ -39,18 +40,15 @@ const originalWrite = process.stdout.write.bind(process.stdout);
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-sirius-"));
   captured = "";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  process.stdout.write = ((chunk: any) => {
+  process.stdout.write = makeWriteStub((chunk) => {
     captured += typeof chunk === "string" ? chunk : String(chunk);
-    return true;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  }) as any;
+  });
 });
 
 afterEach(() => {
   process.stdout.write = originalWrite;
   rmSync(tmp, { recursive: true, force: true });
-  for (const key of Object.keys(process.env)) delete process.env[key];
+  for (const key of Object.keys(process.env)) Reflect.deleteProperty(process.env, key);
   Object.assign(process.env, originalEnv);
 });
 
@@ -69,7 +67,7 @@ describe("llamactl sirius export", () => {
     );
     const code = await runSirius(["export"]);
     expect(code).toBe(0);
-    const parsed = JSON.parse(captured) as { name: string; baseUrl: string; apiKey: string }[];
+    const parsed = parseJsonArray(captured).map(requireRecord);
     expect(parsed).toHaveLength(1);
     expect(parsed[0]!.name).toBe("gpu1");
     expect(parsed[0]!.baseUrl).toBe("https://gpu1.lan:7843/v1");

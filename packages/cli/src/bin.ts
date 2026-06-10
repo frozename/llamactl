@@ -285,8 +285,10 @@ async function main(argv: string[]): Promise<number> {
       return await runHeal(rest);
     case "supervisor":
       process.exit(await runSupervisor(rest));
+    // eslint-disable-next-line no-fallthrough -- Preserve existing CLI/test semantics while clearing strict lint debt.
     case "admit":
       process.exit(await runAdmit(rest));
+    // eslint-disable-next-line no-fallthrough -- Preserve existing CLI/test semantics while clearing strict lint debt.
     case "cost-guardian":
       return await runCostGuardian(rest);
     case "plan":

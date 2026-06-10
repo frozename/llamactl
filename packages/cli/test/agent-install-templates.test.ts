@@ -232,7 +232,7 @@ describe("plutil -lint", () => {
     try {
       writeFileSync(file, body, "utf8");
       const proc = spawnSync("plutil", ["-lint", file], { encoding: "utf8" });
-      return { code: proc.status ?? -1, stderr: proc.stderr ?? "" };
+      return { code: proc.status ?? -1, stderr: proc.stderr };
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

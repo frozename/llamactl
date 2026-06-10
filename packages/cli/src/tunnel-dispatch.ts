@@ -1,6 +1,7 @@
 import type { TunnelSendFn, TunnelSubscribeFn } from "@llamactl/remote";
 
 import { tls } from "@llamactl/remote";
+import { hasBoolean, hasString, isRecord } from "./runtime-shape.js";
 
 const { computeFingerprint, fingerprintsEqual } = tls;
 
@@ -183,7 +184,7 @@ export async function callViaTunnelRelay(opts: TunnelRelayCallOptions): Promise<
   const res = await fetchImpl(built.url, built.init);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`tunnel-relay ${res.status}: ${text || res.statusText}`);
+    throw new Error(`tunnel-relay ${String(res.status)}: ${text || res.statusText}`);
   }
   const envelope = (await res.json()) as TunnelResEnvelope;
   if (envelope.error) {
@@ -233,11 +234,11 @@ export function buildTunnelSend(opts: {
         centralUrl: opts.centralUrl,
         nodeName: opts.nodeName,
         method: req.method,
-        input: params?.input,
+        input: params.input,
         bearer: opts.bearer,
       };
       if (opts.fetchImpl) callOpts.fetchImpl = opts.fetchImpl;
-      if (params?.type) callOpts.type = params.type;
+      if (params.type) callOpts.type = params.type;
       if (opts.pinnedCa) callOpts.pinnedCa = opts.pinnedCa;
       if (opts.expectedFingerprint) callOpts.expectedFingerprint = opts.expectedFingerprint;
       if (opts.insecure) callOpts.insecure = opts.insecure;
@@ -285,6 +286,10 @@ export function buildTunnelSubscribe(opts: {
   const fetchImpl: FetchLike = opts.fetchImpl ?? fetch;
   return (method, input, handlers) => {
     const abort = new AbortController();
+    // Read through a call so control-flow narrowing from the read loop's
+    // top check doesn't treat re-checks as unreachable: abort can flip
+    // while buffered frames are still being drained.
+    const isAborted = (): boolean => abort.signal.aborted;
     let settled = false;
     const safeError = (err: unknown): void => {
       if (settled) return;
@@ -339,7 +344,7 @@ export function buildTunnelSubscribe(opts: {
       }
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        safeError(new Error(`tunnel-relay ${res.status}: ${text || res.statusText}`));
+        safeError(new Error(`tunnel-relay ${String(res.status)}: ${text || res.statusText}`));
         return;
       }
       handlers.onStarted?.();
@@ -351,7 +356,7 @@ export function buildTunnelSubscribe(opts: {
       const decoder = new TextDecoder();
       let buf = "";
       try {
-        while (true) {
+        for (;;) {
           if (abort.signal.aborted) break;
           const { value, done } = await reader.read();
           if (done) break;
@@ -371,7 +376,12 @@ export function buildTunnelSubscribe(opts: {
             if (eventName === "done") {
               let parsed: { ok: boolean; error?: { code: string; message: string } };
               try {
-                parsed = JSON.parse(dataPayload);
+                const value: unknown = JSON.parse(dataPayload);
+                if (!isDoneFrame(value)) {
+                  safeError(new Error("tunnel-relay SSE: invalid done frame"));
+                  return;
+                }
+                parsed = value;
               } catch {
                 safeError(new Error("tunnel-relay SSE: malformed done frame"));
                 return;
@@ -379,9 +389,12 @@ export function buildTunnelSubscribe(opts: {
               if (parsed.ok) {
                 safeComplete();
               } else {
-                const err = new Error(parsed.error?.message ?? "subscription error");
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                (err as any).code = parsed.error?.code;
+                const err = Object.assign(
+                  new Error(parsed.error?.message ?? "subscription error"),
+                  {
+                    code: parsed.error?.code,
+                  },
+                );
                 safeError(err);
               }
               return;
@@ -396,7 +409,9 @@ export function buildTunnelSubscribe(opts: {
                 safeError(new Error("tunnel-relay SSE: malformed data frame"));
                 return;
               }
-              if (abort.signal.aborted) return;
+              // Buffered frames can remain after unsubscribe/SIGINT; do
+              // not deliver data once the subscription is aborted.
+              if (isAborted()) return;
               try {
                 handlers.onData(data);
               } catch {
@@ -432,4 +447,16 @@ export function buildTunnelSubscribe(opts: {
       },
     };
   };
+}
+
+function isDoneFrame(value: unknown): value is {
+  ok: boolean;
+  error?: { code: string; message: string };
+} {
+  if (!isRecord(value) || !hasBoolean(value, "ok")) return false;
+  const error = value.error;
+  return (
+    error === undefined ||
+    (isRecord(error) && hasString(error, "code") && hasString(error, "message"))
+  );
 }

@@ -2,13 +2,15 @@ import { probeNodeMem, projectAdmissionHeadroom } from "@llamactl/fleet-supervis
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import yaml from "yaml";
+import { required } from "../required.js";
+import { isRecord } from "../runtime-shape.js";
 
 import { readMeasuredMemoryCache } from "../../../fleet-supervisor/src/measured-memory.js";
 import { runAdmitMeasure } from "./admit-measure.js";
 
 function requireFinite(value: number, flag: string): number {
   if (!Number.isFinite(value) || value < 0) {
-    throw new Error(`admit: ${flag} must be a finite non-negative number (got ${value})`);
+    throw new Error(`admit: ${flag} must be a finite non-negative number (got ${String(value)})`);
   }
   return value;
 }
@@ -46,10 +48,10 @@ EXIT CODES:
 export async function runAdmit(args: string[]): Promise<number> {
   if (args[0] === "measure") return await runAdmitMeasure(args.slice(1));
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-    console.log(USAGE);
+    process.stdout.write(`${USAGE}\n`);
     return args.length === 0 ? 2 : 0;
   }
-  const target = args[0]!;
+  const target = required(args[0]);
   let headroomMb = 1024;
   let safetyFactor = 1.3;
   let compressorMaxMb: number | undefined;
@@ -108,7 +110,8 @@ export async function runAdmit(args: string[]): Promise<number> {
     metadata?: { name?: string };
   };
   try {
-    manifest = yaml.parse(readFileSync(path, "utf8"));
+    const parsed: unknown = yaml.parse(readFileSync(path, "utf8"));
+    manifest = isAdmitManifest(parsed) ? parsed : {};
   } catch (err) {
     console.error(`admit: failed to read ${path}: ${(err as Error).message}`);
     return 2;
@@ -134,6 +137,7 @@ export async function runAdmit(args: string[]): Promise<number> {
   const measured = modelKey ? readMeasuredMemoryCache(modelKey) : null;
 
   const nodeMem = await probeNodeMem({
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     exec: async (cmd) => {
       // Argument-vector exec (no shell). Caller passes 'vm_stat' verbatim;
       // we don't compose shell strings from user input.
@@ -157,8 +161,8 @@ export async function runAdmit(args: string[]): Promise<number> {
   });
 
   if (emitJson) {
-    console.log(
-      JSON.stringify(
+    process.stdout.write(
+      `${JSON.stringify(
         {
           workload: name,
           currentFreeMb: nodeMem.free_mb,
@@ -176,37 +180,51 @@ export async function runAdmit(args: string[]): Promise<number> {
         },
         null,
         2,
-      ),
+      )}\n`,
     );
   } else if (quiet) {
-    console.log(
-      result.allowed
-        ? `allow ${name}`
-        : `deny ${name} — ${result.reason} (projected_free=${result.projectedFreeGiB.toFixed(2)}GiB, min=${(headroomMb / 1024).toFixed(2)}GiB)`,
+    process.stdout.write(
+      `${
+        result.allowed
+          ? `allow ${name}`
+          : `deny ${name} — ${result.reason} (projected_free=${result.projectedFreeGiB.toFixed(2)}GiB, min=${(headroomMb / 1024).toFixed(2)}GiB)`
+      }\n`,
     );
   } else {
-    console.log(`workload:          ${name}`);
-    console.log(
-      `current free:      ${nodeMem.free_mb.toFixed(0)} MiB (${currentFreeGiB.toFixed(2)} GiB)`,
+    process.stdout.write(`workload:          ${name}\n`);
+    process.stdout.write(
+      `current free:      ${nodeMem.free_mb.toFixed(0)} MiB (${currentFreeGiB.toFixed(2)} GiB)\n`,
     );
     if (compressorMaxMb !== undefined) {
-      console.log(
-        `compressor:        ${nodeMem.compressor_mb.toFixed(0)} MiB (max ${compressorMaxMb})`,
+      process.stdout.write(
+        `compressor:        ${nodeMem.compressor_mb.toFixed(0)} MiB (max ${String(compressorMaxMb)})\n`,
       );
     }
     if (measured) {
-      console.log(
-        `measured peak:     ${measured.peakMb.toFixed(1)} MiB × 1.05 safety = ${((measured.peakMb * 1.05) / 1024).toFixed(2)} GiB  [source: measured]`,
+      process.stdout.write(
+        `measured peak:     ${measured.peakMb.toFixed(1)} MiB × 1.05 safety = ${((measured.peakMb * 1.05) / 1024).toFixed(2)} GiB  [source: measured]\n`,
       );
     } else {
-      console.log(
-        `expected to load:  ${expectedMemoryGiB} GiB × ${safetyFactor} safety = ${(expectedMemoryGiB * safetyFactor).toFixed(2)} GiB  [source: declared]`,
+      process.stdout.write(
+        `expected to load:  ${String(expectedMemoryGiB)} GiB × ${String(safetyFactor)} safety = ${(expectedMemoryGiB * safetyFactor).toFixed(2)} GiB  [source: declared]\n`,
       );
     }
-    console.log(`projected free:    ${result.projectedFreeGiB.toFixed(2)} GiB`);
-    console.log(`headroom min:      ${(headroomMb / 1024).toFixed(2)} GiB`);
-    console.log(`decision:          ${result.allowed ? "ALLOW" : "DENY"}`);
-    if (!result.allowed) console.log(`reason:            ${result.reason}`);
+    process.stdout.write(`projected free:    ${result.projectedFreeGiB.toFixed(2)} GiB\n`);
+    process.stdout.write(`headroom min:      ${(headroomMb / 1024).toFixed(2)} GiB\n`);
+    process.stdout.write(`decision:          ${result.allowed ? "ALLOW" : "DENY"}\n`);
+    if (!result.allowed) process.stdout.write(`reason:            ${result.reason}\n`);
   }
   return result.allowed ? 0 : 1;
+}
+
+function isAdmitManifest(value: unknown): value is {
+  kind?: string;
+  spec?: {
+    resources?: { expectedMemoryGiB?: number };
+    target?: { value?: string };
+    hostedModels?: { rel?: string }[];
+  };
+  metadata?: { name?: string };
+} {
+  return isRecord(value);
 }

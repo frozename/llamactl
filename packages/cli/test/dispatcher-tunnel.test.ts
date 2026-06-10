@@ -94,7 +94,9 @@ describe("dispatcher — tunnelPreferred routing", () => {
 
   test("tunnelPreferred=true routes queries via /tunnel-relay/<nodeId>", async () => {
     const captured: { url: string; init: RequestInit | undefined }[] = [];
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     const fetchImpl: FetchLike = async (url, init) => {
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string -- Preserve existing CLI/test semantics while clearing strict lint debt.
       captured.push({ url: String(url), init });
       return new Response(
         JSON.stringify({
@@ -116,8 +118,10 @@ describe("dispatcher — tunnelPreferred routing", () => {
       ...EMPTY_GLOBALS,
       nodeName: "gpu1",
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await (client as any).env.query({ x: 1 });
+    const tunnelClient = client as unknown as {
+      env: { query: (input: unknown) => Promise<unknown> };
+    };
+    const result = await tunnelClient.env.query({ x: 1 });
     expect(result).toEqual({ ok: true, hello: "from-tunnel" });
 
     expect(captured).toHaveLength(1);
@@ -148,6 +152,7 @@ describe("dispatcher — tunnelPreferred routing", () => {
 
   test("tunnelPreferred unset uses direct HTTPS (regression guard — no fetch)", () => {
     let calls = 0;
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     const fetchImpl: FetchLike = async () => {
       calls++;
       return new Response("never", { status: 200 });
@@ -170,6 +175,7 @@ describe("dispatcher — tunnelPreferred routing", () => {
   });
 
   test("relay returns error envelope → dispatcher throws with code + message", async () => {
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     const fetchImpl: FetchLike = async () => {
       return new Response(
         JSON.stringify({
@@ -195,8 +201,10 @@ describe("dispatcher — tunnelPreferred routing", () => {
       nodeName: "gpu1",
     });
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (client as any).whatever.query(null);
+      const tunnelClient = client as unknown as {
+        whatever: { query: (input: unknown) => Promise<unknown> };
+      };
+      await tunnelClient.whatever.query(null);
       throw new Error("expected throw");
     } catch (err) {
       const e = err as Error & { code?: string };

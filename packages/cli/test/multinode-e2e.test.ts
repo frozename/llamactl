@@ -176,10 +176,14 @@ function waitForTcpOpen(host: string, port: number, timeoutMs: number): Promise<
       const fail = (): void => {
         sock.destroy();
         if (Date.now() >= deadline) {
-          reject(new Error(`waitForTcpOpen(${host}:${port}) timed out after ${timeoutMs}ms`));
+          reject(
+            new Error(
+              `waitForTcpOpen(${host}:${String(port)}) timed out after ${String(timeoutMs)}ms`,
+            ),
+          );
           return;
         }
-        setTimeout(tryOnce, delay).unref?.();
+        setTimeout(tryOnce, delay).unref();
         delay = Math.min(delay * 2, 500);
       };
       sock.once("error", fail);
@@ -207,7 +211,9 @@ beforeAll(() => {
 
 afterAll(async () => {
   if (cluster) {
-    await cluster.cleanup().catch(() => {});
+    await cluster.cleanup().catch(() => {
+      return;
+    });
     cluster = null;
   }
   if (tmpRuntime) {
@@ -285,11 +291,11 @@ describeMaybe("multinode e2e: coordinator + worker via --rpc", () => {
       "    - --host",
       "    - 127.0.0.1",
       "    - --port",
-      `    - "${coordPort}"`,
+      `    - "${String(coordPort)}"`,
       "  workers:",
       "    - node: worker1",
       "      rpcHost: 127.0.0.1",
-      `      rpcPort: ${workerPort}`,
+      `      rpcPort: ${String(workerPort)}`,
       "      timeoutSeconds: 10",
       "  timeoutSeconds: 20",
       "",
@@ -324,7 +330,7 @@ describeMaybe("multinode e2e: coordinator + worker via --rpc", () => {
       expect(status.pid).toBeGreaterThan(0);
       // The `--rpc host:port` flag the apply path composed should
       // appear in the live server's extraArgs.
-      expect(status.extraArgs.join(" ")).toContain(`--rpc 127.0.0.1:${workerPort}`);
+      expect(status.extraArgs.join(" ")).toContain(`--rpc 127.0.0.1:${String(workerPort)}`);
 
       // Delete the workload through the same coordinator client.
       // Stops both the coordinator llama-server and the worker
@@ -338,15 +344,16 @@ describeMaybe("multinode e2e: coordinator + worker via --rpc", () => {
       // `waitForTcpOpen` rejects on timeout — exactly what we want
       // to assert (the port is NO LONGER open). 2s is enough; the
       // stop path SIGTERM + wait ≤ 3s by default.
+      // eslint-disable-next-line @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression -- Preserve existing CLI/test semantics while clearing strict lint debt.
       await expect(waitForTcpOpen("127.0.0.1", workerPort, 2_000)).rejects.toThrow(/timed out/);
     } finally {
       // Even if any assertion above threw, tear the cluster down so
       // bun:test doesn't hang on dangling servers. `cluster.cleanup`
       // stops both agents and rms their tempdirs.
-      if (cluster) {
-        await cluster.cleanup().catch(() => {});
-        cluster = null;
-      }
+      await cluster.cleanup().catch(() => {
+        return;
+      });
+      cluster = null;
       // Best-effort kill any still-tracked pids (covers the failed
       // apply case where workloadDelete never ran).
       for (const basename of ["llama-server.pid", "rpc-server.pid"]) {
@@ -357,9 +364,13 @@ describeMaybe("multinode e2e: coordinator + worker via --rpc", () => {
           if (Number.isFinite(pid) && pid > 0) {
             try {
               process.kill(pid, "SIGTERM");
-            } catch {}
+            } catch {
+              /* Intentionally empty. */
+            }
           }
-        } catch {}
+        } catch {
+          /* Intentionally empty. */
+        }
       }
     }
   }, 30_000); // /health on a small GGUF (up to ~20s in pathological cases), // rpc-server spawn + bind (1-2s), llama-server spawn + warm // Wall-time cap for the whole test. Covers cluster boot (~0.5s), // and teardown (~1s). Under 30s per the slice budget.

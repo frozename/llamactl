@@ -10,6 +10,7 @@ import {
   __setRagPipelineTestSeams,
 } from "../src/commands/rag-pipeline.js";
 import { runRag } from "../src/commands/rag.js";
+import { parseJsonRecord, requireRecordField } from "./helpers.js";
 
 /**
  * CLI coverage for `llamactl rag pipeline ...`. Tests run against a
@@ -27,12 +28,12 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{ result: T; cap: Captur
   const origOut = process.stdout.write.bind(process.stdout);
   const origErr = process.stderr.write.bind(process.stderr);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout as any).write = (s: string | Uint8Array): boolean => {
+  process.stdout.write = (s: string | Uint8Array): boolean => {
     chunks.out += typeof s === "string" ? s : String(s);
     return true;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stderr as any).write = (s: string | Uint8Array): boolean => {
+  process.stderr.write = (s: string | Uint8Array): boolean => {
     chunks.err += typeof s === "string" ? s : String(s);
     return true;
   };
@@ -40,15 +41,17 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{ result: T; cap: Captur
     .then((result) => ({ result, cap: chunks }))
     .finally(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stdout as any).write = origOut;
+      process.stdout.write = origOut;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stderr as any).write = origErr;
+      process.stderr.write = origErr;
     });
 }
 
 function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
   const stubs: StubProcs = {
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     ragPipelineApply: async () => ({ ok: true, name: "test", path: "/tmp/x", created: true }),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     ragPipelineRun: async () => ({
       ok: true,
       dryRun: false,
@@ -61,6 +64,7 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
         per_source: [{ source: "test:0:filesystem", docs: 3, chunks: 12, errors: 0 }],
       },
     }),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     ragPipelineList: async () => ({
       pipelines: [
         {
@@ -80,6 +84,7 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
         },
       ],
     }),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     ragPipelineGet: async () => ({
       manifest: {
         apiVersion: "llamactl/v1",
@@ -94,7 +99,9 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
         },
       },
     }),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     ragPipelineRemove: async () => ({ ok: true, removed: true }),
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     ragPipelineDraft: async (i) => ({
       ok: true,
       yaml: `apiVersion: llamactl/v1\nkind: RagPipeline\nmetadata:\n  name: ${i.nameOverride ?? "drafted"}\nspec: {}\n`,
@@ -122,7 +129,7 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
     ragPipelineRemove: { mutate: stubs.ragPipelineRemove },
     ragPipelineDraft: { query: stubs.ragPipelineDraft },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any as NodeClient;
+  } as unknown as NodeClient;
 }
 
 interface StubProcs {
@@ -195,6 +202,7 @@ describe("rag pipeline apply", () => {
     let sawYaml = "";
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient({
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         ragPipelineApply: async (i) => {
           sawYaml = i.manifestYaml;
           return { ok: true, name: "piped", path: "/tmp/p", created: true };
@@ -245,6 +253,7 @@ describe("rag pipeline run", () => {
     let sawDryRun = false;
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient({
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         ragPipelineRun: async (i) => {
           sawDryRun = i.dryRun;
           return {
@@ -271,9 +280,9 @@ describe("rag pipeline run", () => {
   });
   test("--json emits a single-line JSON doc", async () => {
     const { cap } = await captureStdio(() => runRag(["pipeline", "run", "test", "--json"]));
-    const parsed = JSON.parse(cap.out.trim());
+    const parsed = parseJsonRecord(cap.out.trim());
     expect(parsed.ok).toBe(true);
-    expect(parsed.summary.total_chunks).toBe(12);
+    expect(requireRecordField(parsed, "summary").total_chunks).toBe(12);
   });
 });
 
@@ -286,12 +295,13 @@ describe("rag pipeline list", () => {
   });
   test("--json emits structured doc", async () => {
     const { cap } = await captureStdio(() => runRag(["pipeline", "list", "--json"]));
-    const parsed = JSON.parse(cap.out.trim());
+    const parsed = parseJsonRecord(cap.out.trim());
     expect(Array.isArray(parsed.pipelines)).toBe(true);
   });
   test("empty → informative message", async () => {
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient({
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         ragPipelineList: async () => ({ pipelines: [] }),
       }),
     });
@@ -323,6 +333,7 @@ describe("rag pipeline rm", () => {
   test("not found → exit 1", async () => {
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient({
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         ragPipelineRemove: async () => ({ ok: true, removed: false }),
       }),
     });
@@ -348,7 +359,7 @@ describe("rag pipeline logs", () => {
           kind: "doc-ingested",
           ts: new Date().toISOString(),
           source: "s",
-          doc_id: `d${i}`,
+          doc_id: `d${String(i)}`,
           sha: "x",
           chunks: 1,
         }),
@@ -399,6 +410,7 @@ describe("rag pipeline draft", () => {
     let seen: unknown = null;
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient({
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         ragPipelineDraft: async (i) => {
           seen = i;
           return {
@@ -424,6 +436,7 @@ describe("rag pipeline draft", () => {
   test("warnings are surfaced on stderr", async () => {
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient({
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
         ragPipelineDraft: async () => ({
           ok: true,
           yaml: "apiVersion: llamactl/v1\n",
@@ -459,7 +472,12 @@ describe("rag pipeline scheduler", () => {
           skippedInFlight: [],
           unparseable: [],
         });
-        return { stop: () => {}, done: Promise.resolve() };
+        return {
+          stop: () => {
+            return;
+          },
+          done: Promise.resolve(),
+        };
       },
     });
     const { result, cap } = await captureStdio(() => runRag(["pipeline", "scheduler", "--once"]));
@@ -474,7 +492,12 @@ describe("rag pipeline scheduler", () => {
       nodeClient: makeStubClient(),
       startPipelineScheduler: (opts) => {
         seenOpts = opts;
-        return { stop: () => {}, done: Promise.resolve() };
+        return {
+          stop: () => {
+            return;
+          },
+          done: Promise.resolve(),
+        };
       },
     });
     const { result } = await captureStdio(() =>
@@ -486,7 +509,12 @@ describe("rag pipeline scheduler", () => {
   test("invalid --interval → exit 1", async () => {
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient(),
-      startPipelineScheduler: () => ({ stop: () => {}, done: Promise.resolve() }),
+      startPipelineScheduler: () => ({
+        stop: () => {
+          return;
+        },
+        done: Promise.resolve(),
+      }),
     });
     const { result, cap } = await captureStdio(() =>
       runRag(["pipeline", "scheduler", "--interval=huh"]),
@@ -505,7 +533,12 @@ describe("rag pipeline scheduler", () => {
           skippedInFlight: [],
           unparseable: [],
         });
-        return { stop: () => {}, done: Promise.resolve() };
+        return {
+          stop: () => {
+            return;
+          },
+          done: Promise.resolve(),
+        };
       },
     });
     const { result, cap } = await captureStdio(() =>

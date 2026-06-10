@@ -56,15 +56,17 @@ async function startHarness(script: {
   const bunPort = bun.port ?? 0;
   const handleSubscription = (req: TunnelReq): TunnelSubscription => ({
     subscribe(handlers) {
-      let cancelled = false;
+      const cancelled = { value: false };
+      const isCancelled = (): boolean => cancelled.value;
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Preserve existing CLI/test semantics while clearing strict lint debt.
       (async () => {
         for (const ev of script.events) {
-          if (cancelled) break;
+          if (cancelled.value) break;
           await new Promise((r) => setTimeout(r, script.delayMs ?? 2));
-          if (cancelled) break;
+          if (isCancelled()) break;
           handlers.onEvent(ev);
         }
-        if (cancelled) {
+        if (cancelled.value) {
           handlers.onComplete();
           return;
         }
@@ -76,16 +78,17 @@ async function startHarness(script: {
       })();
       return {
         cancel(): void {
-          cancelled = true;
+          cancelled.value = true;
           receivedCancel.push(req.id);
         },
       };
     },
   });
   const client = createTunnelClient({
-    url: `ws://127.0.0.1:${bunPort}/tunnel`,
+    url: `ws://127.0.0.1:${String(bunPort)}/tunnel`,
     bearer: tunnelBearer,
     nodeName,
+    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
     handleRequest: async () => ({}),
     handleSubscription,
     initialAttemptTimeoutMs: 2000,
@@ -98,6 +101,7 @@ async function startHarness(script: {
     receivedCancel,
     async stop() {
       client.stop();
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Preserve existing CLI/test semantics while clearing strict lint debt.
       bun.stop();
       await new Promise((r) => setTimeout(r, 10));
     },
@@ -105,9 +109,10 @@ async function startHarness(script: {
 }
 
 describe("buildTunnelSubscribe end-to-end", () => {
-  let harness: Harness;
+  let harness: Harness | null = null;
   afterEach(async () => {
     if (harness) await harness.stop();
+    harness = null;
   });
 
   test("streams events + onComplete", async () => {
@@ -115,7 +120,7 @@ describe("buildTunnelSubscribe end-to-end", () => {
       events: [{ i: 0 }, { i: 1 }, { i: 2 }],
     });
     const sub = buildTunnelSubscribe({
-      centralUrl: `http://127.0.0.1:${harness.bunPort}`,
+      centralUrl: `http://127.0.0.1:${String(harness.bunPort)}`,
       bearer: harness.bearer,
       nodeName: "node1",
       insecure: true,
@@ -150,7 +155,7 @@ describe("buildTunnelSubscribe end-to-end", () => {
       throwErr: Object.assign(new Error("agent-failure"), { code: "E42" }),
     });
     const sub = buildTunnelSubscribe({
-      centralUrl: `http://127.0.0.1:${harness.bunPort}`,
+      centralUrl: `http://127.0.0.1:${String(harness.bunPort)}`,
       bearer: harness.bearer,
       nodeName: "node1",
       insecure: true,
@@ -180,7 +185,7 @@ describe("buildTunnelSubscribe end-to-end", () => {
       delayMs: 15,
     });
     const sub = buildTunnelSubscribe({
-      centralUrl: `http://127.0.0.1:${harness.bunPort}`,
+      centralUrl: `http://127.0.0.1:${String(harness.bunPort)}`,
       bearer: harness.bearer,
       nodeName: "node1",
       insecure: true,
@@ -188,8 +193,12 @@ describe("buildTunnelSubscribe end-to-end", () => {
     const events: unknown[] = [];
     const handle = sub("long", null, {
       onData: (e) => events.push(e),
-      onError: () => {},
-      onComplete: () => {},
+      onError: () => {
+        return;
+      },
+      onComplete: () => {
+        return;
+      },
     });
     // Let a couple of events land.
     await new Promise((r) => setTimeout(r, 50));
@@ -203,18 +212,22 @@ describe("buildTunnelSubscribe end-to-end", () => {
   test("pinning fail-closed without fingerprint + not insecure", async () => {
     harness = await startHarness({ events: [] });
     const sub = buildTunnelSubscribe({
-      centralUrl: `http://127.0.0.1:${harness.bunPort}`,
+      centralUrl: `http://127.0.0.1:${String(harness.bunPort)}`,
       bearer: harness.bearer,
       nodeName: "node1",
       // insecure: false (default)
     });
     let error: Error | null = null;
     sub("tick", null, {
-      onData: () => {},
+      onData: () => {
+        return;
+      },
       onError: (err) => {
         error = err as Error;
       },
-      onComplete: () => {},
+      onComplete: () => {
+        return;
+      },
     });
     await new Promise((r) => setTimeout(r, 50));
     expect(error).not.toBeNull();
@@ -227,15 +240,21 @@ describe("buildTunnelSubscribe end-to-end", () => {
       delayMs: 20,
     });
     const sub = buildTunnelSubscribe({
-      centralUrl: `http://127.0.0.1:${harness.bunPort}`,
+      centralUrl: `http://127.0.0.1:${String(harness.bunPort)}`,
       bearer: harness.bearer,
       nodeName: "node1",
       insecure: true,
     });
     const handle = sub("tick", null, {
-      onData: () => {},
-      onError: () => {},
-      onComplete: () => {},
+      onData: () => {
+        return;
+      },
+      onError: () => {
+        return;
+      },
+      onComplete: () => {
+        return;
+      },
     });
     handle.unsubscribe();
     // Second unsubscribe is idempotent.

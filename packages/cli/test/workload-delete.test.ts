@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import type { NodeClient } from "@llamactl/remote";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,12 +37,12 @@ function withCapturedIo<T>(
   const stdoutOrig = process.stdout.write.bind(process.stdout);
   const stderrOrig = process.stderr.write.bind(process.stderr);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout as any).write = (chunk: string | Uint8Array): boolean => {
+  process.stdout.write = (chunk: string | Uint8Array): boolean => {
     stdout += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stderr as any).write = (chunk: string | Uint8Array): boolean => {
+  process.stderr.write = (chunk: string | Uint8Array): boolean => {
     stderr += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };
@@ -49,9 +50,9 @@ function withCapturedIo<T>(
     .then((result) => ({ result, stdout, stderr }))
     .finally(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stdout as any).write = stdoutOrig;
+      process.stdout.write = stdoutOrig;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stderr as any).write = stderrOrig;
+      process.stderr.write = stderrOrig;
     });
 }
 
@@ -90,12 +91,13 @@ test("delete workload removes ModelHost manifest and runtime dir", async () => {
     getNodeClientByName: () =>
       ({
         modelHostStop: {
+          // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
           mutate: async () => {
             stopCalls++;
             return { ok: true };
           },
         },
-      }) as any,
+      }) as unknown as NodeClient,
   });
 
   const {

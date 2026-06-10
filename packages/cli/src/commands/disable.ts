@@ -1,4 +1,5 @@
 import { setWorkloadEnabled } from "./setEnabled.js";
+import { required } from "../required.js";
 
 const USAGE = `Usage: llamactl disable <workload>
 
@@ -11,7 +12,7 @@ export async function runDisable(args: string[]): Promise<number> {
     process.stdout.write(USAGE);
     return args.length === 0 ? 1 : 0;
   }
-  const name = args[0]!;
+  const name = required(args[0]);
   const result = await setWorkloadEnabled(name, false);
   if (result.message) {
     (result.code === 0 ? process.stdout : process.stderr).write(result.message);

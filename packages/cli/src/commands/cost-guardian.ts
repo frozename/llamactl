@@ -14,7 +14,7 @@ USAGE:
                               [--auto] [--auto-tier-2] [--auto-tier-3]
 
 Reads the guardian config (default: ~/.llamactl/cost-guardian.yaml or
-\$LLAMACTL_COST_GUARDIAN_CONFIG), calls nova.ops.cost.snapshot to
+$LLAMACTL_COST_GUARDIAN_CONFIG), calls nova.ops.cost.snapshot to
 compute daily + (if configured) weekly spend, runs the pure tier
 state machine, journals the decision, and prints it.
 
@@ -29,7 +29,7 @@ even when the flag is on, and journaled as \`deregister-refused\`.
 FLAGS:
   --config=<path>       Override the config YAML path.
   --journal=<path>      Override the cost journal. Default:
-                        \$LLAMACTL_COST_JOURNAL or
+                        $LLAMACTL_COST_JOURNAL or
                         ~/.llamactl/healer/cost-journal.jsonl.
   --skip-journal        Print the decision without appending to
                         the journal. Useful for on-demand checks.
@@ -125,6 +125,7 @@ async function runTick(argv: string[]): Promise<number> {
   // A bare boolean absence means "defer to config" (not "force off").
   if (flags.autoTier2) config = { ...config, auto_force_private: true };
   if (flags.autoTier3) config = { ...config, auto_deregister: true };
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const { client, dispose } = await createDefaultToolClient();
   try {
     const decision = await runCostGuardianTick({

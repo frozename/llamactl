@@ -1,4 +1,5 @@
 import type { NodeClient } from "@llamactl/remote";
+import { required } from "../required.js";
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -67,7 +68,7 @@ function parseFlags(args: string[]): Opts | { error: string } {
   let file = "";
   let json = false;
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+    const arg = required(args[i]);
     if (arg === "-f" || arg === "--file") {
       file = args[++i] ?? "";
     } else if (arg.startsWith("--file=")) {
@@ -142,30 +143,32 @@ export async function runRagBenchCli(args: string[]): Promise<number> {
   lines.push(
     `  node ${report.manifest.spec.node}` +
       (report.manifest.spec.collection ? ` / collection ${report.manifest.spec.collection}` : "") +
-      ` · topK ${report.manifest.spec.topK}`,
+      ` · topK ${String(report.manifest.spec.topK)}`,
   );
   lines.push("");
   lines.push(
-    `  hit rate  ${pct(report.hitRate)}  (${report.hits}/${report.totalQueries - report.errors} scored)`,
+    `  hit rate  ${pct(report.hitRate)}  (${String(report.hits)}/${String(report.totalQueries - report.errors)} scored)`,
   );
   lines.push(`  MRR       ${report.mrr.toFixed(4)}`);
   if (report.errors > 0) {
-    lines.push(`  errors    ${report.errors}`);
+    lines.push(`  errors    ${String(report.errors)}`);
   }
-  lines.push(`  elapsed   ${report.elapsed_ms}ms`);
+  lines.push(`  elapsed   ${String(report.elapsed_ms)}ms`);
   lines.push("");
   lines.push("  per-query:");
   const misses = report.perQuery.filter((q) => q.hitRank === null && !q.error);
   const errs = report.perQuery.filter((q) => q.error !== undefined);
   const hits = report.perQuery.filter((q) => q.hitRank !== null);
   for (const q of errs) {
-    lines.push(`    [err ] ${q.query} — ${q.error}`);
+    lines.push(`    [err ] ${q.query} — ${String(q.error)}`);
   }
   for (const q of misses) {
     lines.push(`    [miss] ${q.query}`);
   }
   for (const q of hits) {
-    lines.push(`    [hit ] ${q.query} — rank ${q.hitRank} via ${q.hitKind} (${q.matchedDocId})`);
+    lines.push(
+      `    [hit ] ${q.query} — rank ${String(q.hitRank)} via ${String(q.hitKind)} (${String(q.matchedDocId)})`,
+    );
   }
   process.stdout.write(`${lines.join("\n")}\n`);
   // Exit non-zero when ANY query failed to hit — this is a quality

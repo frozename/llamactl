@@ -15,7 +15,7 @@ import { createNodeClient as defaultCreateNodeClient, config as kubecfg } from "
 export const RPC_DOCTOR_USAGE = `Usage: llamactl agent rpc-doctor [flags]
 
 Verify that rpc-server is available for tensor-parallel workloads.
-Without flags, checks \$LLAMA_CPP_BIN/rpc-server on the local node.
+Without flags, checks $LLAMA_CPP_BIN/rpc-server on the local node.
 With --node <name>, dispatches to that node's rpcServerDoctor
 procedure through the current kubeconfig context.
 

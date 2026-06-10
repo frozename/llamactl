@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseJsonRecord } from "./helpers.js";
 
 /**
  * End-to-end test for `llamactl expose <target>`: the one-shot
@@ -38,10 +39,10 @@ function runCliAsync(
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => {
-      stdout += d.toString();
+      stdout += String(d);
     });
     child.stderr.on("data", (d) => {
-      stderr += d.toString();
+      stderr += String(d);
     });
     const killer = setTimeout(() => {
       child.kill("SIGKILL");
@@ -148,7 +149,9 @@ afterEach(async () => {
     if (Number.isFinite(pid) && pid > 0) {
       try {
         process.kill(pid, "SIGTERM");
-      } catch {}
+      } catch {
+        /* Intentionally empty. */
+      }
     }
   }
   process.env = { ...originalEnv };
@@ -172,8 +175,8 @@ describe("llamactl expose", () => {
     );
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("started modelrun/exposed-test on node mini");
-    expect(r.stdout).toContain(`http://test-mini.local:${fakePort}`);
-    expect(r.stdout).toContain(`http://test-mini.local:${fakePort}/v1`);
+    expect(r.stdout).toContain(`http://test-mini.local:${String(fakePort)}`);
+    expect(r.stdout).toContain(`http://test-mini.local:${String(fakePort)}/v1`);
     expect(existsSync(join(workloadsDir, "exposed-test.yaml"))).toBe(true);
 
     await runCliAsync(["delete", "workload", "exposed-test"], testEnv());
@@ -186,12 +189,12 @@ describe("llamactl expose", () => {
       40_000,
     );
     expect(r.code).toBe(0);
-    const parsed = JSON.parse(r.stdout);
+    const parsed = parseJsonRecord(r.stdout);
     expect(parsed.node).toBe("mini");
     expect(parsed.workload).toBe("exposed-json");
     expect(parsed.action).toBe("started");
-    expect(parsed.openaiBaseUrl).toBe(`http://test-mini.local:${fakePort}/v1`);
-    expect(parsed.advertisedEndpoint).toBe(`http://test-mini.local:${fakePort}`);
+    expect(parsed.openaiBaseUrl).toBe(`http://test-mini.local:${String(fakePort)}/v1`);
+    expect(parsed.advertisedEndpoint).toBe(`http://test-mini.local:${String(fakePort)}`);
 
     await runCliAsync(["delete", "workload", "exposed-json"], testEnv());
   }, 60_000);

@@ -8,6 +8,7 @@ import {
   type TunnelSubscribeFn,
 } from "@llamactl/remote";
 
+import { required } from "./required.js";
 import { buildTunnelSend, buildTunnelSubscribe, type FetchLike } from "./tunnel-dispatch.js";
 
 /**
@@ -172,7 +173,7 @@ export function extractGlobalFlags(argv: string[]): { globals: Globals; rest: st
 
   let i = 0;
   while (i < argv.length) {
-    const arg = argv[i]!;
+    const arg = required(argv[i]);
     if (arg === "--") {
       rest.push(...argv.slice(i));
       break;
@@ -321,6 +322,7 @@ export interface FanOutResult<T> {
  * subscription so the agent's underlying subprocess is signaled and
  * the SSE stream closes cleanly.
  */
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- Preserve existing CLI/test semantics while clearing strict lint debt.
 export function subscribeRemote<Event, Done>(opts: {
   subscribe: (handlers: {
     onData: (e: unknown) => void;
@@ -374,6 +376,7 @@ export function subscribeRemote<Event, Done>(opts: {
  *  result in a distinct `type: 'done' | 'done-candidate' | …` event.
  *  This helper returns the result payload if the event matches the
  *  given type, or null otherwise. */
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- Preserve existing CLI/test semantics while clearing strict lint debt.
 export function matchDoneEvent<T>(doneType: string) {
   return (e: unknown): T | null => {
     if (typeof e !== "object" || e === null) return null;
@@ -396,7 +399,7 @@ export async function fanOut<T>(
     }),
   );
   return names.map((name, i) => {
-    const r = settled[i]!;
+    const r = required(settled[i]);
     if (r.status === "fulfilled") return { node: name, ok: true, data: r.value };
     return { node: name, ok: false, error: (r.reason as Error).message };
   });

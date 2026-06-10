@@ -13,7 +13,7 @@ USAGE:
   llamactl artifacts show-path [--target=<platform>] [--dir=<path>]
 
 Pre-built binaries live under <LLAMACTL_ARTIFACTS_DIR or
-\$DEV_STORAGE/artifacts or ~/.llamactl/artifacts>/agent/<platform>/
+$DEV_STORAGE/artifacts or ~/.llamactl/artifacts>/agent/<platform>/
 and are served by central's /artifacts/agent/<platform> endpoint.
 
 build-agent runs \`bun build --compile\` against packages/cli/src/bin.ts
@@ -25,8 +25,8 @@ own __dirname) doesn't find bin.ts.
 When --sign=<identity> is set (or LLAMACTL_SIGN_IDENTITY is exported),
 the produced binary is re-signed with macOS \`codesign\` after the
 compile. Identity values match the codesign \`-s\` argument: an Apple
-Development cert (\"Apple Development: <email>\"), a Developer ID
-Application cert (\"Developer ID Application: <name>\"), or a SHA1
+Development cert ("Apple Development: <email>"), a Developer ID
+Application cert ("Developer ID Application: <name>"), or a SHA1
 fingerprint. macOS TCC tracks the signing identity, not the binary
 hash — once you've granted Files & Folders access once, all future
 builds with the same identity inherit the grant. Without --sign,
@@ -88,6 +88,7 @@ export function currentPlatform(): Platform | null {
 export function defaultArtifactsDir(): string {
   const override = process.env.LLAMACTL_ARTIFACTS_DIR?.trim();
   if (override) return override;
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const base = process.env.DEV_STORAGE?.trim() || join(process.env.HOME ?? ".", ".llamactl");
   return join(base, "artifacts");
 }
@@ -190,7 +191,7 @@ export async function buildAgentBinary(
         outPath,
         code,
         signCode,
-        reason: `codesign exited ${signCode} — binary still produced with bun ad-hoc signature`,
+        reason: `codesign exited ${String(signCode)} — binary still produced with bun ad-hoc signature`,
       };
     }
     return { ok: true, outPath, code, signCode: 0 };
@@ -301,17 +302,19 @@ async function runBuildAgent(argv: string[]): Promise<number> {
     if (result.reason) {
       process.stderr.write(`artifacts build-agent: ${result.reason}\n`);
     } else {
-      process.stderr.write(`artifacts build-agent: bun build exited ${result.code}\n`);
+      process.stderr.write(`artifacts build-agent: bun build exited ${String(result.code)}\n`);
     }
     return 1;
   }
   process.stderr.write(`artifacts build-agent: wrote ${result.outPath}\n`);
   if (result.signCode === 0) {
     const identity = parsed.signIdentity ?? process.env.LLAMACTL_SIGN_IDENTITY;
-    process.stderr.write(`artifacts build-agent: re-signed with codesign -s '${identity}'\n`);
+    process.stderr.write(
+      `artifacts build-agent: re-signed with codesign -s '${String(identity)}'\n`,
+    );
   } else if (result.signCode !== undefined) {
     process.stderr.write(
-      `artifacts build-agent: WARNING — codesign failed (exit ${result.signCode}); ` +
+      `artifacts build-agent: WARNING — codesign failed (exit ${String(result.signCode)}); ` +
         `binary still written but TCC will re-prompt on first removable-volume access\n`,
     );
   }
@@ -554,8 +557,8 @@ function runPrune(argv: string[]): number {
     return 0;
   }
   process.stdout.write(
-    `artifacts prune: ${result.inspected.length} installed, keep=${flags.keep}, ` +
-      `${result.candidates.length} candidate(s)${flags.execute ? "" : " (dry-run — pass --execute to remove)"}\n`,
+    `artifacts prune: ${String(result.inspected.length)} installed, keep=${String(flags.keep)}, ` +
+      `${String(result.candidates.length)} candidate(s)${flags.execute ? "" : " (dry-run — pass --execute to remove)"}\n`,
   );
   for (const c of result.candidates) {
     const age = Math.max(0, Math.floor((Date.now() - c.mtimeMs) / 86400_000));
@@ -566,12 +569,12 @@ function runPrune(argv: string[]): number {
         : "FAILED "
       : "WOULD  ";
     process.stdout.write(
-      `  ${mark}\t${c.target}\t${c.tag}\t${sizeMb} MB\t${age}d old\t${c.path}\n`,
+      `  ${mark}\t${c.target}\t${c.tag}\t${sizeMb} MB\t${String(age)}d old\t${c.path}\n`,
     );
   }
   if (flags.execute && result.removed.length !== result.candidates.length) {
     process.stderr.write(
-      `artifacts prune: ${result.candidates.length - result.removed.length} candidate(s) could not be removed — inspect manually\n`,
+      `artifacts prune: ${String(result.candidates.length - result.removed.length)} candidate(s) could not be removed — inspect manually\n`,
     );
     return 1;
   }
