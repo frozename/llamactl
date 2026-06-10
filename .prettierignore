@@ -5,4 +5,7 @@
 bun.lock
 docs/notes/**
 packages/train/vendor/**
+packages/train/.spike-work/**
 packages/app/release/**
+packages/eval/results/**
+.pytest_cache/**
