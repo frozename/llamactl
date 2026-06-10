@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { schemas } from '@llamactl/core';
 import { trpc } from '@/lib/trpc';
 import { Button, Input } from '@/ui';
+import { useSettingsStore } from './project-scan-roots';
 
 type PresetOverride = schemas.PresetOverride;
 type Profile = 'mac-mini-16g' | 'balanced' | 'macbook-pro-48g';
@@ -287,6 +288,8 @@ function PromotionsEditor(): React.JSX.Element {
 
 export default function Settings(): React.JSX.Element {
   const env = trpc.env.useQuery();
+  const projectScanRootsText = useSettingsStore((s) => s.projectScanRootsText);
+  const setProjectScanRootsText = useSettingsStore((s) => s.setProjectScanRootsText);
 
   if (env.isLoading) {
     return <div style={{ padding: 24, color: 'var(--color-text-secondary)' }}>Loading…</div>;
@@ -307,6 +310,30 @@ export default function Settings(): React.JSX.Element {
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+        <section>
+          <h2 style={{ marginBottom: 8, fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.025em', color: 'var(--color-text-secondary)' }}>
+            Project scan roots
+          </h2>
+          <div style={{ borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-1)', padding: 12 }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
+                Roots
+              </span>
+              <textarea
+                value={projectScanRootsText}
+                onChange={(e) => setProjectScanRootsText(e.target.value)}
+                rows={7}
+                spellCheck={false}
+                placeholder="~/DevStorage/repos/personal&#10;~/DevStorage/repos/work"
+                style={{ width: '100%', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', padding: 8, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text)', resize: 'vertical' }}
+              />
+            </label>
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+              One root per line or comma-separated. <span style={{ fontFamily: 'var(--font-mono)' }}>~</span> expands in the scanner. Leave empty to use the built-in defaults.
+            </div>
+          </div>
+        </section>
+
         {GROUPS.map((group) => (
           <section key={group.title}>
             <h2 style={{ marginBottom: 8, fontSize: 14, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.025em', color: 'var(--color-text-secondary)' }}>

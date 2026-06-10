@@ -1,9 +1,13 @@
-import * as React from 'react';
-import { useMemo, useState } from 'react';
-import { stringify as stringifyYaml } from 'yaml';
-import { trpc, trpcUIClient } from '@/lib/trpc';
-import { Badge, Button, EditorialHero } from '@/ui';
-import type { BadgeVariant } from '@/ui';
+import * as React from "react";
+import { useMemo, useState } from "react";
+import { stringify as stringifyYaml } from "yaml";
+import { trpc, trpcUIClient } from "@/lib/trpc";
+import { Badge, Button, EditorialHero } from "@/ui";
+import {
+  getProjectScanRoots,
+  useSettingsStore,
+} from "@/modules/settings/project-scan-roots";
+import type { BadgeVariant } from "@/ui";
 
 /**
  * Projects module — the Electron surface for the trifold-
@@ -55,7 +59,7 @@ interface RoutingDecision {
   taskKind: string;
   target: string;
   matched: boolean;
-  reason: 'matched' | 'fallback-default' | 'project-not-found' | 'over-budget';
+  reason: "matched" | "fallback-default" | "project-not-found" | "over-budget";
   budget?: { usdToday?: number; limit?: number };
 }
 
@@ -71,10 +75,10 @@ interface RoutePreviewResponse {
   decision: RoutingDecision | null;
 }
 
-function reasonBadgeVariant(reason: RoutingDecision['reason']): BadgeVariant {
-  if (reason === 'matched') return 'ok';
-  if (reason === 'fallback-default') return 'default';
-  return 'err';
+function reasonBadgeVariant(reason: RoutingDecision["reason"]): BadgeVariant {
+  if (reason === "matched") return "ok";
+  if (reason === "fallback-default") return "default";
+  return "err";
 }
 
 function formatElapsed(iso: string, now: number = Date.now()): string {
@@ -90,17 +94,19 @@ function formatElapsed(iso: string, now: number = Date.now()): string {
   return `${d}d ago`;
 }
 
-function RoutingHeatmap(props: { routing: Record<string, string> | undefined }): React.JSX.Element {
+function RoutingHeatmap(props: {
+  routing: Record<string, string> | undefined;
+}): React.JSX.Element {
   const entries = Object.entries(props.routing ?? {});
   if (entries.length === 0) {
     return (
-      <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
+      <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
         no policy
       </span>
     );
   }
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
       {entries.map(([k, v]) => (
         <Badge key={k} variant="default" title={`${k} → ${v}`}>
           {k} → {v}
@@ -121,18 +127,24 @@ function RoutingPreviewCard(props: {
   );
   const data = q.data as RoutePreviewResponse | undefined;
   if (q.isLoading) {
-    return <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>…</span>;
+    return (
+      <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+        …
+      </span>
+    );
   }
   if (q.error || !data?.decision) {
     return (
-      <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>—</span>
+      <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+        —
+      </span>
     );
   }
   const d = data.decision;
   return (
     <Badge
       variant={reasonBadgeVariant(d.reason)}
-      title={`reason: ${d.reason}${d.budget ? ` · budget ${d.budget.usdToday?.toFixed(4) ?? '?'}/${d.budget.limit?.toFixed(2) ?? '?'} USD` : ''}`}
+      title={`reason: ${d.reason}${d.budget ? ` · budget ${d.budget.usdToday?.toFixed(4) ?? "?"}/${d.budget.limit?.toFixed(2) ?? "?"} USD` : ""}`}
       data-testid={`projects-preview-${project}-${taskKind}`}
     >
       {d.target}
@@ -150,7 +162,21 @@ function RoutingJournalFeed(props: { project: string }): React.JSX.Element {
   const entries = data?.entries ?? [];
   if (q.isLoading) {
     return (
-      <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderStyle: 'dashed', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+      <div
+        style={{
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderStyle: "dashed",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-1)",
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+          fontSize: 12,
+          color: "var(--color-text-secondary)",
+        }}
+      >
         Loading decisions…
       </div>
     );
@@ -158,12 +184,26 @@ function RoutingJournalFeed(props: { project: string }): React.JSX.Element {
   if (entries.length === 0) {
     return (
       <div
-        style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderStyle: 'dashed', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}
+        style={{
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderStyle: "dashed",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-1)",
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+          fontSize: 12,
+          color: "var(--color-text-secondary)",
+        }}
         data-testid="projects-journal-empty"
       >
-        No routing decisions journaled yet — trigger a chat against{' '}
-        <span style={{ fontFamily: 'var(--font-mono)' }}>project:{project}/&lt;taskKind&gt;</span> to
-        populate this feed.
+        No routing decisions journaled yet — trigger a chat against{" "}
+        <span style={{ fontFamily: "var(--font-mono)" }}>
+          project:{project}/&lt;taskKind&gt;
+        </span>{" "}
+        to populate this feed.
       </div>
     );
   }
@@ -171,34 +211,129 @@ function RoutingJournalFeed(props: { project: string }): React.JSX.Element {
   const reversed = [...entries].reverse();
   return (
     <div
-      style={{ overflow: 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)' }}
+      style={{
+        overflow: "auto",
+        borderRadius: "var(--r-md)",
+        border: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface-1)",
+      }}
       data-testid="projects-journal"
     >
-      <table style={{ width: '100%', fontSize: 12 }}>
-        <thead style={{ background: 'var(--color-surface-2)', textAlign: 'left', color: 'var(--color-text-secondary)' }}>
+      <table style={{ width: "100%", fontSize: 12 }}>
+        <thead
+          style={{
+            background: "var(--color-surface-2)",
+            textAlign: "left",
+            color: "var(--color-text-secondary)",
+          }}
+        >
           <tr>
-            <th style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Elapsed</th>
-            <th style={{ width: 128, paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Task kind</th>
-            <th style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Target</th>
-            <th style={{ width: 128, paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Reason</th>
+            <th
+              style={{
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 4,
+                paddingBottom: 4,
+                fontWeight: 500,
+              }}
+            >
+              Elapsed
+            </th>
+            <th
+              style={{
+                width: 128,
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 4,
+                paddingBottom: 4,
+                fontWeight: 500,
+              }}
+            >
+              Task kind
+            </th>
+            <th
+              style={{
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 4,
+                paddingBottom: 4,
+                fontWeight: 500,
+              }}
+            >
+              Target
+            </th>
+            <th
+              style={{
+                width: 128,
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 4,
+                paddingBottom: 4,
+                fontWeight: 500,
+              }}
+            >
+              Reason
+            </th>
           </tr>
         </thead>
         <tbody>
           {reversed.map((d, i) => (
             <tr
               key={`${d.ts}-${i}`}
-              style={{ borderTop: '1px solid var(--color-border)', borderColor: 'var(--color-border)' }}
+              style={{
+                borderTop: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+              }}
             >
-              <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text-secondary)' }}>
+              <td
+                style={{
+                  paddingLeft: 8,
+                  paddingRight: 8,
+                  paddingTop: 4,
+                  paddingBottom: 4,
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 10,
+                  color: "var(--color-text-secondary)",
+                }}
+              >
                 {formatElapsed(d.ts)}
               </td>
-              <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text)' }}>
+              <td
+                style={{
+                  paddingLeft: 8,
+                  paddingRight: 8,
+                  paddingTop: 4,
+                  paddingBottom: 4,
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 10,
+                  color: "var(--color-text)",
+                }}
+              >
                 {d.taskKind}
               </td>
-              <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text)', wordBreak: 'break-all' }}>
+              <td
+                style={{
+                  paddingLeft: 8,
+                  paddingRight: 8,
+                  paddingTop: 4,
+                  paddingBottom: 4,
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 10,
+                  color: "var(--color-text)",
+                  wordBreak: "break-all",
+                }}
+              >
                 {d.target}
               </td>
-              <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4 }}>
+              <td
+                style={{
+                  paddingLeft: 8,
+                  paddingRight: 8,
+                  paddingTop: 4,
+                  paddingBottom: 4,
+                }}
+              >
                 <Badge variant={reasonBadgeVariant(d.reason)}>{d.reason}</Badge>
               </td>
             </tr>
@@ -225,29 +360,66 @@ function ProjectDetail(props: {
   });
   const onRemove = (): void => {
     // eslint-disable-next-line no-alert
-    if (!confirm(`Remove project '${project.metadata.name}'? Indexed data stays in the rag node.`)) {
+    if (
+      !confirm(
+        `Remove project '${project.metadata.name}'? Indexed data stays in the rag node.`,
+      )
+    ) {
       return;
     }
     removeMut.mutate({ name: project.metadata.name });
   };
   return (
     <div
-      style={{ marginTop: 16, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-0)', padding: 16 }}
+      style={{
+        marginTop: 16,
+        borderRadius: "var(--r-md)",
+        border: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface-0)",
+        padding: 16,
+      }}
       data-testid={`projects-detail-${project.metadata.name}`}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: 12,
+        }}
+      >
         <div>
-          <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
+          <div
+            style={{
+              fontSize: 12,
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              color: "var(--color-text-secondary)",
+            }}
+          >
             Project
           </div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 18, color: 'var(--color-text)' }}>
+          <div
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 18,
+              color: "var(--color-text)",
+            }}
+          >
             {project.metadata.name}
           </div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-secondary)' }}>
+          <div
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+              color: "var(--color-text-secondary)",
+            }}
+          >
             {project.spec.path}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: "flex", gap: 8 }}>
           <Button
             type="button"
             variant="destructive"
@@ -272,34 +444,113 @@ function ProjectDetail(props: {
 
       {taskKinds.length > 0 && (
         <div>
-          <div style={{ marginBottom: 8, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
+          <div
+            style={{
+              marginBottom: 8,
+              fontSize: 12,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              color: "var(--color-text-secondary)",
+            }}
+          >
             Routing policy preview
           </div>
           <div
-            style={{ overflow: 'hidden', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)' }}
+            style={{
+              overflow: "hidden",
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
+            }}
             data-testid="projects-policy-table"
           >
-            <table style={{ width: '100%', fontSize: 12 }}>
-              <thead style={{ background: 'var(--color-surface-1)', textAlign: 'left', color: 'var(--color-text-secondary)' }}>
+            <table style={{ width: "100%", fontSize: 12 }}>
+              <thead
+                style={{
+                  background: "var(--color-surface-1)",
+                  textAlign: "left",
+                  color: "var(--color-text-secondary)",
+                }}
+              >
                 <tr>
-                  <th style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Task kind</th>
-                  <th style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Declared target</th>
-                  <th style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontWeight: 500 }}>Resolved (live)</th>
+                  <th
+                    style={{
+                      paddingLeft: 8,
+                      paddingRight: 8,
+                      paddingTop: 4,
+                      paddingBottom: 4,
+                      fontWeight: 500,
+                    }}
+                  >
+                    Task kind
+                  </th>
+                  <th
+                    style={{
+                      paddingLeft: 8,
+                      paddingRight: 8,
+                      paddingTop: 4,
+                      paddingBottom: 4,
+                      fontWeight: 500,
+                    }}
+                  >
+                    Declared target
+                  </th>
+                  <th
+                    style={{
+                      paddingLeft: 8,
+                      paddingRight: 8,
+                      paddingTop: 4,
+                      paddingBottom: 4,
+                      fontWeight: 500,
+                    }}
+                  >
+                    Resolved (live)
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {taskKinds.map((k) => (
                   <tr
                     key={k}
-                    style={{ borderTop: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)' }}
+                    style={{
+                      borderTop: "1px solid var(--color-border)",
+                      borderColor: "var(--color-border)",
+                      background: "var(--color-surface-1)",
+                    }}
                   >
-                    <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}>
+                    <td
+                      style={{
+                        paddingLeft: 8,
+                        paddingRight: 8,
+                        paddingTop: 4,
+                        paddingBottom: 4,
+                        fontFamily: "var(--font-mono)",
+                        color: "var(--color-text)",
+                      }}
+                    >
                       {k}
                     </td>
-                    <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text-secondary)' }}>
+                    <td
+                      style={{
+                        paddingLeft: 8,
+                        paddingRight: 8,
+                        paddingTop: 4,
+                        paddingBottom: 4,
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 10,
+                        color: "var(--color-text-secondary)",
+                      }}
+                    >
                       {project.spec.routing?.[k]}
                     </td>
-                    <td style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4 }}>
+                    <td
+                      style={{
+                        paddingLeft: 8,
+                        paddingRight: 8,
+                        paddingTop: 4,
+                        paddingBottom: 4,
+                      }}
+                    >
                       <RoutingPreviewCard
                         project={project.metadata.name}
                         taskKind={k}
@@ -314,18 +565,44 @@ function ProjectDetail(props: {
       )}
 
       <div>
-        <div style={{ marginBottom: 8, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
+        <div
+          style={{
+            marginBottom: 8,
+            fontSize: 12,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+            color: "var(--color-text-secondary)",
+          }}
+        >
           Routing decisions (live)
         </div>
         <RoutingJournalFeed project={project.metadata.name} />
       </div>
 
       <div>
-        <div style={{ marginBottom: 8, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)' }}>
+        <div
+          style={{
+            marginBottom: 8,
+            fontSize: 12,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+            color: "var(--color-text-secondary)",
+          }}
+        >
           Manifest
         </div>
         <pre
-          style={{ overflow: 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', padding: 12, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text)' }}
+          style={{
+            overflow: "auto",
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--color-border)",
+            borderColor: "var(--color-border)",
+            background: "var(--color-surface-2)",
+            padding: 12,
+            fontFamily: "var(--font-mono)",
+            fontSize: 10,
+            color: "var(--color-text)",
+          }}
           data-testid={`projects-manifest-${project.metadata.name}`}
         >
           {stringifyYaml(project)}
@@ -352,38 +629,97 @@ function ProjectRow(props: {
   const hasRag = !!project.spec.rag;
   return (
     <tr
-      style={{ borderTop: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)' }}
+      style={{
+        borderTop: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface-1)",
+      }}
       data-testid={`projects-row-${project.metadata.name}`}
     >
-      <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, color: 'var(--color-ok)', wordBreak: 'break-all' }}>
+      <td
+        style={{
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+          color: "var(--color-ok)",
+          wordBreak: "break-all",
+        }}
+      >
         <button
           type="button"
           onClick={onOpenDetail}
           data-testid={`projects-open-${project.metadata.name}`}
-          style={{ textAlign: 'left' }}
+          style={{ textAlign: "left" }}
         >
           {project.metadata.name}
         </button>
       </td>
-      <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 10, wordBreak: 'break-all' }}>
+      <td
+        style={{
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+          color: "var(--color-text-secondary)",
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+          wordBreak: "break-all",
+        }}
+      >
         {project.spec.path}
       </td>
-      <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 10 }}>
+      <td
+        style={{
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+          fontSize: 10,
+        }}
+      >
         {hasRag ? (
-          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}>
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              color: "var(--color-text)",
+            }}
+          >
             {project.spec.rag!.node}/{project.spec.rag!.collection}
           </span>
         ) : (
-          <span style={{ color: 'var(--color-text-secondary)' }}>
+          <span style={{ color: "var(--color-text-secondary)" }}>
             no rag block
           </span>
         )}
       </td>
-      <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8 }}>
+      <td
+        style={{
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+        }}
+      >
         <RoutingHeatmap routing={project.spec.routing} />
       </td>
-      <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, textAlign: 'right' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+      <td
+        style={{
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+          textAlign: "right",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: 4,
+          }}
+        >
           <Button
             type="button"
             variant="primary"
@@ -392,9 +728,13 @@ function ProjectRow(props: {
             disabled={indexMut.isPending || !hasRag}
             loading={indexMut.isPending}
             data-testid={`projects-index-${project.metadata.name}`}
-            title={hasRag ? 'Apply + run the auto-generated RAG pipeline' : 'No rag block declared; add one in the manifest to enable indexing'}
+            title={
+              hasRag
+                ? "Apply + run the auto-generated RAG pipeline"
+                : "No rag block declared; add one in the manifest to enable indexing"
+            }
           >
-            {indexMut.isPending ? '…' : 'Index'}
+            {indexMut.isPending ? "…" : "Index"}
           </Button>
           <Button
             type="button"
@@ -407,7 +747,9 @@ function ProjectRow(props: {
           </Button>
         </div>
         {indexError && (
-          <div style={{ marginTop: 4, fontSize: 10, color: 'var(--color-err)' }}>
+          <div
+            style={{ marginTop: 4, fontSize: 10, color: "var(--color-err)" }}
+          >
             {indexError}
           </div>
         )}
@@ -423,36 +765,41 @@ interface DetectedRepo {
 }
 
 /**
- * Quick-pick list of git repos the operator has under their default
- * project roots. Scans ~/DevStorage/repos + ~/repos + ~/Projects
- * (two levels deep) for directories containing `.git/`; click a
- * chip to fill the path field with that repo.
+ * Quick-pick list of git repos the operator has under their project
+ * scan roots. Scans the configured roots, or the default Mac
+ * developer layouts when the setting is empty, two levels deep for
+ * directories containing `.git/`; click a chip to fill the path
+ * field with that repo.
  *
- * Roots are hardcoded — adding an override input is a follow-up
- * (probably surfaces as a Settings entry). Default roots cover the
- * common Mac developer layouts; an empty scan just hides the
- * strip.
+ * Empty scan roots falls back to the built-in defaults; one bad root
+ * still leaves the rest of the scan intact.
  */
-function GitRepoSuggestions({ onPick }: { onPick: (r: DetectedRepo) => void }): React.JSX.Element | null {
+function GitRepoSuggestions({
+  onPick,
+}: {
+  onPick: (r: DetectedRepo) => void;
+}): React.JSX.Element | null {
+  const projectScanRootsText = useSettingsStore((s) => s.projectScanRootsText);
+  const [debouncedProjectScanRootsText, setDebouncedProjectScanRootsText] =
+    React.useState(projectScanRootsText);
   const [state, setState] = React.useState<
-    | { kind: 'loading' }
-    | { kind: 'ready'; repos: DetectedRepo[]; rootsShown: string[] }
-    | { kind: 'error'; message: string }
-  >({ kind: 'loading' });
+    | { kind: "loading" }
+    | { kind: "ready"; repos: DetectedRepo[]; rootsShown: string[] }
+    | { kind: "error"; message: string }
+  >({ kind: "loading" });
   const [expanded, setExpanded] = React.useState(false);
+
+  React.useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedProjectScanRootsText(projectScanRootsText);
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [projectScanRootsText]);
 
   React.useEffect(() => {
     let cancelled = false;
     const scan = async (): Promise<void> => {
-      const candidateRoots = [
-        '~/DevStorage/repos/personal',
-        '~/DevStorage/repos/work',
-        '~/DevStorage/repos',
-        '~/repos',
-        '~/Projects',
-        '~/projects',
-        '~/src',
-      ];
+      const candidateRoots = getProjectScanRoots(debouncedProjectScanRootsText);
       const allRepos: DetectedRepo[] = [];
       const rootsShown: string[] = [];
       for (const root of candidateRoots) {
@@ -469,7 +816,7 @@ function GitRepoSuggestions({ onPick }: { onPick: (r: DetectedRepo) => void }): 
           }
         } catch (err) {
           // Log + keep scanning — one missing root shouldn't stop the rest.
-          if (!cancelled) console.warn('scan failed:', root, err);
+          if (!cancelled) console.warn("scan failed:", root, err);
         }
       }
       if (cancelled) return;
@@ -479,34 +826,52 @@ function GitRepoSuggestions({ onPick }: { onPick: (r: DetectedRepo) => void }): 
         const prior = seen.get(r.path);
         if (!prior || prior.mtimeMs < r.mtimeMs) seen.set(r.path, r);
       }
-      const repos = Array.from(seen.values()).sort((a, b) => b.mtimeMs - a.mtimeMs);
-      setState({ kind: 'ready', repos, rootsShown });
+      const repos = Array.from(seen.values()).sort(
+        (a, b) => b.mtimeMs - a.mtimeMs,
+      );
+      setState({ kind: "ready", repos, rootsShown });
     };
     void scan();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [debouncedProjectScanRootsText]);
 
-  if (state.kind === 'loading') {
+  if (state.kind === "loading") {
     return (
-      <div style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
+      <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
         Scanning for git repos\u2026
       </div>
     );
   }
-  if (state.kind === 'error') {
+  if (state.kind === "error") {
     return null;
   }
   if (state.repos.length === 0) return null;
   const visible = expanded ? state.repos : state.repos.slice(0, 8);
   return (
-    <div >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 8,
+          fontSize: 10,
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          color: "var(--color-text-secondary)",
+        }}
+      >
         <span>Detected git repos</span>
-        <span style={{ opacity: 0.6 }}>({state.repos.length} across {state.rootsShown.length} root{state.rootsShown.length === 1 ? '' : 's'})</span>
+        <span style={{ opacity: 0.6 }}>
+          ({state.repos.length} across {state.rootsShown.length} root
+          {state.rootsShown.length === 1 ? "" : "s"})
+        </span>
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }} data-testid="projects-git-suggestions">
+      <div
+        style={{ display: "flex", flexWrap: "wrap", gap: 4 }}
+        data-testid="projects-git-suggestions"
+      >
         {visible.map((repo) => (
           <Button
             key={repo.path}
@@ -540,39 +905,43 @@ function GitRepoSuggestions({ onPick }: { onPick: (r: DetectedRepo) => void }): 
  * one-line "add another" at the top of the table; default mode
  * renders as a full-width wizard in the empty state.
  */
-function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.Element {
+function CreateProjectForm({
+  compact,
+}: { compact?: boolean } = {}): React.JSX.Element {
   const utils = trpc.useUtils();
   const nodesQuery = trpc.nodeList.useQuery();
   const apply = trpc.projectApply.useMutation({
     onSuccess: async () => {
       await utils.projectList.invalidate();
-      setName('');
-      setPath('');
-      setStatus({ kind: 'ok', message: 'project created' });
+      setName("");
+      setPath("");
+      setStatus({ kind: "ok", message: "project created" });
     },
-    onError: (err) => setStatus({ kind: 'error', message: err.message }),
+    onError: (err) => setStatus({ kind: "error", message: err.message }),
   });
-  const [name, setName] = React.useState('');
-  const [path, setPath] = React.useState('');
-  const [purpose, setPurpose] = React.useState('');
-  const [ragNode, setRagNode] = React.useState<string>('');
-  const [ragCollection, setRagCollection] = React.useState('');
+  const [name, setName] = React.useState("");
+  const [path, setPath] = React.useState("");
+  const [purpose, setPurpose] = React.useState("");
+  const [ragNode, setRagNode] = React.useState<string>("");
+  const [ragCollection, setRagCollection] = React.useState("");
   const [status, setStatus] = React.useState<
-    | { kind: 'idle' }
-    | { kind: 'ok'; message: string }
-    | { kind: 'error'; message: string }
-  >({ kind: 'idle' });
+    | { kind: "idle" }
+    | { kind: "ok"; message: string }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
 
-  const ragNodes = (nodesQuery.data?.nodes ?? []).filter((n) => n.effectiveKind === 'rag');
+  const ragNodes = (nodesQuery.data?.nodes ?? []).filter(
+    (n) => n.effectiveKind === "rag",
+  );
   const canSubmit = name.trim().length > 0 && path.trim().length > 0;
 
   function onSubmit(e: React.FormEvent): void {
     e.preventDefault();
     if (!canSubmit) return;
-    setStatus({ kind: 'idle' });
+    setStatus({ kind: "idle" });
     const manifest: Record<string, unknown> = {
-      apiVersion: 'llamactl/v1',
-      kind: 'Project',
+      apiVersion: "llamactl/v1",
+      kind: "Project",
       metadata: { name: name.trim() },
       spec: {
         path: path.trim(),
@@ -595,7 +964,17 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
     <form
       onSubmit={onSubmit}
       data-testid="projects-create-form"
-      style={{ ...( compact ? { borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 12 } : {  } ) }}
+      style={{
+        ...(compact
+          ? {
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface-1)",
+              padding: 12,
+            }
+          : {}),
+      }}
     >
       {!compact && (
         <GitRepoSuggestions
@@ -605,7 +984,18 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
           }}
         />
       )}
-      <div style={{ ...( compact ? { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 8 } : { display: 'grid', gap: 12 } ) }}>
+      <div
+        style={{
+          ...(compact
+            ? {
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "flex-end",
+                gap: 8,
+              }
+            : { display: "grid", gap: 12 }),
+        }}
+      >
         <Field label="Name" required>
           <input
             type="text"
@@ -614,11 +1004,24 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
             placeholder="novaflow"
             data-testid="projects-create-name"
             required
-            style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text)' }}
+            style={{
+              width: "100%",
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface-2)",
+              paddingLeft: 8,
+              paddingRight: 8,
+              paddingTop: 4,
+              paddingBottom: 4,
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+              color: "var(--color-text)",
+            }}
           />
         </Field>
         <Field label="Path" required>
-          <div style={{ display: 'flex', gap: 4 }}>
+          <div style={{ display: "flex", gap: 4 }}>
             <input
               type="text"
               value={path}
@@ -626,7 +1029,20 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
               placeholder="/Users/you/repos/novaflow"
               data-testid="projects-create-path"
               required
-              style={{ flex: 1, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text)' }}
+              style={{
+                flex: 1,
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-2)",
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 4,
+                paddingBottom: 4,
+                fontFamily: "var(--font-mono)",
+                fontSize: 12,
+                color: "var(--color-text)",
+              }}
             />
             <Button
               type="button"
@@ -634,13 +1050,14 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
               size="sm"
               onClick={async () => {
                 const picked = await trpcUIClient.uiPickDirectory.mutate({
-                  title: 'Pick a project directory',
+                  title: "Pick a project directory",
                   defaultPath: path || undefined,
                 });
                 if (picked) {
                   setPath(picked);
                   if (!name.trim()) {
-                    const basename = picked.split('/').filter(Boolean).pop() ?? '';
+                    const basename =
+                      picked.split("/").filter(Boolean).pop() ?? "";
                     setName(basename);
                   }
                 }
@@ -660,18 +1077,44 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
                 value={purpose}
                 onChange={(e) => setPurpose(e.target.value)}
                 placeholder="e.g. at-home diagnostic services platform"
-                style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontSize: 12, color: 'var(--color-text)' }}
+                style={{
+                  width: "100%",
+                  borderRadius: "var(--r-md)",
+                  border: "1px solid var(--color-border)",
+                  borderColor: "var(--color-border)",
+                  background: "var(--color-surface-2)",
+                  paddingLeft: 8,
+                  paddingRight: 8,
+                  paddingTop: 4,
+                  paddingBottom: 4,
+                  fontSize: 12,
+                  color: "var(--color-text)",
+                }}
               />
             </Field>
             <Field label="RAG node (optional)">
               <select
                 value={ragNode}
                 onChange={(e) => setRagNode(e.target.value)}
-                style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontSize: 12, color: 'var(--color-text)' }}
+                style={{
+                  width: "100%",
+                  borderRadius: "var(--r-md)",
+                  border: "1px solid var(--color-border)",
+                  borderColor: "var(--color-border)",
+                  background: "var(--color-surface-2)",
+                  paddingLeft: 8,
+                  paddingRight: 8,
+                  paddingTop: 4,
+                  paddingBottom: 4,
+                  fontSize: 12,
+                  color: "var(--color-text)",
+                }}
               >
                 <option value="">— skip RAG binding —</option>
                 {ragNodes.map((n) => (
-                  <option key={n.name} value={n.name}>{n.name}</option>
+                  <option key={n.name} value={n.name}>
+                    {n.name}
+                  </option>
                 ))}
               </select>
             </Field>
@@ -682,13 +1125,37 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
                   value={ragCollection}
                   onChange={(e) => setRagCollection(e.target.value)}
                   placeholder="novaflow_docs"
-                  style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text)' }}
+                  style={{
+                    width: "100%",
+                    borderRadius: "var(--r-md)",
+                    border: "1px solid var(--color-border)",
+                    borderColor: "var(--color-border)",
+                    background: "var(--color-surface-2)",
+                    paddingLeft: 8,
+                    paddingRight: 8,
+                    paddingTop: 4,
+                    paddingBottom: 4,
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 12,
+                    color: "var(--color-text)",
+                  }}
                 />
               </Field>
             )}
           </>
         )}
-        <div style={{ ...( compact ? {  } : { gridColumn: 'span 2 / span 2', display: 'flex', alignItems: 'center', gap: 8 } ) }}>
+        <div
+          style={{
+            ...(compact
+              ? {}
+              : {
+                  gridColumn: "span 2 / span 2",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }),
+          }}
+        >
           <Button
             type="submit"
             variant="primary"
@@ -697,13 +1164,17 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
             loading={apply.isPending}
             data-testid="projects-create-submit"
           >
-            {apply.isPending ? 'Creating…' : compact ? 'Add' : 'Create project'}
+            {apply.isPending ? "Creating…" : compact ? "Add" : "Create project"}
           </Button>
-          {status.kind === 'error' && (
-            <span style={{ fontSize: 11, color: 'var(--color-err)' }}>{status.message}</span>
+          {status.kind === "error" && (
+            <span style={{ fontSize: 11, color: "var(--color-err)" }}>
+              {status.message}
+            </span>
           )}
-          {status.kind === 'ok' && (
-            <span style={{ fontSize: 11, color: 'var(--color-ok)' }}>✓ {status.message}</span>
+          {status.kind === "ok" && (
+            <span style={{ fontSize: 11, color: "var(--color-ok)" }}>
+              ✓ {status.message}
+            </span>
           )}
         </div>
       </div>
@@ -711,12 +1182,27 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
   );
 }
 
-function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }): React.JSX.Element {
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}): React.JSX.Element {
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
+    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span
+        style={{
+          fontSize: 10,
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          color: "var(--color-text-secondary)",
+        }}
+      >
         {label}
-        {required && <span style={{ color: 'var(--color-err)' }}>*</span>}
+        {required && <span style={{ color: "var(--color-err)" }}>*</span>}
       </span>
       {children}
     </label>
@@ -730,36 +1216,91 @@ export default function Projects(): React.JSX.Element {
   const [selected, setSelected] = useState<string | null>(null);
 
   const sorted = useMemo(
-    () => [...rows].sort((a, b) => a.metadata.name.localeCompare(b.metadata.name)),
+    () =>
+      [...rows].sort((a, b) => a.metadata.name.localeCompare(b.metadata.name)),
     [rows],
   );
   const selectedProject =
-    selected !== null ? sorted.find((p) => p.metadata.name === selected) ?? null : null;
+    selected !== null
+      ? (sorted.find((p) => p.metadata.name === selected) ?? null)
+      : null;
 
   return (
-    <div style={{ height: '100%', overflow: 'auto', padding: 24 }} data-testid="projects-root">
-      <div style={{ marginBottom: 4, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
+    <div
+      style={{ height: "100%", overflow: "auto", padding: 24 }}
+      data-testid="projects-root"
+    >
+      <div
+        style={{
+          marginBottom: 4,
+          fontSize: 12,
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          color: "var(--color-text-secondary)",
+        }}
+      >
         Projects
       </div>
-      <h1 style={{ marginBottom: 8, fontSize: 24, fontWeight: 600, color: 'var(--color-text)' }}>
+      <h1
+        style={{
+          marginBottom: 8,
+          fontSize: 24,
+          fontWeight: 600,
+          color: "var(--color-text)",
+        }}
+      >
         Local projects
       </h1>
-      <p style={{ marginBottom: 24, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-        Registered project directories with per-task routing policies.
-        Register via{' '}
-        <span style={{ fontFamily: 'var(--font-mono)' }}>llamactl project add &lt;name&gt; --path &lt;abs&gt;</span>;
-        indexed docs land in the declared rag collection; routing
-        decisions for <span style={{ fontFamily: 'var(--font-mono)' }}>project:&lt;name&gt;/&lt;taskKind&gt;</span>{' '}
+      <p
+        style={{
+          marginBottom: 24,
+          fontSize: 12,
+          color: "var(--color-text-secondary)",
+        }}
+      >
+        Registered project directories with per-task routing policies. Register
+        via{" "}
+        <span style={{ fontFamily: "var(--font-mono)" }}>
+          llamactl project add &lt;name&gt; --path &lt;abs&gt;
+        </span>
+        ; indexed docs land in the declared rag collection; routing decisions
+        for{" "}
+        <span style={{ fontFamily: "var(--font-mono)" }}>
+          project:&lt;name&gt;/&lt;taskKind&gt;
+        </span>{" "}
         chat calls stream into the detail view.
       </p>
 
       {list.isLoading && (
-        <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 16, fontSize: 14, color: 'var(--color-text-secondary)' }}>
+        <div
+          style={{
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--color-border)",
+            borderColor: "var(--color-border)",
+            background: "var(--color-surface-1)",
+            padding: 16,
+            fontSize: 14,
+            color: "var(--color-text-secondary)",
+          }}
+        >
           Loading projects…
         </div>
       )}
       {list.error && (
-        <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-err)', background: 'var(--color-surface-1)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 14, color: 'var(--color-err)' }}>
+        <div
+          style={{
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--color-border)",
+            borderColor: "var(--color-err)",
+            background: "var(--color-surface-1)",
+            paddingLeft: 12,
+            paddingRight: 12,
+            paddingTop: 8,
+            paddingBottom: 8,
+            fontSize: 14,
+            color: "var(--color-err)",
+          }}
+        >
           {list.error.message}
         </div>
       )}
@@ -795,17 +1336,80 @@ export default function Projects(): React.JSX.Element {
       )}
       {sorted.length > 0 && (
         <div
-          style={{ overflow: 'hidden', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)' }}
+          style={{
+            overflow: "hidden",
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--color-border)",
+            borderColor: "var(--color-border)",
+          }}
           data-testid="projects-table"
         >
-          <table style={{ width: '100%', fontSize: 14 }}>
-            <thead style={{ background: 'var(--color-surface-1)', textAlign: 'left', color: 'var(--color-text-secondary)' }}>
+          <table style={{ width: "100%", fontSize: 14 }}>
+            <thead
+              style={{
+                background: "var(--color-surface-1)",
+                textAlign: "left",
+                color: "var(--color-text-secondary)",
+              }}
+            >
               <tr>
-                <th style={{ width: 192, paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500 }}>Name</th>
-                <th style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500 }}>Path</th>
-                <th style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500 }}>RAG</th>
-                <th style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500 }}>Routing policy</th>
-                <th style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500, textAlign: 'right' }}>Actions</th>
+                <th
+                  style={{
+                    width: 192,
+                    paddingLeft: 12,
+                    paddingRight: 12,
+                    paddingTop: 8,
+                    paddingBottom: 8,
+                    fontWeight: 500,
+                  }}
+                >
+                  Name
+                </th>
+                <th
+                  style={{
+                    paddingLeft: 12,
+                    paddingRight: 12,
+                    paddingTop: 8,
+                    paddingBottom: 8,
+                    fontWeight: 500,
+                  }}
+                >
+                  Path
+                </th>
+                <th
+                  style={{
+                    paddingLeft: 12,
+                    paddingRight: 12,
+                    paddingTop: 8,
+                    paddingBottom: 8,
+                    fontWeight: 500,
+                  }}
+                >
+                  RAG
+                </th>
+                <th
+                  style={{
+                    paddingLeft: 12,
+                    paddingRight: 12,
+                    paddingTop: 8,
+                    paddingBottom: 8,
+                    fontWeight: 500,
+                  }}
+                >
+                  Routing policy
+                </th>
+                <th
+                  style={{
+                    paddingLeft: 12,
+                    paddingRight: 12,
+                    paddingTop: 8,
+                    paddingBottom: 8,
+                    fontWeight: 500,
+                    textAlign: "right",
+                  }}
+                >
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -822,7 +1426,7 @@ export default function Projects(): React.JSX.Element {
       )}
 
       {selectedProject && (
-        <div >
+        <div>
           <ProjectDetail
             project={selectedProject}
             onClose={() => setSelected(null)}
