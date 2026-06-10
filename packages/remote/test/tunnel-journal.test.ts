@@ -165,8 +165,7 @@ describe("appendTunnelJournal broken-path handling (unit)", () => {
     // Swap stderr.write for the scope of this test. Tests must not
     // pollute stderr in the test runner output, AND we need to count
     // writes.
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
-    (process.stderr as any).write = (chunk: string | Uint8Array): boolean => {
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
       captured.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
       return true;
     };
@@ -197,8 +196,7 @@ describe("appendTunnelJournal broken-path handling (unit)", () => {
         expect(captured.join("")).toContain("entries dropped");
       }
     } finally {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
-      (process.stderr as any).write = origWrite;
+      process.stderr.write = origWrite;
     }
   });
 });

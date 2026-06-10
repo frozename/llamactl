@@ -12,6 +12,37 @@ import { createNodeClient, type TunnelSendFn } from "../src/client/node-client.j
  * the agent-side handler.
  */
 
+/**
+ * Structural model of the path-agnostic tunnel proxy. The recursive
+ * Proxy behind `createNodeClient(+tunnelSend)` accepts ANY dotted
+ * path and only materializes `.query` / `.mutate` / `.subscribe`
+ * leaves — these tests probe arbitrary paths, so the proxy's runtime
+ * contract (not AppRouter) is the truthful type surface. Listed below
+ * are exactly the dotted paths this file exercises.
+ */
+type TunnelProxyLeaf = {
+  query: (input?: unknown) => Promise<unknown>;
+  mutate: (input?: unknown) => Promise<unknown>;
+  subscribe: (
+    input: unknown,
+    handlers: {
+      onData: (e: unknown) => void;
+      onError: (err: unknown) => void;
+      onComplete: () => void;
+    },
+  ) => { unsubscribe: () => void };
+};
+type TunnelProxy = {
+  catalog: { list: TunnelProxyLeaf; promote: TunnelProxyLeaf };
+  anything: TunnelProxyLeaf;
+  deeply: { nested: { procedure: TunnelProxyLeaf } };
+  pullFile: TunnelProxyLeaf;
+};
+
+function tunnelProxy(client: unknown): TunnelProxy {
+  return client as TunnelProxy;
+}
+
 function baseConfig(overrides: Partial<Config["clusters"][number]["nodes"][number]> = {}): Config {
   return {
     apiVersion: "llamactl/v1",
@@ -52,9 +83,7 @@ describe("proxyFromTunnel — via createNodeClient", () => {
       nodeName: "gpu1",
       tunnelSend: send,
     });
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
-    const catalog = (client as any).catalog;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
+    const catalog = tunnelProxy(client).catalog;
     const result = await catalog.list.query({ classFilter: "all" });
     expect(result).toEqual([{ rel: "a" }, { rel: "b" }]);
     expect(sent).toHaveLength(1);
@@ -76,8 +105,7 @@ describe("proxyFromTunnel — via createNodeClient", () => {
       nodeName: "gpu1",
       tunnelSend: send,
     });
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
-    const result = await (client as any).catalog.promote.mutate({ rel: "foo.gguf" });
+    const result = await tunnelProxy(client).catalog.promote.mutate({ rel: "foo.gguf" });
     expect(result).toEqual({ ok: true });
     expect(sent[0]!.params).toEqual({
       type: "mutation",
@@ -96,13 +124,11 @@ describe("proxyFromTunnel — via createNodeClient", () => {
       tunnelSend: send,
     });
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
-      await (client as any).anything.query(null);
+      await tunnelProxy(client).anything.query(null);
       throw new Error("expected throw");
     } catch (err) {
       expect((err as Error).message).toBe("simulated failure");
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
-      expect((err as any).code).toBe("handler-threw");
+      expect((err as Error & { code?: string }).code).toBe("handler-threw");
     }
   });
 
@@ -117,8 +143,7 @@ describe("proxyFromTunnel — via createNodeClient", () => {
       nodeName: "gpu1",
       tunnelSend: send,
     });
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
-    await (client as any).deeply.nested.procedure.query({ x: 1 });
+    await tunnelProxy(client).deeply.nested.procedure.query({ x: 1 });
     expect(sent).toEqual(["deeply.nested.procedure"]);
   });
 
@@ -130,8 +155,7 @@ describe("proxyFromTunnel — via createNodeClient", () => {
       tunnelSend: send,
     });
     expect(() => {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
-      (client as any).pullFile.subscribe(
+      tunnelProxy(client).pullFile.subscribe(
         { repo: "r", file: "f" },
         { onData: () => undefined, onError: () => undefined, onComplete: () => undefined },
       );
@@ -163,13 +187,11 @@ describe("proxyFromTunnel — via createNodeClient", () => {
       tunnelSend: send,
       tunnelSubscribe,
     });
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
-    const handle = (client as any).pullFile.subscribe(
+    const handle = tunnelProxy(client).pullFile.subscribe(
       { repo: "a", file: "b" },
       { onData: () => undefined, onError: () => undefined, onComplete: () => undefined },
     );
     expect(calls).toEqual([{ method: "pullFile", input: { repo: "a", file: "b" } }]);
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
     expect(typeof handle.unsubscribe).toBe("function");
   });
 

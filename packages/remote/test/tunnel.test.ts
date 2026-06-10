@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import type { TunnelSendFn } from "../src/client/node-client.js";
+
 import { hashToken } from "../src/server/auth.js";
 import {
   createTunnelClient,
@@ -268,9 +270,7 @@ describe("end-to-end I.3.3: router bridge + tunneled client over real ws", () =>
     await client.start();
 
     // Central-side NodeClient that routes via the tunnel server's send.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const tunnelSend: any = (req: { id: string; method: string; params: unknown }) =>
-      srv!.server.send("gpu-routed", req);
+    const tunnelSend: TunnelSendFn = (req) => srv!.server.send("gpu-routed", req);
     const nodeClient = createNodeClient(
       {
         apiVersion: "llamactl/v1",
@@ -292,12 +292,16 @@ describe("end-to-end I.3.3: router bridge + tunneled client over real ws", () =>
         ],
         users: [{ name: "me", token: "t" }],
       },
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- test uses dynamic fixture/proxy data.
       { nodeName: "gpu-routed", tunnelSend },
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
-    const result = await (nodeClient as any).catalog.list.query({ classFilter: "vision" });
+    // The tunnel-routed NodeClient is a path-agnostic recursive Proxy;
+    // the remote side here is `fakeCaller`, so its surface — not
+    // AppRouter's — is the truthful type of this client.
+    const tunneledClient = nodeClient as unknown as {
+      catalog: { list: { query: (input: { classFilter?: string }) => Promise<unknown> } };
+    };
+    const result = await tunneledClient.catalog.list.query({ classFilter: "vision" });
     expect(result).toEqual([{ rel: "v1" }]);
     client.stop();
   });
@@ -538,30 +542,25 @@ describe("reconnect + heartbeat (I.3.2)", () => {
     // message (no pongs). Client should trip heartbeat timeout,
     // close with 4000, and reconnect.
     let acceptedHellos = 0;
-    const bun = Bun.serve({
+    const bun = Bun.serve<{ hello: boolean }>({
       port: 0,
       hostname: "127.0.0.1",
       fetch(req, server) {
         if (new URL(req.url).pathname !== "/tunnel") return new Response("nf", { status: 404 });
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
-        const ok = (server as any).upgrade(req, { data: { hello: false } });
+        const ok = server.upgrade(req, { data: { hello: false } });
         return ok ? undefined : new Response("no", { status: 400 });
       },
       websocket: {
         open() {
           /* wait for hello */
         },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        message(ws: any, data: string | Buffer) {
+        message(ws, data) {
           const raw = typeof data === "string" ? data : data.toString("utf8");
           const msg = parseTunnelMessage(raw);
           if (!msg) return;
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
           if (msg.type === "hello" && !ws.data.hello) {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
             ws.data.hello = true;
             acceptedHellos++;
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call -- test uses dynamic fixture/proxy data.
             ws.send(
               encodeTunnelMessage({ type: "hello-ack", serverTime: new Date().toISOString() }),
             );

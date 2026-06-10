@@ -50,8 +50,8 @@ import { defaultWorkloadsDir, listAnyWorkloadsForAdmission, listWorkloads } from
  */
 
 type SubscribeCallbacks = {
-  onData: (e: any) => void;
-  onError: (err: any) => void;
+  onData: (e: unknown) => void;
+  onError: (err: unknown) => void;
   onComplete: () => void;
 };
 type Unsubscribable = { unsubscribe?: () => void };
