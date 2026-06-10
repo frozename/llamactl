@@ -81,6 +81,31 @@ function seedNodeBudgetFixtures(): void {
   );
 }
 
+function seedModelRunFixture(): void {
+  const workloadsDir = join(runtimeDir, 'workloads');
+  saveWorkload(
+    {
+      apiVersion: 'llamactl/v1',
+      kind: 'ModelRun',
+      metadata: { name: 'gemma4-run-a', labels: {}, annotations: {} },
+      spec: {
+        node: 'local',
+        enabled: true,
+        target: { kind: 'rel', value: 'acme/model-run.gguf' },
+        extraArgs: [],
+        workers: [],
+        restartPolicy: 'Always',
+        resources: { expectedMemoryGiB: 12 },
+        endpoint: { host: '127.0.0.1', port: 8183 },
+        timeoutSeconds: 60,
+        gateway: false,
+        allowExternalBind: false,
+      },
+    },
+    workloadsDir,
+  );
+}
+
 function seedModelHostFixture(): void {
   const workloadsDir = join(runtimeDir, 'workloads');
   saveModelHost(
@@ -386,7 +411,48 @@ describe('@llamactl/mcp read surface', () => {
     expect(parsed.found).toBe(true);
     expect(parsed.node).toBe('local');
     expect(parsed.rel).toBe('acme/model.gguf');
+    expect(parsed.kind).toBe('ModelHost');
     expect(parsed.message).toContain('mlx-host-a');
+  });
+
+  test('llamactl.workload.delete dry-run resolves a ModelRun manifest', async () => {
+    seedModelRunFixture();
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: 'llamactl.workload.delete',
+      arguments: { name: 'gemma4-run-a', dryRun: true },
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      dryRun: boolean;
+      found: boolean;
+      kind: 'ModelRun' | 'ModelHost';
+      node: string | null;
+      rel: string | null;
+      message: string;
+    };
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.found).toBe(true);
+    expect(parsed.kind).toBe('ModelRun');
+    expect(parsed.node).toBe('local');
+    expect(parsed.rel).toBe('acme/model-run.gguf');
+    expect(parsed.message).toContain('gemma4-run-a');
+  });
+
+  test('llamactl.workload.delete wet-run reports the deleted manifest kind', async () => {
+    seedModelHostFixture();
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: 'llamactl.workload.delete',
+      arguments: { name: 'mlx-host-a', dryRun: false },
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      ok: boolean;
+      removed: boolean;
+      manifest: { kind: 'ModelRun' | 'ModelHost' } | null;
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.removed).toBe(true);
+    expect(parsed.manifest?.kind).toBe('ModelHost');
   });
 });
 

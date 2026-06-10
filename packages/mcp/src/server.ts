@@ -347,7 +347,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
     {
       title: 'Remove a workload manifest',
       description:
-        'Delete the persisted workload manifest under ~/.llamactl/workloads/ (ModelRun or ModelHost). Does NOT stop the server — that\'s a separate imperative operation. Dry-run reports what the wet-run would have removed.',
+        'Delete the persisted workload manifest from the configured workloads directory (LLAMACTL_WORKLOADS_DIR, else $DEV_STORAGE/workloads, else ~/.llamactl/workloads). Does NOT stop the server — that\'s a separate imperative operation. Dry-run reports what the wet-run would have removed.',
       inputSchema: {
         name: z.string().min(1).describe('metadata.name of the manifest'),
         dryRun: z.boolean().default(false),
@@ -357,15 +357,17 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const { name, dryRun } = input;
       const manifests = workloadStore.listAnyWorkloadsForAdmission();
       const match = manifests.find((m) => m.metadata.name === name);
+      const manifest = match ? workloadStore.loadWorkloadByNameAny(name) : null;
       if (dryRun) {
         appendAudit({ server: SERVER_SLUG, tool: 'llamactl.workload.delete', input, dryRun: true });
         return toTextContent({
           dryRun: true,
           found: !!match,
+          kind: manifest?.kind ?? null,
           node: match?.spec.node ?? null,
           rel: match?.spec.target.value ?? null,
           message: match
-            ? `would remove manifest ${name} (node=${match.spec.node}, rel=${match.spec.target.value})`
+            ? `would remove manifest ${name} (kind=${manifest?.kind ?? 'unknown'}, node=${match.spec.node}, rel=${match.spec.target.value})`
             : `no manifest named ${name}`,
         });
       }
@@ -377,7 +379,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
         dryRun: false,
         result: { removed, found: !!match },
       });
-      return toTextContent({ ok: true, removed, manifest: match ?? null });
+      return toTextContent({ ok: true, removed, manifest });
     },
   );
 
