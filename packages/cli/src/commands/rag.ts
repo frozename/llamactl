@@ -333,7 +333,7 @@ async function runAsk(args: string[]): Promise<number> {
   // --- Step 3: chat completion -----------------------------------------
   let chat: ChatResponseShape;
   try {
-    chat = (await client.chatComplete.mutate({
+    chat = await client.chatComplete.mutate({
       node: opts.via,
       request: {
         model: opts.model,
@@ -344,7 +344,7 @@ async function runAsk(args: string[]): Promise<number> {
         max_tokens: opts.maxTokens,
         temperature: opts.temperature,
       },
-    })) as ChatResponseShape;
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`rag ask: chat completion failed via '${opts.via}': ${msg}\n`);

@@ -11,9 +11,14 @@ interface JsonRpcResponse {
   error?: { code: number; message: string; data?: unknown };
 }
 
+// Resolve callback for a pending JSON-RPC request. Derived from the Promise
+// executor type so no named function-type parameter is introduced (the base
+// no-unused-vars rule, active for tests/, flags such names as unused).
+type PendingResolve = Parameters<ConstructorParameters<typeof Promise<JsonRpcResponse>>[0]>[0];
+
 class McpClient {
   private seq = 1;
-  private pending = new Map<number, (res: JsonRpcResponse) => void>();
+  private pending = new Map<number, PendingResolve>();
   private readonly proc: ChildProcessByStdio<Writable, Readable, null>;
   constructor(proc: ChildProcessByStdio<Writable, Readable, null>) {
     this.proc = proc;
@@ -27,7 +32,9 @@ class McpClient {
           this.pending.delete(frame.id as number);
           cb(frame);
         }
-      } catch {}
+      } catch {
+        /* skip */
+      }
     });
   }
   async call(tool: string, args: unknown, timeoutMs = 30_000): Promise<unknown> {
@@ -81,21 +88,23 @@ class McpClient {
   kill(): void {
     try {
       this.proc.kill();
-    } catch {}
+    } catch {
+      /* ignore */
+    }
   }
 }
 
 interface DriverArgs {
   executable: string;
   execArgs: string[];
-  env: NodeJS.ProcessEnv;
+  env: typeof process.env;
   userDataDir?: string;
 }
 
 function parseArgs(argv: string[]): DriverArgs {
   let executable: string | undefined;
   let execArgs: string[] = [];
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: typeof process.env = { ...process.env };
   let userDataDir: string | undefined;
   for (const a of argv.slice(2)) {
     if (a.startsWith("--executable=")) executable = a.slice("--executable=".length);
@@ -129,7 +138,7 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv);
   const here = dirname(fileURLToPath(import.meta.url));
   const serverScript = resolveServerScript(here);
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: typeof process.env = { ...process.env };
   env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? "warn";
   const nodeBin = process.env.MCP_NODE ?? "node";
   const proc = spawn(nodeBin, [serverScript], { env, stdio: ["pipe", "pipe", "inherit"] });

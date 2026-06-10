@@ -31,7 +31,7 @@ const MAX_BUFFER_BYTES = 256 * 1024 * 1024;
 const MISSING_RULE_KEY = "(no-rule-id)";
 
 function formatDate(date: Date): string {
-  const year = date.getFullYear();
+  const year = String(date.getFullYear());
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
@@ -56,13 +56,13 @@ const eslint = spawnSync(ESLINT_BIN, [".", "--format", "json"], {
 
 if (eslint.status !== 0 && eslint.status !== 1) {
   throw new Error(
-    `eslint exited unexpectedly (status=${eslint.status}, signal=${eslint.signal}):\n${eslint.stderr}`,
+    `eslint exited unexpectedly (status=${String(eslint.status)}, signal=${String(eslint.signal)}):\n${eslint.stderr}`,
   );
 }
 
 if (typeof eslint.stdout !== "string" || eslint.stdout.trim().length === 0) {
   throw new Error(
-    `eslint did not produce JSON on stdout (status=${eslint.status}):\n${eslint.stderr}`,
+    `eslint did not produce JSON on stdout (status=${String(eslint.status)}):\n${eslint.stderr}`,
   );
 }
 

@@ -41,9 +41,14 @@ interface JsonRpcResponse {
   error?: { code: number; message: string; data?: unknown };
 }
 
+// Resolve callback for a pending JSON-RPC request. Derived from the Promise
+// executor type so no named function-type parameter is introduced (the base
+// no-unused-vars rule, active for tests/, flags such names as unused).
+type PendingResolve = Parameters<ConstructorParameters<typeof Promise<JsonRpcResponse>>[0]>[0];
+
 class McpClient {
   private seq = 1;
-  private pending = new Map<number, (res: JsonRpcResponse) => void>();
+  private pending = new Map<number, PendingResolve>();
   private readonly proc: ChildProcessByStdio<Writable, Readable, null>;
   constructor(proc: ChildProcessByStdio<Writable, Readable, null>) {
     this.proc = proc;
@@ -168,6 +173,7 @@ function resolveServerScript(here: string): string {
 
 async function waitUntil<T>(
   fn: () => Promise<T>,
+  // eslint-disable-next-line no-unused-vars -- 'v' only names a function-type parameter; the base rule (active for tests/) cannot see type-position usage.
   predicate: (v: T) => boolean,
   timeoutMs: number,
   pollMs = 500,
@@ -205,7 +211,7 @@ async function main(): Promise<void> {
   const pipelineName = `wizard-smoke-${ts}`;
   const collectionName = `wizard_smoke_${ts}`;
 
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: typeof process.env = { ...process.env };
   env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? "warn";
   const nodeBin = process.env.MCP_NODE ?? "node";
   const proc = spawn(nodeBin, [serverScript], { env, stdio: ["pipe", "pipe", "inherit"] });

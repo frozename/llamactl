@@ -28,9 +28,14 @@ interface JsonRpcResponse {
   error?: { code: number; message: string };
 }
 
+// Resolve callback for a pending JSON-RPC request. Derived from the Promise
+// executor type so no named function-type parameter is introduced (the base
+// no-unused-vars rule, active for tests/, flags such names as unused).
+type PendingResolve = Parameters<ConstructorParameters<typeof Promise<JsonRpcResponse>>[0]>[0];
+
 class McpClient {
   private seq = 1;
-  private pending = new Map<number, (res: JsonRpcResponse) => void>();
+  private pending = new Map<number, PendingResolve>();
   private readonly proc: ChildProcessByStdio<Writable, Readable, null>;
   constructor(proc: ChildProcessByStdio<Writable, Readable, null>) {
     this.proc = proc;
@@ -250,7 +255,7 @@ async function main(): Promise<void> {
   const here = dirname(fileURLToPath(import.meta.url));
   const serverScript = resolveServerScript(here);
 
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: typeof process.env = { ...process.env };
   env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? "warn";
   const nodeBin = process.env.MCP_NODE ?? "node";
   const proc = spawn(nodeBin, [serverScript], { env, stdio: ["pipe", "pipe", "inherit"] });

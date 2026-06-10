@@ -81,9 +81,14 @@ function parseArgs(argv: string[]): Args {
   return out;
 }
 
+// Resolve callback for a pending JSON-RPC request. Derived from the Promise
+// executor type so no named function-type parameter is introduced (the base
+// no-unused-vars rule, active for tests/, flags such names as unused).
+type PendingResolve = Parameters<ConstructorParameters<typeof Promise<JsonRpcResponse>>[0]>[0];
+
 class McpClient {
   private seq = 1;
-  private pending = new Map<number | string, (res: JsonRpcResponse) => void>();
+  private pending = new Map<number | string, PendingResolve>();
   constructor(private readonly proc: ChildProcessByStdio<Writable, Readable, null>) {
     const rl = createInterface({ input: proc.stdout });
     rl.on("line", (line) => {
@@ -150,7 +155,7 @@ async function main(): Promise<void> {
     );
     process.exit(1);
   }
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: typeof process.env = { ...process.env };
   if (args.allowlist) env.ELECTRON_MCP_EXECUTABLE_ALLOWLIST = args.allowlist;
   // Speed up the internal Playwright launch timeout so flakes fail fast.
   env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? "info";

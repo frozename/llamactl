@@ -57,7 +57,7 @@ describe("GET /v1/fleet/snapshot", () => {
       "utf8",
     );
 
-    const res = await handleFleetSnapshotRoute(new Request("http://agent/v1/fleet/snapshot"), {
+    const res = handleFleetSnapshotRoute(new Request("http://agent/v1/fleet/snapshot"), {
       journalPath,
     });
 
@@ -77,7 +77,7 @@ describe("GET /v1/fleet/snapshot", () => {
       "utf8",
     );
 
-    const res = await handleFleetSnapshotRoute(new Request("http://agent/v1/fleet/snapshot"), {
+    const res = handleFleetSnapshotRoute(new Request("http://agent/v1/fleet/snapshot"), {
       journalPath,
     });
 
