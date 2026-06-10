@@ -26,7 +26,7 @@ export class SlotAllocator {
     let released = false;
     return {
       slotId: 0,
-      release: () => {
+      release: (): void => {
         if (released) return;
         released = true;
         this.singleSlotBusy = false;
@@ -46,7 +46,7 @@ export class SlotAllocator {
     let released = false;
     return {
       slotId: selectedSlot,
-      release: () => {
+      release: (): void => {
         if (released) return;
         released = true;
         this.busySlots.delete(selectedSlot);

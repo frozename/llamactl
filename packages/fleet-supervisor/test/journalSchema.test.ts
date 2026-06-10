@@ -85,7 +85,7 @@ describe("journal schema forward-compat", () => {
     // capture must wrap stdout rather than console.log.
     const lines: string[] = [];
     const orig = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (chunk: string | Uint8Array) => {
+    process.stdout.write = (chunk: string | Uint8Array): boolean => {
       lines.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
       return true;
     };

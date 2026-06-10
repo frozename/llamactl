@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,7 +28,10 @@ async function waitUntil(pred: () => boolean, timeoutMs: number, stepMs = 50): P
 // subprocess) and waits so the parent stays alive. detached:true makes the
 // parent its own process-group leader; detached:false leaves it in THIS test
 // runner's group.
-async function spawnParentWithGrandchild(detached: boolean, gpidFile: string) {
+async function spawnParentWithGrandchild(
+  detached: boolean,
+  gpidFile: string,
+): Promise<{ proc: ChildProcess; grandchildPid: number }> {
   const proc = spawn("bash", ["-c", `sleep 600 & echo $! > "${gpidFile}"; wait`], {
     stdio: "ignore",
     detached,

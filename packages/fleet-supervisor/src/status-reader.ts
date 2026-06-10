@@ -29,23 +29,22 @@ export interface ReadSupervisorStatusOptions {
   limit?: number;
 }
 
+type NodePressureAccumulator = {
+  state: "NORMAL" | "HIGH";
+  enteredAt: string | null;
+  lastTransitionTs: string | null;
+  lastStatus: FleetPressureStatusEntry | null;
+  recent: FleetPressureStatusEntry[];
+};
+
 export async function readSupervisorStatus(
   opts: ReadSupervisorStatusOptions,
 ): Promise<SupervisorStatusReport> {
   const limit = opts.limit ?? 20;
 
-  const nodeStates = new Map<
-    string,
-    {
-      state: "NORMAL" | "HIGH";
-      enteredAt: string | null;
-      lastTransitionTs: string | null;
-      lastStatus: FleetPressureStatusEntry | null;
-      recent: FleetPressureStatusEntry[];
-    }
-  >();
+  const nodeStates = new Map<string, NodePressureAccumulator>();
 
-  const ensureNode = (node: string) => {
+  const ensureNode = (node: string): NodePressureAccumulator => {
     const existing = nodeStates.get(node);
     if (existing) return existing;
     const created = {

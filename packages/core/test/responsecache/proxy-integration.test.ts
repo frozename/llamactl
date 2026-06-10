@@ -24,6 +24,14 @@ interface TempRuntime {
   cleanup: () => void;
 }
 
+type LookupScope = {
+  readonly sha: string;
+  readonly model: string;
+  readonly workload: string;
+  readonly workloadEpoch: string;
+  readonly protocolVariant: "openai" | "anthropic";
+};
+
 interface TestUpstream {
   baseUrl: string;
   calls: number;
@@ -40,7 +48,7 @@ function makeTempRuntime(): TempRuntime {
       LOCAL_AI_RUNTIME_DIR: root,
       LLAMA_CPP_MODELS: join(root, "models"),
     }),
-    cleanup: () => {
+    cleanup: (): void => {
       rmSync(root, { recursive: true, force: true });
     },
   };
@@ -82,7 +90,7 @@ function lookupScope(params: {
   workload: string;
   workloadEpoch: string;
   protocolVariant?: "openai" | "anthropic";
-}) {
+}): LookupScope {
   return {
     sha: params.sha,
     model: params.model,
@@ -1125,7 +1133,7 @@ test("peer route cache invalidates when the peer revision changes (restart/swap)
       messages: [{ role: "user", content: "peer revision invalidation" }],
       temperature: 0,
     });
-    const mkReq = () =>
+    const mkReq = (): Request =>
       new Request("http://localhost/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1149,7 +1157,7 @@ test("peer route cache invalidates when the peer revision changes (restart/swap)
     // Each boot's entry is stored under its own revision-qualified epoch.
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
-    const scopeFor = (rev: string) =>
+    const scopeFor = (rev: string): LookupScope =>
       lookupScope({
         sha: canonicalRequestSha(body),
         model: PEER_MODEL,

@@ -152,7 +152,7 @@ export const defaultRunHf: RunHf = (args, onEvent, signal) => {
     const token = resolveHfToken();
     if (token) env.HF_TOKEN = token;
     const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env });
-    const forward = (stream: NodeJS.ReadableStream, kind: "stdout" | "stderr") => {
+    const forward = (stream: NodeJS.ReadableStream, kind: "stdout" | "stderr"): void => {
       let buf = "";
       stream.on("data", (chunk: Buffer) => {
         buf += chunk.toString("utf8");
@@ -164,7 +164,7 @@ export const defaultRunHf: RunHf = (args, onEvent, signal) => {
     };
     forward(child.stdout, "stdout");
     forward(child.stderr, "stderr");
-    const onAbort = () => {
+    const onAbort = (): void => {
       try {
         child.kill("SIGTERM");
       } catch {

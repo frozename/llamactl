@@ -774,7 +774,7 @@ function cacheHitResponse(entry: ResponseCacheEntry): Response {
   if (entry.contentType.toLowerCase().startsWith("text/event-stream")) {
     return new Response(
       new ReadableStream<Uint8Array>({
-        start(controller) {
+        start(controller): void {
           controller.enqueue(new Uint8Array(entry.responseBody));
           controller.close();
         },
@@ -1693,7 +1693,7 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
           hits: 0,
           createdAt: now,
           lastUsed: now,
-          payloadBytes: (() => {
+          payloadBytes: ((): number => {
             try {
               return statSync(slotFile).size;
             } catch {

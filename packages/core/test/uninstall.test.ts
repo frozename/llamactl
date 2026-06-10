@@ -15,10 +15,10 @@ describe("uninstall (integration)", () => {
   let benchVisionFile: string;
 
   const rel = "Test-GGUF/test-Q4.gguf";
-  const modelDir = () => join(temp.modelsDir, "Test-GGUF");
-  const modelPath = () => join(modelDir(), "test-Q4.gguf");
-  const mmproj = () => join(modelDir(), "mmproj-BF16.gguf");
-  const cacheDir = () => join(modelDir(), ".cache");
+  const modelDir = (): string => join(temp.modelsDir, "Test-GGUF");
+  const modelPath = (): string => join(modelDir(), "test-Q4.gguf");
+  const mmproj = (): string => join(modelDir(), "mmproj-BF16.gguf");
+  const cacheDir = (): string => join(modelDir(), ".cache");
 
   beforeEach(() => {
     temp = makeTempRuntime();

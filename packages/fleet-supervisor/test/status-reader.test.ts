@@ -6,7 +6,10 @@ import * as path from "node:path";
 import { readSupervisorStatus } from "../src/status-reader.js";
 
 describe("status-reader", () => {
-  async function withTempJournal(content: string, fn: (path: string) => Promise<void>) {
+  async function withTempJournal(
+    content: string,
+    fn: (path: string) => Promise<void>,
+  ): Promise<void> {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "status-reader-test-"));
     const journalPath = path.join(tmp, "journal.jsonl");
     if (content) fs.writeFileSync(journalPath, content, "utf8");

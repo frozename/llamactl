@@ -7,7 +7,18 @@ import { readMeasuredMemoryCache, writeMeasuredMemoryCache } from "../src/measur
 
 const ORIG_ENV_KEY = "LLAMACTL_MEASURED_MEMORY_PATH";
 
-function makeEntry(name: string, peakMb: number) {
+function makeEntry(
+  name: string,
+  peakMb: number,
+): {
+  workloadName: string;
+  measuredAt: string;
+  rssMeanMb: number;
+  rssPeakMb: number;
+  sampleCount: number;
+  engineKind: "llama.cpp";
+  binary: string;
+} {
   return {
     workloadName: name,
     measuredAt: "2026-05-22T10:00:00.000Z",

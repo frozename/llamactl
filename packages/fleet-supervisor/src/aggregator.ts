@@ -110,7 +110,7 @@ export class FleetAggregator {
   start(): { stop: () => void } {
     if (this.timer !== null) {
       return {
-        stop: () => {
+        stop: (): void => {
           if (this.timer !== null) {
             clearInterval(this.timer);
             this.timer = null;
@@ -123,7 +123,7 @@ export class FleetAggregator {
       void this.pollNow();
     }, this.pollIntervalMs);
     return {
-      stop: () => {
+      stop: (): void => {
         if (this.timer !== null) {
           clearInterval(this.timer);
           this.timer = null;

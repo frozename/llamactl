@@ -35,7 +35,16 @@ describe("tryAdoptExistingServer", () => {
     temp.cleanup();
   });
 
-  const base = () => ({
+  const base = (): {
+    resolved: ResolvedEnv;
+    key: { name: string };
+    endpointUrl: string;
+    host: string;
+    port: number;
+    rel: string;
+    extraArgs: string[];
+    binary: string;
+  } => ({
     resolved,
     key: KEY,
     endpointUrl: "http://127.0.0.1:8086",

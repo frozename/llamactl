@@ -15,7 +15,7 @@ function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-responsecache-"));
   return {
     root,
-    cleanup: () => {
+    cleanup: (): void => {
       rmSync(root, { recursive: true, force: true });
     },
   };
@@ -48,7 +48,13 @@ function lookupParams(
     workloadEpoch: string;
     protocolVariant: "openai" | "anthropic";
   }> = {},
-) {
+): {
+  sha: string;
+  model: string;
+  workload: string;
+  workloadEpoch: string;
+  protocolVariant: "openai" | "anthropic";
+} {
   return {
     sha: "sha-1",
     model: "Qwen",

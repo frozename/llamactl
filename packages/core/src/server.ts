@@ -429,7 +429,7 @@ function lsofListenerPid(filter: string): Promise<number | null> {
   return new Promise((resolve) => {
     let settled = false;
     let child: ReturnType<typeof spawn> | null = null;
-    const finish = (value: number | null) => {
+    const finish = (value: number | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -817,7 +817,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
 
   // Wire the caller's abort signal to SIGTERM the detached child so
   // a tRPC unsubscribe or Ctrl-C doesn't leave an orphan server.
-  const killOnAbort = () => {
+  const killOnAbort = (): void => {
     try {
       if (isProcessAlive(pid)) process.kill(pid, "SIGTERM");
     } catch {

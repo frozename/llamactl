@@ -115,7 +115,7 @@ export function resolvePreset(
 function formatIso(date: Date = new Date()): string {
   // Matches `date +%Y-%m-%dT%H:%M:%S%z` used by the shell library —
   // local time with an offset like `-0300`, no colon in the offset.
-  const pad = (n: number) => String(n).padStart(2, "0");
+  const pad = (n: number): string => String(n).padStart(2, "0");
   const y = date.getFullYear();
   const mo = pad(date.getMonth() + 1);
   const d = pad(date.getDate());

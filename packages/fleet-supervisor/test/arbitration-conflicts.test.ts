@@ -20,22 +20,22 @@ describe("Arbitration conflicts", () => {
 
     controller = new MigrationController({
       peers: ["m2mini"],
-      fetchSnapshot: async (node) =>
+      fetchSnapshot: async (node): Promise<NodeSnapshot> =>
         snapshots[node] ?? {
           node,
           pressureState: "NORMAL",
           nodeMem: { freeMb: 4096 },
           workloads: [{ name: "model-a", reachable: true }],
         },
-      deployWorkload: async () => {
+      deployWorkload: async (): Promise<void> => {
         applyCalls += 1;
       },
-      removeWorkload: async () => undefined,
+      removeWorkload: async (): Promise<undefined> => undefined,
       leaseholder: "m4pro",
-      getNowMs: () => nowMs,
+      getNowMs: (): number => nowMs,
       healthTimeoutMs: 5,
       pollIntervalMs: 1,
-      sleep: async () => {
+      sleep: async (): Promise<void> => {
         nowMs += 1;
       },
     });

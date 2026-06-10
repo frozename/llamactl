@@ -16,7 +16,7 @@ const encoder = new TextEncoder();
 
 function makeSseStream(events: string[], options?: { crash?: Error }): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
-    start(controller) {
+    start(controller): void {
       for (const event of events) {
         controller.enqueue(encoder.encode(event));
       }
@@ -426,7 +426,7 @@ test("unknown line increments counter but does not suppress valid data", async (
 test("upstream mid-stream error emits clean terminal message_delta + message_stop", async () => {
   let emitted = false;
   const upstream = new ReadableStream<Uint8Array>({
-    pull(controller) {
+    pull(controller): void {
       if (!emitted) {
         emitted = true;
         controller.enqueue(

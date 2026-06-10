@@ -303,7 +303,7 @@ export function migrateLegacySingletonRuntime(
   const workloadName = match?.metadata.name ?? `imperative-${String(Date.now())}`;
   const destDir = ensureWorkloadRuntimeDir(resolved, { name: workloadName });
 
-  const moveIfExists = (src: string, dstName: string) => {
+  const moveIfExists = (src: string, dstName: string): void => {
     if (existsSync(src)) {
       try {
         renameSync(src, join(destDir, dstName));

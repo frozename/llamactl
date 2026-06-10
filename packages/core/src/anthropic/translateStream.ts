@@ -127,7 +127,7 @@ export function translateOpenAIStreamToAnthropic(
   const encoder = new TextEncoder();
 
   return new ReadableStream<Uint8Array>({
-    async start(controller) {
+    async start(controller): Promise<void> {
       const reader = upstream.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -144,11 +144,11 @@ export function translateOpenAIStreamToAnthropic(
       let outputTokens = 0;
       let sawUsageCompletionTokens = false;
 
-      const emit = (event: string, payload: Record<string, unknown>) => {
+      const emit = (event: string, payload: Record<string, unknown>): void => {
         controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`));
       };
 
-      const ensureMessageStart = () => {
+      const ensureMessageStart = (): void => {
         if (messageStarted) return;
         messageStarted = true;
         emit("message_start", {
@@ -169,7 +169,7 @@ export function translateOpenAIStreamToAnthropic(
         });
       };
 
-      const closeOpenBlock = () => {
+      const closeOpenBlock = (): void => {
         if (!openBlock) return;
         emit("content_block_stop", {
           type: "content_block_stop",
@@ -178,7 +178,7 @@ export function translateOpenAIStreamToAnthropic(
         openBlock = null;
       };
 
-      const ensureTextBlock = () => {
+      const ensureTextBlock = (): Extract<OpenBlockState, { kind: "text" }> => {
         if (openBlock?.kind === "text") return openBlock;
         closeOpenBlock();
         ensureMessageStart();
@@ -204,7 +204,9 @@ export function translateOpenAIStreamToAnthropic(
         return computed;
       };
 
-      const ensureToolBlock = (tool: UpstreamToolCall) => {
+      const ensureToolBlock = (
+        tool: UpstreamToolCall,
+      ): Extract<OpenBlockState, { kind: "tool" }> => {
         const rawToolIndex = typeof tool.index === "number" ? tool.index : 0;
         const index = toolBlockIndex(rawToolIndex);
         const toolId = tool.id ?? `tool_${String(rawToolIndex)}`;
@@ -242,11 +244,11 @@ export function translateOpenAIStreamToAnthropic(
         return openBlock;
       };
 
-      const emitMessageStop = () => {
+      const emitMessageStop = (): void => {
         emit("message_stop", { type: "message_stop" });
       };
 
-      const emitTerminalDelta = (stopReason: string | null | undefined) => {
+      const emitTerminalDelta = (stopReason: string | null | undefined): void => {
         ensureMessageStart();
         closeOpenBlock();
         const normalized = normalizeFinishReason(stopReason);
@@ -262,11 +264,11 @@ export function translateOpenAIStreamToAnthropic(
         });
       };
 
-      const addOutputEmission = () => {
+      const addOutputEmission = (): void => {
         if (!sawUsageCompletionTokens) outputTokens += 1;
       };
 
-      const handleChunk = (parsed: UpstreamChunk) => {
+      const handleChunk = (parsed: UpstreamChunk): void => {
         if (parsed.id) messageId = parsed.id;
         const usageTokens = parsed.usage?.completion_tokens;
         if (typeof usageTokens === "number" && Number.isFinite(usageTokens)) {

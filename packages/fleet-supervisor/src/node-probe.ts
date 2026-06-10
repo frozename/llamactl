@@ -12,7 +12,7 @@ export function parseVmStatOutput(raw: string): NodeMemSnapshot {
   const pageSizeMatch = /page size of (\d+) bytes/.exec(raw);
   const pageSizeText = pageSizeMatch?.[1];
   const pageSize = pageSizeText ? parseInt(pageSizeText, 10) : 4096;
-  const toMb = (pages: number) => (pages * pageSize) / 1024 / 1024;
+  const toMb = (pages: number): number => (pages * pageSize) / 1024 / 1024;
 
   const snap: NodeMemSnapshot = {
     free_mb: 0,
@@ -49,7 +49,7 @@ export async function probeNodeMem(opts?: {
 }): Promise<NodeMemSnapshot> {
   const exec =
     opts?.exec ??
-    ((_cmd: string) => {
+    ((_cmd: string): Promise<string> => {
       const proc = Bun.spawnSync(["vm_stat"]);
       return Promise.resolve(new TextDecoder().decode(proc.stdout));
     });

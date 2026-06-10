@@ -6,7 +6,10 @@ import * as path from "node:path";
 import { readAuditEntries } from "../src/audit-reader.js";
 
 describe("audit-reader", () => {
-  async function withTempAudit(content: string, fn: (path: string) => Promise<void>) {
+  async function withTempAudit(
+    content: string,
+    fn: (path: string) => Promise<void>,
+  ): Promise<void> {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "audit-reader-test-"));
     const auditPath = path.join(tmp, "audit.jsonl");
     if (content) {

@@ -86,7 +86,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const journalPath = opts.journalPath ?? defaultFleetJournalPath();
   const writeJournal =
     opts.writeJournal ??
-    ((entry: FleetJournalEntry) => {
+    ((entry: FleetJournalEntry): void => {
       appendFleetJournal(entry, journalPath);
     });
   const consecutiveErrors = new Map<string, number>();
@@ -112,7 +112,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
 
   const probeWorkloadFn =
     opts.probeWorkload ??
-    (async (target) => {
+    (async (target): Promise<WorkloadSnapshot> => {
       const result = await defaultProbeWorkload(target, {
         fetch: opts.fetch,
         timeoutMs: probeTimeoutMs,
@@ -333,7 +333,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const run = async (): Promise<void> => {
     try {
       await tick();
-      const isStopped = () => stopped;
+      const isStopped = (): boolean => stopped;
       if (opts.once || isStopped()) return;
       while (!isStopped()) {
         await new Promise<void>((res) => setTimeout(res, intervalMs));
@@ -348,7 +348,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   void run();
 
   return {
-    stop() {
+    stop(): void {
       stopped = true;
     },
     done,

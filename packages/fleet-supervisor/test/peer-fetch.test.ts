@@ -9,7 +9,7 @@ import type { PeerNode } from "../../remote/src/config/peers.js";
 import { generateSelfSignedCert } from "../../remote/src/server/tls.js";
 import { createPeerFetch } from "../src/peer-fetch.js";
 
-function makeSnapshot(node: string) {
+function makeSnapshot(node: string): string {
   return JSON.stringify({
     kind: "fleet-snapshot",
     ts: "2026-05-25T17:00:00.000Z",
@@ -29,7 +29,10 @@ function makeSnapshot(node: string) {
 
 function withStubbedSnapshotFetch(
   peerRequestCapture: (url: string, init: RequestInit | undefined) => string,
-) {
+): {
+  captured: () => { url: string; headers: Headers } | null;
+  cleanup: () => void;
+} {
   const originalFetch = globalThis.fetch;
   let captured: { url: string; headers: Headers } | null = null;
   globalThis.fetch = (async (input: Request | string, init?: RequestInit) => {
@@ -42,8 +45,8 @@ function withStubbedSnapshotFetch(
     });
   }) as typeof fetch;
   return {
-    captured: () => captured,
-    cleanup: () => {
+    captured: (): { url: string; headers: Headers } | null => captured,
+    cleanup: (): void => {
       globalThis.fetch = originalFetch;
     },
   };

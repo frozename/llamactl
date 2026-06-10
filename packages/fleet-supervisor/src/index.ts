@@ -48,12 +48,14 @@ export function createEnabledMigrationController(
   if (process.env.LLAMACTL_FLEET_MOVE_ENABLED !== "1") return null;
   return createMigrationController({
     ...deps,
-    getNowMs: deps.getNowMs ?? (() => Date.now()),
+    getNowMs: deps.getNowMs ?? ((): number => Date.now()),
     peers: deps.peers?.map((peer) => peer.id) ?? listPeers().map((peer) => peer.id),
     fetchSnapshot: deps.fetchSnapshot,
     leaseholder: deps.leaseholder,
     readRecentMoves:
-      deps.readRecentMoves ?? (() => readRecentMovesFromJournal(defaultFleetJournalPath())),
+      deps.readRecentMoves ??
+      ((): { workload: string; movedAtMs: number }[] =>
+        readRecentMovesFromJournal(defaultFleetJournalPath())),
   });
 }
 

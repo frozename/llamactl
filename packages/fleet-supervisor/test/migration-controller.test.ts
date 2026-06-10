@@ -28,25 +28,25 @@ describe("MigrationController", () => {
 
     controller = new MigrationController({
       peers: ["m2mini", "m4pro"],
-      fetchSnapshot: async (node) =>
+      fetchSnapshot: async (node): Promise<NodeSnapshot> =>
         snapshots[node] ?? {
           node,
           pressureState: "NORMAL",
           nodeMem: { freeMb: 4096 },
           workloads: [],
         },
-      deployWorkload: async (workload, toNode) => {
+      deployWorkload: async (workload, toNode): Promise<void> => {
         applyCalls.push({ workload, toNode });
       },
-      removeWorkload: async (workload, fromNode) => {
+      removeWorkload: async (workload, fromNode): Promise<void> => {
         deleteCalls.push({ workload, fromNode });
       },
       leaseholder: "m4pro",
-      getNowMs: () => nowMs,
-      getCurrentTick: () => tick,
+      getNowMs: (): number => nowMs,
+      getCurrentTick: (): number => tick,
       healthTimeoutMs: 5,
       pollIntervalMs: 1,
-      sleep: async () => {
+      sleep: async (): Promise<void> => {
         nowMs += 1;
       },
     });
@@ -164,7 +164,7 @@ describe("MigrationController", () => {
   it("F14: seeds in-flight cooldown from readRecentMoves on construction", () => {
     const seeded = new MigrationController({
       peers: ["m2mini"],
-      fetchSnapshot: async () => ({
+      fetchSnapshot: async (): Promise<NodeSnapshot> => ({
         node: "m2mini",
         schedulerLeaseHolder: "m4pro",
         pressureState: "NORMAL",
@@ -172,10 +172,12 @@ describe("MigrationController", () => {
         workloads: [],
       }),
       leaseholder: "m4pro",
-      getNowMs: () => nowMs,
+      getNowMs: (): number => nowMs,
       moveCooldownTicks: 10,
       pollIntervalMs: 100,
-      readRecentMoves: () => [{ workload: "w1", movedAtMs: nowMs - 500 }],
+      readRecentMoves: (): { workload: string; movedAtMs: number }[] => [
+        { workload: "w1", movedAtMs: nowMs - 500 },
+      ],
     });
 
     expect(seeded.isInMoveCooldown("w1")).toBe(true);
@@ -293,25 +295,25 @@ describe("MigrationController", () => {
   it("F1: executeMove does not journal move intent before deploy succeeds", async () => {
     const failingController = new MigrationController({
       peers: ["m2mini", "m4pro"],
-      fetchSnapshot: async (node) =>
+      fetchSnapshot: async (node): Promise<NodeSnapshot> =>
         snapshots[node] ?? {
           node,
           pressureState: "NORMAL",
           nodeMem: { freeMb: 4096 },
           workloads: [],
         },
-      deployWorkload: async () => {
+      deployWorkload: async (): Promise<void> => {
         throw new Error("apply failed");
       },
-      removeWorkload: async (w, fromNode) => {
+      removeWorkload: async (w, fromNode): Promise<void> => {
         deleteCalls.push({ workload: w, fromNode });
       },
       leaseholder: "m4pro",
-      getNowMs: () => nowMs,
-      getCurrentTick: () => tick,
+      getNowMs: (): number => nowMs,
+      getCurrentTick: (): number => tick,
       healthTimeoutMs: 5,
       pollIntervalMs: 1,
-      sleep: async () => {
+      sleep: async (): Promise<void> => {
         nowMs += 1;
       },
     });
@@ -343,16 +345,16 @@ describe("MigrationController", () => {
   it("F2: cooldown clears without getCurrentTick by falling back to elapsed time", () => {
     const noTickController = new MigrationController({
       peers: ["m2mini"],
-      fetchSnapshot: async () => ({
+      fetchSnapshot: async (): Promise<NodeSnapshot> => ({
         node: "m2mini",
         pressureState: "NORMAL",
         nodeMem: { freeMb: 4096 },
         workloads: [],
       }),
-      deployWorkload: async () => undefined,
-      removeWorkload: async () => undefined,
+      deployWorkload: async (): Promise<undefined> => undefined,
+      removeWorkload: async (): Promise<undefined> => undefined,
       leaseholder: "m4pro",
-      getNowMs: () => nowMs,
+      getNowMs: (): number => nowMs,
       moveCooldownTicks: 2,
       pollIntervalMs: 100,
     });
@@ -382,7 +384,7 @@ describe("MigrationController", () => {
 
     const parallelController = new MigrationController({
       peers,
-      fetchSnapshot: async (node) => {
+      fetchSnapshot: async (node): Promise<NodeSnapshot> => {
         started.push(node);
         return await (deferred.get(node)?.promise ??
           Promise.resolve({
@@ -392,11 +394,11 @@ describe("MigrationController", () => {
             workloads: [],
           }));
       },
-      deployWorkload: async () => undefined,
-      removeWorkload: async () => undefined,
+      deployWorkload: async (): Promise<undefined> => undefined,
+      removeWorkload: async (): Promise<undefined> => undefined,
       leaseholder: "m4pro",
-      getNowMs: () => nowMs,
-      getCurrentTick: () => tick,
+      getNowMs: (): number => nowMs,
+      getCurrentTick: (): number => tick,
     });
 
     const evaluation = parallelController.evaluateMove(workload, sourceSnapshot);
@@ -527,14 +529,14 @@ describe("MigrationController", () => {
   it("F18: isInMoveCooldown drops entries after the cooldown elapses", () => {
     const gcController = new MigrationController({
       peers: ["m2mini"],
-      fetchSnapshot: async () => ({
+      fetchSnapshot: async (): Promise<NodeSnapshot> => ({
         node: "m2mini",
         pressureState: "NORMAL",
         nodeMem: { freeMb: 4096 },
         workloads: [],
       }),
       leaseholder: "m4pro",
-      getNowMs: () => nowMs,
+      getNowMs: (): number => nowMs,
       moveCooldownTicks: 2,
       pollIntervalMs: 100,
     });

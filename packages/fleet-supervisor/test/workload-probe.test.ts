@@ -5,7 +5,7 @@ import { probeWorkload } from "../src/workload-probe.js";
 
 describe("probeWorkload", () => {
   it("healthy endpoint → reachable:true with latency and models", async () => {
-    const fakeFetch = async (url: string) => {
+    const fakeFetch = async (url: string): Promise<Response> => {
       if (url.endsWith("/health")) return new Response("ok", { status: 200 });
       if (url.endsWith("/v1/models"))
         return new Response(JSON.stringify({ data: [{ id: "Qwen3-8B" }] }), { status: 200 });
@@ -22,7 +22,7 @@ describe("probeWorkload", () => {
   });
 
   it("502 response → reachable:false, consecutiveErrors incremented", async () => {
-    const fakeFetch = async () => new Response("Bad Gateway", { status: 502 });
+    const fakeFetch = async (): Promise<Response> => new Response("Bad Gateway", { status: 502 });
     const result = await probeWorkload(
       { name: "granite-mini-3b", endpoint: "http://mac-mini.ai:8086", kind: "ModelRun" },
       { fetch: fakeFetch as unknown as typeof fetch, timeoutMs: 500, priorConsecutiveErrors: 3 },
@@ -33,7 +33,7 @@ describe("probeWorkload", () => {
 
   it("hits /health only (no /healthz fallback)", async () => {
     const calls: string[] = [];
-    const fakeFetch = async (url: string) => {
+    const fakeFetch = async (url: string): Promise<Response> => {
       calls.push(url);
       if (url.endsWith("/health")) return new Response("ok", { status: 200 });
       if (url.endsWith("/v1/models"))
@@ -55,7 +55,7 @@ describe("probeWorkload", () => {
   });
 
   it("captures revision from the max /v1/models `created` (boot token)", async () => {
-    const fakeFetch = async (url: string) => {
+    const fakeFetch = async (url: string): Promise<Response> => {
       if (url.endsWith("/health")) return new Response("ok", { status: 200 });
       if (url.endsWith("/v1/models"))
         return new Response(
@@ -77,7 +77,7 @@ describe("probeWorkload", () => {
   });
 
   it("revision is null when /v1/models omits `created` (older engine)", async () => {
-    const fakeFetch = async (url: string) => {
+    const fakeFetch = async (url: string): Promise<Response> => {
       if (url.endsWith("/health")) return new Response("ok", { status: 200 });
       if (url.endsWith("/v1/models"))
         return new Response(JSON.stringify({ data: [{ id: "qwen" }] }), { status: 200 });

@@ -59,7 +59,7 @@ function makeTempRuntime(): TempRuntime {
       LLAMA_CPP_MACHINE_PROFILE: "balanced",
       LLAMA_CPP_QWEN_CTX_SIZE: "32768",
     }),
-    cleanup: () => {
+    cleanup: (): void => {
       rmSync(root, { recursive: true, force: true });
     },
   };

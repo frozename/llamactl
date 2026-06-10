@@ -84,7 +84,7 @@ export const defaultRunCli: RunCli = (bin, args, onEvent, signal) => {
       stream: NodeJS.ReadableStream,
       kind: "stdout" | "stderr",
       bucket: (chunk: string) => void,
-    ) => {
+    ): void => {
       let buf = "";
       stream.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf8");
@@ -102,7 +102,7 @@ export const defaultRunCli: RunCli = (bin, args, onEvent, signal) => {
     attach(child.stderr, "stderr", (t) => {
       stderr += t;
     });
-    const onAbort = () => {
+    const onAbort = (): void => {
       try {
         child.kill("SIGTERM");
       } catch {
@@ -133,7 +133,7 @@ export const defaultRunCli: RunCli = (bin, args, onEvent, signal) => {
  * `YYYY-MM-DDTHH:MM:SS±HHMM`, local time, no colon in the offset.
  */
 export function formatBenchTimestamp(date: Date = new Date()): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
+  const pad = (n: number): string => String(n).padStart(2, "0");
   const y = date.getFullYear();
   const mo = pad(date.getMonth() + 1);
   const d = pad(date.getDate());

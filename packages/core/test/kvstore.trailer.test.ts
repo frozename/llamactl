@@ -17,7 +17,7 @@ function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-kvstore-trailer-"));
   return {
     root,
-    cleanup: () => {
+    cleanup: (): void => {
       rmSync(root, { recursive: true, force: true });
     },
   };
@@ -55,7 +55,7 @@ test("readTrailer returns null for missing trailer file", () => {
 
 test("atomic write leaves previous trailer intact when rename fails", () => {
   const t = makeTempRoot();
-  let restoreRename = () => undefined;
+  let restoreRename = (): undefined => undefined;
   try {
     const slotFile = join(t.root, "slots", "wl-a", "stable.kvslot");
     const baseline: KvTrailer = {
@@ -67,7 +67,7 @@ test("atomic write leaves previous trailer intact when rename fails", () => {
       const err = new Error("rename blocked");
       throw err;
     });
-    restoreRename = () => {
+    restoreRename = (): undefined => {
       renameSpy.mockRestore();
     };
 

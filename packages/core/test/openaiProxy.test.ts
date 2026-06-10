@@ -16,7 +16,7 @@ afterEach(() => {
   openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
 });
 
-function tempEnv() {
+function tempEnv(): { env: ResolvedEnv; dir: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-openai-proxy-core-"));
   return {
     env: resolveEnv({
@@ -25,7 +25,7 @@ function tempEnv() {
       LLAMA_CPP_MODELS: join(dir, "models"),
     }),
     dir,
-    cleanup: () => {
+    cleanup: (): void => {
       rmSync(dir, { recursive: true, force: true });
     },
   } satisfies { env: ResolvedEnv; dir: string; cleanup: () => void };
@@ -86,7 +86,7 @@ test("route cache invalidates when a workload state file is rewritten in place",
     const workload = join(t.dir, "workloads", "mlx-host");
     mkdirSync(workload, { recursive: true });
     writeFileSync(join(workload, "modelhost.pid"), `${String(process.pid)}\n`);
-    const writeState = (port: number) => {
+    const writeState = (port: number): void => {
       writeFileSync(
         join(workload, "modelhost.state"),
         JSON.stringify({
@@ -110,7 +110,7 @@ test("route cache invalidates when a workload state file is rewritten in place",
       return Response.json({ ok: true });
     }) as unknown as typeof fetch;
 
-    const req = () =>
+    const req = (): Promise<Response> =>
       openaiProxy.proxyOpenAI(
         new Request("http://localhost/v1/chat/completions", {
           method: "POST",
@@ -466,7 +466,7 @@ test("/v1/messages SSE responses translate to anthropic stream events", async ()
   const t = tempEnv();
   try {
     const stream = new ReadableStream({
-      start(controller) {
+      start(controller): void {
         controller.enqueue(
           new TextEncoder().encode(
             'data: {"id":"msg_1","choices":[{"delta":{"content":"hello"},"finish_reason":null}],"usage":{"completion_tokens":1}}\n\n',

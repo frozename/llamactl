@@ -453,7 +453,7 @@ test("supportsRequestHandle returns cached value within TTL window", async () =>
 test("supportsRequestHandle re-probes after TTL expiry", async () => {
   const originalNow = Date.now;
   let now = 1_000;
-  Date.now = () => now;
+  Date.now = (): number => now;
   let requests = 0;
   const upstream = await startTestServer((req, res, url) => {
     if (req.method === "GET" && url.pathname === "/props") {

@@ -24,7 +24,7 @@ export function makeTempRuntime(): {
     runtimeDir,
     devStorage,
     modelsDir,
-    cleanup: () => {
+    cleanup: (): void => {
       rmSync(devStorage, { recursive: true, force: true });
     },
   };

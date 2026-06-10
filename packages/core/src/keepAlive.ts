@@ -289,7 +289,7 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
 
   let restarts = 0;
   let backoff = 1;
-  const sleep = (s: number) =>
+  const sleep = (s: number): Promise<void> =>
     new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, s * 1000);
       opts.signal?.addEventListener(
@@ -301,9 +301,10 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
         { once: true },
       );
     });
-  const shouldStop = () => opts.signal?.aborted === true || existsSync(keepAliveStopFile(resolved));
+  const shouldStop = (): boolean =>
+    opts.signal?.aborted === true || existsSync(keepAliveStopFile(resolved));
 
-  const cleanup = async (finalState: KeepAliveState, rel: string) => {
+  const cleanup = async (finalState: KeepAliveState, rel: string): Promise<void> => {
     logLine(resolved, `supervisor exiting state=${finalState}`);
     writeState(resolved, {
       target: opts.target,

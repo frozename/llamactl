@@ -15,12 +15,12 @@ import {
   workloadRuntimeDir,
 } from "../src/workloadRuntime.js";
 
-const tempEnv = () => {
+const tempEnv = (): { runtimeDir: string; resolved: ResolvedEnv; cleanup: () => void } => {
   const dir = mkdtempSync(join(tmpdir(), "workloadrt-"));
   return {
     runtimeDir: dir,
     resolved: { LOCAL_AI_RUNTIME_DIR: dir } as ResolvedEnv,
-    cleanup: () => {
+    cleanup: (): void => {
       rmSync(dir, { recursive: true, force: true });
     },
   };

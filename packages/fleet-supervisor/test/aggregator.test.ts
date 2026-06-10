@@ -29,9 +29,9 @@ describe("FleetAggregator", () => {
     ];
     const aggr = new FleetAggregator({
       peers,
-      fetchSnapshot: async (peer) =>
+      fetchSnapshot: async (peer): Promise<FleetSnapshotEntry> =>
         snapshot(peer.id, `2026-05-25T17:00:0${peer.id === "a" ? "1" : "2"}Z`),
-      now: () => 1_000,
+      now: (): number => 1_000,
     });
 
     await aggr.pollNow();
@@ -47,13 +47,13 @@ describe("FleetAggregator", () => {
     let fail = false;
     const aggr = new FleetAggregator({
       peers,
-      fetchSnapshot: async (peer) => {
+      fetchSnapshot: async (peer): Promise<FleetSnapshotEntry> => {
         if (fail) throw new Error("boom");
         return snapshot(peer.id, "2026-05-25T17:00:01Z");
       },
       now: (() => {
         let t = 0;
-        return () => {
+        return (): number => {
           t += 31_000;
           return t;
         };
@@ -74,8 +74,9 @@ describe("FleetAggregator", () => {
     let nowMs = 0;
     const aggr = new FleetAggregator({
       peers,
-      fetchSnapshot: async (peer) => snapshot(peer.id, "2026-05-25T17:00:01Z"),
-      now: () => nowMs,
+      fetchSnapshot: async (peer): Promise<FleetSnapshotEntry> =>
+        snapshot(peer.id, "2026-05-25T17:00:01Z"),
+      now: (): number => nowMs,
     });
 
     nowMs = 1_000;
@@ -96,11 +97,11 @@ describe("FleetAggregator", () => {
     ];
     const aggr = new FleetAggregator({
       peers,
-      fetchSnapshot: async (peer) => {
+      fetchSnapshot: async (peer): Promise<FleetSnapshotEntry> => {
         if (peer.id === "b") throw new Error("down");
         return snapshot(peer.id, "2026-05-25T17:00:01Z");
       },
-      now: () => 50_000,
+      now: (): number => 50_000,
     });
 
     await aggr.pollNow();
@@ -118,12 +119,12 @@ describe("FleetAggregator", () => {
     const order: string[] = [];
     const aggr = new FleetAggregator({
       peers,
-      fetchSnapshot: async (peer) => {
+      fetchSnapshot: async (peer): Promise<FleetSnapshotEntry> => {
         await new Promise((r) => setTimeout(r, peer.id === "a" ? 20 : 40));
         order.push(peer.id);
         return snapshot(peer.id, "2026-05-25T17:00:01Z");
       },
-      now: () => 100_000,
+      now: (): number => 100_000,
     });
 
     await aggr.pollNow();
@@ -141,11 +142,11 @@ describe("FleetAggregator", () => {
     let nowMs = 0;
     const aggr = new FleetAggregator({
       peers,
-      fetchSnapshot: async (peer) => {
+      fetchSnapshot: async (peer): Promise<FleetSnapshotEntry> => {
         calls.set(peer.id, (calls.get(peer.id) ?? 0) + 1);
         return snapshot(peer.id, "2026-05-25T17:00:01Z");
       },
-      now: () => nowMs,
+      now: (): number => nowMs,
     });
 
     nowMs = 1_000;
