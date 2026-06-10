@@ -1,5 +1,7 @@
 import {
+  type ClusterNode,
   config as kubecfg,
+  type NodeClient,
   noderunApply,
   type noderunSchema,
   noderunStore,
@@ -85,7 +87,7 @@ export function __resetWorkloadTestSeams(): void {
   workloadTestSeams = {};
 }
 
-function getWorkloadNodeClient(name: string) {
+function getWorkloadNodeClient(name: string): NodeClient {
   return (workloadTestSeams.getNodeClientByName ?? getNodeClientByName)(name);
 }
 
@@ -233,10 +235,11 @@ async function applyModelRunFromRaw(
     const cfg = kubecfg.loadConfig();
     const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
     const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
-    const lookupNode = (name: string) => (cluster?.nodes ?? []).find((n) => n.name === name);
+    const lookupNode = (name: string): ClusterNode | undefined =>
+      (cluster?.nodes ?? []).find((n) => n.name === name);
     const gatewayDispatch = (
       opts: Parameters<NonNullable<Parameters<typeof workloadApply.applyOne>[3]>>[0],
-    ) =>
+    ): Promise<workloadApply.ApplyResult | null> =>
       workloadGatewayHandlers.dispatchGatewayApply({
         manifest: opts.manifest,
         getClient: opts.getClient,
@@ -373,7 +376,7 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
   // The agent's startModelHost handler loads the manifest by name from
   // the workloads dir, so the file must exist before the subscription
   // begins. Validation happens inside saveModelHost via Zod.
-  const parsedHost = (() => {
+  const parsedHost = ((): ModelHostManifest | null => {
     try {
       return ModelHostManifestSchema.parse(manifest);
     } catch (err) {

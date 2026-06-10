@@ -55,11 +55,11 @@ async function startHarness(script: {
   });
   const bunPort = bun.port ?? 0;
   const handleSubscription = (req: TunnelReq): TunnelSubscription => ({
-    subscribe(handlers) {
+    subscribe(handlers): { cancel(): void } {
       const cancelled = { value: false };
       const isCancelled = (): boolean => cancelled.value;
       // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Preserve existing CLI/test semantics while clearing strict lint debt.
-      (async () => {
+      (async (): Promise<void> => {
         for (const ev of script.events) {
           if (cancelled.value) break;
           await new Promise((r) => setTimeout(r, script.delayMs ?? 2));
@@ -99,7 +99,7 @@ async function startHarness(script: {
     bunPort,
     bearer,
     receivedCancel,
-    async stop() {
+    async stop(): Promise<void> {
       client.stop();
       // eslint-disable-next-line @typescript-eslint/no-floating-promises -- Preserve existing CLI/test semantics while clearing strict lint debt.
       bun.stop();

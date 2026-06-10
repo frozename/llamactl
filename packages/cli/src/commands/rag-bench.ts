@@ -99,7 +99,7 @@ export async function runRagBenchCli(args: string[]): Promise<number> {
   }
   let manifestYaml: string;
   if (parsed.file === "-") {
-    const reader = testSeams.readStdinYaml ?? (() => readFileSync(0, "utf8"));
+    const reader = testSeams.readStdinYaml ?? ((): string => readFileSync(0, "utf8"));
     try {
       manifestYaml = reader();
     } catch (err) {

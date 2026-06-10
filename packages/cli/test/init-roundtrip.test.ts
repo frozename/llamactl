@@ -36,11 +36,41 @@ let configPath = "";
 const originalEnv = { ...process.env };
 let dockerReachable = false;
 
-function makeModelHostClient() {
+type MockServerStatus = {
+  state: string;
+  rel: null;
+  extraArgs: never[];
+  pid: null;
+  host: null;
+  port: null;
+  binary: null;
+  endpoint: string;
+};
+
+type MockSubscription = { unsubscribe(): void };
+
+type MockModelHostClient = {
+  serverStatus: { query: () => Promise<MockServerStatus> };
+  serverStop: { mutate: () => Promise<{ ok: boolean }> };
+  serverStart: { subscribe: () => Promise<MockSubscription> };
+  modelHostStart: {
+    subscribe: (
+      _input: unknown,
+      callbacks: { onData: (data: unknown) => void; onComplete: () => void },
+    ) => Promise<MockSubscription>;
+  };
+  modelHostStop: { mutate: () => Promise<{ ok: boolean }> };
+  modelHostStatus: { query: () => Promise<{ state: string; pid: number }> };
+  rpcServerStart: { subscribe: () => Promise<MockSubscription> };
+  rpcServerStop: { mutate: () => Promise<{ ok: boolean }> };
+  rpcServerDoctor: { query: () => Promise<{ ok: boolean; path: null; llamaCppBin: null }> };
+};
+
+function makeModelHostClient(): MockModelHostClient {
   return {
     serverStatus: {
       // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-      query: async () => ({
+      query: async (): Promise<MockServerStatus> => ({
         state: "down",
         rel: null,
         extraArgs: [],
@@ -52,11 +82,11 @@ function makeModelHostClient() {
       }),
     },
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    serverStop: { mutate: async () => ({ ok: true }) },
+    serverStop: { mutate: async (): Promise<{ ok: boolean }> => ({ ok: true }) },
     serverStart: {
       // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-      subscribe: async () => ({
-        unsubscribe() {
+      subscribe: async (): Promise<MockSubscription> => ({
+        unsubscribe(): void {
           return;
         },
       }),
@@ -66,7 +96,7 @@ function makeModelHostClient() {
       subscribe: async (
         _input: unknown,
         callbacks: { onData: (data: unknown) => void; onComplete: () => void },
-      ) => {
+      ): Promise<MockSubscription> => {
         queueMicrotask(() => {
           callbacks.onData({
             type: "done",
@@ -75,30 +105,36 @@ function makeModelHostClient() {
           callbacks.onComplete();
         });
         return {
-          unsubscribe() {
+          unsubscribe(): void {
             return;
           },
         };
       },
     },
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    modelHostStop: { mutate: async () => ({ ok: true }) },
+    modelHostStop: { mutate: async (): Promise<{ ok: boolean }> => ({ ok: true }) },
     modelHostStatus: {
       // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-      query: async () => ({ state: "Running", pid: 3333 }),
+      query: async (): Promise<{ state: string; pid: number }> => ({ state: "Running", pid: 3333 }),
     },
     rpcServerStart: {
       // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-      subscribe: async () => ({
-        unsubscribe() {
+      subscribe: async (): Promise<MockSubscription> => ({
+        unsubscribe(): void {
           return;
         },
       }),
     },
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    rpcServerStop: { mutate: async () => ({ ok: true }) },
-    // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
+    rpcServerStop: { mutate: async (): Promise<{ ok: boolean }> => ({ ok: true }) },
+    rpcServerDoctor: {
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
+      query: async (): Promise<{ ok: boolean; path: null; llamaCppBin: null }> => ({
+        ok: true,
+        path: null,
+        llamaCppBin: null,
+      }),
+    },
   };
 }
 

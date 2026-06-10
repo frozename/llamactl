@@ -45,7 +45,7 @@ afterEach(() => {
   rmSync(auditDir, { recursive: true, force: true });
 });
 
-async function connected() {
+async function connected(): Promise<{ client: Client }> {
   const server = buildMcpServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

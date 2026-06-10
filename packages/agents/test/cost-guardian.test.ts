@@ -104,7 +104,7 @@ function makeConfig(overrides: Partial<CostGuardianConfig> = {}): CostGuardianCo
 }
 
 describe("decideGuardianAction", () => {
-  const now = () => new Date("2026-04-19T12:00:00Z");
+  const now = (): Date => new Date("2026-04-19T12:00:00Z");
 
   test("noop when no budget is configured", () => {
     const decision = decideGuardianAction({

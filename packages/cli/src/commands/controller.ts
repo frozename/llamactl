@@ -165,7 +165,7 @@ export async function runController(args: string[]): Promise<number> {
           wake = null;
           r();
         }, sleepMs);
-        wake = () => {
+        wake = (): void => {
           clearTimeout(timer);
           wake = null;
           r();

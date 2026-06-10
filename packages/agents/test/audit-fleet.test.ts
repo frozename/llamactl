@@ -111,7 +111,7 @@ describe("audit-fleet runbook", () => {
     });
     // Override server.status to throw.
     const original = client.callTool;
-    client.callTool = async (input) => {
+    client.callTool = async (input): Promise<unknown> => {
       if (input.name === "llamactl.server.status") {
         throw new Error("server unavailable");
       }

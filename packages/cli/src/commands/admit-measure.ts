@@ -39,7 +39,7 @@ EXIT CODES:
 
 function findFreePort(start: number): Promise<number> {
   return new Promise((resolve, reject) => {
-    function tryPort(p: number) {
+    function tryPort(p: number): void {
       if (p > start + 200) {
         reject(new Error(`No free port found in range ${String(start)}–${String(start + 200)}`));
         return;

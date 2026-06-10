@@ -7,12 +7,12 @@ import { join } from "node:path";
 
 import { resolveWorkloadName } from "../src/commands/_workload-resolve.js";
 
-const tempEnv = () => {
+const tempEnv = (): { runtimeDir: string; resolved: ResolvedEnv; cleanup: () => void } => {
   const dir = mkdtempSync(join(tmpdir(), "workload-resolve-"));
   return {
     runtimeDir: dir,
     resolved: { LOCAL_AI_RUNTIME_DIR: dir } as ResolvedEnv,
-    cleanup: () => {
+    cleanup: (): void => {
       rmSync(dir, { recursive: true, force: true });
     },
   };

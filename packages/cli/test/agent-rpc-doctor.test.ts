@@ -21,6 +21,16 @@ interface CapturedOutput {
   stderr: string;
 }
 
+type DoctorOkResult = { ok: true; path: string; llamaCppBin: string };
+type DoctorMissingResult = {
+  ok: false;
+  path: null;
+  llamaCppBin: string;
+  reason: "rpc-server-missing";
+  hint: string;
+};
+type LoadedConfig = ReturnType<NonNullable<RpcDoctorDeps["loadConfig"]>>;
+
 function baseDeps(overrides: Partial<RpcDoctorDeps> & { capture?: CapturedOutput } = {}): {
   deps: Partial<RpcDoctorDeps>;
   captured: CapturedOutput;
@@ -93,7 +103,7 @@ describe("parseRpcDoctorFlags", () => {
 describe("runRpcDoctor (local mode)", () => {
   test("ok → exit 0, stdout has path + LLAMA_CPP_BIN, stderr empty", async () => {
     const { deps, captured } = baseDeps();
-    deps.checkLocal = () => ({
+    deps.checkLocal = (): DoctorOkResult => ({
       ok: true,
       path: "/opt/llama.cpp/build/bin/rpc-server",
       llamaCppBin: "/opt/llama.cpp/build/bin",
@@ -108,7 +118,7 @@ describe("runRpcDoctor (local mode)", () => {
 
   test("fail → exit 1, stderr has reason + hint, stdout empty", async () => {
     const { deps, captured } = baseDeps();
-    deps.checkLocal = () => ({
+    deps.checkLocal = (): DoctorMissingResult => ({
       ok: false,
       path: null,
       llamaCppBin: "/opt/llama.cpp/build/bin",
@@ -128,7 +138,7 @@ describe("runRpcDoctor (local mode)", () => {
 
   test("--json on ok → stdout is valid JSON matching shape", async () => {
     const { deps, captured } = baseDeps();
-    deps.checkLocal = () => ({
+    deps.checkLocal = (): DoctorOkResult => ({
       ok: true,
       path: "/usr/local/bin/rpc-server",
       llamaCppBin: "/usr/local/bin",
@@ -144,7 +154,13 @@ describe("runRpcDoctor (local mode)", () => {
 
   test("--json on fail → exit 1, stdout is the JSON blob", async () => {
     const { deps, captured } = baseDeps();
-    deps.checkLocal = () => ({
+    deps.checkLocal = (): {
+      ok: false;
+      path: null;
+      llamaCppBin: null;
+      reason: "LLAMA_CPP_BIN-unset";
+      hint: string;
+    } => ({
       ok: false,
       path: null,
       llamaCppBin: null,
@@ -161,7 +177,7 @@ describe("runRpcDoctor (local mode)", () => {
   test("--help → exit 0, usage on stdout, no dispatch fires", async () => {
     const { deps, captured } = baseDeps();
     let localCalls = 0;
-    deps.checkLocal = () => {
+    deps.checkLocal = (): DoctorOkResult => {
       localCalls++;
       return { ok: true, path: "/x", llamaCppBin: "/y" };
     };
@@ -183,19 +199,17 @@ describe("runRpcDoctor (--node remote mode)", () => {
   test("--node=<name> dispatches through createNodeClient, not checkLocal", async () => {
     const { deps, captured } = baseDeps();
     const calls: string[] = [];
-    deps.checkLocal = () => {
+    deps.checkLocal = (): never => {
       throw new Error("checkLocal must not run when --node is set");
     };
-    deps.loadConfig = () =>
-      ({ apiVersion: "llamactl/v1" }) as unknown as ReturnType<
-        NonNullable<RpcDoctorDeps["loadConfig"]>
-      >;
+    deps.loadConfig = (): LoadedConfig =>
+      ({ apiVersion: "llamactl/v1" }) as unknown as LoadedConfig;
     deps.createNodeClient = (_cfg, opts): RpcDoctorRemoteClient => {
       calls.push(opts.nodeName);
       return {
         rpcServerDoctor: {
           // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-          async query() {
+          async query(): Promise<DoctorOkResult> {
             return {
               ok: true,
               path: "/opt/bin/rpc-server",
@@ -213,14 +227,12 @@ describe("runRpcDoctor (--node remote mode)", () => {
 
   test("--node failure on the remote → exit 1, stderr has the node + reason", async () => {
     const { deps, captured } = baseDeps();
-    deps.loadConfig = () =>
-      ({ apiVersion: "llamactl/v1" }) as unknown as ReturnType<
-        NonNullable<RpcDoctorDeps["loadConfig"]>
-      >;
+    deps.loadConfig = (): LoadedConfig =>
+      ({ apiVersion: "llamactl/v1" }) as unknown as LoadedConfig;
     deps.createNodeClient = (): RpcDoctorRemoteClient => ({
       rpcServerDoctor: {
         // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-        async query() {
+        async query(): Promise<DoctorMissingResult> {
           return {
             ok: false,
             path: null,
@@ -242,14 +254,12 @@ describe("runRpcDoctor (--node remote mode)", () => {
 
   test("--node when dispatcher throws → exit 1, stderr names the node + error", async () => {
     const { deps, captured } = baseDeps();
-    deps.loadConfig = () =>
-      ({ apiVersion: "llamactl/v1" }) as unknown as ReturnType<
-        NonNullable<RpcDoctorDeps["loadConfig"]>
-      >;
+    deps.loadConfig = (): LoadedConfig =>
+      ({ apiVersion: "llamactl/v1" }) as unknown as LoadedConfig;
     deps.createNodeClient = (): RpcDoctorRemoteClient => ({
       rpcServerDoctor: {
         // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-        async query() {
+        async query(): Promise<never> {
           throw new Error("connection refused");
         },
       },
@@ -262,14 +272,12 @@ describe("runRpcDoctor (--node remote mode)", () => {
 
   test("--node + --json → JSON blob on stdout", async () => {
     const { deps, captured } = baseDeps();
-    deps.loadConfig = () =>
-      ({ apiVersion: "llamactl/v1" }) as unknown as ReturnType<
-        NonNullable<RpcDoctorDeps["loadConfig"]>
-      >;
+    deps.loadConfig = (): LoadedConfig =>
+      ({ apiVersion: "llamactl/v1" }) as unknown as LoadedConfig;
     deps.createNodeClient = (): RpcDoctorRemoteClient => ({
       rpcServerDoctor: {
         // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-        async query() {
+        async query(): Promise<DoctorOkResult> {
           return {
             ok: true,
             path: "/opt/bin/rpc-server",

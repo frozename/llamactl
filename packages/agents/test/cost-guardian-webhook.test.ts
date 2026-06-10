@@ -100,9 +100,11 @@ describe("postGuardianWebhook", () => {
 
 /* -------------------------------------------------------------------------- */
 
+type TextContentResult = { content: { type: string; text: string }[] };
+
 function makeClient(responses: Record<string, unknown>): RunbookToolClient {
   return {
-    async callTool(input: ToolCallInput) {
+    async callTool(input: ToolCallInput): Promise<TextContentResult> {
       const payload = responses[input.name];
       if (payload === undefined) throw new Error(`unexpected: ${input.name}`);
       return { content: [{ type: "text", text: JSON.stringify(payload) }] };
@@ -737,7 +739,7 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
     return body.split("\n").map((line) => JSON.parse(line));
   }
 
-  function makeForcePrivateResponse(overrides: Record<string, unknown> = {}) {
+  function makeForcePrivateResponse(overrides: Record<string, unknown> = {}): TextContentResult {
     return {
       content: [
         {
@@ -755,7 +757,7 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
     };
   }
 
-  function makeDeregisterResponse(overrides: Record<string, unknown> = {}) {
+  function makeDeregisterResponse(overrides: Record<string, unknown> = {}): TextContentResult {
     return {
       content: [
         {

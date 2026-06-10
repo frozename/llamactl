@@ -97,7 +97,7 @@ function makeMockClient(handler: (input: ToolCallInput) => Promise<unknown>): {
   return {
     calls,
     client: {
-      async callTool(input: ToolCallInput) {
+      async callTool(input: ToolCallInput): Promise<unknown> {
         calls.push({ name: input.name, arguments: input.arguments });
         return await handler(input);
       },

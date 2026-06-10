@@ -22,17 +22,23 @@ test("T5: orchestrating node appears last in rollout sequence", () => {
 
 test("T1: one-at-a-time strategy: install->activate->health completes before next", async () => {
   const events: string[] = [];
-  const mockClientFactory = (peer: PeerNode) => ({
+  const mockClientFactory = (
+    peer: PeerNode,
+  ): {
+    install: () => Promise<void>;
+    activate: () => Promise<void>;
+    pollHealth: () => Promise<"healthy">;
+  } => ({
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    install: async () => {
+    install: async (): Promise<void> => {
       events.push(`install ${peer.id}`);
     },
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    activate: async () => {
+    activate: async (): Promise<void> => {
       events.push(`activate ${peer.id}`);
     },
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    pollHealth: async () => {
+    pollHealth: async (): Promise<"healthy"> => {
       events.push(`health ${peer.id}`);
       return "healthy" as const;
     },
@@ -62,17 +68,23 @@ test("T1: one-at-a-time strategy: install->activate->health completes before nex
 
 test("T2: rollout halts at node B when health gate fails on node A", async () => {
   const events: string[] = [];
-  const mockClientFactory = (peer: PeerNode) => ({
+  const mockClientFactory = (
+    peer: PeerNode,
+  ): {
+    install: () => Promise<void>;
+    activate: () => Promise<void>;
+    pollHealth: () => Promise<"healthy" | "timeout">;
+  } => ({
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    install: async () => {
+    install: async (): Promise<void> => {
       events.push(`install ${peer.id}`);
     },
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    activate: async () => {
+    activate: async (): Promise<void> => {
       events.push(`activate ${peer.id}`);
     },
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    pollHealth: async () => {
+    pollHealth: async (): Promise<"healthy" | "timeout"> => {
       events.push(`health ${peer.id}`);
       return peer.id === "node-a" ? ("timeout" as const) : ("healthy" as const);
     },
@@ -93,17 +105,23 @@ test("T2: rollout halts at node B when health gate fails on node A", async () =>
 
 test("T3: --strategy=all fires all installs concurrently before any activates", async () => {
   const events: string[] = [];
-  const mockClientFactory = (peer: PeerNode) => ({
-    install: async () => {
+  const mockClientFactory = (
+    peer: PeerNode,
+  ): {
+    install: () => Promise<void>;
+    activate: () => Promise<void>;
+    pollHealth: () => Promise<"healthy">;
+  } => ({
+    install: async (): Promise<void> => {
       await new Promise((r) => setTimeout(r, 10));
       events.push(`install ${peer.id}`);
     },
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    activate: async () => {
+    activate: async (): Promise<void> => {
       events.push(`activate ${peer.id}`);
     },
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    pollHealth: async () => {
+    pollHealth: async (): Promise<"healthy"> => {
       events.push(`health ${peer.id}`);
       return "healthy" as const;
     },
@@ -132,13 +150,19 @@ test("T3: --strategy=all fires all installs concurrently before any activates", 
 
 test("T4: rollback calls activate(previousVersion) on each node", async () => {
   const events: string[] = [];
-  const mockClientFactory = (peer: PeerNode) => ({
+  const mockClientFactory = (
+    peer: PeerNode,
+  ): {
+    install: () => Promise<void>;
+    activate: (args: { pkg: string; version: string }) => Promise<void>;
+    pollHealth: () => Promise<"healthy">;
+  } => ({
     // eslint-disable-next-line @typescript-eslint/require-await -- Preserve existing CLI/test semantics while clearing strict lint debt.
-    install: async () => {
+    install: async (): Promise<void> => {
       return;
     },
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    activate: async (args: { pkg: string; version: string }) => {
+    activate: async (args: { pkg: string; version: string }): Promise<void> => {
       events.push(`activate ${peer.id} ${args.version}`);
     },
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.

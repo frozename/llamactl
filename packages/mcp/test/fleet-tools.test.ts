@@ -6,6 +6,10 @@ import type {
   FleetSnapshotEntry,
   FleetTransitionEntry,
 } from "@llamactl/fleet-supervisor";
+import type {
+  CallToolResult,
+  CompatibilityCallToolResult,
+} from "@modelcontextprotocol/sdk/types.js";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -38,7 +42,7 @@ function writeJournal(entries: FleetJournalEntry[], name = "journal.jsonl"): str
   return path;
 }
 
-async function connected() {
+async function connected(): Promise<{ client: Client }> {
   const server = new McpServer({ name: "test-fleet", version: "0.0.0" });
   registerFleetTools(server);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -59,7 +63,11 @@ function parseJson(text: string): unknown {
   return JSON.parse(text) as unknown;
 }
 
-function call(client: Client, name: string, args: Record<string, unknown>) {
+function call(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<CallToolResult | CompatibilityCallToolResult> {
   return client.callTool({ name, arguments: args });
 }
 

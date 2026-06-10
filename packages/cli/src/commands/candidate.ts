@@ -36,7 +36,7 @@ function forwardStream(e: pull.PullEvent | bench.BenchEvent): void {
 
 function printCompareTable(rows: readonly bench.BenchCompareRow[]): void {
   if (rows.length === 0) return;
-  const pad = (s: string, w: number) => (s.length >= w ? s : s + " ".repeat(w - s.length));
+  const pad = (s: string, w: number): string => (s.length >= w ? s : s + " ".repeat(w - s.length));
   const tuned = rows.filter((r) => r.tuned);
   for (const row of tuned) {
     const t = required(row.tuned);

@@ -471,7 +471,7 @@ describe("rag pipeline scheduler", () => {
           unparseable: [],
         });
         return {
-          stop: () => {
+          stop: (): void => {
             return;
           },
           done: Promise.resolve(),
@@ -491,7 +491,7 @@ describe("rag pipeline scheduler", () => {
       startPipelineScheduler: (opts) => {
         seenOpts = opts;
         return {
-          stop: () => {
+          stop: (): void => {
             return;
           },
           done: Promise.resolve(),
@@ -508,7 +508,7 @@ describe("rag pipeline scheduler", () => {
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient(),
       startPipelineScheduler: () => ({
-        stop: () => {
+        stop: (): void => {
           return;
         },
         done: Promise.resolve(),
@@ -532,7 +532,7 @@ describe("rag pipeline scheduler", () => {
           unparseable: [],
         });
         return {
-          stop: () => {
+          stop: (): void => {
             return;
           },
           done: Promise.resolve(),

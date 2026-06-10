@@ -181,7 +181,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
       `audit: ${res.auditPath}  total=${String(res.total)} entries=${String(res.entries.length)}\n\n`,
     );
 
-    const summarize = (obj: unknown) => {
+    const summarize = (obj: unknown): string => {
       if (!isRecord(obj) || Object.keys(obj).length === 0) return "{}";
 
       let out = "";
@@ -220,7 +220,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
   }
 
   const once = sub === "tick" || flags.once;
-  const writeJournal = (entry: FleetJournalEntry) => {
+  const writeJournal = (entry: FleetJournalEntry): void => {
     appendFleetJournal(entry, journalPath);
   };
 
@@ -277,7 +277,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
     },
     migrationController,
     onTick: executorEnabled
-      ? async () => {
+      ? async (): Promise<void> => {
           const results = await runExecutor({
             node: flags.node,
             auto: flags.auto,
@@ -389,13 +389,13 @@ export function resolveWorkloadUrl(
 ): string {
   const loadWorkloadByNameAny =
     deps.loadWorkloadByNameAny ??
-    ((workloadName: string) =>
+    ((workloadName: string): { spec: { useProxy?: boolean } } =>
       (deps.loadWorkloadByName
         ? deps.loadWorkloadByName(workloadName)
         : workloadStore.loadWorkloadByName(workloadName)) as { spec: { useProxy?: boolean } });
   const resolveInternalProxyEndpoint =
     deps.resolveInternalProxyEndpoint ?? envMod.resolveInternalProxyEndpoint;
-  const warn = deps.warn ?? ((message: string) => process.stderr.write(`${message}\n`));
+  const warn = deps.warn ?? ((message: string): boolean => process.stderr.write(`${message}\n`));
 
   try {
     const manifest = loadWorkloadByNameAny(name);
@@ -417,7 +417,7 @@ export function resolveWorkloadTargetsAtStartup(
   env: NodeJS.ProcessEnv = process.env,
   deps: ResolveWorkloadTargetsAtStartupDeps = {},
 ): WorkloadTarget[] {
-  const info = deps.info ?? ((message: string) => process.stderr.write(`${message}\n`));
+  const info = deps.info ?? ((message: string): boolean => process.stderr.write(`${message}\n`));
   const loggedOverrides = new Map<string, string>();
 
   return workloads.map((target) => {

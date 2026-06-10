@@ -657,7 +657,7 @@ describe("runAgentInstallLaunchd", () => {
         responses: [
           {
             // plutil -lint → success
-            match: (c, a) => c === "plutil" && a[0] === "-lint",
+            match: (c, a): boolean => c === "plutil" && a[0] === "-lint",
             response: {
               pid: 0,
               output: ["OK\n", "", ""],
@@ -669,7 +669,7 @@ describe("runAgentInstallLaunchd", () => {
           },
           {
             // launchctl unload → irrelevant
-            match: (c, a) => c === "launchctl" && a[0] === "unload",
+            match: (c, a): boolean => c === "launchctl" && a[0] === "unload",
             response: {
               pid: 0,
               output: ["", "", ""],
@@ -681,7 +681,7 @@ describe("runAgentInstallLaunchd", () => {
           },
           {
             // launchctl load → fail
-            match: (c, a) => c === "launchctl" && a[0] === "load",
+            match: (c, a): boolean => c === "launchctl" && a[0] === "load",
             response: {
               pid: 0,
               output: ["", "Load failed: 5: Input/output error\n", ""],
@@ -742,7 +742,7 @@ describe("runAgentInstallLaunchd", () => {
       const stub = makeSpawnStub({
         responses: [
           {
-            match: (c, a) => c === "plutil" && a[0] === "-lint",
+            match: (c, a): boolean => c === "plutil" && a[0] === "-lint",
             response: {
               pid: 0,
               output: ["OK\n", "", ""],
@@ -753,7 +753,7 @@ describe("runAgentInstallLaunchd", () => {
             },
           },
           {
-            match: (c, a) => c === "launchctl" && a[0] === "unload",
+            match: (c, a): boolean => c === "launchctl" && a[0] === "unload",
             response: {
               pid: 0,
               output: ["", "", ""],
@@ -764,7 +764,7 @@ describe("runAgentInstallLaunchd", () => {
             },
           },
           {
-            match: (c, a) => c === "launchctl" && a[0] === "load",
+            match: (c, a): boolean => c === "launchctl" && a[0] === "load",
             response: {
               pid: 0,
               output: ["", "", ""],
@@ -836,7 +836,7 @@ describe("runAgentInstallLaunchd", () => {
       const stub = makeSpawnStub({
         responses: [
           {
-            match: (c, a) => c === "plutil" && a[0] === "-lint",
+            match: (c, a): boolean => c === "plutil" && a[0] === "-lint",
             response: {
               pid: 0,
               output: ["OK\n", "", ""],
@@ -847,7 +847,7 @@ describe("runAgentInstallLaunchd", () => {
             },
           },
           {
-            match: (c, a) => c === "launchctl" && a[0] === "unload",
+            match: (c, a): boolean => c === "launchctl" && a[0] === "unload",
             response: {
               pid: 0,
               output: ["", "", ""],
@@ -858,7 +858,7 @@ describe("runAgentInstallLaunchd", () => {
             },
           },
           {
-            match: (c, a) => c === "launchctl" && a[0] === "load",
+            match: (c, a): boolean => c === "launchctl" && a[0] === "load",
             response: {
               pid: 0,
               output: ["", "", ""],

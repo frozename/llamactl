@@ -252,7 +252,7 @@ async function runWorker(args: string[]): Promise<number> {
   // Wire SIGTERM to a trip the abort signal so the loop exits cleanly
   // (allowing the `finally` cleanup to stop llama-server).
   const controller = new AbortController();
-  const onSignal = () => {
+  const onSignal = (): void => {
     controller.abort();
   };
   process.on("SIGTERM", onSignal);

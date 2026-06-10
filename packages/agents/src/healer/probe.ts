@@ -126,7 +126,7 @@ async function probeOne(
 
 export async function probeFleet(opts: ProbeFleetOptions): Promise<ProbeReport> {
   const fetchImpl = opts.fetch ?? globalThis.fetch;
-  const now = opts.now ?? (() => Date.now());
+  const now = opts.now ?? ((): number => Date.now());
   const timeoutMs = opts.timeoutMs ?? 1500;
 
   const kube = readYamlIfExists(opts.kubeconfigPath) as KubeconfigShape | null;

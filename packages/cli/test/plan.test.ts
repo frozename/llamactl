@@ -21,7 +21,7 @@ function captureWrites(target: NodeJS.WriteStream): { restore: () => void; outpu
     return true;
   };
   return {
-    restore: () => {
+    restore: (): void => {
       target.write = original;
     },
     output: () => chunks.join(""),

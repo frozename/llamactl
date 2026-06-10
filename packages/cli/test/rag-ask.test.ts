@@ -55,12 +55,12 @@ async function capture(fn: () => Promise<number>): Promise<{
   let stdout = "";
   let stderr = "";
 
-  process.stdout.write = (chunk: unknown) => {
+  process.stdout.write = (chunk: unknown): true => {
     stdout += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };
 
-  process.stderr.write = (chunk: unknown) => {
+  process.stderr.write = (chunk: unknown): true => {
     stderr += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };
@@ -103,7 +103,18 @@ function installStubClient(opts: {
   const fake = {
     ragSearch: {
       // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-      query: async (input: { node: string; query: string; topK: number; collection?: string }) => {
+      query: async (input: {
+        node: string;
+        query: string;
+        topK: number;
+        collection?: string;
+      }): Promise<{
+        collection: string;
+        results: {
+          document: { metadata?: Record<string, unknown> | undefined; id: string; content: string };
+          score: number;
+        }[];
+      }> => {
         calls.ragSearch.push(input);
         if (opts.throwOnSearch) throw opts.throwOnSearch;
         return {
@@ -121,7 +132,16 @@ function installStubClient(opts: {
     },
     chatComplete: {
       // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-      mutate: async (input: { node: string; request: Record<string, unknown> }) => {
+      mutate: async (input: {
+        node: string;
+        request: Record<string, unknown>;
+      }): Promise<{
+        id: string;
+        object: string;
+        model: unknown;
+        created: number;
+        choices: unknown[];
+      }> => {
         calls.chatComplete.push(input);
         if (opts.throwOnChat) throw opts.throwOnChat;
         return {

@@ -268,7 +268,8 @@ async function handleFleetAudit({
 export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): void {
   const spawnFn = deps?.spawn ?? spawn;
   const detectExistingSupervisor =
-    deps?.detectExistingSupervisor ?? (() => detectExistingSupervisorDefault(spawnFn));
+    deps?.detectExistingSupervisor ??
+    ((): Promise<{ running: boolean; pid?: number }> => detectExistingSupervisorDefault(spawnFn));
 
   server.registerTool(
     "llamactl_fleet_snapshot",
@@ -287,7 +288,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         const peers = listPeers();
         const aggregator = new FleetAggregator({
           peers,
-          fetchSnapshot: (peer) => createPeerFetch(peer)(),
+          fetchSnapshot: (peer): Promise<FleetSnapshotEntry | null> => createPeerFetch(peer)(),
         });
         await aggregator.pollNow();
         return toTextContent({ snapshots: aggregator.getAll() });

@@ -114,11 +114,12 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
   const readLocalSnapshot =
     deps.readLocalSnapshot ??
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-    (async () => readLatestFleetSnapshotFromJournal(defaultFleetJournalPath()));
+    (async (): Promise<FleetSnapshotEntry | null> =>
+      readLatestFleetSnapshotFromJournal(defaultFleetJournalPath()));
   const readPeers = deps.readPeers ?? listPeers;
   const fetchPeerSnapshot =
     deps.fetchPeerSnapshot ??
-    (async (peer: PeerNode) => {
+    (async (peer: PeerNode): Promise<FleetSnapshotEntry | null> => {
       const fetcher = createPeerFetch(peer);
       return await fetcher();
     });
@@ -179,13 +180,13 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
     const db = openAggregatorDb(dbPath);
     const aggregator = new FleetAggregator({
       peers,
-      fetchSnapshot: async (peer) => {
+      fetchSnapshot: async (peer): Promise<FleetSnapshotEntry | null> => {
         const fetcher = createPeerFetch(peer);
         return await fetcher();
       },
     });
 
-    const persist = () => {
+    const persist = (): void => {
       for (const row of aggregator.getAll()) {
         if (row.snapshot === null) continue;
         writeSnapshot(db, row.nodeId, row.snapshot);
@@ -203,7 +204,7 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
     const interval = setInterval(() => {
       persist();
     }, 30_000);
-    const stop = () => {
+    const stop = (): never => {
       clearInterval(interval);
       running.stop();
       db.close();

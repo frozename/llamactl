@@ -67,7 +67,7 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-function deps() {
+function deps(): SetEnabledDeps {
   return {
     loadWorkloadByName: (name: string) => {
       return parseYaml(readFileSync(join(workloadsDir, `${name}.yaml`), "utf8")) as ModelRun;

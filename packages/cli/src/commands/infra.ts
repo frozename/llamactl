@@ -1,6 +1,7 @@
 import {
   type InfraClientLike,
   planRollout,
+  type RolloutPlan,
   runRollback,
   runRollout,
 } from "@llamactl/fleet-supervisor";
@@ -303,7 +304,7 @@ export async function executeRollout(
     sha256: string;
     skipIfPresent: boolean;
   },
-) {
+): Promise<RolloutPlan> {
   return await runRollout(groups, clientFactory, opts);
 }
 
@@ -311,7 +312,7 @@ export async function executeRollback(
   peers: PeerNode[],
   clientFactory: (peer: PeerNode) => InfraClientLike,
   opts: { pkg: string; previousVersion: string },
-) {
+): Promise<RolloutPlan> {
   return await runRollback(peers, clientFactory, opts);
 }
 

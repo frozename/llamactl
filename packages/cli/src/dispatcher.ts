@@ -356,14 +356,14 @@ export function subscribeRemote<Event, Done>(opts: {
         else reject(new Error("remote subscription completed without a done event"));
       },
     });
-    const abort = () => {
+    const abort = (): void => {
       if (settled) return;
       settled = true;
       sub.unsubscribe();
       cleanup();
       reject(new Error("aborted"));
     };
-    const cleanup = () => {
+    const cleanup = (): void => {
       process.off("SIGINT", abort);
       process.off("SIGTERM", abort);
     };

@@ -43,7 +43,7 @@ const snap = (
 function captureStdout<T>(fn: () => Promise<T>): Promise<{ result: T; out: string }> {
   let out = "";
   const orig = process.stdout.write.bind(process.stdout);
-  process.stdout.write = (chunk: string | Uint8Array) => {
+  process.stdout.write = (chunk: string | Uint8Array): true => {
     out += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };

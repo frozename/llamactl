@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 describe("supervisor status - CII regressions", () => {
-  function withTempJournal(content: string, fn: (path: string) => Promise<void>) {
+  function withTempJournal(content: string, fn: (path: string) => Promise<void>): Promise<void> {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "llamactl-cli-test-"));
     const journalPath = path.join(tmp, "journal.jsonl");
     if (content) fs.writeFileSync(journalPath, content, "utf8");

@@ -7,7 +7,7 @@ import { makeTempRuntime, runCli } from "./helpers.js";
 describe("llamactl uninstall", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
   const rel = "E2E-Uninstall-GGUF/e2e.gguf";
-  const primeFs = () => {
+  const primeFs = (): void => {
     const modelDir = join(temp.modelsDir, "E2E-Uninstall-GGUF");
     mkdirSync(modelDir, { recursive: true });
     writeFileSync(join(modelDir, "e2e.gguf"), "");

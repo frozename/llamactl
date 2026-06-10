@@ -100,7 +100,7 @@ function seedTempFleet(): {
     auditDir,
     kubeconfigPath,
     embersynthPath,
-    restore: () => {
+    restore: (): void => {
       for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
       Object.assign(process.env, originalEnv);
       rmSync(runtimeDir, { recursive: true, force: true });

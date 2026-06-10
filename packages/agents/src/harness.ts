@@ -59,7 +59,7 @@ async function mountInProcess(
   await client.connect(clientTransport);
   return {
     client,
-    close: async () => {
+    close: async (): Promise<void> => {
       try {
         await client.close();
       } catch {
@@ -206,7 +206,7 @@ export async function runRunbook<Params>(
   if (!client) {
     const built = await defaultToolClient();
     client = built.client;
-    dispose = async () => {
+    dispose = async (): Promise<void> => {
       await built.dispose();
     };
   }

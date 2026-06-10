@@ -88,7 +88,7 @@ function seedTempFleet(): {
     kubeconfigPath,
     providersPath,
     journalPath,
-    restore: () => {
+    restore: (): void => {
       rmSync(runtimeDir, { recursive: true, force: true });
     },
   };

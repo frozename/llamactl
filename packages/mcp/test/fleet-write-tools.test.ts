@@ -1,3 +1,7 @@
+import type {
+  CallToolResult,
+  CompatibilityCallToolResult,
+} from "@modelcontextprotocol/sdk/types.js";
 import type { ChildProcess, spawn, SpawnOptions } from "node:child_process";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -42,12 +46,13 @@ function mockSpawn(opts: SpawnMockOptions, calls: { cmd: string; args: string[] 
 async function connected(deps?: {
   spawn?: SpawnFn;
   detectExistingSupervisor?: () => Promise<{ running: boolean; pid?: number }>;
-}) {
+}): Promise<{ client: Client }> {
   const server = new McpServer({ name: "test", version: "0.0.0" });
   registerFleetTools(server, {
     ...deps,
     detectExistingSupervisor:
-      deps?.detectExistingSupervisor ?? (() => Promise.resolve({ running: false })),
+      deps?.detectExistingSupervisor ??
+      ((): Promise<{ running: false }> => Promise.resolve({ running: false })),
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -61,7 +66,11 @@ function textOf(result: unknown): string {
   return c[0]?.text ?? "";
 }
 
-function call(client: Client, name: string, args: Record<string, unknown>) {
+function call(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<CallToolResult | CompatibilityCallToolResult> {
   return client.callTool({ name, arguments: args });
 }
 

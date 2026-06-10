@@ -248,7 +248,7 @@ function envelope(payload: unknown): { content: { type: "text"; text: string }[]
 
 function mockClient(handler: (input: ToolCallInput) => Promise<unknown>): RunbookToolClient {
   return {
-    async callTool(input: ToolCallInput) {
+    async callTool(input: ToolCallInput): Promise<unknown> {
       return await handler(input);
     },
   };

@@ -35,9 +35,29 @@ function makeClient(responses: Record<string, (args: Record<string, unknown>) =>
 
 const VISION_REL = "acme/visionmax-Q4_K_M.gguf";
 
+type BenchResponseRow = {
+  label: string;
+  rel: string;
+  class: string;
+  installed: boolean;
+  scope: string;
+  mode: string;
+  ctx: string;
+  build: string;
+  machine: string;
+  tuned: {
+    profile: string;
+    gen_tps: string;
+    prompt_tps: string;
+    updated_at: string;
+    legacy: boolean;
+  } | null;
+  vision: null;
+};
+
 function benchResponse(
   rows: { rel: string; class: string; installed: boolean; gen_tps?: string }[],
-) {
+): BenchResponseRow[] {
   return rows.map((r) => ({
     label: r.rel,
     rel: r.rel,

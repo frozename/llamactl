@@ -162,7 +162,7 @@ async function runApply(args: string[]): Promise<number> {
     // the full body up front. Small manifests (< a few MB); we're
     // not streaming anywhere. Tests override via `readStdinYaml`
     // seam because fd-0 can't be redirected without a subprocess.
-    const reader = testSeams.readStdinYaml ?? (() => readFileSync(0, "utf8"));
+    const reader = testSeams.readStdinYaml ?? ((): string => readFileSync(0, "utf8"));
     try {
       manifestYaml = reader();
     } catch (err) {

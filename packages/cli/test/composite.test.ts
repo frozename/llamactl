@@ -63,12 +63,12 @@ async function capture(fn: () => Promise<number>): Promise<{
   let stdout = "";
   let stderr = "";
 
-  process.stdout.write = (chunk: unknown) => {
+  process.stdout.write = (chunk: unknown): true => {
     stdout += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };
 
-  process.stderr.write = (chunk: unknown) => {
+  process.stderr.write = (chunk: unknown): true => {
     stderr += typeof chunk === "string" ? chunk : String(chunk);
     return true;
   };

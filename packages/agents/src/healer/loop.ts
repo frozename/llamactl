@@ -196,7 +196,7 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
   })();
 
   return {
-    stop() {
+    stop(): void {
       stopped = true;
     },
     done,

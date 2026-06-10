@@ -12,7 +12,7 @@ describe("llamactl bench", () => {
   // checkout in the temp $DEV_STORAGE so `resolveBuildId` falls all
   // the way back to literal `unknown`. The seed TSV rows must use
   // the same key shape or `findLatestProfile` will miss them.
-  const seedBenchFiles = () => {
+  const seedBenchFiles = (): void => {
     mkdirSync(temp.runtimeDir, { recursive: true });
     writeFileSync(
       join(temp.runtimeDir, "llama-bench-profiles.tsv"),
