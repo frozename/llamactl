@@ -86,10 +86,10 @@ async function startHarness(script: {
   });
   const bunPort = bun.port ?? 0;
   const handleSubscription = (req: TunnelReq): TunnelSubscription => ({
-    subscribe(handlers) {
+    subscribe(handlers): { cancel(): void } {
       let cancelled = false;
       const isCancelled = (): boolean => cancelled;
-      void (async () => {
+      void (async (): Promise<void> => {
         for (const ev of script.events) {
           if (isCancelled()) break;
           await new Promise((r) => setTimeout(r, script.delayMs ?? 2));
@@ -129,7 +129,7 @@ async function startHarness(script: {
     bearer,
     bun,
     receivedCancel,
-    async stop() {
+    async stop(): Promise<void> {
       client.stop();
       void bun.stop();
       await new Promise((r) => setTimeout(r, 10));

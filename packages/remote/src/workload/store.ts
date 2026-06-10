@@ -176,7 +176,7 @@ export function listWorkloads(
       const error = err instanceof Error ? err : new Error(String(err));
       (
         onSkip ??
-        ((skippedFile: string, skippedErr: Error) => {
+        ((skippedFile: string, skippedErr: Error): void => {
           console.warn(`listWorkloads: skipped ${skippedFile}: ${skippedErr.message}`);
         })
       )(path, error);

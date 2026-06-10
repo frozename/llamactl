@@ -31,7 +31,7 @@ function mockClient(live: InstalledInfra[] = []): NodeRunInfraClient {
   let queried = false;
   return {
     infraList: {
-      async query() {
+      async query(): Promise<InstalledInfra[]> {
         await Promise.resolve();
         // After the first query (pre-apply), flip to post-apply state
         // simulating installs.
@@ -43,7 +43,12 @@ function mockClient(live: InstalledInfra[] = []): NodeRunInfraClient {
       },
     },
     infraInstall: {
-      async mutate(input) {
+      async mutate(input): Promise<{
+        ok: true;
+        state: "installed" | "already-present";
+        versionDir: string;
+        activated: boolean;
+      }> {
         await Promise.resolve();
         const result: InstallResult = {
           ok: true,
@@ -56,13 +61,13 @@ function mockClient(live: InstalledInfra[] = []): NodeRunInfraClient {
       },
     },
     infraActivate: {
-      async mutate() {
+      async mutate(): Promise<{ ok: true }> {
         await Promise.resolve();
         return { ok: true as const };
       },
     },
     infraUninstall: {
-      async mutate() {
+      async mutate(): Promise<{ ok: true; mode: "package"; removed: true }> {
         await Promise.resolve();
         return { ok: true as const, mode: "package" as const, removed: true };
       },
@@ -82,7 +87,7 @@ describe("reconcileNodeRunsOnce", () => {
     const result = await reconcileNodeRunsOnce({
       workloadsDir: dir,
       getClient: () => mockClient(),
-      getArtifactResolver: () => () =>
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
         Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
     });
     expect(result.reports).toEqual([]);
@@ -99,7 +104,7 @@ describe("reconcileNodeRunsOnce", () => {
         calls.push(node);
         return mockClient();
       },
-      getArtifactResolver: () => () =>
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
         Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
     });
     expect(result.reports).toHaveLength(2);
@@ -116,7 +121,7 @@ describe("reconcileNodeRunsOnce", () => {
     const result = await reconcileNodeRunsOnce({
       workloadsDir: dir,
       getClient: () => mockClient(),
-      getArtifactResolver: () => () =>
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
         Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
       filter: (m) => m.metadata.name === "a",
     });
@@ -130,7 +135,7 @@ describe("reconcileNodeRunsOnce", () => {
     await reconcileNodeRunsOnce({
       workloadsDir: dir,
       getClient: () => mockClient(),
-      getArtifactResolver: () => () =>
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
         Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
       onReport: (r) => names.push(r.manifestName),
     });
@@ -149,7 +154,7 @@ describe("reconcileNodeRunsOnce", () => {
         }
         return mockClient();
       },
-      getArtifactResolver: () => () =>
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
         Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
     });
     expect(result.errors).toBe(1);

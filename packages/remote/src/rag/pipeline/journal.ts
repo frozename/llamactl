@@ -128,7 +128,7 @@ export async function openJournal(path: string): Promise<Journal> {
   const { seen: seenSet, prior } = await loadIndexes(path);
 
   return {
-    async append(entry) {
+    async append(entry): Promise<void> {
       const line = `${JSON.stringify(entry)}\n`;
       // Bun.file + writer is a touch faster for high-volume streams;
       // node:fs/promises is the portable fallback and is plenty for
@@ -144,10 +144,10 @@ export async function openJournal(path: string): Promise<Journal> {
         prior.set(pk, list);
       }
     },
-    seen(source, doc_id, sha) {
+    seen(source, doc_id, sha): Promise<boolean> {
       return Promise.resolve(seenSet.has(key(source, doc_id, sha)));
     },
-    priorIngestions(source, doc_id) {
+    priorIngestions(source, doc_id): Promise<{ sha: string; chunk_ids: string[] }[]> {
       // Return a defensive copy so callers mutating the list can't
       // corrupt the in-memory index.
       return Promise.resolve(
@@ -157,7 +157,7 @@ export async function openJournal(path: string): Promise<Journal> {
         })),
       );
     },
-    close() {
+    close(): Promise<void> {
       // No resources held between calls — appendFile opens/closes
       // per call. Keeping the method in the contract so a future
       // batched-writer swap doesn't reshape the API.

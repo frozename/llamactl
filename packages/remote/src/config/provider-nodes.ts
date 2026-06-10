@@ -46,7 +46,9 @@ export function synthesizeProviderNodes(
   // below both tolerate an empty `gateways` list.
 
   const loadSirius = loaders.loadSirius ?? loadSiriusProviders;
-  const loadEmbersynth = loaders.loadEmbersynth ?? (() => loadEmbersynthConfig());
+  const loadEmbersynth =
+    loaders.loadEmbersynth ??
+    ((): ReturnType<typeof loadEmbersynthConfig> => loadEmbersynthConfig());
 
   const virtual: ClusterNode[] = [];
 

@@ -168,8 +168,8 @@ class BunFetchHttpLibrary {
       headerMap[name] = value;
     }
     const respBody = {
-      text: () => resp.text(),
-      binary: async () => Buffer.from(await resp.arrayBuffer()),
+      text: (): Promise<string> => resp.text(),
+      binary: async (): Promise<Buffer<ArrayBuffer>> => Buffer.from(await resp.arrayBuffer()),
     };
     return new ResponseContext(resp.status, headerMap, respBody);
   }

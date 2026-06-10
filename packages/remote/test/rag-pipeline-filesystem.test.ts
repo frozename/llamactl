@@ -21,7 +21,7 @@ async function collect(spec: unknown): Promise<RawDoc[]> {
   const logs: { level: string; msg: string }[] = [];
   const ctx = {
     spec,
-    log: (e: { level: "info" | "warn" | "error"; msg: string; data?: unknown }) =>
+    log: (e: { level: "info" | "warn" | "error"; msg: string; data?: unknown }): number =>
       logs.push({ level: e.level, msg: e.msg }),
     signal: new AbortController().signal,
     env: process.env,

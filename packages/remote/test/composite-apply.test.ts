@@ -14,7 +14,7 @@ import type {
   ServiceInstance,
   ServiceRef,
 } from "../src/runtime/backend.js";
-import type { WorkloadClient } from "../src/workload/apply.js";
+import type { ApplyResult, WorkloadClient } from "../src/workload/apply.js";
 
 import { applyComposite, destroyComposite } from "../src/composite/apply.js";
 import { saveConfig } from "../src/config/kubeconfig.js";
@@ -209,10 +209,10 @@ function makeFakeWorkloadClient(): {
   // read-only getters that reflect counters
   return {
     client: wrap,
-    get stopped() {
+    get stopped(): number {
       return stopped;
     },
-    get started() {
+    get started(): number {
       return started;
     },
   };
@@ -340,7 +340,10 @@ describe("applyComposite — happy path with rag + backingService", () => {
           },
         ) => Promise<string | null>;
       }
-    ).resolveExternalServiceEndpoint = async (_ref, opts) => {
+    ).resolveExternalServiceEndpoint = async (
+      _ref,
+      opts,
+    ): Promise<"http://localhost:31234" | null> => {
       await Promise.resolve();
       if (opts.serviceType === "NodePort") return "http://localhost:31234";
       return null;
@@ -397,7 +400,7 @@ describe("applyComposite — happy path with rag + backingService", () => {
       backend as unknown as {
         resolveExternalServiceEndpoint: () => Promise<string | null>;
       }
-    ).resolveExternalServiceEndpoint = async () => {
+    ).resolveExternalServiceEndpoint = async (): Promise<string> => {
       await Promise.resolve();
       externalCalls++;
       return "http://should-not-be-used";
@@ -488,7 +491,7 @@ describe("applyComposite — service failure triggers rollback", () => {
     // First service succeeds; second fails.
     let callCount = 0;
     const origEnsure = backend.ensureService.bind(backend);
-    backend.ensureService = async (spec) => {
+    backend.ensureService = async (spec): Promise<ServiceInstance> => {
       callCount++;
       if (callCount === 2) throw new Error("simulated docker failure");
       return await origEnsure(spec);
@@ -561,7 +564,7 @@ describe("applyComposite — onFailure=leave-partial", () => {
 
     let callCount = 0;
     const origEnsure = backend.ensureService.bind(backend);
-    backend.ensureService = async (spec) => {
+    backend.ensureService = async (spec): Promise<ServiceInstance> => {
       callCount++;
       if (callCount === 2) throw new Error("partial failure");
       return await origEnsure(spec);
@@ -795,7 +798,7 @@ describe("destroyComposite — purgeVolumes plumbing", () => {
 
     let callCount = 0;
     const origEnsure = backend.ensureService.bind(backend);
-    backend.ensureService = async (spec) => {
+    backend.ensureService = async (spec): Promise<ServiceInstance> => {
       callCount++;
       if (callCount === 2) throw new Error("simulated docker failure");
       return await origEnsure(spec);
@@ -877,7 +880,7 @@ describe("destroyComposite — boundary-based destroy (k8s cascade)", () => {
       backend as FakeRuntimeBackend & {
         destroyCompositeBoundary?: (name: string, opts?: unknown) => Promise<void>;
       }
-    ).destroyCompositeBoundary = async (compositeName, opts) => {
+    ).destroyCompositeBoundary = async (compositeName, opts): Promise<void> => {
       await Promise.resolve();
       boundaryCalls.push({ compositeName, opts });
     };
@@ -943,7 +946,7 @@ describe("destroyComposite — boundary-based destroy (k8s cascade)", () => {
       backend as FakeRuntimeBackend & {
         destroyCompositeBoundary?: (name: string) => Promise<void>;
       }
-    ).destroyCompositeBoundary = async () => {
+    ).destroyCompositeBoundary = async (): Promise<never> => {
       await Promise.resolve();
       throw new Error("cluster unreachable");
     };
@@ -1030,14 +1033,15 @@ describe("applyComposite — gateway upstream threading", () => {
     }[] = [];
     const fakeSirius = {
       kind: "sirius",
-      canHandle: (node: { cloud?: { provider: string } }) => node.cloud?.provider === "sirius",
+      canHandle: (node: { cloud?: { provider: string } }): boolean =>
+        node.cloud?.provider === "sirius",
       apply: async (o: {
         composite?: {
           compositeName: string;
           upstreams: readonly { name: string; endpoint: string; nodeName: string }[];
           providerConfig: Readonly<Record<string, unknown>>;
         };
-      }) => {
+      }): Promise<ApplyResult> => {
         await Promise.resolve();
         if (o.composite) recorded.push({ ...o.composite });
         const now = new Date().toISOString();
@@ -1139,12 +1143,13 @@ describe("applyComposite — gateway upstream threading", () => {
     }[] = [];
     const fakeSirius = {
       kind: "sirius",
-      canHandle: (node: { cloud?: { provider: string } }) => node.cloud?.provider === "sirius",
+      canHandle: (node: { cloud?: { provider: string } }): boolean =>
+        node.cloud?.provider === "sirius",
       apply: async (o: {
         composite?: {
           upstreams: readonly { endpoint: string }[];
         };
-      }) => {
+      }): Promise<ApplyResult> => {
         await Promise.resolve();
         if (o.composite) recorded.push(o.composite);
         const now = new Date().toISOString();
@@ -1239,12 +1244,13 @@ describe("applyComposite — gateway upstream threading", () => {
     }[] = [];
     const fakeSirius = {
       kind: "sirius",
-      canHandle: (node: { cloud?: { provider: string } }) => node.cloud?.provider === "sirius",
+      canHandle: (node: { cloud?: { provider: string } }): boolean =>
+        node.cloud?.provider === "sirius",
       apply: async (o: {
         composite?: {
           upstreams: readonly { endpoint: string }[];
         };
-      }) => {
+      }): Promise<ApplyResult> => {
         await Promise.resolve();
         if (o.composite) recorded.push(o.composite);
         const now = new Date().toISOString();
@@ -1337,8 +1343,11 @@ describe("applyComposite — gateway upstream threading", () => {
     let ctxSeen: { upstreams?: unknown; providerConfig?: unknown } | null = null;
     const fakeEmber = {
       kind: "embersynth",
-      canHandle: (node: { cloud?: { provider: string } }) => node.cloud?.provider === "embersynth",
-      apply: async (o: { composite?: { upstreams: unknown; providerConfig: unknown } }) => {
+      canHandle: (node: { cloud?: { provider: string } }): boolean =>
+        node.cloud?.provider === "embersynth",
+      apply: async (o: {
+        composite?: { upstreams: unknown; providerConfig: unknown };
+      }): Promise<ApplyResult> => {
         await Promise.resolve();
         ctxSeen = o.composite ?? null;
         const now = new Date().toISOString();

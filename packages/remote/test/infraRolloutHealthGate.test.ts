@@ -37,7 +37,7 @@ function snapshot(reachable: boolean[]): FleetSnapshotEntry {
 
 test('T1: healthGate resolves "healthy" when all workloads reachable=true before timeout', async () => {
   let calls = 0;
-  const fetchSnapshot = async () => {
+  const fetchSnapshot = async (): Promise<FleetSnapshotEntry> => {
     await Promise.resolve();
     calls++;
     if (calls < 3) return snapshot([false, true]);
@@ -50,7 +50,7 @@ test('T1: healthGate resolves "healthy" when all workloads reachable=true before
 
 test('T2: healthGate resolves "timeout" after timeoutMs without full health', async () => {
   let calls = 0;
-  const fetchSnapshot = async () => {
+  const fetchSnapshot = async (): Promise<FleetSnapshotEntry> => {
     await Promise.resolve();
     calls++;
     return snapshot([false, true]);

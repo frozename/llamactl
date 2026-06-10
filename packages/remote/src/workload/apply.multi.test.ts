@@ -17,7 +17,7 @@ type WorkloadStateMap = Map<string, WorkloadState>;
 function makeClient(state: WorkloadStateMap): WorkloadClient {
   return {
     serverStatus: {
-      query: ({ workload }) => {
+      query: ({ workload }): ReturnType<WorkloadClient["serverStatus"]["query"]> => {
         const s = state.get(workload);
         return Promise.resolve(
           s
@@ -45,13 +45,13 @@ function makeClient(state: WorkloadStateMap): WorkloadClient {
       },
     },
     serverStop: {
-      mutate: ({ workload }) => {
+      mutate: ({ workload }): Promise<{ stopped: boolean }> => {
         state.delete(workload);
         return Promise.resolve({ stopped: true });
       },
     },
     serverStart: {
-      subscribe: ({ workload, target, extraArgs }, callbacks) => {
+      subscribe: ({ workload, target, extraArgs }, callbacks): { unsubscribe: () => undefined } => {
         state.set(workload, { up: true, rel: target, args: extraArgs ?? [] });
         queueMicrotask(() => {
           callbacks.onData({
@@ -141,7 +141,7 @@ function makeModelHostClient(): WorkloadClient {
     serverStop: { mutate: () => Promise.resolve({ stopped: true }) },
     serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
     modelHostStart: {
-      subscribe: (_input, callbacks) => {
+      subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
         queueMicrotask(() => {
           callbacks.onData({ type: "done", result: { ok: true, pid: 12345, state: "Running" } });
           callbacks.onComplete();
@@ -238,7 +238,7 @@ test("concurrent applies on the same node serialize through the mutex", async ()
     },
     serverStop: { mutate: () => Promise.resolve({ stopped: true }) },
     serverStart: {
-      subscribe: ({ workload }, callbacks) => {
+      subscribe: ({ workload }, callbacks): { unsubscribe: () => undefined } => {
         callOrder.push(`start:${workload}`);
         setTimeout(() => {
           callOrder.push(`done:${workload}`);

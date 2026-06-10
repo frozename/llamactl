@@ -14,27 +14,35 @@ void vi.mock("bonjour-service", () => {
     port?: number;
     txt?: Record<string, unknown>;
   };
+  type MockService = PublishOpts & {
+    addresses: string[];
+    on: (evt: string, cb: (err: unknown) => void) => undefined;
+    stop: (cb?: () => void) => void;
+  };
   const registry = new Set<PublishOpts>();
   let lastPublished: PublishOpts | null = null;
 
   class MockBonjour {
-    publish(opts: PublishOpts) {
+    publish(opts: PublishOpts): MockService {
       lastPublished = opts;
       registry.add(opts);
       return {
         ...opts,
         addresses: ["127.0.0.1"],
-        on(_evt: string, _cb: (err: unknown) => void) {
+        on(_evt: string, _cb: (err: unknown) => void): undefined {
           return undefined;
         },
-        stop(cb?: () => void) {
+        stop(cb?: () => void): void {
           registry.delete(opts);
           cb?.();
         },
       };
     }
 
-    find(filter: { type?: string }, onUp: (svc: Record<string, unknown>) => void) {
+    find(
+      filter: { type?: string },
+      onUp: (svc: Record<string, unknown>) => void,
+    ): { stop(): undefined } {
       // Emit each matching pre-registered service to the browser on the
       // next tick — mirrors how the real Bonjour browser fires `up`
       // events as responses come in. Synchronous emission would race
@@ -47,21 +55,21 @@ void vi.mock("bonjour-service", () => {
         }
       }, 10);
       return {
-        stop() {
+        stop(): undefined {
           return undefined;
         },
       };
     }
 
-    destroy() {
+    destroy(): undefined {
       return undefined;
     }
   }
 
   return {
     Bonjour: MockBonjour,
-    __lastPublished: () => lastPublished,
-    __mockRegistrySize: () => registry.size,
+    __lastPublished: (): PublishOpts | null => lastPublished,
+    __mockRegistrySize: (): number => registry.size,
   };
 });
 

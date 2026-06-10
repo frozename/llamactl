@@ -53,14 +53,14 @@ async function startPair(script: Map<string, ScriptedSub>): Promise<RunningPair>
 
   // Build a subscription handler honouring the `script` map.
   const handleSubscription = (req: TunnelReq): TunnelSubscription => ({
-    subscribe(handlers) {
+    subscribe(handlers): { cancel(): void } {
       const entry = script.get(req.method);
       if (!entry) {
         setImmediate(() => {
           handlers.onError(new Error(`unknown method ${req.method}`));
         });
         return {
-          cancel() {
+          cancel(): void {
             /* no-op */
           },
         };
@@ -111,7 +111,7 @@ async function startPair(script: Map<string, ScriptedSub>): Promise<RunningPair>
     server: srv,
     client,
     receivedCancel,
-    async stop() {
+    async stop(): Promise<void> {
       client.stop();
       void bun.stop();
       await new Promise((r) => setTimeout(r, 20));

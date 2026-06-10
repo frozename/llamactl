@@ -120,7 +120,7 @@ export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
   return {
     nodes: handles,
     clusterConfigPath,
-    cleanup: async () => {
+    cleanup: async (): Promise<void> => {
       for (const h of handles) await h.stop().catch(() => undefined);
       rmSync(clusterConfigPath, { force: true });
     },

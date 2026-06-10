@@ -246,11 +246,13 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   // handler kills the process even though the HTTP server is fine.
   // Make the agent resilient: log + continue. Once installed, this
   // covers ANY future async-leak the agent picks up — not just mDNS.
-  const captureFatal = (kind: string) => (err: unknown) => {
-    process.stderr.write(
-      `${kind}: ${err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err)}\n`,
-    );
-  };
+  const captureFatal =
+    (kind: string) =>
+    (err: unknown): void => {
+      process.stderr.write(
+        `${kind}: ${err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err)}\n`,
+      );
+    };
   process.on("uncaughtException", captureFatal("uncaughtException"));
   process.on("unhandledRejection", captureFatal("unhandledRejection"));
 
@@ -468,7 +470,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   const wsConfig = tunnelServer ? tunnelServer.websocket : null;
   const server =
     opts.tls && !allowPlainHttp
-      ? (() => {
+      ? ((): Bun.Server<unknown> => {
           const loaded = loadCert(opts.tls);
           fingerprint = loaded.fingerprint;
           return wsConfig
@@ -576,14 +578,17 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     url: `${scheme}://${bindHost}:${String(listenPort)}`,
     port: listenPort,
     fingerprint,
-    handleRequest: async (req: Request, address: ClientAddress | null = null) => {
+    handleRequest: async (
+      req: Request,
+      address: ClientAddress | null = null,
+    ): Promise<Response> => {
       return await fetchHandler(req, {
         requestIP: () => address,
         // Tunneled requests are synthetic — no socket to upgrade.
         upgrade: () => false,
       });
     },
-    stop: async () => {
+    stop: async (): Promise<void> => {
       stopSearchIngest();
       stopPeerSnapshotPoller?.();
       // Best-effort — never let a tunnel-client teardown error

@@ -125,14 +125,15 @@ export const pipelineEvents: PipelineEventBus = createPipelineEventBus();
 
 export function _resetPipelineEventsForTests(): void {
   const fresh = createPipelineEventBus();
-  (pipelineEvents as { startRun: PipelineEventBus["startRun"] }).startRun = (name, init) => {
+  (pipelineEvents as { startRun: PipelineEventBus["startRun"] }).startRun = (name, init): void => {
     fresh.startRun(name, init);
   };
-  (pipelineEvents as { endRun: PipelineEventBus["endRun"] }).endRun = (name) => {
+  (pipelineEvents as { endRun: PipelineEventBus["endRun"] }).endRun = (name): void => {
     fresh.endRun(name);
   };
-  (pipelineEvents as { currentRun: PipelineEventBus["currentRun"] }).currentRun = (name) =>
-    fresh.currentRun(name);
-  (pipelineEvents as { allRunning: PipelineEventBus["allRunning"] }).allRunning = () =>
+  (pipelineEvents as { currentRun: PipelineEventBus["currentRun"] }).currentRun = (
+    name,
+  ): PipelineRun | null => fresh.currentRun(name);
+  (pipelineEvents as { allRunning: PipelineEventBus["allRunning"] }).allRunning = (): string[] =>
     fresh.allRunning();
 }

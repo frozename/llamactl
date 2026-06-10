@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import { CompositeSchema, CompositeSpecSchema } from "../src/composite/schema.js";
 
-function minimalRaw() {
+function minimalRaw(): {
+  apiVersion: "llamactl/v1";
+  kind: "Composite";
+  metadata: { name: string };
+  spec: Record<string, never>;
+} {
   return {
     apiVersion: "llamactl/v1" as const,
     kind: "Composite" as const,

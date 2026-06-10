@@ -106,8 +106,8 @@ export interface PeerSnapshotPollerOptions {
  */
 export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): () => void {
   const intervalMs = opts.intervalMs ?? 15_000;
-  const nowFn = opts.nowFn ?? (() => Date.now());
-  const discover = opts.listPeersFn ?? (() => listPeers());
+  const nowFn = opts.nowFn ?? ((): number => Date.now());
+  const discover = opts.listPeersFn ?? ((): PeerNode[] => listPeers());
   const fetchOne = opts.fetchFn ?? fetchPeerSnapshot;
   const publish = opts.publish ?? openaiProxy.setPeerSnapshots;
   let stopped = false;

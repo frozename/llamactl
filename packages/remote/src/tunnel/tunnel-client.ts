@@ -426,7 +426,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         /* ignore */
       }
     }, ackTimeout);
-    newWs.onopen = () => {
+    newWs.onopen = (): void => {
       try {
         newWs.send(
           encodeTunnelMessage({
@@ -439,7 +439,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         // close path picks it up
       }
     };
-    newWs.onmessage = (ev: { data: string | Buffer }) => {
+    newWs.onmessage = (ev: { data: string | Buffer }): void => {
       const raw = typeof ev.data === "string" ? ev.data : ev.data.toString("utf8");
       const msg = parseTunnelMessage(raw);
       if (!msg) return;
@@ -498,7 +498,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         return;
       }
     };
-    newWs.onclose = (ev: { code: number; reason: string }) => {
+    newWs.onclose = (ev: { code: number; reason: string }): void => {
       if (ackTimer) {
         clearTimeout(ackTimer);
         ackTimer = null;
@@ -515,13 +515,13 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
       }
       if (!stopped) scheduleReconnect();
     };
-    newWs.onerror = () => {
+    newWs.onerror = (): void => {
       // onclose will follow.
     };
   }
 
   return {
-    async start() {
+    async start(): Promise<void> {
       if (stopped) throw new Error("tunnel client has been stopped");
       const initialBudget = opts.initialAttemptTimeoutMs ?? INITIAL_ATTEMPT_TIMEOUT_DEFAULT;
       if (initialBudget <= 0) {
@@ -535,11 +535,11 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
           reject(new Error("tunnel start: initial-attempt timeout"));
         }, initialBudget);
         firstAttemptResolver = {
-          resolve: () => {
+          resolve: (): void => {
             clearTimeout(timer);
             resolve();
           },
-          reject: (err) => {
+          reject: (err): void => {
             clearTimeout(timer);
             reject(err);
           },
@@ -547,7 +547,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         doConnect();
       });
     },
-    stop(code, reason) {
+    stop(code, reason): void {
       stopped = true;
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
@@ -571,7 +571,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         firstAttemptResolver = null;
       }
     },
-    async ping(nonce, timeoutMs = 3000) {
+    async ping(nonce, timeoutMs = 3000): Promise<void> {
       if (state !== "ready" || !ws) throw new Error("tunnel not ready");
       const currentWs = ws;
       const actualNonce = nonce ?? Math.random().toString(36).slice(2);
@@ -599,7 +599,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         }
       });
     },
-    async waitUntilReady(timeoutMs = 10000) {
+    async waitUntilReady(timeoutMs = 10000): Promise<void> {
       if (state === "ready") return;
       if (state === "stopped") throw new Error("tunnel client stopped");
       await new Promise<void>((resolve, reject) => {
@@ -611,10 +611,10 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         readyWaiters.push({ resolve, reject, timer });
       });
     },
-    isReady() {
+    isReady(): boolean {
       return state === "ready";
     },
-    state() {
+    state(): TunnelState {
       return state;
     },
   };

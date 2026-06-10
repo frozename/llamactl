@@ -274,7 +274,7 @@ async function startFakeEmbedder(
   return {
     url: `http://127.0.0.1:${String(server.port)}`,
     calls,
-    stop: async () => {
+    stop: async (): Promise<void> => {
       await Promise.resolve();
       await server.stop(true);
     },

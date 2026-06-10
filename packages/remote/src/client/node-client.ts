@@ -257,7 +257,7 @@ function proxyFromTunnel(
           onComplete: () => void;
           onStarted?: () => void;
         },
-      ) => {
+      ): { unsubscribe: () => void } => {
         if (!subscribeFn) {
           throw new Error(
             `tunnel-routed subscribe('${method}') requires a tunnelSubscribe dispatcher; none was configured`,

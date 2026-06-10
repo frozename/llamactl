@@ -136,7 +136,7 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
   const providerId = `${opts.agentName}.${opts.binding.name}`;
   const spawn = opts.spawn ?? defaultBunSpawn;
   const spawnStream = opts.spawnStream ?? defaultBunSpawnStream;
-  const journalWrite = opts.journalWrite ?? ((e) => appendCliJournal(e, opts.env));
+  const journalWrite = opts.journalWrite ?? ((e): Promise<void> => appendCliJournal(e, opts.env));
 
   return {
     name: providerId,

@@ -2,7 +2,7 @@ import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 
-import type { EngineBootEnv } from "../../../core/src/engines/types.js";
+import type { EngineBootEnv, ModelHostSpecForEngine } from "../../../core/src/engines/types.js";
 import type { WorkloadKey } from "../../../core/src/workloadRuntime.js";
 
 import { ENGINES } from "../../../core/src/engines/index.js";
@@ -144,7 +144,7 @@ function withRuntimeDir(env: NodeJS.ProcessEnv, runtimeDir?: string): NodeJS.Pro
   return { ...env, LOCAL_AI_RUNTIME_DIR: runtimeDir };
 }
 
-function buildModelHostSpec(manifest: ModelHostManifest) {
+function buildModelHostSpec(manifest: ModelHostManifest): ModelHostSpecForEngine {
   return {
     engine: manifest.spec.engine,
     binary: manifest.spec.binary,
@@ -181,7 +181,7 @@ function defaultFindListenerPid(
   return new Promise((resolve) => {
     let settled = false;
     let child: ChildProcess | null = null;
-    const finish = (value: number | null) => {
+    const finish = (value: number | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -330,14 +330,17 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     // a crash + external respawn), a fresh spawn cannot bind the held port, so
     // we must never fall through to it.
     const findListenerPid =
-      opts.findListenerPid ?? ((endpoint) => defaultFindListenerPid(endpoint, opts.signal));
+      opts.findListenerPid ??
+      ((endpoint): Promise<number | null> => defaultFindListenerPid(endpoint, opts.signal));
     const livePid = await findListenerPid(manifest.spec.endpoint).catch(() => null);
     if (livePid !== null && isProcessAlive(livePid)) {
       const adopted = await tryAdoptLiveHost(
         manifest,
         opts,
         resolved,
-        opts.probeReady ?? ((endpoint, timeoutMs) => engine.probeReady(endpoint, timeoutMs)),
+        opts.probeReady ??
+          ((endpoint, timeoutMs): Promise<{ ready: boolean; modelIds: string[] }> =>
+            engine.probeReady(endpoint, timeoutMs)),
         livePid,
       );
       if (adopted) {
@@ -455,7 +458,8 @@ export async function stopModelHost(opts: StopModelHostOptions): Promise<StopMod
   const state = readModelHostState(opts.key, resolved);
   if (!state) return { ok: true, pid: null };
   const teardown =
-    opts.teardown ?? ((pid: number, _graceSeconds?: number) => ENGINES[state.engine].teardown(pid));
+    opts.teardown ??
+    ((pid: number, _graceSeconds?: number): Promise<void> => ENGINES[state.engine].teardown(pid));
   await teardown(state.pid, opts.graceSeconds);
   removeModelHostState(opts.key, resolved);
   return { ok: true, pid: state.pid };

@@ -1,4 +1,4 @@
-import { createTRPCClient } from "@trpc/client";
+import { createTRPCClient, type TRPCClient } from "@trpc/client";
 
 import type { PeerNode } from "../config/peers.js";
 import type { AppRouter } from "../router.js";
@@ -31,7 +31,7 @@ function resolvedPeerToken(peer: PeerNode): string | undefined {
   }
 }
 
-function remoteClient(peer: PeerNode) {
+function remoteClient(peer: PeerNode): TRPCClient<AppRouter> {
   const token = resolvedPeerToken(peer);
   return createTRPCClient<AppRouter>({
     links: buildPinnedLinks(
@@ -99,13 +99,13 @@ export function makeInfraClient(peer: PeerNode): InfraClient {
   if (isLocalPeer(peer)) {
     const client = localNodeClient(peer);
     return {
-      install: async (args) => {
+      install: async (args): Promise<void> => {
         await client.infraInstall.mutate(args);
       },
-      activate: async (args) => {
+      activate: async (args): Promise<void> => {
         await client.infraActivate.mutate(args);
       },
-      pollHealth: async (opts) => {
+      pollHealth: async (opts): Promise<"healthy" | "timeout"> => {
         const probe = snapshotFetch(peer);
         const start = Date.now();
         while (Date.now() - start <= opts.timeoutMs) {
@@ -119,13 +119,13 @@ export function makeInfraClient(peer: PeerNode): InfraClient {
 
   const client = remoteClient(peer);
   return {
-    install: async (args) => {
+    install: async (args): Promise<void> => {
       await client.infraInstall.mutate(args);
     },
-    activate: async (args) => {
+    activate: async (args): Promise<void> => {
       await client.infraActivate.mutate(args);
     },
-    pollHealth: async (opts) => {
+    pollHealth: async (opts): Promise<"healthy" | "timeout"> => {
       const probe = snapshotFetch(peer);
       const start = Date.now();
       while (Date.now() - start <= opts.timeoutMs) {

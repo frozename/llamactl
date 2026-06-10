@@ -68,7 +68,7 @@ export interface DetectOrphansOptions {
 export function detectOrphanedRuns(opts: DetectOrphansOptions = {}): OrphanedRun[] {
   const threshold = opts.staleThresholdMs ?? DEFAULT_STALE_THRESHOLD_MS;
   const now = opts.now ?? Date.now;
-  const list = opts.listPipelines ?? (() => listPipelines(opts.env));
+  const list = opts.listPipelines ?? ((): PipelineRecord[] => listPipelines(opts.env));
   const readTail =
     opts.readJournalTail ??
     ((name: string): string | null => {

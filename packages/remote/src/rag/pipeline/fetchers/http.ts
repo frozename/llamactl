@@ -152,7 +152,7 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const outer = init.signal;
-  const onAbort = () => {
+  const onAbort = (): void => {
     controller.abort();
   };
   if (outer) {

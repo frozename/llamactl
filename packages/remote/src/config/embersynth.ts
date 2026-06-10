@@ -9,7 +9,7 @@ import { CompositeOwnershipSchema } from "../workload/gateway-catalog/schema.js"
 import { nonEmpty } from "./env.js";
 import { loadConfig, resolveToken } from "./kubeconfig.js";
 import { type ClusterNode, type Config, LOCAL_NODE_ENDPOINT, resolveNodeKind } from "./schema.js";
-import { loadSiriusProviders } from "./sirius-providers.js";
+import { loadSiriusProviders, type SiriusProvider } from "./sirius-providers.js";
 type BenchHistoryEntry = schemas.BenchHistoryEntry;
 
 /**
@@ -329,7 +329,7 @@ export function generateEmbersynthConfig(opts?: {
   // initiated locally or in-proc, plus any records a user copied in.
   const benchRows: readonly BenchHistoryEntry[] =
     opts?.benchHistory ??
-    (() => {
+    ((): readonly BenchHistoryEntry[] => {
       try {
         const resolved = envMod.resolveEnv(env);
         const file = bench.benchHistoryFile(resolved);
@@ -360,7 +360,7 @@ export function generateEmbersynthConfig(opts?: {
   }
 
   // Sirius-provider entries
-  const providers = (() => {
+  const providers = ((): SiriusProvider[] => {
     try {
       return loadSiriusProviders();
     } catch {

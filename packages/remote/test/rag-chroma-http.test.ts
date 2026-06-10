@@ -54,7 +54,7 @@ async function startFakeChroma(opts: FakeChromaOptions = {}): Promise<{
   const calls: RecordedRequest[] = [];
   const collections = new Map<string, { id: string; name: string }>();
   let nextId = 0;
-  const assignedUuid = () => {
+  const assignedUuid = (): string => {
     const base = opts.collectionId ?? "11111111-1111-4111-8111-";
     return `${base}${String(nextId++).padStart(12, "0")}`;
   };
@@ -194,7 +194,7 @@ async function startFakeChroma(opts: FakeChromaOptions = {}): Promise<{
     url: `http://127.0.0.1:${String(server.port)}`,
     calls,
     collections,
-    stop: async () => {
+    stop: async (): Promise<void> => {
       await Promise.resolve();
       await server.stop(true);
     },
@@ -481,7 +481,7 @@ describe("ChromaRagAdapter (HTTP backend)", () => {
 
   test("uses delegated embedder when docs arrive without vectors", async () => {
     let embedCalls = 0;
-    const embedder = async (texts: string[]) => {
+    const embedder = async (texts: string[]): Promise<number[][]> => {
       await Promise.resolve();
       embedCalls++;
       // Return one 3-dim vector per text; each row deterministic by index.

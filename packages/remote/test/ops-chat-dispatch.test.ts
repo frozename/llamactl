@@ -165,11 +165,13 @@ describe("RAG dispatch", () => {
   type RagCalls = { method: string; input: unknown }[];
 
   function makeFakeCaller(calls: RagCalls): Caller {
-    const stub = (method: string, reply: unknown) => async (input: unknown) => {
-      await Promise.resolve();
-      calls.push({ method, input });
-      return reply;
-    };
+    const stub =
+      (method: string, reply: unknown) =>
+      async (input: unknown): Promise<unknown> => {
+        await Promise.resolve();
+        calls.push({ method, input });
+        return reply;
+      };
     // Narrow Caller proxy — we stub only the RAG surface the tests
     // exercise; other methods don't get called in these assertions.
     return {
@@ -333,11 +335,13 @@ describe("Composite dispatch", () => {
   type CompositeCalls = { method: string; input: unknown }[];
 
   function makeFakeCompositeCaller(calls: CompositeCalls): Caller {
-    const stub = (method: string, reply: unknown) => async (input: unknown) => {
-      await Promise.resolve();
-      calls.push({ method, input });
-      return reply;
-    };
+    const stub =
+      (method: string, reply: unknown) =>
+      async (input: unknown): Promise<unknown> => {
+        await Promise.resolve();
+        calls.push({ method, input });
+        return reply;
+      };
     return {
       compositeApply: stub("compositeApply", {
         dryRun: true,

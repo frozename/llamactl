@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import type { ModelRun } from "../src/workload/schema.js";
 
-import { applyOne, type WorkloadClient } from "../src/workload/apply.js";
+import { applyOne, type ApplyResult, type WorkloadClient } from "../src/workload/apply.js";
 import { reconcileOnce } from "../src/workload/reconciler.js";
 import {
   loadWorkloadByName,
@@ -44,7 +44,7 @@ spec:
 function makeClient(): WorkloadClient {
   return {
     serverStatus: {
-      async query() {
+      async query(): ReturnType<WorkloadClient["serverStatus"]["query"]> {
         await Promise.resolve();
         return {
           state: "stopped",
@@ -59,13 +59,13 @@ function makeClient(): WorkloadClient {
       },
     },
     serverStop: {
-      async mutate() {
+      async mutate(): Promise<Record<string, never>> {
         await Promise.resolve();
         return {};
       },
     },
     serverStart: {
-      subscribe(_input, callbacks) {
+      subscribe(_input, callbacks): { unsubscribe(): undefined } {
         queueMicrotask(() => {
           callbacks.onData({
             type: "done",
@@ -74,58 +74,58 @@ function makeClient(): WorkloadClient {
           callbacks.onComplete();
         });
         return {
-          unsubscribe() {
+          unsubscribe(): undefined {
             return undefined;
           },
         };
       },
     },
     modelHostStart: {
-      subscribe(_input, callbacks) {
+      subscribe(_input, callbacks): { unsubscribe(): undefined } {
         queueMicrotask(() => {
           callbacks.onData({ type: "done", result: { ok: true } });
           callbacks.onComplete();
         });
         return {
-          unsubscribe() {
+          unsubscribe(): undefined {
             return undefined;
           },
         };
       },
     },
     modelHostStop: {
-      async mutate() {
+      async mutate(): Promise<Record<string, never>> {
         await Promise.resolve();
         return {};
       },
     },
     modelHostStatus: {
-      async query() {
+      async query(): Promise<{ state: string; pid: null }> {
         await Promise.resolve();
         return { state: "Stopped", pid: null };
       },
     },
     rpcServerStart: {
-      subscribe(_input, callbacks) {
+      subscribe(_input, callbacks): { unsubscribe(): undefined } {
         queueMicrotask(() => {
           callbacks.onData({ type: "done", result: { ok: true, pid: 2222, endpoint: "" } });
           callbacks.onComplete();
         });
         return {
-          unsubscribe() {
+          unsubscribe(): undefined {
             return undefined;
           },
         };
       },
     },
     rpcServerStop: {
-      async mutate() {
+      async mutate(): Promise<Record<string, never>> {
         await Promise.resolve();
         return {};
       },
     },
     rpcServerDoctor: {
-      async query() {
+      async query(): Promise<{ ok: true; path: string; llamaCppBin: string }> {
         await Promise.resolve();
         return {
           ok: true,
@@ -145,7 +145,7 @@ async function applyAndPersist(
   manifest: ModelRun,
   workloadsDir: string,
   resolveNodeIdentity?: (n: string) => string | null,
-) {
+): Promise<ApplyResult> {
   return await withWorkloadsMutex(workloadsDir, async () => {
     const client = makeClient();
     const result = await applyOne(manifest, () => client, undefined, undefined, {
@@ -180,7 +180,7 @@ describe("workload apply concurrency", () => {
     const b = makeManifest("beta", "mac-mini");
 
     // Both names resolve to the same physical agent.
-    const aliasResolver = (_n: string) => "https://127.0.0.1:7843";
+    const aliasResolver = (_n: string): string => "https://127.0.0.1:7843";
 
     const r1 = await applyAndPersist(a, dir, aliasResolver);
     expect(r1.error).toBeUndefined();
@@ -194,7 +194,7 @@ describe("workload apply concurrency", () => {
     const a = makeManifest("alpha", "gpu1");
     const b = makeManifest("beta", "gpu2");
 
-    const resolver = (n: string) =>
+    const resolver = (n: string): "https://10.0.0.1:7843" | "https://10.0.0.2:7843" =>
       n === "gpu1" ? "https://10.0.0.1:7843" : "https://10.0.0.2:7843";
 
     const r1 = await applyAndPersist(a, dir, resolver);
@@ -255,7 +255,7 @@ describe("workload apply concurrency", () => {
             callbacks.onComplete();
           });
           return {
-            unsubscribe() {
+            unsubscribe(): undefined {
               return undefined;
             },
           };

@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { WorkloadClient } from "../../src/workload/apply.js";
+import type { ModelHostManifest } from "../../src/workload/modelhost-schema.js";
+import type { ModelRun } from "../../src/workload/schema.js";
 
 import {
   computeModelHostSpecHash,
@@ -33,6 +35,19 @@ function seedRunningSidecar(dir: string, manifest: ReturnType<typeof makeHostMan
   );
 }
 
+interface MockModelHostStatus {
+  state: string;
+  pid: number;
+  engine: string;
+  binary: string;
+  endpoint: { host: string; port: number };
+  hostedModels: { rel: string }[];
+  extraArgs: string[];
+  resources: undefined;
+  restartPolicy: string;
+  timeoutSeconds: number;
+}
+
 function makeClient(): WorkloadClient {
   return {
     serverStatus: {
@@ -50,7 +65,7 @@ function makeClient(): WorkloadClient {
     },
     serverStop: { mutate: () => Promise.resolve({ ok: true }) },
     serverStart: {
-      subscribe: (_input, callbacks) => {
+      subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
         queueMicrotask(() => {
           callbacks.onData({
             type: "done",
@@ -62,7 +77,7 @@ function makeClient(): WorkloadClient {
       },
     },
     modelHostStart: {
-      subscribe: (_input, callbacks) => {
+      subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
         queueMicrotask(() => {
           callbacks.onData({ type: "done", result: { ok: true } });
           callbacks.onComplete();
@@ -91,7 +106,7 @@ function makeClient(): WorkloadClient {
   };
 }
 
-function makeRunManifest() {
+function makeRunManifest(): ModelRun {
   return {
     apiVersion: "llamactl/v1" as const,
     kind: "ModelRun" as const,
@@ -110,7 +125,7 @@ function makeRunManifest() {
   };
 }
 
-function makeHostManifest() {
+function makeHostManifest(): ModelHostManifest {
   return {
     apiVersion: "llamactl/v1" as const,
     kind: "ModelHost" as const,
@@ -170,7 +185,10 @@ describe("reconcileOnce", () => {
         workloadsDir: dir,
         getClient: () => ({
           ...makeClient(),
-          modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 1234 }) },
+          modelHostStatus: {
+            query: (): Promise<{ state: string; pid: number }> =>
+              Promise.resolve({ state: "Running", pid: 1234 }),
+          },
         }),
       });
 
@@ -205,7 +223,9 @@ describe("reconcileOnce", () => {
         workloadsDir: dir,
         getClient: () => ({
           ...makeClient(),
-          modelHostStatus: { query: () => Promise.resolve({ state: "Stopped" }) },
+          modelHostStatus: {
+            query: (): Promise<{ state: string }> => Promise.resolve({ state: "Stopped" }),
+          },
         }),
       });
 
@@ -237,7 +257,7 @@ describe("reconcileOnce", () => {
         getClient: () => ({
           ...makeClient(),
           modelHostStatus: {
-            query: () =>
+            query: (): Promise<MockModelHostStatus> =>
               Promise.resolve({
                 state: "Running",
                 pid: 1234,
@@ -254,7 +274,7 @@ describe("reconcileOnce", () => {
           modelHostStart: {
             subscribe: mock((_input, _callbacks) => {
               startCalls.push(_input);
-              return { unsubscribe: () => undefined };
+              return { unsubscribe: (): undefined => undefined };
             }),
           },
         }),
@@ -284,7 +304,7 @@ describe("reconcileOnce", () => {
         getClient: () => ({
           ...makeClient(),
           modelHostStatus: {
-            query: () => {
+            query: (): Promise<MockModelHostStatus> => {
               saveModelHost(
                 {
                   ...currentManifest,
@@ -310,7 +330,7 @@ describe("reconcileOnce", () => {
             },
           },
           modelHostStart: {
-            subscribe: (_input, callbacks) => {
+            subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
               startCalls += 1;
               queueMicrotask(() => {
                 callbacks.onData({
@@ -319,7 +339,7 @@ describe("reconcileOnce", () => {
                 });
                 callbacks.onComplete();
               });
-              return { unsubscribe: () => undefined };
+              return { unsubscribe: (): undefined => undefined };
             },
           },
         }),
@@ -358,7 +378,7 @@ describe("reconcileOnce", () => {
         getClient: () => ({
           ...makeClient(),
           modelHostStatus: {
-            query: () =>
+            query: (): Promise<MockModelHostStatus> =>
               Promise.resolve({
                 state: "Running",
                 pid: 1234,
@@ -373,7 +393,7 @@ describe("reconcileOnce", () => {
               }),
           },
           modelHostStart: {
-            subscribe: (_input, callbacks) => {
+            subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
               startCalls += 1;
               queueMicrotask(() => {
                 callbacks.onData({
@@ -382,7 +402,7 @@ describe("reconcileOnce", () => {
                 });
                 callbacks.onComplete();
               });
-              return { unsubscribe: () => undefined };
+              return { unsubscribe: (): undefined => undefined };
             },
           },
         }),
@@ -420,10 +440,11 @@ describe("reconcileOnce", () => {
         getClient: () => ({
           ...makeClient(),
           modelHostStatus: {
-            query: () => Promise.resolve({ state: "Stopped", pid: null }),
+            query: (): Promise<{ state: string; pid: null }> =>
+              Promise.resolve({ state: "Stopped", pid: null }),
           },
           modelHostStop: {
-            mutate: (input) => {
+            mutate: (input): Promise<{ ok: boolean }> => {
               stopCalls.push(input);
               return Promise.resolve({ ok: true });
             },

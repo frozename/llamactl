@@ -125,7 +125,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
       this.backend = {
         kind: "mcp",
         client,
-        teardown: teardown ?? (() => client.close()),
+        teardown: teardown ?? ((): Promise<void> => client.close()),
       };
     }
     this.defaultCollection = binding.collection ?? DEFAULT_COLLECTION;

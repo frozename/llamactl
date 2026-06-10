@@ -69,12 +69,12 @@ const calls: { op: CalledOp; input: unknown }[] = [];
 function makeFakeProvider(options: FakeProviderOptions): RetrievalProvider {
   return {
     kind: "fake",
-    async search(req) {
+    async search(req): Promise<SearchResponse> {
       calls.push({ op: "search", input: req });
       if (options.search) return await options.search(req);
       return { collection: req.collection ?? "default", results: [] };
     },
-    async store(req) {
+    async store(req): Promise<{ ids: string[]; collection: string }> {
       calls.push({ op: "store", input: req });
       if (options.store) return await options.store(req);
       return {
@@ -82,17 +82,17 @@ function makeFakeProvider(options: FakeProviderOptions): RetrievalProvider {
         ids: req.documents.map((d) => d.id),
       };
     },
-    async delete(req) {
+    async delete(req): Promise<{ deleted: number; collection: string }> {
       calls.push({ op: "delete", input: req });
       if (options.delete) return await options.delete(req);
       return { collection: req.collection ?? "default", deleted: req.ids.length };
     },
-    async listCollections() {
+    async listCollections(): Promise<ListCollectionsResponse> {
       calls.push({ op: "listCollections", input: null });
       if (options.listCollections) return await options.listCollections();
       return { collections: [{ name: "default" }] };
     },
-    async close() {
+    async close(): Promise<void> {
       await Promise.resolve();
       closeCount++;
     },
@@ -100,7 +100,7 @@ function makeFakeProvider(options: FakeProviderOptions): RetrievalProvider {
 }
 
 await mock.module("../src/rag/index.js", () => ({
-  createRagAdapter: async (node: { name: string }, opts?: unknown) => {
+  createRagAdapter: async (node: { name: string }, opts?: unknown): Promise<RetrievalProvider> => {
     await Promise.resolve();
     lastNodeName = node.name;
     lastFactoryOpts = opts;
@@ -152,7 +152,7 @@ afterEach(() => {
 describe("router RAG procedures", () => {
   test("ragSearch dispatches to adapter and forwards input", async () => {
     lastProviderOptions = {
-      search: (req) =>
+      search: (req): Promise<SearchResponse> =>
         Promise.resolve({
           collection: req.collection ?? "default",
           results: [
@@ -224,7 +224,7 @@ describe("router RAG procedures", () => {
 
   test("ragListCollections dispatches to adapter", async () => {
     lastProviderOptions = {
-      listCollections: () =>
+      listCollections: (): Promise<{ collections: { name: string; count: number }[] }> =>
         Promise.resolve({
           collections: [
             { name: "docs", count: 42 },
@@ -244,7 +244,7 @@ describe("router RAG procedures", () => {
 
   test("adapter.close() runs even when the adapter method throws", async () => {
     lastProviderOptions = {
-      search: async () => {
+      search: async (): Promise<never> => {
         await Promise.resolve();
         throw new Error("adapter-layer failure");
       },

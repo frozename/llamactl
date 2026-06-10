@@ -62,7 +62,8 @@ function makeMockFetch(responder: Responder, recorded: Recorded[]): typeof fetch
   };
   // Bun's fetch type requires a `preconnect` method. Tests don't need
   // it — shim as a no-op so the cast typechecks cleanly.
-  (impl as unknown as { preconnect: (url: string) => void }).preconnect = () => undefined;
+  (impl as unknown as { preconnect: (url: string) => void }).preconnect = (): undefined =>
+    undefined;
   return impl as unknown as typeof fetch;
 }
 

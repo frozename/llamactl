@@ -395,7 +395,7 @@ describe("tunnel journal — integration", () => {
       const timer = setTimeout(() => {
         reject(new Error("ws timeout"));
       }, 2000);
-      ws.onopen = () => {
+      ws.onopen = (): void => {
         ws.send(
           encodeTunnelMessage({
             type: "hello",
@@ -404,11 +404,11 @@ describe("tunnel journal — integration", () => {
           }),
         );
       };
-      ws.onclose = () => {
+      ws.onclose = (): void => {
         clearTimeout(timer);
         resolve();
       };
-      ws.onerror = () => {
+      ws.onerror = (): void => {
         // The server will close the ws with a 4401; browser WebSocket
         // surfaces the close as a normal close event, so this is a
         // no-op for assertion purposes.

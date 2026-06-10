@@ -33,7 +33,7 @@ function startServer(bearer: string, opts: { fixedTime?: string } = {}): Running
     expectedBearerHash: hashToken(bearer),
     onNodeConnect: (n) => connects.push(n),
     onNodeDisconnect: (n, r) => disconnects.push({ node: n, reason: r }),
-    clock: opts.fixedTime ? () => new Date(opts.fixedTime!) : undefined,
+    clock: opts.fixedTime ? (): Date => new Date(opts.fixedTime!) : undefined,
   });
   const bun = Bun.serve({
     port: 0,
@@ -50,7 +50,7 @@ function startServer(bearer: string, opts: { fixedTime?: string } = {}): Running
     server: srv,
     connects,
     disconnects,
-    stop: () => {
+    stop: (): Promise<void> => {
       void bun.stop(true);
       return Promise.resolve();
     },
@@ -246,7 +246,7 @@ describe("end-to-end I.3.3: router bridge + tunneled client over real ws", () =>
   // Build a fake "caller" that looks like tRPC's createCaller() shape.
   const fakeCaller = {
     catalog: {
-      async list(input?: { classFilter?: string }) {
+      async list(input?: { classFilter?: string }): Promise<{ rel: string }[]> {
         await Promise.resolve();
         if (input?.classFilter === "vision") return [{ rel: "v1" }];
         return [{ rel: "a" }];
@@ -335,7 +335,7 @@ describe("disconnect semantics", () => {
       nodeName: "gpu1",
       handleRequest: () =>
         new Promise<unknown>((resolve) => {
-          release = () => {
+          release = (): void => {
             resolve(null);
           };
         }),

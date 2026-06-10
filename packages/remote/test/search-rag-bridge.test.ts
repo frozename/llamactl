@@ -3,8 +3,21 @@ import { describe, expect, test } from "bun:test";
 
 import { ragBridgeSearch } from "../src/search/rag-bridge.js";
 
+interface MockHit<M> {
+  id: string;
+  score: number;
+  content: string;
+  metadata: M;
+}
+
+type MockSearchResponse =
+  | { hits: MockHit<{ sessionId: string; goal: string; status: string; startedAt: string }>[] }
+  | { hits: MockHit<{ entityId: string; title: string }>[] }
+  | { hits: MockHit<{ fileLabel: string; filePath: string; lineNumber: number }>[] }
+  | { hits: never[] };
+
 const mockAdapter = {
-  search: async (opts: { collection: string }) => {
+  search: async (opts: { collection: string }): Promise<MockSearchResponse> => {
     await Promise.resolve();
     if (opts.collection === "sessions") {
       return {
@@ -44,7 +57,7 @@ const mockAdapter = {
     }
     return { hits: [] };
   },
-  close: () => Promise.resolve(undefined),
+  close: (): Promise<undefined> => Promise.resolve(undefined),
 };
 
 describe("ragBridgeSearch", () => {

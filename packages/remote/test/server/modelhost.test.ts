@@ -8,7 +8,28 @@ import { join } from "node:path";
 import { ENGINES } from "../../../core/src/engines/index.js";
 import { startModelHost, statusModelHost, stopModelHost } from "../../src/server/modelhost.js";
 
-function makeManifest(tmp: string) {
+interface ManifestFixture {
+  manifest: {
+    readonly apiVersion: "llamactl/v1";
+    readonly kind: "ModelHost";
+    readonly metadata: { readonly name: "mlx-host-server" };
+    readonly spec: {
+      readonly engine: "omlx";
+      readonly node: "local";
+      readonly enabled: true;
+      readonly binary: string;
+      readonly endpoint: { readonly host: "127.0.0.1"; readonly port: 8094 };
+      readonly hostedModels: readonly [{ readonly rel: "mlx-community/Qwen3-8B-MLX-4bit" }];
+      readonly extraArgs: readonly ["--max-concurrent-requests", "1"];
+      readonly restartPolicy: "Always";
+      readonly timeoutSeconds: 60;
+    };
+  };
+  workloadsDir: string;
+  runtimeDir: string;
+}
+
+function makeManifest(tmp: string): ManifestFixture {
   const workloadsDir = join(tmp, "workloads");
   const runtimeDir = join(tmp, "runtime");
   const fakeBinary = join(tmp, "omlx");

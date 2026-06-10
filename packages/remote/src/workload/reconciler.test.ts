@@ -80,7 +80,7 @@ test("reconcile uses remote modelHostStatus.specHash to avoid restarts and detec
     rpcServerDoctor: { query: () => Promise.resolve({ ok: true, path: "", llamaCppBin: "" }) },
   };
 
-  const getClient = () => client;
+  const getClient = (): WorkloadClient => client;
 
   try {
     const first = await reconcileOnce({ workloadsDir, getClient });

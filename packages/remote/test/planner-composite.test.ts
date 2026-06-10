@@ -1,6 +1,7 @@
 import {
   DEFAULT_ALLOWLIST,
   type PlannerExecutor,
+  type PlannerExecutorResult,
   type PlannerToolDescriptor,
   runPlanner,
 } from "@nova/mcp";
@@ -63,7 +64,7 @@ function compositeManifestYaml(): string {
 function stubEmittingComposite(): PlannerExecutor {
   return {
     name: "stub-composite",
-    async generate() {
+    async generate(): Promise<PlannerExecutorResult> {
       await Promise.resolve();
       return {
         ok: true,
@@ -91,7 +92,7 @@ function stubEmittingComposite(): PlannerExecutor {
 function stubEmittingSingleReadStep(): PlannerExecutor {
   return {
     name: "stub-single-read",
-    async generate() {
+    async generate(): Promise<PlannerExecutorResult> {
       await Promise.resolve();
       return {
         ok: true,

@@ -112,7 +112,7 @@ describe("startAgentServer no-auth bypass", () => {
   test("logs the first unauthenticated request and suppresses the next 98", async () => {
     const writes: string[] = [];
     const originalWrite = process.stderr.write.bind(process.stderr);
-    process.stderr.write = (chunk: string | Uint8Array) => {
+    process.stderr.write = (chunk: string | Uint8Array): true => {
       writes.push(String(chunk));
       return true;
     };

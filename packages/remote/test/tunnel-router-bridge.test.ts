@@ -42,24 +42,24 @@ interface FakeCaller {
 function fakeCaller(): FakeCaller {
   return {
     catalog: {
-      async list(input) {
+      async list(input): Promise<{ rel: string }[]> {
         await Promise.resolve();
         if (input?.classFilter === "vision") return [{ rel: "v1" }];
         return [{ rel: "a" }, { rel: "b" }];
       },
-      async promote(input) {
+      async promote(input): Promise<{ ok: true }> {
         await Promise.resolve();
         if (!input.rel) throw new Error("rel required");
         return { ok: true };
       },
     },
     node: {
-      async facts() {
+      async facts(): Promise<{ profile: string }> {
         await Promise.resolve();
         return { profile: "macbook-pro-48g" };
       },
     },
-    async throws() {
+    async throws(): Promise<never> {
       await Promise.resolve();
       throw new Error("intentional");
     },

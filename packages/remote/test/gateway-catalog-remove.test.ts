@@ -4,7 +4,9 @@ import type { SiriusProvider } from "../src/config/sirius-providers.js";
 
 import { removeCompositeEntries } from "../src/workload/gateway-catalog/remove.js";
 
-const own = (names: string[]) => ({
+const own = (
+  names: string[],
+): { source: "composite"; compositeNames: string[]; specHash: string } => ({
   source: "composite" as const,
   compositeNames: names,
   specHash: "h",

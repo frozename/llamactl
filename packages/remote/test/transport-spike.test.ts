@@ -26,6 +26,7 @@ interface SpikeContext {
   aborted: { flag: boolean };
 }
 
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- tRPC BuiltRouter internals are unnameable; the spike consumes it via typeof inference.
 function createSpikeRouter() {
   const t = initTRPC.context<SpikeContext>().create();
 
@@ -51,7 +52,7 @@ function createSpikeRouter() {
         const timer = setTimeout(() => {
           resolve(null);
         }, input.ms);
-        const abortCb = () => {
+        const abortCb = (): void => {
           ctx.aborted.flag = true;
           clearTimeout(timer);
           reject(new Error("aborted"));
@@ -104,7 +105,7 @@ function startSpikeServer(router: SpikeRouter): SpikeServer {
   return {
     url: `http://127.0.0.1:${String(server.port)}/trpc`,
     lastAbort,
-    stop: async () => {
+    stop: async (): Promise<void> => {
       await Promise.resolve();
       await server.stop(true);
     },

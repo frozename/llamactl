@@ -108,7 +108,7 @@ function makeMockAdapter(options: { withDelete?: boolean } = {}): {
       }),
     calls,
     deletes,
-    get closed() {
+    get closed(): number {
       return closed;
     },
   };

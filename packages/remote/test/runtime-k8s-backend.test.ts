@@ -363,7 +363,7 @@ describe("KubernetesBackend.ensureService — Deployment happy path", () => {
     });
     const pvcsCreated: V1PersistentVolumeClaim[] = [];
     let deploymentExists = false;
-    const existingDeployment = () => readyDeployment(spec);
+    const existingDeployment = (): V1Deployment => readyDeployment(spec);
 
     const stub = stubKubeConfig({
       handlers: {

@@ -95,11 +95,11 @@ beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-pipeline-scheduler-"));
   defaultOptions = {
     once: true,
-    now: () => BASE_NOW,
-    journalPathFor: (name: string) => join(tmp, `${name}.jsonl`),
-    listPipelines: () => [],
-    runPipeline: () => Promise.resolve(FIRE_SUMMARY),
-    writeLastRun: () => undefined,
+    now: (): number => BASE_NOW,
+    journalPathFor: (name: string): string => join(tmp, `${name}.jsonl`),
+    listPipelines: (): never[] => [],
+    runPipeline: (): Promise<RunSummary> => Promise.resolve(FIRE_SUMMARY),
+    writeLastRun: (): undefined => undefined,
   };
 });
 
@@ -218,7 +218,7 @@ describe("startPipelineScheduler", () => {
     ];
     let resolveRun: (() => void) | null = null;
     const runPromise = new Promise<RunSummary>((resolve) => {
-      resolveRun = () => {
+      resolveRun = (): void => {
         resolve(FIRE_SUMMARY);
       };
     });

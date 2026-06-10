@@ -167,7 +167,7 @@ export async function applyNodeRun(
   const live = await client.infraList.query();
   const actions = planNodeRun(manifest.spec, live);
   const outcomes: NodeRunActionOutcome[] = [];
-  const now = () => new Date().toISOString();
+  const now = (): string => new Date().toISOString();
 
   if (dryRun) {
     return {

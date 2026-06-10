@@ -92,7 +92,7 @@ export interface GeneratedToken {
 
 export function generateBootstrapToken(opts: GenerateTokenOptions): GeneratedToken {
   const dir = opts.dir ?? defaultBootstrapTokensDir();
-  const now = (opts.now ?? (() => new Date()))();
+  const now = (opts.now ?? ((): Date => new Date()))();
   const ttlMs = opts.ttlMs ?? 15 * 60_000;
   const token = randomBytes(32).toString("base64url");
   const tokenHash = hashToken(token);
@@ -170,7 +170,7 @@ export interface ConsumeOptions {
  */
 export function consumeBootstrapToken(token: string, opts: ConsumeOptions = {}): ConsumeResult {
   const dir = opts.dir ?? defaultBootstrapTokensDir();
-  const now = (opts.now ?? (() => new Date()))();
+  const now = (opts.now ?? ((): Date => new Date()))();
   const found = findBootstrapTokenByPlaintext(token, dir);
   if (!found) return { ok: false, reason: "not-found" };
   if (found.record.used) return { ok: false, reason: "already-used" };
@@ -190,7 +190,7 @@ export function consumeBootstrapToken(token: string, opts: ConsumeOptions = {}):
  */
 export function pruneBootstrapTokens(opts: ConsumeOptions = {}): number {
   const dir = opts.dir ?? defaultBootstrapTokensDir();
-  const now = (opts.now ?? (() => new Date()))();
+  const now = (opts.now ?? ((): Date => new Date()))();
   if (!existsSync(dir)) return 0;
   let removed = 0;
   for (const { path, record } of listBootstrapTokens(dir)) {

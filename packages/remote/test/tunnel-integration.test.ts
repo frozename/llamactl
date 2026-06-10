@@ -80,7 +80,7 @@ describe("startAgentServer with tunnelCentral", () => {
       const timer = setTimeout(() => {
         reject(new Error("ack timeout"));
       }, 2000);
-      ws.onopen = () => {
+      ws.onopen = (): void => {
         ws.send(
           encodeTunnelMessage({
             type: "hello",
@@ -89,7 +89,7 @@ describe("startAgentServer with tunnelCentral", () => {
           }),
         );
       };
-      ws.onmessage = (ev: MessageEvent) => {
+      ws.onmessage = (ev: MessageEvent): void => {
         const raw = typeof ev.data === "string" ? ev.data : String(ev.data);
         const msg = parseTunnelMessage(raw);
         if (msg?.type === "hello-ack") {
@@ -98,7 +98,7 @@ describe("startAgentServer with tunnelCentral", () => {
           resolve();
         }
       };
-      ws.onerror = (err) => {
+      ws.onerror = (err): void => {
         clearTimeout(timer);
         reject(err instanceof Error ? err : new Error("websocket error"));
       };

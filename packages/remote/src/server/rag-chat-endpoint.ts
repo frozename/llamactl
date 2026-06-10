@@ -241,7 +241,7 @@ export async function handleRagChatCompletions(
 ): Promise<Response> {
   const log =
     ctx.log ??
-    ((line) => {
+    ((line): void => {
       console.error(line);
     });
 
@@ -346,7 +346,7 @@ export async function handleRagChatCompletions(
   // from the shared appRouter.
   const caller =
     ctx.caller ??
-    (() => {
+    ((): NonNullable<RagChatEndpointContext["caller"]> => {
       const c = ctx.appRouter.createCaller({}) as {
         ragSearch: (input: RagSearchInput) => Promise<RagSearchResponse>;
         chatComplete: (input: ChatCompleteInput) => Promise<unknown>;

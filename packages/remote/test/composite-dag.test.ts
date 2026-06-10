@@ -170,7 +170,7 @@ describe("topologicalOrder", () => {
       ],
     });
     const order = refs(topologicalOrder(s));
-    const idx = (k: string) => order.indexOf(k);
+    const idx = (k: string): number => order.indexOf(k);
     expect(idx("service/kb")).toBeLessThan(idx("rag/kb-node"));
     expect(idx("workload/alpha")).toBeLessThan(idx("gateway/gw"));
     expect(order.length).toBe(4);
@@ -242,7 +242,7 @@ describe("topologicalOrder", () => {
       ],
     });
     const order = refs(topologicalOrder(s));
-    const idx = (k: string) => order.indexOf(k);
+    const idx = (k: string): number => order.indexOf(k);
     expect(idx("workload/alpha")).toBeLessThan(idx("gateway/gw"));
   });
 });

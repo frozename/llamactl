@@ -1,3 +1,5 @@
+import type { schemas } from "@llamactl/core";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -187,7 +189,7 @@ describe("embersynth config bridge", () => {
 
   test("priority bands span gen_ts ranges deterministically", () => {
     const base = makeCfgWithAgent();
-    const makeHistory = (genTps: string) => [
+    const makeHistory = (genTps: string): schemas.BenchHistoryEntry[] => [
       {
         updated_at: "2026-04-01T00:00:00Z",
         machine: "gpu1",

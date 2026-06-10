@@ -8,7 +8,7 @@ import {
 } from "../src/rag/pipeline/transforms/markdown-chunk.js";
 
 async function collect(inputs: RawDoc[], spec: unknown): Promise<RawDoc[]> {
-  async function* source() {
+  async function* source(): AsyncGenerator<RawDoc, void, unknown> {
     await Promise.resolve();
     for (const d of inputs) yield d;
   }

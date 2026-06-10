@@ -76,7 +76,7 @@ function makeStubCaller(opts: StubOpts = {}): StubCaller {
   return {
     ragCalls,
     chatCalls,
-    ragSearch: async (input) => {
+    ragSearch: async (input): Promise<RagSearchResponse> => {
       await Promise.resolve();
       ragCalls.push(input);
       if (opts.throwOnSearch) throw opts.throwOnSearch;
@@ -92,7 +92,7 @@ function makeStubCaller(opts: StubOpts = {}): StubCaller {
         })),
       };
     },
-    chatComplete: async (input) => {
+    chatComplete: async (input): Promise<Record<string, unknown> | typeof defaultChat> => {
       await Promise.resolve();
       chatCalls.push(input);
       if (opts.throwOnChat) throw opts.throwOnChat;

@@ -44,24 +44,24 @@ let storeCalls = 0;
 function makeFakeProvider(): RetrievalProvider {
   return {
     kind: "fake",
-    async search() {
+    async search(): Promise<{ collection: string; results: never[] }> {
       await Promise.resolve();
       return { collection: "default", results: [] };
     },
-    async store(req) {
+    async store(req): Promise<{ collection: string; ids: string[] }> {
       await Promise.resolve();
       storeCalls++;
       return { collection: req.collection ?? "default", ids: req.documents.map((d) => d.id) };
     },
-    async delete(req) {
+    async delete(req): Promise<{ collection: string; deleted: number }> {
       await Promise.resolve();
       return { collection: req.collection ?? "default", deleted: req.ids.length };
     },
-    async listCollections() {
+    async listCollections(): Promise<{ collections: never[] }> {
       await Promise.resolve();
       return { collections: [] };
     },
-    async close() {
+    async close(): Promise<void> {
       await Promise.resolve();
       closeCount++;
     },
@@ -69,7 +69,7 @@ function makeFakeProvider(): RetrievalProvider {
 }
 
 await mock.module("../src/rag/index.js", () => ({
-  createRagAdapter: () => Promise.resolve(makeFakeProvider()),
+  createRagAdapter: (): Promise<RetrievalProvider> => Promise.resolve(makeFakeProvider()),
 }));
 
 const originalEnv = { ...process.env };

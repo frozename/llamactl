@@ -45,7 +45,7 @@ function makeMockClient(
 ): WorkloadClient {
   return {
     serverStatus: {
-      async query() {
+      async query(): ReturnType<WorkloadClient["serverStatus"]["query"]> {
         await Promise.resolve();
         trace.serverStatusCalls.push(nodeName);
         return {
@@ -61,14 +61,14 @@ function makeMockClient(
       },
     },
     serverStop: {
-      async mutate() {
+      async mutate(): Promise<{ stopped: boolean }> {
         await Promise.resolve();
         trace.serverStopCalls.push(nodeName);
         return { stopped: true };
       },
     },
     serverStart: {
-      subscribe(_input, callbacks) {
+      subscribe(_input, callbacks): { unsubscribe(): undefined } {
         trace.serverStartCalls.push(nodeName);
         queueMicrotask(() => {
           callbacks.onData({
@@ -78,39 +78,39 @@ function makeMockClient(
           callbacks.onComplete();
         });
         return {
-          unsubscribe() {
+          unsubscribe(): undefined {
             return undefined;
           },
         };
       },
     },
     modelHostStart: {
-      subscribe(_input, callbacks) {
+      subscribe(_input, callbacks): { unsubscribe(): undefined } {
         queueMicrotask(() => {
           callbacks.onData({ type: "done", result: { ok: true } });
           callbacks.onComplete();
         });
         return {
-          unsubscribe() {
+          unsubscribe(): undefined {
             return undefined;
           },
         };
       },
     },
     modelHostStop: {
-      async mutate() {
+      async mutate(): Promise<{ ok: boolean }> {
         await Promise.resolve();
         return { ok: true };
       },
     },
     modelHostStatus: {
-      async query() {
+      async query(): Promise<{ state: string; pid: null }> {
         await Promise.resolve();
         return { state: "Stopped", pid: null };
       },
     },
     rpcServerStart: {
-      subscribe(_input, callbacks) {
+      subscribe(_input, callbacks): { unsubscribe(): undefined } {
         trace.rpcServerStartCalls.push(nodeName);
         queueMicrotask(() => {
           callbacks.onData({
@@ -120,21 +120,21 @@ function makeMockClient(
           callbacks.onComplete();
         });
         return {
-          unsubscribe() {
+          unsubscribe(): undefined {
             return undefined;
           },
         };
       },
     },
     rpcServerStop: {
-      async mutate() {
+      async mutate(): Promise<{ stopped: boolean }> {
         await Promise.resolve();
         trace.rpcServerStopCalls.push(nodeName);
         return { stopped: true };
       },
     },
     rpcServerDoctor: {
-      async query() {
+      async query(): Promise<RpcDoctorResult> {
         await Promise.resolve();
         trace.rpcServerDoctorCalls.push(nodeName);
         return doctorResult;
@@ -338,7 +338,7 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
     };
     const getClient = (node: string): WorkloadClient => ({
       serverStatus: {
-        async query() {
+        async query(): ReturnType<WorkloadClient["serverStatus"]["query"]> {
           await Promise.resolve();
           trace.serverStatusCalls.push(node);
           return {
@@ -354,14 +354,14 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
         },
       },
       serverStop: {
-        async mutate() {
+        async mutate(): Promise<{ stopped: boolean }> {
           await Promise.resolve();
           trace.serverStopCalls.push(node);
           return { stopped: true };
         },
       },
       serverStart: {
-        subscribe(_input, callbacks) {
+        subscribe(_input, callbacks): { unsubscribe(): undefined } {
           trace.serverStartCalls.push(node);
           queueMicrotask(() => {
             callbacks.onData({
@@ -371,39 +371,39 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
             callbacks.onComplete();
           });
           return {
-            unsubscribe() {
+            unsubscribe(): undefined {
               return undefined;
             },
           };
         },
       },
       modelHostStart: {
-        subscribe(_input, callbacks) {
+        subscribe(_input, callbacks): { unsubscribe(): undefined } {
           queueMicrotask(() => {
             callbacks.onData({ type: "done", result: { ok: true } });
             callbacks.onComplete();
           });
           return {
-            unsubscribe() {
+            unsubscribe(): undefined {
               return undefined;
             },
           };
         },
       },
       modelHostStop: {
-        async mutate() {
+        async mutate(): Promise<Record<string, never>> {
           await Promise.resolve();
           return {};
         },
       },
       modelHostStatus: {
-        async query() {
+        async query(): Promise<{ state: string; pid: null }> {
           await Promise.resolve();
           return { state: "Stopped", pid: null };
         },
       },
       rpcServerStart: {
-        subscribe(_input, callbacks) {
+        subscribe(_input, callbacks): { unsubscribe(): undefined } {
           trace.rpcServerStartCalls.push(node);
           queueMicrotask(() => {
             callbacks.onData({
@@ -413,21 +413,21 @@ describe("applyOne preflight — worker rpcServerDoctor", () => {
             callbacks.onComplete();
           });
           return {
-            unsubscribe() {
+            unsubscribe(): undefined {
               return undefined;
             },
           };
         },
       },
       rpcServerStop: {
-        async mutate() {
+        async mutate(): Promise<{ stopped: boolean }> {
           await Promise.resolve();
           trace.rpcServerStopCalls.push(node);
           return { stopped: true };
         },
       },
       rpcServerDoctor: {
-        async query() {
+        async query(): Promise<{ ok: true; path: string; llamaCppBin: string }> {
           await Promise.resolve();
           trace.rpcServerDoctorCalls.push(node);
           return {

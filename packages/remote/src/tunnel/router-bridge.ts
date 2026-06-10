@@ -141,7 +141,7 @@ export function createTunnelSubscriptionHandler(
     const params = (req.params ?? {}) as TunnelRouterParams;
     const path = req.method;
     return {
-      subscribe(handlers) {
+      subscribe(handlers): { cancel(): void } {
         const abort = new AbortController();
         // `settled` — handlers have fired their terminal callback
         // (onComplete OR onError). Once set, further callbacks are

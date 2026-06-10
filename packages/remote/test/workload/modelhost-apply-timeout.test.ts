@@ -26,7 +26,7 @@ describe("applyManifest — ModelHost timeout cleanup", () => {
       serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
       modelHostStart: {
         subscribe: () => ({
-          unsubscribe: () => {
+          unsubscribe: (): void => {
             unsubscribed = true;
           },
         }),

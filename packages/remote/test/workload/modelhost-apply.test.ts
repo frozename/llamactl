@@ -57,7 +57,7 @@ function makeModelRunClient(): WorkloadClient {
     },
     serverStop: { mutate: () => Promise.resolve({ ok: true }) },
     serverStart: {
-      subscribe: (_input, callbacks) => {
+      subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
         queueMicrotask(() => {
           callbacks.onData({
             type: "done",
@@ -94,7 +94,7 @@ function makePlacementClient(): WorkloadClient {
     },
     serverStop: { mutate: () => Promise.resolve({ ok: true }) },
     serverStart: {
-      subscribe: (_input, callbacks) => {
+      subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
         queueMicrotask(() => {
           callbacks.onData({
             type: "done",

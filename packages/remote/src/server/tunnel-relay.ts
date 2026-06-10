@@ -163,7 +163,7 @@ function handleStream(
   if (req.signal.aborted) abort.abort();
   else req.signal.addEventListener("abort", onReqAbort, { once: true });
   const body = new ReadableStream<Uint8Array>({
-    async start(controller) {
+    async start(controller): Promise<void> {
       const iter = tunnelServer.sendSubscribe(nodeName, {
         id: crypto.randomUUID(),
         method,

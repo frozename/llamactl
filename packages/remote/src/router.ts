@@ -165,7 +165,7 @@ async function* bridgeEventStream<T>(
     w?.();
   };
 
-  const run = (async () => {
+  const run = (async (): Promise<void> => {
     try {
       await runner((ev) => {
         queue.push(ev);

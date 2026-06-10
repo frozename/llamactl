@@ -9,7 +9,11 @@ function peer(id: string): PeerNode {
   return { id, endpoint: `https://${id}.local:7843`, token: "tok" };
 }
 
-function capture() {
+function capture(): {
+  done: Promise<void>;
+  readonly published: Map<string, PeerSnapshot> | null;
+  publish: (m: Map<string, PeerSnapshot>) => void;
+} {
   let published: Map<string, PeerSnapshot> | null = null;
   let resolve!: () => void;
   const done = new Promise<void>((r) => {
@@ -17,10 +21,10 @@ function capture() {
   });
   return {
     done,
-    get published() {
+    get published(): Map<string, PeerSnapshot> | null {
       return published;
     },
-    publish: (m: Map<string, PeerSnapshot>) => {
+    publish: (m: Map<string, PeerSnapshot>): void => {
       published = m;
       resolve();
     },
@@ -74,7 +78,7 @@ describe("startPeerSnapshotPoller", () => {
     let n = 0;
     let resolve!: () => void;
     const twoTicks = new Promise<void>((r) => {
-      resolve = () => {
+      resolve = (): void => {
         if (++n >= 2) r();
       };
     });

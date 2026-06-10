@@ -138,11 +138,11 @@ test("readSchedulerLease reads holder from journal and does not call loadConfig 
   });
 
   void mock.module("../../src/config/kubeconfig.js", () => ({
-    currentContext: () => {
+    currentContext: (): never => {
       throw new Error("currentContext should not be called");
     },
     loadConfig: loadConfigSpy,
-    resolveToken: () => undefined,
+    resolveToken: (): undefined => undefined,
     saveConfig,
     upsertCluster,
     upsertNode,

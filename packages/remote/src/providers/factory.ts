@@ -3,6 +3,7 @@ import {
   createOpenAICompatProvider,
   type ModelInfo,
   type UnifiedAiRequest,
+  type UnifiedStreamEvent,
 } from "@nova/contracts";
 
 import type { PinnedFetchFactory } from "../client/links.js";
@@ -83,8 +84,10 @@ function applyProviderQuirks(base: AiProvider, providerName: CloudProvider): AiP
     createResponse: (req: UnifiedAiRequest) => base.createResponse(transformRequest(req)),
     ...(streamResponse
       ? {
-          streamResponse: (req: UnifiedAiRequest, signal?: AbortSignal) =>
-            streamResponse(transformRequest(req), signal),
+          streamResponse: (
+            req: UnifiedAiRequest,
+            signal?: AbortSignal,
+          ): AsyncIterable<UnifiedStreamEvent> => streamResponse(transformRequest(req), signal),
         }
       : {}),
     listModels: async () => {

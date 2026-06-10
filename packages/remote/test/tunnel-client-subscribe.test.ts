@@ -39,7 +39,7 @@ describe("tunnel-client: handleSubscription", () => {
     const url = `ws://127.0.0.1:${String(port)}/tunnel`;
 
     const handleSubscription = (_req: TunnelReq): TunnelSubscription => ({
-      subscribe(handlers) {
+      subscribe(handlers): { cancel(): void } {
         // synchronous fan-out then complete
         queueMicrotask(() => {
           handlers.onEvent("a");
@@ -48,7 +48,7 @@ describe("tunnel-client: handleSubscription", () => {
           handlers.onComplete();
         });
         return {
-          cancel() {
+          cancel(): void {
             /* no-op */
           },
         };
@@ -98,10 +98,10 @@ describe("tunnel-client: handleSubscription", () => {
 
     const cancelledSubs: string[] = [];
     const handleSubscription = (req: TunnelReq): TunnelSubscription => ({
-      subscribe(handlers) {
+      subscribe(handlers): { cancel(): void } {
         let cancelled = false;
         const isCancelled = (): boolean => cancelled;
-        void (async () => {
+        void (async (): Promise<void> => {
           for (let i = 0; i < 50; i++) {
             if (isCancelled()) break;
             await new Promise((r) => setTimeout(r, 10));

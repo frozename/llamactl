@@ -886,7 +886,8 @@ export async function applyOne(
   }
 
   return await withNodeLock(manifest.spec.node, async () => {
-    const listManifests = opts?.listManifests ?? (() => listWorkloads(opts?.workloadsDir));
+    const listManifests =
+      opts?.listManifests ?? ((): ModelRun[] => listWorkloads(opts?.workloadsDir));
     const living = listManifests().filter(
       (m) =>
         m.metadata.name !== manifest.metadata.name &&

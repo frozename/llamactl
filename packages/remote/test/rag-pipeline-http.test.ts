@@ -70,7 +70,7 @@ async function startFakeSite(opts: ServerOptions): Promise<FakeServer> {
   return {
     origin: `http://127.0.0.1:${String(server.port)}`,
     calls,
-    stop: async () => {
+    stop: async (): Promise<void> => {
       await server.stop(true);
     },
   };
@@ -83,7 +83,7 @@ async function run(
   const logs: { level: string; msg: string }[] = [];
   const ctx = {
     spec,
-    log: (e: { level: "info" | "warn" | "error"; msg: string }) =>
+    log: (e: { level: "info" | "warn" | "error"; msg: string }): number =>
       logs.push({ level: e.level, msg: e.msg }),
     signal: new AbortController().signal,
     env,

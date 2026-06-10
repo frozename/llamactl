@@ -1,4 +1,4 @@
-import type { PlannerExecutor, PlannerToolDescriptor } from "@nova/mcp";
+import type { PlannerExecutor, PlannerExecutorResult, PlannerToolDescriptor } from "@nova/mcp";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
@@ -46,7 +46,7 @@ function scriptedExecutor(
   let calls = 0;
   return {
     name: "scripted",
-    async generate() {
+    async generate(): Promise<PlannerExecutorResult> {
       await Promise.resolve();
       const idx = Math.min(calls, plans.length - 1);
       calls += 1;
@@ -69,7 +69,7 @@ function scriptedExecutor(
 function failingExecutor(message = "simulated model failure"): PlannerExecutor {
   return {
     name: "failing",
-    async generate() {
+    async generate(): Promise<{ ok: false; reason: "model-error"; message: string }> {
       await Promise.resolve();
       return { ok: false, reason: "model-error", message };
     },
@@ -365,7 +365,7 @@ describe("runLoopExecutor — cancellation + session cleanup", () => {
       signal: controller.signal,
     });
     const events: OpsChatStreamEvent[] = [];
-    const consumer = (async () => {
+    const consumer = (async (): Promise<void> => {
       for await (const ev of gen) {
         events.push(ev);
         if (ev.type === "plan_proposed") {

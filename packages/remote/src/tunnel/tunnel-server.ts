@@ -242,7 +242,7 @@ function buildSubscriptionIterable(
 }
 
 export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
-  const clock = opts.clock ?? (() => new Date());
+  const clock = opts.clock ?? ((): Date => new Date());
   const nodes = new Map<string, BunServerWebSocket>();
   // Resolved once at setup so env overrides capture the process's
   // startup state, not whatever `process.env` looks like when a ws
@@ -327,7 +327,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
   }
 
   return {
-    handleUpgrade(req, server) {
+    handleUpgrade(req, server): Response | undefined {
       const url = new URL(req.url);
       if (url.pathname !== "/tunnel") return undefined;
       const state: ConnectionState = {
@@ -345,7 +345,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       return undefined;
     },
     websocket: {
-      open(ws) {
+      open(ws): void {
         const state = getState(ws);
         state.helloTimer = setTimeout(() => {
           // NodeName is still unknown — hello never arrived. Journal
@@ -363,7 +363,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
           }
         }, HELLO_TIMEOUT_MS);
       },
-      message(ws, data) {
+      message(ws, data): void {
         const state = getState(ws);
         const raw = typeof data === "string" ? data : data.toString("utf8");
         const msg = parseTunnelMessage(raw);
@@ -456,7 +456,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
         // Anything else at this stage (req from a node, spurious
         // hello) is ignored — tunnel is request-from-central only.
       },
-      close(ws, code, reason) {
+      close(ws, code, reason): void {
         const state = getState(ws);
         if (state.helloTimer) {
           clearTimeout(state.helloTimer);
@@ -465,7 +465,15 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
         unregisterNode(ws, `ws closed ${String(code)}${reason ? ` (${reason})` : ""}`);
       },
     },
-    async send(nodeName, req) {
+    async send(
+      nodeName,
+      req,
+    ): Promise<{
+      type: "res";
+      id: string;
+      result?: unknown;
+      error?: { code: string; message: string } | undefined;
+    }> {
       const ws = nodes.get(nodeName);
       if (!ws) throw new Error(`tunnel not connected for node '${nodeName}'`);
       const state = getState(ws);
@@ -480,7 +488,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
         }
       });
     },
-    sendSubscribe(nodeName, req) {
+    sendSubscribe(nodeName, req): AsyncIterable<unknown> {
       const ws = nodes.get(nodeName);
       if (!ws) {
         // Return an iterable that throws on first `next()` so the
@@ -507,7 +515,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       const full: TunnelReq = { type: "req", ...req };
       return buildSubscriptionIterable(ws, state, full);
     },
-    registry() {
+    registry(): TunnelRegistryEntry[] {
       const out: TunnelRegistryEntry[] = [];
       for (const [nodeName, ws] of nodes.entries()) {
         const state = getState(ws);
@@ -535,7 +543,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       }
       return out;
     },
-    disconnect(nodeName, reason) {
+    disconnect(nodeName, reason): boolean {
       const ws = nodes.get(nodeName);
       if (!ws) return false;
       try {

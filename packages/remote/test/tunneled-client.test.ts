@@ -177,7 +177,7 @@ describe("proxyFromTunnel — via createNodeClient", () => {
     ): { unsubscribe: () => void } => {
       calls.push({ method, input });
       return {
-        unsubscribe() {
+        unsubscribe(): void {
           /* no-op */
         },
       };

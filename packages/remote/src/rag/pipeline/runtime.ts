@@ -252,7 +252,7 @@ async function runSource(args: {
   onDuplicate: OnDuplicate;
 }): Promise<PerSourceTally> {
   const tally: PerSourceTally = { docs: 0, chunks: 0, skipped: 0, errors: 0 };
-  const log = (event: Parameters<Parameters<typeof args.fetcher.fetch>[0]["log"]>[0]) => {
+  const log = (event: Parameters<Parameters<typeof args.fetcher.fetch>[0]["log"]>[0]): void => {
     if (event.level === "error") {
       void appendErrorEntry(args.journal, args.label, event.msg);
     }
@@ -282,7 +282,7 @@ async function runSource(args: {
     for await (const rawDoc of source) {
       if (args.signal.aborted) break;
       await sem.acquire();
-      const task = (async () => {
+      const task = (async (): Promise<void> => {
         try {
           const outcome = await processDoc({
             label: args.label,

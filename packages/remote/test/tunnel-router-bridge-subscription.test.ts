@@ -16,6 +16,7 @@ import { createTunnelSubscriptionHandler } from "../src/tunnel/router-bridge.js"
 
 const t = initTRPC.context<{ userId?: string }>().create();
 
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- tRPC BuiltRouter internals are unnameable; the bridge accepts any router instance.
 function buildFixtureRouter() {
   return t.router({
     counter: t.procedure

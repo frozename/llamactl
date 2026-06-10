@@ -60,7 +60,7 @@ export function publishAgentMdns(opts: PublishAgentOptions): PublishedAgent {
   });
   return {
     host: synthHost,
-    stop: async () => {
+    stop: async (): Promise<void> => {
       await new Promise<void>((resolve) => {
         const stopService = service.stop as (cb: () => void) => void;
         if (typeof stopService === "function") {

@@ -31,7 +31,10 @@ describe("loop-executor → journal + bus", () => {
       goal: "do nothing",
       executor: {
         name: "no-work",
-        async generate() {
+        async generate(): Promise<{
+          ok: true;
+          rawPlan: { steps: never[]; reasoning: string; requiresConfirmation: boolean };
+        }> {
           await Promise.resolve();
           return {
             ok: true,

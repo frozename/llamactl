@@ -84,7 +84,7 @@ beforeAll(async () => {
               });
               if (req.method === "POST" && body.includes('"stream":true')) {
                 const stream = new ReadableStream({
-                  start(controller) {
+                  start(controller): void {
                     const enc = new TextEncoder();
                     controller.enqueue(
                       enc.encode(

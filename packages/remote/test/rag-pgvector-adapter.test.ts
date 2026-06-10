@@ -90,7 +90,9 @@ function createMockSql(): MockSql {
   };
 
   // Attach `end()`.
-  (callable as unknown as { end: (opts?: { timeout?: number }) => Promise<void> }).end = (opts) => {
+  (callable as unknown as { end: (opts?: { timeout?: number }) => Promise<void> }).end = (
+    opts,
+  ): Promise<void> => {
     mock.endCalled = true;
     mock.endOptions = opts;
     return Promise.resolve();
@@ -104,7 +106,7 @@ function createMockSql(): MockSql {
     callable as unknown as {
       unsafe: (raw: string) => { __unsafe: true; raw: string };
     }
-  ).unsafe = (raw) => {
+  ).unsafe = (raw): { __unsafe: true; raw: string } => {
     mock.calls.push({ strings: [], values: [], unsafe: { raw } });
     return { __unsafe: true, raw };
   };
@@ -265,7 +267,7 @@ describe("PgvectorRagAdapter.search", () => {
     const adapter = new PgvectorRagAdapter({
       sql: mock.fn,
       defaultCollection: "docs",
-      embedder: async (texts) => {
+      embedder: async (texts): Promise<number[][]> => {
         await Promise.resolve();
         embedCalls.push(texts);
         return [[0.5, 0.5]];
@@ -283,7 +285,7 @@ describe("PgvectorRagAdapter.search", () => {
     const adapter = new PgvectorRagAdapter({
       sql: mock.fn,
       defaultCollection: "docs",
-      embedder: async () => {
+      embedder: async (): Promise<number[][]> => {
         await Promise.resolve();
         embedderCalled = true;
         return [[0.5, 0.5]];
@@ -379,7 +381,7 @@ describe("PgvectorRagAdapter.store", () => {
     const adapter = new PgvectorRagAdapter({
       sql: mock.fn,
       defaultCollection: "knowledge",
-      embedder: async (texts) => {
+      embedder: async (texts): Promise<number[][]> => {
         await Promise.resolve();
         embedCalls.push(texts);
         return texts.map((_, i) => [i + 0.1, i + 0.2]);
@@ -433,7 +435,7 @@ describe("PgvectorRagAdapter.store", () => {
     const adapter = new PgvectorRagAdapter({
       sql: mock.fn,
       defaultCollection: "knowledge",
-      embedder: () => Promise.resolve([[0.1, 0.2]]), // only one vector for two missing
+      embedder: (): Promise<number[][]> => Promise.resolve([[0.1, 0.2]]), // only one vector for two missing
     });
     try {
       await adapter.store({

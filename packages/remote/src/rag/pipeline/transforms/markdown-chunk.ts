@@ -115,7 +115,7 @@ function splitByHeadings(text: string): Section[] {
   const pathStack: { level: number; title: string }[] = [];
   let bodyLines: string[] = [];
 
-  const flush = () => {
+  const flush = (): void => {
     const body = bodyLines.join("\n").trim();
     const path = pathStack.map((p) => p.title);
     if (body.length > 0 || path.length > 0) {

@@ -149,16 +149,18 @@ export function startPipelineScheduler(
 ): PipelineSchedulerHandle {
   const tickMs = Math.max(5_000, opts.tickIntervalMs ?? 60_000);
   const now = opts.now ?? Date.now;
-  const list = opts.listPipelines ?? (() => listPipelines(opts.env));
+  const list = opts.listPipelines ?? ((): PipelineRecord[] => listPipelines(opts.env));
   const write =
     opts.writeLastRun ??
-    ((name, summary) => {
+    ((name, summary): void => {
       writeLastRun(name, summary, opts.env);
     });
-  const journalPath = opts.journalPathFor ?? ((name: string) => journalPathFor(name, opts.env));
+  const journalPath =
+    opts.journalPathFor ?? ((name: string): string => journalPathFor(name, opts.env));
   const run =
     opts.runPipeline ??
-    (async (manifest, path) => await runPipeline({ manifest, journalPath: path }));
+    (async (manifest, path): Promise<RunSummary> =>
+      await runPipeline({ manifest, journalPath: path }));
 
   const state = { stopped: false };
   const inFlight = new Set<string>();
@@ -261,7 +263,7 @@ export function startPipelineScheduler(
   })();
 
   return {
-    stop() {
+    stop(): void {
       state.stopped = true;
     },
     done,

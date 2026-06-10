@@ -55,10 +55,10 @@ export function createSecretResolver(opts: SecretResolverOptions = {}): SecretRe
   const runSecurity = opts.runSecurityCli ?? defaultRunSecurityCli;
 
   return {
-    backendFor(ref) {
+    backendFor(ref): SecretBackend {
       return classify(ref).backend;
     },
-    resolve(ref) {
+    resolve(ref): string {
       const { backend, body } = classify(ref);
       switch (backend) {
         case "env":

@@ -61,7 +61,7 @@ export function createDockerClient(opts: DockerClientOptions = {}): DockerClient
 
   return {
     socketPath,
-    async request(path, init = {}) {
+    async request(path, init = {}): Promise<Response> {
       const { query, ...rest } = init;
       const qs = query ? encodeQuery(query) : "";
       const url = `http://docker/${DOCKER_API_VERSION}${path}${qs}`;

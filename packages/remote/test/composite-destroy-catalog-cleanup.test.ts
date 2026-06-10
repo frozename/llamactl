@@ -59,7 +59,9 @@ describe("destroyComposite catalog cleanup", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  const own = (names: string[]) => ({
+  const own = (
+    names: string[],
+  ): { source: "composite"; compositeNames: string[]; specHash: string } => ({
     source: "composite" as const,
     compositeNames: names,
     specHash: "h",

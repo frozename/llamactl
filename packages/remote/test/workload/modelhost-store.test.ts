@@ -84,7 +84,7 @@ describe("modelhost-store", () => {
         bad,
         "kind: ModelHost\napiVersion: llamactl/v1\nmetadata: {name: broken}\nspec: {",
       );
-      const onSkip = (file: string, err: Error) => {
+      const onSkip = (file: string, err: Error): void => {
         expect(file).toBe(bad);
         expect(err.message.length).toBeGreaterThan(0);
       };
