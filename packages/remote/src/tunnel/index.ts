@@ -34,6 +34,7 @@ export {
   type TunnelSubscription,
 } from "./router-bridge.js";
 export {
+  type ClientWebSocketConstructor,
   createTunnelClient,
   type TunnelClient,
   type TunnelClientOptions,

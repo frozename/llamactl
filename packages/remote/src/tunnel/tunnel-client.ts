@@ -121,7 +121,7 @@ interface ClientWebSocket {
   close(code?: number, reason?: string): void;
 }
 
-type ClientWebSocketConstructor = new (url: string) => ClientWebSocket;
+export type ClientWebSocketConstructor = new (url: string) => ClientWebSocket;
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

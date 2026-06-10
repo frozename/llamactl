@@ -11,6 +11,7 @@ import { router as appRouter } from "../router.js";
 import { handleFleetSnapshotRoute } from "../routes/fleet.js";
 import { startSearchIngest, stopSearchIngest } from "../search/ingest/lifecycle.js";
 import {
+  type ClientWebSocketConstructor,
   createTunnelClient,
   createTunnelRouterHandler,
   createTunnelServer,
@@ -119,7 +120,7 @@ export interface StartAgentOptions {
     /** Pass through to createTunnelClient; omit for production defaults. */
     initialAttemptTimeoutMs?: number;
     /** Test-only WebSocket constructor override. */
-    WebSocketCtor?: unknown;
+    WebSocketCtor?: ClientWebSocketConstructor;
   };
 }
 
@@ -337,7 +338,10 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
 
   const fetchHandler = (
     req: Request,
-    server: { requestIP?: (req: Request) => ClientAddress | null },
+    server: {
+      requestIP?: (req: Request) => ClientAddress | null;
+      upgrade(req: Request, opts: { data: unknown }): boolean;
+    },
   ): Response | Promise<Response> => {
     const url = new URL(req.url);
     const clientAddress = typeof server.requestIP === "function" ? server.requestIP(req) : null;
@@ -575,6 +579,8 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     handleRequest: async (req: Request, address: ClientAddress | null = null) => {
       return await fetchHandler(req, {
         requestIP: () => address,
+        // Tunneled requests are synthetic — no socket to upgrade.
+        upgrade: () => false,
       });
     },
     stop: async () => {
