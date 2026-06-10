@@ -181,14 +181,14 @@ describe("bench.benchPreset (with injected runCli)", () => {
       throughput: JSON.stringify({ n_gen: 64, n_prompt: 0, avg_ts: 30.0 }),
       conservative: JSON.stringify({ n_gen: 64, n_prompt: 0, avg_ts: 15.0 }),
     };
-    const runCli: RunCli = async (_bin, args) => {
+    const runCli: RunCli = (_bin, args) => {
       const joined = args.join(" ");
       const key = joined.includes("-fa 1 -b 4096")
         ? "throughput"
         : joined.includes("-fa 0")
           ? "conservative"
           : "default";
-      return { code: 0, stdout: scripted[key] ?? "", stderr: "" };
+      return Promise.resolve({ code: 0, stdout: scripted[key] ?? "", stderr: "" });
     };
     const result = await benchPreset({ target: rel, mode: "text", runCli });
     if ("error" in result) throw new Error(`unexpected error: ${result.error}`);
@@ -201,7 +201,7 @@ describe("bench.benchPreset (with injected runCli)", () => {
   });
 
   test("returns an error when every profile fails", async () => {
-    const runCli: RunCli = async () => ({ code: 1, stdout: "", stderr: "boom" });
+    const runCli: RunCli = () => Promise.resolve({ code: 1, stdout: "", stderr: "boom" });
     const result = await benchPreset({ target: rel, mode: "text", runCli });
     expect("error" in result).toBe(true);
   });

@@ -165,7 +165,7 @@ export const benchVisionFields = [
 // ---- Hugging Face API responses ----------------------------------------
 /**
  * Subset of the `GET /api/models/<repo>` response we actually consume.
- * The real payload has many more fields; we mark unknown ones passthrough
+ * The real payload has many more fields; we mark unknown ones loose
  * so caching preserves the full document byte-for-byte even if zod rejects
  * a future field rename on the fields we do care about.
  */
@@ -173,9 +173,9 @@ export const HFModelSibling = z
   .object({
     rfilename: z.string(),
     size: z.number().optional(),
-    lfs: z.object({ size: z.number().optional() }).passthrough().optional(),
+    lfs: z.object({ size: z.number().optional() }).loose().optional(),
   })
-  .passthrough();
+  .loose();
 export type HFModelSibling = z.infer<typeof HFModelSibling>;
 
 export const HFModelInfo = z
@@ -189,7 +189,7 @@ export const HFModelInfo = z
     tags: z.array(z.string()).optional(),
     siblings: z.array(HFModelSibling).optional(),
   })
-  .passthrough();
+  .loose();
 export type HFModelInfo = z.infer<typeof HFModelInfo>;
 
 export const HFTreeEntry = z
@@ -197,9 +197,9 @@ export const HFTreeEntry = z
     path: z.string(),
     type: z.enum(["file", "directory"]).optional(),
     size: z.number().optional(),
-    lfs: z.object({ size: z.number().optional() }).passthrough().optional(),
+    lfs: z.object({ size: z.number().optional() }).loose().optional(),
   })
-  .passthrough();
+  .loose();
 export type HFTreeEntry = z.infer<typeof HFTreeEntry>;
 
 export const HFTree = z.array(HFTreeEntry);

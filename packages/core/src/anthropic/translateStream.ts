@@ -6,6 +6,9 @@ function normalizeFinishReason(
   finishReason: string | null | undefined,
 ): "end_turn" | "max_tokens" | "tool_use" | "stop_sequence" {
   switch (finishReason) {
+    case undefined:
+    case null:
+      return "end_turn";
     case "stop":
       return "end_turn";
     case "length":
@@ -32,7 +35,7 @@ function generateMessageId(): string {
   if ("randomUUID" in crypto && typeof crypto.randomUUID === "function") {
     return `msg_${crypto.randomUUID()}`;
   }
-  return `msg_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+  return `msg_${String(Date.now())}_${String(Math.floor(Math.random() * 1_000_000))}`;
 }
 
 type UpstreamToolCall = {
@@ -204,8 +207,8 @@ export function translateOpenAIStreamToAnthropic(
       const ensureToolBlock = (tool: UpstreamToolCall) => {
         const rawToolIndex = typeof tool.index === "number" ? tool.index : 0;
         const index = toolBlockIndex(rawToolIndex);
-        const toolId = tool.id ?? `tool_${rawToolIndex}`;
-        const toolName = tool.function?.name ?? `tool_${rawToolIndex}`;
+        const toolId = tool.id ?? `tool_${String(rawToolIndex)}`;
+        const toolName = tool.function?.name ?? `tool_${String(rawToolIndex)}`;
 
         if (
           openBlock?.kind === "tool" &&
@@ -322,9 +325,6 @@ export function translateOpenAIStreamToAnthropic(
         unknownEventTotal += unknownLineCount;
         if (data === null) return "continue";
         if (data === "[DONE]") {
-          emitTerminalDelta(lastFinishReason);
-          emitMessageStop();
-          controller.close();
           return "done";
         }
 
@@ -344,7 +344,7 @@ export function translateOpenAIStreamToAnthropic(
         let done = false;
         let pendingRead: ReturnType<typeof reader.read> | null = reader.read();
 
-        while (!done && pendingRead) {
+        while (!done) {
           const readResult = await Promise.race([
             pendingRead.then((value) => ({ kind: "read" as const, value })),
             new Promise<{ kind: "ping" }>((resolve) => {
@@ -366,18 +366,15 @@ export function translateOpenAIStreamToAnthropic(
             break;
           }
 
-          if (value) {
-            buffer += decoder
-              .decode(value, { stream: true })
-              .replaceAll("\r\n", "\n")
-              .replaceAll("\r", "\n");
-          }
+          buffer += decoder
+            .decode(value, { stream: true })
+            .replaceAll("\r\n", "\n")
+            .replaceAll("\r", "\n");
 
           pendingRead = reader.read();
 
-          while (true) {
-            const boundary = buffer.indexOf("\n\n");
-            if (boundary === -1) break;
+          let boundary = buffer.indexOf("\n\n");
+          while (boundary !== -1) {
             const eventPayload = buffer.slice(0, boundary);
             buffer = buffer.slice(boundary + 2);
             const status = processEvent(eventPayload);
@@ -385,19 +382,16 @@ export function translateOpenAIStreamToAnthropic(
               done = true;
               break;
             }
+            boundary = buffer.indexOf("\n\n");
           }
         }
 
-        if (!done) {
-          if (buffer.trim().length > 0) {
-            processEvent(buffer);
-          }
-          if (!done) {
-            emitTerminalDelta(lastFinishReason);
-            emitMessageStop();
-            controller.close();
-          }
+        if (buffer.trim().length > 0) {
+          processEvent(buffer);
         }
+        emitTerminalDelta(lastFinishReason);
+        emitMessageStop();
+        controller.close();
       } catch (error) {
         console.error(
           JSON.stringify({

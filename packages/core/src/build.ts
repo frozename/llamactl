@@ -36,7 +36,7 @@ export function resolveBuildId(resolved = resolveEnv()): string {
     const st = statSync(serverBin);
     if (st.isFile()) {
       const mtime = Math.floor(st.mtimeMs / 1000);
-      return `bin-${mtime}`;
+      return `bin-${String(mtime)}`;
     }
   } catch {
     // fall through

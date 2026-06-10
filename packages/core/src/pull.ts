@@ -126,19 +126,23 @@ function repoBasename(repo: string): string {
  */
 function drainLines(buf: string, onLine: (line: string) => void): string {
   let remaining = buf;
-  while (true) {
-    const nl = remaining.indexOf("\n");
-    const cr = remaining.indexOf("\r");
-    let idx: number;
-    if (nl === -1 && cr === -1) break;
-    else if (nl === -1) idx = cr;
-    else if (cr === -1) idx = nl;
-    else idx = Math.min(nl, cr);
+  let idx = nextLineBreak(remaining);
+  while (idx !== -1) {
     const line = remaining.slice(0, idx);
     remaining = remaining.slice(idx + 1);
     if (line.length > 0) onLine(line);
+    idx = nextLineBreak(remaining);
   }
   return remaining;
+}
+
+function nextLineBreak(value: string): number {
+  const nl = value.indexOf("\n");
+  const cr = value.indexOf("\r");
+  if (nl === -1 && cr === -1) return -1;
+  if (nl === -1) return cr;
+  if (cr === -1) return nl;
+  return Math.min(nl, cr);
 }
 
 export const defaultRunHf: RunHf = (args, onEvent, signal) => {
@@ -158,8 +162,8 @@ export const defaultRunHf: RunHf = (args, onEvent, signal) => {
         if (buf.length > 0) onEvent?.({ type: kind, line: buf });
       });
     };
-    if (child.stdout) forward(child.stdout, "stdout");
-    if (child.stderr) forward(child.stderr, "stderr");
+    forward(child.stdout, "stdout");
+    forward(child.stderr, "stderr");
     const onAbort = () => {
       try {
         child.kill("SIGTERM");
@@ -309,7 +313,7 @@ export interface PickCandidateOptions {
   /** If set, short-circuit the HF lookup and return this file verbatim. */
   file?: string;
   /** Overrides the active machine profile for ranking. */
-  profile?: MachineProfile | string;
+  profile?: string;
   resolved?: ResolvedEnv;
 }
 
@@ -367,7 +371,7 @@ export async function pickCandidateFile(
 export interface PullCandidateOptions {
   repo: string;
   file?: string;
-  profile?: MachineProfile | string;
+  profile?: string;
   onEvent?: (e: PullEvent) => void;
   runHf?: RunHf;
   resolved?: ResolvedEnv;

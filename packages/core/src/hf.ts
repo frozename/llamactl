@@ -57,7 +57,7 @@ export function discoveryCacheFile(
   limit: number,
   search: string,
 ): string {
-  const safeKey = `${sanitizeRepo(author)}-${sanitizeSearch(search)}-${limit}`;
+  const safeKey = `${sanitizeRepo(author)}-${sanitizeSearch(search)}-${String(limit)}`;
   return join(runtimeDir, `hf-discovery-${safeKey}.json`);
 }
 
@@ -72,11 +72,11 @@ function isCacheFresh(file: string, ttlSeconds: number): boolean {
   }
 }
 
-function readJsonFile<T>(file: string): T | null {
+function readJsonFile(file: string): unknown {
   try {
     const raw = readFileSync(file, "utf8");
     if (!raw.trim()) return null;
-    return JSON.parse(raw) as T;
+    return JSON.parse(raw) as unknown;
   } catch {
     return null;
   }
@@ -94,7 +94,7 @@ function writeJsonFile(file: string, body: string): void {
   mkdirSync(dir, { recursive: true });
   const tmp = join(
     dir,
-    `.${file.slice(dir.length + 1)}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`,
+    `.${file.slice(dir.length + 1)}.tmp-${String(process.pid)}-${Math.random().toString(36).slice(2)}`,
   );
   writeFileSync(tmp, body);
   renameSync(tmp, file);
@@ -122,7 +122,7 @@ async function fetchWithCache(opts: FetchWithCacheOpts): Promise<string | null> 
   const { url, cacheFile, ttlSeconds } = opts;
 
   if (isCacheFresh(cacheFile, ttlSeconds)) {
-    const cached = readJsonFile<unknown>(cacheFile);
+    const cached = readJsonFile(cacheFile);
     if (cached !== null) return JSON.stringify(cached);
   }
 
@@ -145,14 +145,14 @@ async function fetchWithCache(opts: FetchWithCacheOpts): Promise<string | null> 
       }
       return body;
     }
-    process.stderr.write(`llamactl: HF returned status ${res.status} for ${url}\n`);
+    process.stderr.write(`llamactl: HF returned status ${String(res.status)} for ${url}\n`);
   } catch (err) {
     process.stderr.write(
       `llamactl: HF fetch failed for ${url}: ${err instanceof Error ? err.message : String(err)}\n`,
     );
   }
 
-  const stale = readJsonFile<unknown>(cacheFile);
+  const stale = readJsonFile(cacheFile);
   return stale === null ? null : JSON.stringify(stale);
 }
 
@@ -217,7 +217,7 @@ export async function fetchDiscoveryFeed(
   const search = opts.search ?? resolved.LOCAL_AI_DISCOVERY_SEARCH;
   const cacheFile = discoveryCacheFile(resolved.LOCAL_AI_RUNTIME_DIR, author, limit, search);
   const body = await fetchWithCache({
-    url: `https://huggingface.co/api/models?author=${encodeURIComponent(author)}&search=${encodeURIComponent(search)}&sort=downloads&direction=-1&limit=${limit}&full=true`,
+    url: `https://huggingface.co/api/models?author=${encodeURIComponent(author)}&search=${encodeURIComponent(search)}&sort=downloads&direction=-1&limit=${String(limit)}&full=true`,
     cacheFile,
     ttlSeconds: cacheTtlSeconds(env),
   });
@@ -286,7 +286,7 @@ export function fileSizeFromTree(tree: HFTree, file: string): number | null {
  *   - one decimal for KiB / MiB / GiB / TiB
  */
 export function humanSize(bytes: number | null | undefined): string {
-  const n = bytes === null || bytes === undefined ? 0 : bytes;
+  const n = bytes ?? 0;
   if (!Number.isFinite(n)) return "n/a";
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
   let i = 0;
@@ -295,8 +295,8 @@ export function humanSize(bytes: number | null | undefined): string {
     x /= 1024;
     i += 1;
   }
-  if (i === 0) return `${Math.trunc(x)} ${units[i]}`;
-  return `${x.toFixed(1)} ${units[i]}`;
+  if (i === 0) return `${String(Math.trunc(x))} ${String(units[i])}`;
+  return `${x.toFixed(1)} ${String(units[i])}`;
 }
 
 /** Look up the HF repo id for a rel, via the catalog. */
@@ -335,5 +335,5 @@ export async function summaryForRel(
   const likes = info.likes ?? "n/a";
   const updated = info.lastModified ?? "n/a";
   const pipeline = info.pipeline_tag ?? info.pipelineTag ?? "n/a";
-  return `repo=${repo} downloads=${downloads} likes=${likes} updated=${updated} task=${pipeline} file=${fileName}`;
+  return `repo=${repo} downloads=${String(downloads)} likes=${String(likes)} updated=${updated} task=${pipeline} file=${fileName}`;
 }

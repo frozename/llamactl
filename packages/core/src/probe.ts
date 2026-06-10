@@ -41,5 +41,5 @@ export function formatEndpoint(host: string, port: number): string {
   const normalized = host === "0.0.0.0" ? "127.0.0.1" : host;
   const isIPv6 = normalized.includes(":") && !normalized.startsWith("[");
   const hostPart = isIPv6 ? `[${normalized}]` : normalized;
-  return `http://${hostPart}:${port}`;
+  return `http://${hostPart}:${String(port)}`;
 }

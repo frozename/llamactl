@@ -56,11 +56,11 @@ describe("presets.writePresetOverride (round-trip)", () => {
   const temp = makeTempRuntime();
   const env = envForTemp(temp);
 
-  afterEach(() => {
+  afterEach(async () => {
     // Wipe any file we may have written so subsequent tests start empty.
     try {
       const file = env.LOCAL_AI_PRESET_OVERRIDES_FILE!;
-      if (existsSync(file)) Bun.write(file, "");
+      if (existsSync(file)) await Bun.write(file, "");
     } catch {
       // no-op
     }
@@ -86,10 +86,10 @@ describe("presets.deletePresetOverride", () => {
   const temp = makeTempRuntime();
   const env = envForTemp(temp);
 
-  afterEach(() => {
+  afterEach(async () => {
     try {
       const file = env.LOCAL_AI_PRESET_OVERRIDES_FILE!;
-      if (existsSync(file)) Bun.write(file, "");
+      if (existsSync(file)) await Bun.write(file, "");
     } catch {
       // no-op
     }

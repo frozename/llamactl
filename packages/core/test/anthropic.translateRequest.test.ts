@@ -183,10 +183,10 @@ test("throws 400 for unsupported content block type", () => {
       messages: [
         {
           role: "user",
-          content: [{ type: "video", src: "x" } as unknown as any],
+          content: [{ type: "video", src: "x" }],
         },
       ],
-    }),
+    } as unknown as AnthropicMessagesRequest),
   ).toThrow(AnthropicTranslationError);
 
   try {
@@ -195,10 +195,10 @@ test("throws 400 for unsupported content block type", () => {
       messages: [
         {
           role: "user",
-          content: [{ type: "video", src: "x" } as unknown as any],
+          content: [{ type: "video", src: "x" }],
         },
       ],
-    });
+    } as unknown as AnthropicMessagesRequest);
   } catch (error) {
     expect(error).toBeInstanceOf(AnthropicTranslationError);
     expect((error as AnthropicTranslationError).statusCode).toBe(400);

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { writeModelHostState } from "../src/engines/state.js";
+import type { ResolvedEnv } from "../src/types.js";
 import {
   ensureWorkloadRuntimeDir,
   listLocalRoutes,
@@ -17,7 +18,7 @@ const tempEnv = () => {
   const dir = mkdtempSync(join(tmpdir(), "workloadrt-"));
   return {
     runtimeDir: dir,
-    resolved: { LOCAL_AI_RUNTIME_DIR: dir } as any,
+    resolved: { LOCAL_AI_RUNTIME_DIR: dir } as ResolvedEnv,
     cleanup: () => {
       rmSync(dir, { recursive: true, force: true });
     },
@@ -81,7 +82,7 @@ test("listLocalRoutes returns ModelRun entries from llama-server state", () => {
   try {
     const dir = join(t.runtimeDir, "workloads", "test-run");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "llama-server.pid"), `${process.pid}\n`);
+    writeFileSync(join(dir, "llama-server.pid"), `${String(process.pid)}\n`);
     writeFileSync(
       join(dir, "llama-server.state"),
       JSON.stringify({
@@ -208,9 +209,10 @@ test("migrateLegacySingletonRuntime moves files under a matching workload dir", 
     expect(existsSync(join(dest, "llama-server.pid"))).toBe(true);
     expect(existsSync(join(dest, "llama-server.state"))).toBe(true);
     expect(existsSync(join(dest, "llama-server.log"))).toBe(true);
-    expect(JSON.parse(readFileSync(join(dest, "llama-server.state"), "utf8")).rel).toBe(
-      "granite/granite-4.1-8b-Q4_K_M.gguf",
-    );
+    const migratedState = JSON.parse(readFileSync(join(dest, "llama-server.state"), "utf8")) as {
+      rel?: unknown;
+    };
+    expect(migratedState.rel).toBe("granite/granite-4.1-8b-Q4_K_M.gguf");
     expect(existsSync(join(t.runtimeDir, "llama-server.pid"))).toBe(false);
     expect(existsSync(join(t.runtimeDir, ".migrated-v2"))).toBe(true);
   } finally {

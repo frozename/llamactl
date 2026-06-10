@@ -18,7 +18,7 @@ describe("catalogWriter.addCurated (integration)", () => {
 
   afterEach(() => {
     for (const key of Object.keys(process.env)) {
-      if (!(key in originalEnv)) delete process.env[key];
+      if (!(key in originalEnv)) Reflect.deleteProperty(process.env, key);
     }
     for (const [k, v] of Object.entries(originalEnv)) {
       if (v !== undefined) process.env[k] = v;

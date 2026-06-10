@@ -76,7 +76,6 @@ export function readPresetOverrides(file: string): PresetOverride[] {
     if (cols.length < presetOverrideFields.length) continue;
     const record: Record<string, string> = {};
     for (const [i, field] of presetOverrideFields.entries()) {
-      if (field === undefined) continue;
       record[field] = cols[i] ?? "";
     }
     const parsed = PresetOverride.safeParse(record);
@@ -128,7 +127,7 @@ function formatIso(date: Date = new Date()): string {
   const abs = Math.abs(off);
   const oh = pad(Math.floor(abs / 60));
   const om = pad(abs % 60);
-  return `${y}-${mo}-${d}T${h}:${mi}:${s}${sign}${oh}${om}`;
+  return `${String(y)}-${mo}-${d}T${h}:${mi}:${s}${sign}${oh}${om}`;
 }
 
 /**
@@ -151,7 +150,7 @@ export function writePresetOverride(
     .filter((row) => !(row.profile === profile && row.preset === preset))
     .concat([{ profile, preset, rel, updated_at: updatedAt }]);
   const body = next
-    .map((row) => `${row.profile}\t${row.preset}\t${row.rel}\t${row.updated_at ?? ""}`)
+    .map((row) => `${row.profile}\t${row.preset}\t${row.rel}\t${row.updated_at}`)
     .join("\n");
   atomicWriteFile(file, body === "" ? "" : `${body}\n`);
 }
@@ -181,7 +180,7 @@ export function deletePresetOverride(
     return true;
   }
   const body = next
-    .map((row) => `${row.profile}\t${row.preset}\t${row.rel}\t${row.updated_at ?? ""}`)
+    .map((row) => `${row.profile}\t${row.preset}\t${row.rel}\t${row.updated_at}`)
     .join("\n");
   atomicWriteFile(file, `${body}\n`);
   return true;
@@ -196,7 +195,7 @@ export function formatPromotionsList(overrides: readonly PresetOverride[]): stri
   return overrides
     .map(
       (row) =>
-        `profile=${row.profile} preset=${row.preset} model=${row.rel} updated_at=${row.updated_at ?? ""}`,
+        `profile=${row.profile} preset=${row.preset} model=${row.rel} updated_at=${row.updated_at}`,
     )
     .join("\n");
 }

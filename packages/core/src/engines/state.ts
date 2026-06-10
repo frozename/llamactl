@@ -77,7 +77,7 @@ export function writeModelHostState(
   resolved: ResolvedEnv = resolveEnv(),
 ): void {
   ensureWorkloadRuntimeDir(resolved, key);
-  writeFileSync(modelhostPidFile(resolved, key), `${state.pid}\n`);
+  writeFileSync(modelhostPidFile(resolved, key), `${String(state.pid)}\n`);
   writeFileSync(modelhostStateFile(resolved, key), JSON.stringify(state, null, 2));
 }
 
@@ -89,24 +89,32 @@ export function readModelHostState(
   if (!existsSync(path)) return null;
   try {
     const raw = readFileSync(path, "utf8");
-    const parsed = JSON.parse(raw) as ModelHostState;
-    if (parsed?.kind !== "ModelHost") return null;
-    if (!Number.isInteger(parsed.pid) || parsed.pid <= 0) return null;
-    if (typeof parsed.host !== "string" || !LOOPBACK_HOSTS.has(parsed.host)) return null;
-    if (!Number.isInteger(parsed.port) || parsed.port < 1 || parsed.port > 65535) return null;
-    if (parsed.engine !== "llamacpp" && parsed.engine !== "omlx") return null;
-    if (typeof parsed.startedAt !== "string" || Number.isNaN(Date.parse(parsed.startedAt)))
+    const parsed = JSON.parse(raw) as Partial<ModelHostState>;
+    if (parsed.kind !== "ModelHost") return null;
+    const { engine, host, modelAliases, pid, port, startedAt } = parsed;
+    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
+    if (typeof host !== "string" || !LOOPBACK_HOSTS.has(host)) return null;
+    if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535)
       return null;
-    if (!Array.isArray(parsed.modelAliases) || parsed.modelAliases.length === 0) return null;
+    if (engine !== "llamacpp" && engine !== "omlx") return null;
+    if (typeof startedAt !== "string" || Number.isNaN(Date.parse(startedAt))) return null;
+    if (!Array.isArray(modelAliases) || modelAliases.length === 0) return null;
     if (
-      parsed.modelAliases.some(
+      modelAliases.some(
         (alias) => typeof alias !== "string" || alias.length === 0 || /[\t\r\n]/.test(alias),
       )
     )
       return null;
     return {
-      ...parsed,
+      kind: "ModelHost",
+      engine,
+      pid,
+      host,
+      port,
+      modelAliases,
+      startedAt,
       slotSavePath: typeof parsed.slotSavePath === "string" ? parsed.slotSavePath : null,
+      ...(typeof parsed.specHash === "string" ? { specHash: parsed.specHash } : {}),
     };
   } catch {
     return null;
@@ -117,6 +125,8 @@ export function removeModelHostState(key: WorkloadKey, resolved: ResolvedEnv = r
   for (const path of [modelhostPidFile(resolved, key), modelhostStateFile(resolved, key)]) {
     try {
       unlinkSync(path);
-    } catch {}
+    } catch {
+      // Best-effort cleanup; failures are not actionable here.
+    }
   }
 }

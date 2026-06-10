@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { resolveEnv } from "../src/env.js";
 import { openaiProxy } from "../src/index.js";
 import {
   EXT_FLAG_TOOL_MAP,
@@ -18,10 +19,11 @@ import {
   __getOpenAIProxyKvModelMismatchTotalForTests,
   isRouteKvEligible,
 } from "../src/openaiProxy.js";
+import type { ResolvedEnv } from "../src/types.js";
 
 interface TempRuntime {
   root: string;
-  env: { LOCAL_AI_RUNTIME_DIR: string };
+  env: ResolvedEnv;
   cleanup: () => void;
 }
 
@@ -31,11 +33,31 @@ interface TestUpstream {
   close: () => Promise<void>;
 }
 
+interface SpyCalls {
+  mock: { calls: unknown[][] };
+}
+
+function pidText(): string {
+  return `${String(process.pid)}\n`;
+}
+
+function filenameFromBody(body: string): string {
+  if (body.length === 0) return "";
+  const parsed = JSON.parse(body) as { filename?: unknown };
+  return typeof parsed.filename === "string" ? parsed.filename : "";
+}
+
 function makeTempRuntime(): TempRuntime {
   const root = mkdtempSync(join(tmpdir(), "llamactl-openai-proxy-kv-"));
   return {
     root,
-    env: { LOCAL_AI_RUNTIME_DIR: root },
+    env: resolveEnv({
+      DEV_STORAGE: root,
+      LOCAL_AI_RUNTIME_DIR: root,
+      LLAMA_CPP_MODELS: join(root, "models"),
+      LLAMA_CPP_MACHINE_PROFILE: "balanced",
+      LLAMA_CPP_QWEN_CTX_SIZE: "32768",
+    }),
     cleanup: () => {
       rmSync(root, { recursive: true, force: true });
     },
@@ -52,7 +74,7 @@ function writeModelRunWorkload(
   const slotDir = join(runtimeRoot, "kvstore", "slots", workload);
   mkdirSync(dir, { recursive: true });
   mkdirSync(slotDir, { recursive: true });
-  writeFileSync(join(dir, "llama-server.pid"), `${process.pid}\n`);
+  writeFileSync(join(dir, "llama-server.pid"), pidText());
   writeFileSync(
     join(dir, "llama-server.state"),
     JSON.stringify({
@@ -80,7 +102,7 @@ function writeModelHostWorkload(
   const slotDir = join(runtimeRoot, "kvstore", "slots", workload);
   mkdirSync(dir, { recursive: true });
   mkdirSync(slotDir, { recursive: true });
-  writeFileSync(join(dir, "modelhost.pid"), `${process.pid}\n`);
+  writeFileSync(join(dir, "modelhost.pid"), pidText());
   writeFileSync(
     join(dir, "modelhost.state"),
     JSON.stringify({
@@ -96,7 +118,7 @@ function writeModelHostWorkload(
   );
 }
 
-async function startUpstream(opts: {
+function startUpstream(opts: {
   slotBaseDir: string;
   saveMode?: "ok" | "invalid";
   restoreMode?: "ok" | "http_error";
@@ -118,7 +140,7 @@ async function startUpstream(opts: {
   const toolCalls = opts.toolCalls ?? [];
   const slotBaseDir = opts.slotBaseDir;
   const baseUrl = "http://127.0.0.1:19502";
-  globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
+  globalThis.fetch = ((input: Request | URL | string, init?: RequestInit): Promise<Response> => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method =
@@ -127,95 +149,104 @@ async function startUpstream(opts: {
     if (method === "POST" && parsed.pathname.startsWith("/slots/")) {
       const action = parsed.searchParams.get("action");
       const body = typeof init?.body === "string" ? init.body : "";
-      const filename = body ? JSON.parse(body).filename : "";
+      const filename = filenameFromBody(body);
       const absPath = join(slotBaseDir, filename);
       if (action === "restore") {
         events.push("slot-restore");
         if (restoreMode === "http_error")
-          return Response.json({ error: "restore-fail" }, { status: 500 });
-        if (!existsSync(absPath)) return Response.json({ error: "missing" }, { status: 404 });
-        return Response.json({ n_restored: 123, restore_epoch: restoreEpoch });
+          return Promise.resolve(Response.json({ error: "restore-fail" }, { status: 500 }));
+        if (!existsSync(absPath))
+          return Promise.resolve(Response.json({ error: "missing" }, { status: 404 }));
+        return Promise.resolve(Response.json({ n_restored: 123, restore_epoch: restoreEpoch }));
       }
       if (action === "save") {
         events.push("slot-save");
         mkdirSync(dirname(absPath), { recursive: true });
         writeFileSync(absPath, "slot");
-        if (saveMode === "invalid") return Response.json({ ok: true });
-        return Response.json({ n_saved: 321 });
+        if (saveMode === "invalid") return Promise.resolve(Response.json({ ok: true }));
+        return Promise.resolve(Response.json({ n_saved: 321 }));
       }
-      return Response.json({ error: "bad action" }, { status: 400 });
+      return Promise.resolve(Response.json({ error: "bad action" }, { status: 400 }));
     }
     if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
       events.push("chat-forward");
       const body = typeof init?.body === "string" ? init.body : "";
       if (chatMode === "sse") {
-        return new Response(`data: ${JSON.stringify({ id: "evt", body })}\n\n`, {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
-        });
+        return Promise.resolve(
+          new Response(`data: ${JSON.stringify({ id: "evt", body })}\n\n`, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
       }
-      return Response.json({
-        id: "chatcmpl-1",
-        object: "chat.completion",
-        model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
-        choices: [
-          {
-            index: 0,
-            message: {
-              role: "assistant",
-              content: [{ type: "text", text: `${firstJsonToken} world` }],
-              ...(toolCalls.length > 0
-                ? {
-                    tool_calls: toolCalls.map((call) => ({
-                      id: call.id,
-                      type: "function",
-                      function: {
-                        name: call.name,
-                        arguments: call.arguments,
-                      },
-                    })),
-                  }
-                : {}),
+      return Promise.resolve(
+        Response.json({
+          id: "chatcmpl-1",
+          object: "chat.completion",
+          model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: `${firstJsonToken} world` }],
+                ...(toolCalls.length > 0
+                  ? {
+                      tool_calls: toolCalls.map((call) => ({
+                        id: call.id,
+                        type: "function",
+                        function: {
+                          name: call.name,
+                          arguments: call.arguments,
+                        },
+                      })),
+                    }
+                  : {}),
+              },
+              finish_reason: "stop",
             },
-            finish_reason: "stop",
-          },
-        ],
-        echoed: body,
-      });
+          ],
+          echoed: body,
+        }),
+      );
     }
     if (method === "GET" && parsed.pathname === "/props") {
-      return Response.json({
-        slots: {
-          api_version: supportsRequestHandle ? 2 : 1,
-          supports_request_handle: supportsRequestHandle,
-        },
-      });
+      return Promise.resolve(
+        Response.json({
+          slots: {
+            api_version: supportsRequestHandle ? 2 : 1,
+            supports_request_handle: supportsRequestHandle,
+          },
+        }),
+      );
     }
     // oMLX advertises slot capabilities here instead of /props.
     if (method === "GET" && parsed.pathname === "/v1/slots/capabilities") {
-      return Response.json({
-        slots: {
-          api_version: 2,
-          supports_request_handle: true,
-          supports_save_handle: supportsSaveHandle,
-        },
-      });
+      return Promise.resolve(
+        Response.json({
+          slots: {
+            api_version: 2,
+            supports_request_handle: true,
+            supports_save_handle: supportsSaveHandle,
+          },
+        }),
+      );
     }
-    return new Response("", { status: 404 });
+    return Promise.resolve(new Response("", { status: 404 }));
   }) as typeof fetch;
 
-  return {
+  return Promise.resolve({
     baseUrl,
     events,
-    close: async () => {},
-  };
+    close: () => Promise.resolve(),
+  });
 }
 
 function shaForBody(body: string): string {
   return createHash("sha1").update(body).digest("hex");
 }
 
-function parsedConsoleDebugEvents(spy: ReturnType<typeof spyOn>): Record<string, unknown>[] {
+function parsedConsoleDebugEvents(spy: SpyCalls): Record<string, unknown>[] {
   return spy.mock.calls
     .map((call: unknown[]) => {
       const [message] = call;
@@ -284,7 +315,7 @@ test("cold miss saves a new idle kv entry", async () => {
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
 
@@ -335,7 +366,7 @@ test("uses ModelHost slotSavePath from state when persisting kv", async () => {
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(res.status).toBe(200);
     expect(existsSync(join(slotDir, `${shaForBody(body)}.kvslot`))).toBe(true);
@@ -380,7 +411,7 @@ test("ModelHost omlx without save-handle capability performs no cold-miss save (
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
 
@@ -433,7 +464,7 @@ test("ModelHost omlx with save-handle capability saves a cold-miss kv entry (alw
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
 
@@ -481,7 +512,7 @@ test("anthropic cold save writes trailer toolMap and ext_flags when upstream ret
         headers: { "content-type": "application/json" },
         body: JSON.stringify(anthropicBody),
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
 
@@ -517,7 +548,7 @@ test("warm hit restores slot before upstream forward", async () => {
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -544,7 +575,7 @@ test("warm hit restores slot before upstream forward", async () => {
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     expect(upstream.events.indexOf("slot-restore")).toBeLessThan(
@@ -572,7 +603,7 @@ test("KV restore is skipped when the saved entry model differs from the request 
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
     // Seed a hit whose stored model does NOT match the request's model.
@@ -600,12 +631,12 @@ test("KV restore is skipped when the saved entry model differs from the request 
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     // The model mismatch must prevent a restore; the request falls through to cold prefill.
     expect(upstream.events).not.toContain("slot-restore");
-    expect(__getOpenAIProxyKvModelMismatchTotalForTests(runtime.env as any)).toBe(1);
+    expect(__getOpenAIProxyKvModelMismatchTotalForTests(runtime.env)).toBe(1);
   } finally {
     await upstream.close();
     runtime.cleanup();
@@ -631,7 +662,7 @@ test("proxy injects x_omlx_request_handle and x_omlx_restore_epoch after success
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -656,7 +687,7 @@ test("proxy injects x_omlx_request_handle and x_omlx_restore_epoch after success
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
@@ -689,7 +720,7 @@ test("proxy does not inject vendor fields when request-handle capability is unsu
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -714,7 +745,7 @@ test("proxy does not inject vendor fields when request-handle capability is unsu
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
@@ -747,7 +778,7 @@ test("proxy does not inject vendor fields when restore fails", async () => {
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -772,7 +803,7 @@ test("proxy does not inject vendor fields when restore fails", async () => {
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
@@ -804,7 +835,7 @@ test("proxy does not inject vendor fields when restore_epoch is null", async () 
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -829,7 +860,7 @@ test("proxy does not inject vendor fields when restore_epoch is null", async () 
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
@@ -861,7 +892,7 @@ test("proxy injects vendor fields at top-level only", async () => {
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -886,7 +917,7 @@ test("proxy injects vendor fields at top-level only", async () => {
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
@@ -914,7 +945,7 @@ test("phase4b logs slot injection applied event on success", async () => {
     supportsRequestHandle: true,
     restoreEpoch: "abc",
   });
-  const debugSpy = spyOn(console, "debug").mockImplementation(() => {});
+  const debugSpy = spyOn(console, "debug").mockImplementation(() => undefined);
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
@@ -926,7 +957,7 @@ test("phase4b logs slot injection applied event on success", async () => {
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -951,7 +982,7 @@ test("phase4b logs slot injection applied event on success", async () => {
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
 
@@ -977,7 +1008,7 @@ test("phase4b logs slot injection skipped with capability_missing reason", async
     supportsRequestHandle: false,
     restoreEpoch: "abc",
   });
-  const debugSpy = spyOn(console, "debug").mockImplementation(() => {});
+  const debugSpy = spyOn(console, "debug").mockImplementation(() => undefined);
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
@@ -989,7 +1020,7 @@ test("phase4b logs slot injection skipped with capability_missing reason", async
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1014,7 +1045,7 @@ test("phase4b logs slot injection skipped with capability_missing reason", async
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
 
@@ -1039,7 +1070,7 @@ test("phase4b logs slot injection skipped with no_restore_epoch reason", async (
     supportsRequestHandle: true,
     restoreEpoch: null,
   });
-  const debugSpy = spyOn(console, "debug").mockImplementation(() => {});
+  const debugSpy = spyOn(console, "debug").mockImplementation(() => undefined);
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
@@ -1051,7 +1082,7 @@ test("phase4b logs slot injection skipped with no_restore_epoch reason", async (
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1076,7 +1107,7 @@ test("phase4b logs slot injection skipped with no_restore_epoch reason", async (
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
 
@@ -1101,7 +1132,7 @@ test("proxy strips user supplied x_omlx_request_handle at ingress", async () => 
     supportsRequestHandle: true,
     restoreEpoch: "abc",
   });
-  const debugSpy = spyOn(console, "debug").mockImplementation(() => {});
+  const debugSpy = spyOn(console, "debug").mockImplementation(() => undefined);
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
@@ -1118,7 +1149,7 @@ test("proxy strips user supplied x_omlx_request_handle at ingress", async () => 
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1143,7 +1174,7 @@ test("proxy strips user supplied x_omlx_request_handle at ingress", async () => 
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
@@ -1173,7 +1204,7 @@ test("proxy strips user supplied x_omlx_restore_epoch at ingress", async () => {
     supportsRequestHandle: true,
     restoreEpoch: "abc",
   });
-  const debugSpy = spyOn(console, "debug").mockImplementation(() => {});
+  const debugSpy = spyOn(console, "debug").mockImplementation(() => undefined);
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
@@ -1190,7 +1221,7 @@ test("proxy strips user supplied x_omlx_restore_epoch at ingress", async () => {
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1215,7 +1246,7 @@ test("proxy strips user supplied x_omlx_restore_epoch at ingress", async () => {
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
@@ -1245,7 +1276,7 @@ test("proxy injection overwrites user supplied vendor fields", async () => {
     supportsRequestHandle: true,
     restoreEpoch: "abc",
   });
-  const debugSpy = spyOn(console, "debug").mockImplementation(() => {});
+  const debugSpy = spyOn(console, "debug").mockImplementation(() => undefined);
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
@@ -1263,7 +1294,7 @@ test("proxy injection overwrites user supplied vendor fields", async () => {
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1288,7 +1319,7 @@ test("proxy injection overwrites user supplied vendor fields", async () => {
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
@@ -1330,14 +1361,15 @@ test("warm-hit lease is released when response-cache buffering throws before kv 
   const slotBaseDir = join(runtime.root, "kvstore", "slots", "wl-a");
   const upstream = await startUpstream({ slotBaseDir });
   const nativeFetch = globalThis.fetch;
-  const nativeArrayBuffer = Response.prototype.arrayBuffer;
+  const nativeArrayBuffer = (response: Response): Promise<ArrayBuffer> =>
+    Response.prototype.arrayBuffer.call(response);
   const arrayBufferSpy = spyOn(Response.prototype, "arrayBuffer").mockImplementation(function (
     this: Response,
   ): Promise<ArrayBuffer> {
     if (this.headers.get("x-fail-buffer") === "1") {
       return Promise.reject(new Error("simulated arrayBuffer failure"));
     }
-    return nativeArrayBuffer.call(this);
+    return nativeArrayBuffer(this);
   });
   const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((
     ...args: Parameters<typeof fetch>
@@ -1366,7 +1398,7 @@ test("warm-hit lease is released when response-cache buffering throws before kv 
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1385,16 +1417,23 @@ test("warm-hit lease is released when response-cache buffering throws before kv 
     );
     storage.close();
 
-    await expect(
-      openaiProxy.proxyOpenAI(
-        new Request("http://localhost/v1/chat/completions", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body,
-        }),
-        runtime.env as any,
-      ),
-    ).rejects.toThrow("simulated arrayBuffer failure");
+    let thrown: unknown;
+    try {
+      await Promise.resolve().then(() =>
+        openaiProxy.proxyOpenAI(
+          new Request("http://localhost/v1/chat/completions", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body,
+          }),
+          runtime.env,
+        ),
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain("simulated arrayBuffer failure");
 
     const afterStorage = openKvStorage(runtime.root);
     const afterRegistry = new KvRegistry(afterStorage);
@@ -1457,7 +1496,7 @@ test("anthropic warm hit replays with trailer toolMap bytes and keeps warm path 
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1492,7 +1531,7 @@ test("anthropic warm hit replays with trailer toolMap bytes and keeps warm path 
         headers: { "content-type": "application/json" },
         body: JSON.stringify(anthropicBody),
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     expect(upstream.events).toEqual(["slot-restore", "chat-forward"]);
@@ -1506,7 +1545,7 @@ test("anthropic warm-hit trailer mismatch falls back to cold prefill and increme
   const runtime = makeTempRuntime();
   const slotBaseDir = join(runtime.root, "kvstore", "slots", "wl-a");
   const upstream = await startUpstream({ slotBaseDir });
-  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
@@ -1552,7 +1591,7 @@ test("anthropic warm-hit trailer mismatch falls back to cold prefill and increme
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1587,10 +1626,10 @@ test("anthropic warm-hit trailer mismatch falls back to cold prefill and increme
         headers: { "content-type": "application/json" },
         body: JSON.stringify(anthropicBody),
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
-    expect(openaiProxy.__getOpenAIProxyKvReplayMismatchTotalForTests(runtime.env as any)).toBe(1);
+    expect(openaiProxy.__getOpenAIProxyKvReplayMismatchTotalForTests(runtime.env)).toBe(1);
     expect(upstream.events).toEqual(["slot-restore", "chat-forward", "slot-save"]);
     expect(
       warnSpy.mock.calls.some((call) => String(call[0]).includes('"event":"kv_replay_mismatch"')),
@@ -1606,7 +1645,7 @@ test("warm-hit mismatch on deterministic request increments false-hit counter an
   const runtime = makeTempRuntime();
   const slotBaseDir = join(runtime.root, "kvstore", "slots", "wl-a");
   const upstream = await startUpstream({ slotBaseDir, firstJsonToken: "Goodbye" });
-  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
@@ -1619,7 +1658,7 @@ test("warm-hit mismatch on deterministic request increments false-hit counter an
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1644,10 +1683,10 @@ test("warm-hit mismatch on deterministic request increments false-hit counter an
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
-    expect(openaiProxy.__getOpenAIProxyKvFalseHitTotalForTests(runtime.env as any)).toBe(1);
+    expect(openaiProxy.__getOpenAIProxyKvFalseHitTotalForTests(runtime.env)).toBe(1);
 
     const afterStorage = openKvStorage(runtime.root);
     const afterRegistry = new KvRegistry(afterStorage);
@@ -1679,7 +1718,7 @@ test("warm-hit match on deterministic request keeps entry and counter unchanged"
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1704,10 +1743,10 @@ test("warm-hit match on deterministic request keeps entry and counter unchanged"
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
-    expect(openaiProxy.__getOpenAIProxyKvFalseHitTotalForTests(runtime.env as any)).toBe(0);
+    expect(openaiProxy.__getOpenAIProxyKvFalseHitTotalForTests(runtime.env)).toBe(0);
 
     const afterStorage = openKvStorage(runtime.root);
     const afterRegistry = new KvRegistry(afterStorage);
@@ -1735,7 +1774,7 @@ test("warm-hit mismatch skips check when request is sampled and seed is missing"
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1760,10 +1799,10 @@ test("warm-hit mismatch skips check when request is sampled and seed is missing"
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
-    expect(openaiProxy.__getOpenAIProxyKvFalseHitTotalForTests(runtime.env as any)).toBe(0);
+    expect(openaiProxy.__getOpenAIProxyKvFalseHitTotalForTests(runtime.env)).toBe(0);
 
     const afterStorage = openKvStorage(runtime.root);
     const afterRegistry = new KvRegistry(afterStorage);
@@ -1791,7 +1830,7 @@ test("warm-hit skip when legacy entry has null fingerprint", async () => {
     const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(slotFile), { recursive: true });
     writeFileSync(slotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1816,10 +1855,10 @@ test("warm-hit skip when legacy entry has null fingerprint", async () => {
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
-    expect(openaiProxy.__getOpenAIProxyKvFalseHitTotalForTests(runtime.env as any)).toBe(0);
+    expect(openaiProxy.__getOpenAIProxyKvFalseHitTotalForTests(runtime.env)).toBe(0);
 
     const afterStorage = openKvStorage(runtime.root);
     const afterRegistry = new KvRegistry(afterStorage);
@@ -1850,7 +1889,7 @@ test("restore failure downgrades to cold prefill and deletes broken entry", asyn
     const missingSlotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
     mkdirSync(dirname(missingSlotFile), { recursive: true });
     writeFileSync(missingSlotFile, "slot");
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1874,7 +1913,7 @@ test("restore failure downgrades to cold prefill and deletes broken entry", asyn
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     expect(upstream.events).toEqual(["slot-restore", "chat-forward", "slot-save"]);
@@ -1926,7 +1965,7 @@ test("epoch mismatch rejects stale hit and proceeds as cold prefill", async () =
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     expect(upstream.events).toEqual(["chat-forward", "slot-save"]);
@@ -1944,7 +1983,7 @@ test("eviction trims over-budget workload entries and keeps new cold entry", asy
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -1976,7 +2015,7 @@ test("eviction trims over-budget workload entries and keeps new cold entry", asy
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
 
@@ -1998,11 +2037,11 @@ test("eviction blocked by active entry keeps active row and emits debug event", 
   const slotBaseDir = join(runtime.root, "kvstore", "slots", "wl-a");
   const upstream = await startUpstream({ slotBaseDir });
   process.env.LLAMACTL_KV_WORKLOAD_BUDGET_MB = "1";
-  const debugSpy = spyOn(console, "debug").mockImplementation(() => {});
+  const debugSpy = spyOn(console, "debug").mockImplementation(() => undefined);
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
-    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env as any);
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
     expect(workloadEpoch).not.toBeNull();
     const storage = openKvStorage(runtime.root);
     const registry = new KvRegistry(storage);
@@ -2047,7 +2086,7 @@ test("eviction blocked by active entry keeps active row and emits debug event", 
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     expect(debugSpy).toHaveBeenCalled();
@@ -2086,7 +2125,7 @@ test("sse response skips kv save", async () => {
         headers: { "content-type": "application/json" },
         body,
       }),
-      runtime.env as any,
+      runtime.env,
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/event-stream");

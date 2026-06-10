@@ -1,5 +1,12 @@
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { BenchMode, ResolvedEnv } from "../types.js";
@@ -49,19 +56,23 @@ export type RunCli = (
 
 function drainLines(buf: string, onLine: (line: string) => void): string {
   let remaining = buf;
-  while (true) {
-    const nl = remaining.indexOf("\n");
-    const cr = remaining.indexOf("\r");
-    let idx: number;
-    if (nl === -1 && cr === -1) break;
-    else if (nl === -1) idx = cr;
-    else if (cr === -1) idx = nl;
-    else idx = Math.min(nl, cr);
+  let idx = nextLineBreak(remaining);
+  while (idx !== -1) {
     const line = remaining.slice(0, idx);
     remaining = remaining.slice(idx + 1);
     if (line.length > 0) onLine(line);
+    idx = nextLineBreak(remaining);
   }
   return remaining;
+}
+
+function nextLineBreak(value: string): number {
+  const nl = value.indexOf("\n");
+  const cr = value.indexOf("\r");
+  if (nl === -1 && cr === -1) return -1;
+  if (nl === -1) return cr;
+  if (cr === -1) return nl;
+  return Math.min(nl, cr);
 }
 
 export const defaultRunCli: RunCli = (bin, args, onEvent, signal) => {
@@ -85,14 +96,12 @@ export const defaultRunCli: RunCli = (bin, args, onEvent, signal) => {
         if (buf.length > 0) onEvent?.({ type: kind, line: buf });
       });
     };
-    if (child.stdout)
-      attach(child.stdout, "stdout", (t) => {
-        stdout += t;
-      });
-    if (child.stderr)
-      attach(child.stderr, "stderr", (t) => {
-        stderr += t;
-      });
+    attach(child.stdout, "stdout", (t) => {
+      stdout += t;
+    });
+    attach(child.stderr, "stderr", (t) => {
+      stderr += t;
+    });
     const onAbort = () => {
       try {
         child.kill("SIGTERM");
@@ -134,7 +143,7 @@ export function formatBenchTimestamp(date: Date = new Date()): string {
   const off = -date.getTimezoneOffset();
   const sign = off >= 0 ? "+" : "-";
   const abs = Math.abs(off);
-  return `${y}-${mo}-${d}T${h}:${mi}:${s}${sign}${pad(Math.floor(abs / 60))}${pad(abs % 60)}`;
+  return `${String(y)}-${mo}-${d}T${h}:${mi}:${s}${sign}${pad(Math.floor(abs / 60))}${pad(abs % 60)}`;
 }
 
 // ---- JSONL / mtmd-cli parsers ----------------------------------------
@@ -221,9 +230,8 @@ export function parseMtmdCliStats(stderr: string): {
 
 function atomicRewrite(file: string, body: string): void {
   mkdirSync(dirname(file), { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  const tmp = `${file}.tmp-${String(process.pid)}-${Math.random().toString(36).slice(2)}`;
   writeFileSync(tmp, body);
-  const { renameSync } = require("node:fs") as typeof import("node:fs");
   renameSync(tmp, file);
 }
 
@@ -438,8 +446,7 @@ export async function benchPreset(
   const modeArg = opts.mode ?? "auto";
   let mode: BenchMode;
   if (modeArg === "auto") mode = defaultModeForRel(rel, resolved);
-  else if (modeArg === "text" || modeArg === "vision") mode = modeArg;
-  else return { error: `Unknown bench mode: ${String(modeArg)}` };
+  else mode = modeArg;
 
   const ctx = ctxForModel(rel, resolved);
   const build = resolveBuildId(resolved);
@@ -618,7 +625,7 @@ export async function benchVision(
   const result = await run(bin, args, opts.onEvent, opts.signal);
   if (result.code !== 0) {
     const tail = result.stderr.split("\n").slice(-20).join("\n");
-    return { error: `llama-mtmd-cli failed (code=${result.code})\n${tail}` };
+    return { error: `llama-mtmd-cli failed (code=${String(result.code)})\n${tail}` };
   }
 
   const parsed = parseMtmdCliStats(result.stderr);

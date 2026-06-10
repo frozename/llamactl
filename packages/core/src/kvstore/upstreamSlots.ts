@@ -71,7 +71,7 @@ export class UpstreamSlotClient implements SlotClient {
         ok: false,
         reason: "http_error",
         status: result.response.status,
-        error: new Error(`slot save failed with HTTP ${result.response.status}`),
+        error: new Error(`slot save failed with HTTP ${String(result.response.status)}`),
       };
     }
     const body = await this.parseJsonBody(result.response);
@@ -110,7 +110,7 @@ export class UpstreamSlotClient implements SlotClient {
         ok: false,
         reason: "http_error",
         status: result.response.status,
-        error: new Error(`slot restore failed with HTTP ${result.response.status}`),
+        error: new Error(`slot restore failed with HTTP ${String(result.response.status)}`),
       };
     }
     const body = await this.parseJsonBody(result.response);
@@ -132,9 +132,7 @@ export class UpstreamSlotClient implements SlotClient {
   }
 
   supportsSlots(): Promise<boolean> {
-    if (!this.supportsSlotsProbe) {
-      this.supportsSlotsProbe = this.probeSupportsSlots();
-    }
+    this.supportsSlotsProbe ??= this.probeSupportsSlots();
     return this.supportsSlotsProbe;
   }
 
@@ -166,7 +164,7 @@ export class UpstreamSlotClient implements SlotClient {
     filename: string,
     opts?: SlotActionOpts,
   ): Promise<FetchResult> {
-    const url = new URL(`/slots/${slotId}`, this.baseUrl);
+    const url = new URL(`/slots/${String(slotId)}`, this.baseUrl);
     url.searchParams.set("action", action);
     const payload: Record<string, unknown> = { filename };
     if (opts?.model !== undefined) payload.model = opts.model;

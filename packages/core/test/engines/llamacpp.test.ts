@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { ModelHostSpecForEngine } from "../../src/engines/types.js";
+import type { EngineBootEnv, ModelHostSpecForEngine } from "../../src/engines/types.js";
 
 import { ENGINES } from "../../src/engines/index.js";
 import { formatHostForUrl, gracefulShutdown } from "../../src/engines/lifecycle.js";
@@ -69,16 +69,23 @@ describe("llamacpp engine adapter", () => {
       hostedModels: [{ rel: "../escape.gguf" }],
     };
     expect(() =>
-      ENGINES.llamacpp.buildBootCommand(bad, { LLAMA_CPP_MODELS: "/tmp/models" } as any),
+      ENGINES.llamacpp.buildBootCommand(bad, {
+        LLAMA_CPP_MODELS: "/tmp/models",
+      } satisfies EngineBootEnv),
     ).toThrow(/escapes models dir/);
   });
 
   test("probeReady resolves only when /v1/models advertises a model id", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ object: "list", data: [{ id: "granite-4.1-3b-Q8_0.gguf" }] }), {
-        headers: { "content-type": "application/json" },
-      })) as unknown as typeof fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ object: "list", data: [{ id: "granite-4.1-3b-Q8_0.gguf" }] }),
+          {
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      )) as unknown as typeof fetch;
     const result = await ENGINES.llamacpp.probeReady({ host: "127.0.0.1", port: 12345 }, 1000);
     globalThis.fetch = originalFetch;
     expect(result.ready).toBe(true);
@@ -97,7 +104,7 @@ describe("llamacpp engine adapter", () => {
         init?.signal?.addEventListener("abort", () => {
           reject(new Error("aborted"));
         });
-      })) as typeof fetch;
+      })) as unknown as typeof fetch;
     const started = Date.now();
     const result = await ENGINES.llamacpp.probeReady({ host: "127.0.0.1", port: 12345 }, 300);
     const elapsed = Date.now() - started;

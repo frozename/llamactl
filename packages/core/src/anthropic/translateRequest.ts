@@ -197,9 +197,6 @@ function normalizeSystemContent(system: AnthropicMessagesRequest["system"]): str
   if (typeof system === "string") return system;
   const parts: string[] = [];
   for (const block of system) {
-    if (block.type !== "text") {
-      throw new AnthropicTranslationError(`unsupported system content block type: ${block.type}`);
-    }
     parts.push(block.text);
   }
   return parts.join("");
@@ -286,15 +283,12 @@ function translateToolChoice(
   if (choice === "auto") return "auto";
   if (choice === "any") return "required";
   if (choice === "none") return "none";
-  if (isRecord(choice) && choice.type === "tool" && typeof choice.name === "string") {
-    return {
-      type: "function",
-      function: {
-        name: choice.name,
-      },
-    };
-  }
-  throw new AnthropicTranslationError("unsupported tool_choice value");
+  return {
+    type: "function",
+    function: {
+      name: choice.name,
+    },
+  };
 }
 
 export function translateAnthropicRequest(

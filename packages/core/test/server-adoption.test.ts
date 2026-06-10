@@ -50,8 +50,8 @@ describe("tryAdoptExistingServer", () => {
     const pid = await tryAdoptExistingServer({
       ...base(),
       deps: {
-        probeModelIds: async () => ["granite-mini-3b"],
-        findListenerPid: async () => process.pid,
+        probeModelIds: () => Promise.resolve(["granite-mini-3b"]),
+        findListenerPid: () => Promise.resolve(process.pid),
       },
     });
     expect(pid).toBe(process.pid);
@@ -68,8 +68,8 @@ describe("tryAdoptExistingServer", () => {
     const pid = await tryAdoptExistingServer({
       ...base(),
       deps: {
-        probeModelIds: async () => ["granite-4.1-3b-Q8_0.gguf"],
-        findListenerPid: async () => process.pid,
+        probeModelIds: () => Promise.resolve(["granite-4.1-3b-Q8_0.gguf"]),
+        findListenerPid: () => Promise.resolve(process.pid),
       },
     });
     expect(pid).toBe(process.pid);
@@ -78,7 +78,10 @@ describe("tryAdoptExistingServer", () => {
   test("refuses when the model list is empty (unconfirmable)", async () => {
     const pid = await tryAdoptExistingServer({
       ...base(),
-      deps: { probeModelIds: async () => [], findListenerPid: async () => process.pid },
+      deps: {
+        probeModelIds: () => Promise.resolve([]),
+        findListenerPid: () => Promise.resolve(process.pid),
+      },
     });
     expect(pid).toBeNull();
     expect(readServerState(KEY, resolved)).toBeNull();
@@ -88,8 +91,8 @@ describe("tryAdoptExistingServer", () => {
     const pid = await tryAdoptExistingServer({
       ...base(),
       deps: {
-        probeModelIds: async () => ["some-other-model"],
-        findListenerPid: async () => process.pid,
+        probeModelIds: () => Promise.resolve(["some-other-model"]),
+        findListenerPid: () => Promise.resolve(process.pid),
       },
     });
     expect(pid).toBeNull();
@@ -99,7 +102,10 @@ describe("tryAdoptExistingServer", () => {
   test("refuses when no listener pid is found", async () => {
     const pid = await tryAdoptExistingServer({
       ...base(),
-      deps: { probeModelIds: async () => ["granite-mini-3b"], findListenerPid: async () => null },
+      deps: {
+        probeModelIds: () => Promise.resolve(["granite-mini-3b"]),
+        findListenerPid: () => Promise.resolve(null),
+      },
     });
     expect(pid).toBeNull();
   });
@@ -108,8 +114,8 @@ describe("tryAdoptExistingServer", () => {
     const pid = await tryAdoptExistingServer({
       ...base(),
       deps: {
-        probeModelIds: async () => ["granite-mini-3b"],
-        findListenerPid: async () => 2147480000,
+        probeModelIds: () => Promise.resolve(["granite-mini-3b"]),
+        findListenerPid: () => Promise.resolve(2147480000),
       },
     });
     expect(pid).toBeNull();
@@ -119,9 +125,10 @@ describe("tryAdoptExistingServer", () => {
     const pid = await tryAdoptExistingServer({
       ...base(),
       deps: {
-        probeModelIds: async () => ["granite-mini-3b"],
-        findListenerPid: async () => process.pid,
-        readProcessCommand: async () => `/bin/llama-server --slot-save-path /tmp/live-slots`,
+        probeModelIds: () => Promise.resolve(["granite-mini-3b"]),
+        findListenerPid: () => Promise.resolve(process.pid),
+        readProcessCommand: () =>
+          Promise.resolve(`/bin/llama-server --slot-save-path /tmp/live-slots`),
       },
     });
     expect(pid).toBe(process.pid);

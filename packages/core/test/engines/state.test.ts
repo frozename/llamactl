@@ -26,7 +26,9 @@ beforeEach(() => {
 afterEach(() => {
   try {
     rmSync(tmp, { recursive: true, force: true });
-  } catch {}
+  } catch {
+    // Best-effort cleanup; failures are not actionable here.
+  }
 });
 
 describe("engines/state", () => {

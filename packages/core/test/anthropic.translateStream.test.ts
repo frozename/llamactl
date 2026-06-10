@@ -33,10 +33,10 @@ async function readStreamText(stream: ReadableStream<Uint8Array>): Promise<strin
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let out = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    if (value) out += decoder.decode(value, { stream: true });
+  let chunk = await reader.read();
+  while (!chunk.done) {
+    out += decoder.decode(chunk.value, { stream: true });
+    chunk = await reader.read();
   }
   out += decoder.decode();
   return out;
@@ -67,7 +67,7 @@ function assertContentBlockDeltaInvariant(events: ParsedEvent[]): void {
     if (event.event === "content_block_start") {
       const index = event.data.index;
       if (typeof index !== "number") throw new Error("content_block_start missing numeric index");
-      if (open.get(index)) throw new Error(`content block index already open: ${index}`);
+      if (open.get(index)) throw new Error(`content block index already open: ${String(index)}`);
       open.set(index, true);
       continue;
     }
@@ -75,14 +75,14 @@ function assertContentBlockDeltaInvariant(events: ParsedEvent[]): void {
     if (event.event === "content_block_delta") {
       const index = event.data.index;
       if (typeof index !== "number") throw new Error("content_block_delta missing numeric index");
-      if (!open.get(index)) throw new Error(`delta outside open block: ${index}`);
+      if (!open.get(index)) throw new Error(`delta outside open block: ${String(index)}`);
       continue;
     }
 
     if (event.event === "content_block_stop") {
       const index = event.data.index;
       if (typeof index !== "number") throw new Error("content_block_stop missing numeric index");
-      if (!open.get(index)) throw new Error(`stop outside open block: ${index}`);
+      if (!open.get(index)) throw new Error(`stop outside open block: ${String(index)}`);
       open.delete(index);
     }
   }
@@ -290,7 +290,7 @@ test("fuzz: fragmented tool argument JSON reconstructs exactly for 20 seeds", as
 
     const sseEvents = [
       `data: ${JSON.stringify({
-        id: `msg_fuzz_${seed}`,
+        id: `msg_fuzz_${String(seed)}`,
         choices: [
           {
             delta: {
@@ -335,7 +335,7 @@ test("fuzz: fragmented tool argument JSON reconstructs exactly for 20 seeds", as
 
     const partials = events
       .filter((event) => event.event === "content_block_delta")
-      .map((event) => (event.data.delta as { partial_json?: string })?.partial_json ?? "")
+      .map((event) => (event.data.delta as { partial_json?: string }).partial_json ?? "")
       .join("");
 
     expect(JSON.parse(partials)).toEqual(JSON.parse(sourceJson));
@@ -374,7 +374,7 @@ test("named event with valid data is translated and does not increment unknown c
   expect(events.at(-1)?.event).toBe("message_stop");
 });
 
-test("multiple data lines in one event are concatenated with newlines", async () => {
+test("multiple data lines in one event are concatenated with newlines", () => {
   const parsed = __parseAnthropicSseEventPayloadForTests("data: line1\ndata: line2\n\n");
 
   expect(parsed.unknownLineCount).toBe(0);

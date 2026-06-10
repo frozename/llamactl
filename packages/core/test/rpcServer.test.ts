@@ -48,7 +48,7 @@ beforeEach(() => {
   resolved = resolveEnv();
 });
 
-afterEach(async () => {
+afterEach(() => {
   // Best-effort teardown of any fake that's still listening.
   const pidFile = join(resolved.LOCAL_AI_RUNTIME_DIR, "rpc-server.pid");
   if (existsSync(pidFile)) {
@@ -56,7 +56,9 @@ afterEach(async () => {
     if (Number.isFinite(pid) && pid > 0) {
       try {
         process.kill(pid, "SIGTERM");
-      } catch {}
+      } catch {
+        // Best-effort cleanup; failures are not actionable here.
+      }
     }
   }
   process.env = { ...origEnv };
@@ -68,14 +70,14 @@ describe("rpcServer", () => {
     const port = pickPort();
     const result = await startRpcServer({ host: "127.0.0.1", port, timeoutSeconds: 5 });
     expect(result.ok).toBe(true);
-    expect(result.endpoint).toBe(`127.0.0.1:${port}`);
+    expect(result.endpoint).toBe(`127.0.0.1:${String(port)}`);
     expect(result.pid).not.toBeNull();
 
     const status = await rpcServerStatus(resolved);
     expect(status.state).toBe("up");
     expect(status.host).toBe("127.0.0.1");
     expect(status.port).toBe(port);
-    expect(status.endpoint).toBe(`127.0.0.1:${port}`);
+    expect(status.endpoint).toBe(`127.0.0.1:${String(port)}`);
     expect(status.pid).toBe(result.pid);
 
     const stopped = await stopRpcServer({ resolved });

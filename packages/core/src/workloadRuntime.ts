@@ -179,7 +179,10 @@ function aliasesFromExtraArgs(extraArgs: readonly string[] | undefined): string[
   if (!extraArgs) return [];
   const out: string[] = [];
   for (let i = 0; i + 1 < extraArgs.length; i += 1) {
-    if (extraArgs[i] === "--alias" || extraArgs[i] === "-a") out.push(extraArgs[i + 1]!);
+    const value = extraArgs[i + 1];
+    if ((extraArgs[i] === "--alias" || extraArgs[i] === "-a") && value !== undefined) {
+      out.push(value);
+    }
   }
   return out;
 }
@@ -214,7 +217,7 @@ export function listLocalRoutes(resolved: ResolvedEnv = resolveEnv()): LocalRout
     const runPid = readPidFile(join(root, dirent.name, "llama-server.pid"));
     if (runPid === null || !isProcessAlive(runPid)) continue;
     const state = readServerState(key, resolved);
-    if (!state?.rel || !state.host || state.port == null) continue;
+    if (!state?.rel || !state.host) continue;
     // Route by the model rel AND any `--alias` the server advertises. The
     // server reports its alias (not the rel) on /v1/models, so peer snapshots
     // and clients that use the alias must resolve to a real route rather than
@@ -283,11 +286,13 @@ export function migrateLegacySingletonRuntime(
   let statePort: number | null = null;
   try {
     const raw = readFileSync(legacyState, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as { rel?: unknown; port?: unknown };
     if (typeof parsed.rel === "string") stateRel = parsed.rel;
     if (typeof parsed.port === "string") statePort = Number.parseInt(parsed.port, 10);
     if (typeof parsed.port === "number") statePort = parsed.port;
-  } catch {}
+  } catch {
+    // Legacy sidecar may be absent or malformed; migration can still move raw files.
+  }
 
   const match = manifests.find(
     (manifest) =>
@@ -295,14 +300,16 @@ export function migrateLegacySingletonRuntime(
       (manifest.spec.endpoint?.port === undefined || manifest.spec.endpoint.port === statePort),
   );
 
-  const workloadName = match?.metadata.name ?? `imperative-${Date.now()}`;
+  const workloadName = match?.metadata.name ?? `imperative-${String(Date.now())}`;
   const destDir = ensureWorkloadRuntimeDir(resolved, { name: workloadName });
 
   const moveIfExists = (src: string, dstName: string) => {
     if (existsSync(src)) {
       try {
         renameSync(src, join(destDir, dstName));
-      } catch {}
+      } catch {
+        // Best-effort migration leaves the original file in place if a move fails.
+      }
     }
   };
   moveIfExists(legacyPid, "llama-server.pid");

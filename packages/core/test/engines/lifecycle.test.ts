@@ -58,11 +58,15 @@ describe("gracefulShutdown process-group reaping", () => {
       if (proc.pid) {
         try {
           process.kill(-proc.pid, "SIGKILL");
-        } catch {}
+        } catch {
+          // Best-effort cleanup; failures are not actionable here.
+        }
       }
       try {
         process.kill(grandchildPid, "SIGKILL");
-      } catch {}
+      } catch {
+        // Best-effort cleanup; failures are not actionable here.
+      }
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -85,11 +89,15 @@ describe("gracefulShutdown process-group reaping", () => {
     } finally {
       try {
         process.kill(grandchildPid, "SIGKILL");
-      } catch {}
+      } catch {
+        // Best-effort cleanup; failures are not actionable here.
+      }
       if (proc.pid) {
         try {
           process.kill(proc.pid, "SIGKILL");
-        } catch {}
+        } catch {
+          // Best-effort cleanup; failures are not actionable here.
+        }
       }
       rmSync(dir, { recursive: true, force: true });
     }

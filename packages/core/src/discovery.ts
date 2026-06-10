@@ -74,21 +74,14 @@ export function profileForDiscovery(
   requested: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): MachineProfile {
-  switch (filter) {
-    case "fits-16g":
-      return "mac-mini-16g";
-    case "fits-32g":
-      return "balanced";
-    case "fits-48g":
-      return "macbook-pro-48g";
-    default: {
-      const resolved = resolveEnv(env);
-      if (!requested || requested === "current") {
-        return normalizeProfile(resolved.LLAMA_CPP_MACHINE_PROFILE) ?? "macbook-pro-48g";
-      }
-      return normalizeProfile(requested) ?? "macbook-pro-48g";
-    }
+  if (filter === "fits-16g") return "mac-mini-16g";
+  if (filter === "fits-32g") return "balanced";
+  if (filter === "fits-48g") return "macbook-pro-48g";
+  const resolved = resolveEnv(env);
+  if (!requested || requested === "current") {
+    return normalizeProfile(resolved.LLAMA_CPP_MACHINE_PROFILE) ?? "macbook-pro-48g";
   }
+  return normalizeProfile(requested) ?? "macbook-pro-48g";
 }
 
 // ---- classification ---------------------------------------------------
@@ -188,7 +181,7 @@ export function eligibleGgufSiblings(info: HFModelInfo): string[] {
     const name = sib.rfilename;
     if (!/\.gguf$/i.test(name)) continue;
     if (name.toLowerCase().includes("mmproj")) continue;
-    if (/(^|\/)(bf16|fp16|f16)\//i.test(name)) continue;
+    if (/(?:^|\/)(?:bf16|fp16|f16)\//i.test(name)) continue;
     if (/-\d{5}-of-\d{5}\.gguf$/i.test(name)) continue;
     out.push(name);
   }
@@ -286,8 +279,9 @@ function applyRepoQuantOverrides(
       if (/671b|405b|123b|120b|72b|70b/.test(repoL)) fit = "poor";
       break;
     }
-    default: {
+    case "macbook-pro-48g": {
       if (/671b|405b|123b|120b/.test(repoL)) fit = "poor";
+      break;
     }
   }
 
@@ -339,7 +333,7 @@ export function fitScore(fit: DiscoveryFit): number {
       return 3;
     case "poor":
       return 2;
-    default:
+    case "unknown":
       return 1;
   }
 }

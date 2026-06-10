@@ -63,8 +63,8 @@ function writeState(
       `target=${snapshot.target}`,
       `model=${snapshot.model}`,
       `state=${snapshot.state}`,
-      `restarts=${snapshot.restarts}`,
-      `backoff_seconds=${snapshot.backoff_seconds}`,
+      `restarts=${String(snapshot.restarts)}`,
+      `backoff_seconds=${String(snapshot.backoff_seconds)}`,
       `log=${keepAliveLogFile(resolved)}`,
     ].join("\n") + "\n";
   writeFileSync(keepAliveStateFile(resolved), body);
@@ -278,7 +278,7 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
   } catch {
     // no-op
   }
-  writeFileSync(keepAlivePidFile(resolved), `${process.pid}\n`);
+  writeFileSync(keepAlivePidFile(resolved), `${String(process.pid)}\n`);
   writeState(resolved, {
     target: opts.target,
     model: "pending",
@@ -383,7 +383,7 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
         restarts,
         backoff_seconds: backoff,
       });
-      logLine(resolved, `ready rel=${rel} pid=${startRes.pid}`);
+      logLine(resolved, `ready rel=${rel} pid=${String(startRes.pid)}`);
 
       // Poll /health.
       while (!shouldStop()) {

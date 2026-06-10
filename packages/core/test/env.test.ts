@@ -211,7 +211,7 @@ describe("env.resolveEnv — process.env seed shape", () => {
       LLAMACTL_TEST_PROFILE: "/tmp/profile-for-seed",
       LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
     });
-    for (const [key, value] of Object.entries(resolved)) {
+    for (const [key, value] of Object.entries(resolved) as [string, string][]) {
       expect(typeof value).toBe("string");
       // LOCAL_AI_BENCH_IMAGE is intentionally empty-string when unset;
       // other fields must not be undefined/null. The seed loop's

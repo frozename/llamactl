@@ -16,6 +16,9 @@ function normalizeFinishReason(
   finishReason: string | null | undefined,
 ): AnthropicMessagesResponse["stop_reason"] {
   switch (finishReason) {
+    case undefined:
+    case null:
+      return "end_turn";
     case "stop":
       return "end_turn";
     case "length":
@@ -53,7 +56,7 @@ function toolUseFromCall(call: OpenAIChatToolCall): AnthropicContentBlock {
 
 function choiceFromResponse(res: OpenAIChatResponse): OpenAIChatChoice {
   const choice = res.choices[0];
-  if (!choice || !isRecord(choice.message) || choice.message.role !== "assistant") {
+  if (choice === undefined || !isRecord(choice.message)) {
     throw new AnthropicTranslationError("openai response missing assistant choice");
   }
   return choice;

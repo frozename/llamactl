@@ -68,7 +68,7 @@ function migrate(db: Database): void {
   const fromVersion = versionRow?.version ?? 0;
   if (fromVersion > SCHEMA_VERSION) {
     throw new Error(
-      `kvstore schema_version ${fromVersion} is newer than supported ${SCHEMA_VERSION}`,
+      `kvstore schema_version ${String(fromVersion)} is newer than supported ${String(SCHEMA_VERSION)}`,
     );
   }
   runMigrations(db, fromVersion, SCHEMA_VERSION);
@@ -153,7 +153,7 @@ export function runMigrations(db: Database, fromVersion: number, toVersion: numb
         db.query("UPDATE schema_version SET version = 5").run();
         break;
       default:
-        throw new Error(`Unsupported kvstore schema migration target ${next}`);
+        throw new Error(`Unsupported kvstore schema migration target ${String(next)}`);
     }
   }
 }

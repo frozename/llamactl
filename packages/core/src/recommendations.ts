@@ -56,7 +56,7 @@ function qwen36ForProfile(profile: MachineProfile): string {
       return "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ2_M.gguf";
     case "balanced":
       return "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf";
-    default:
+    case "macbook-pro-48g":
       return "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf";
   }
 }
@@ -70,7 +70,8 @@ function qwen35ForProfile(profile: MachineProfile): string {
   switch (profile) {
     case "mac-mini-16g":
       return "Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-IQ2_M.gguf";
-    default:
+    case "balanced":
+    case "macbook-pro-48g":
       return "Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf";
   }
 }

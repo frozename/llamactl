@@ -212,12 +212,17 @@ function readState(resolved: ResolvedEnv): PersistedState | null {
 function clearTracking(resolved: ResolvedEnv): void {
   try {
     unlinkSync(pidFile(resolved));
-  } catch {}
+  } catch {
+    // Best-effort cleanup; failures are not actionable here.
+  }
   try {
     unlinkSync(stateFile(resolved));
-  } catch {}
+  } catch {
+    // Best-effort cleanup; failures are not actionable here.
+  }
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Public RPC status API is async-compatible with other server operations.
 export async function rpcServerStatus(
   resolved: ResolvedEnv = resolveEnv(),
 ): Promise<RpcServerStatus> {
@@ -231,7 +236,7 @@ export async function rpcServerStatus(
   const port = pid && persisted ? persisted.port : null;
   return {
     state,
-    endpoint: host && port ? `${host}:${port}` : null,
+    endpoint: host && port ? `${host}:${String(port)}` : null,
     pid,
     host,
     port,
@@ -253,7 +258,7 @@ export async function startRpcServer(opts: StartRpcServerOptions): Promise<Start
   const host = opts.host ?? "0.0.0.0";
   const port = opts.port;
   const advertiseHost = host === "0.0.0.0" ? "127.0.0.1" : host;
-  const endpoint = `${advertiseHost}:${port}`;
+  const endpoint = `${advertiseHost}:${String(port)}`;
 
   await stopRpcServer({ resolved });
 
@@ -283,7 +288,9 @@ export async function startRpcServer(opts: StartRpcServerOptions): Promise<Start
   const killOnAbort = (): void => {
     try {
       if (isAlive(pid)) process.kill(pid, "SIGTERM");
-    } catch {}
+    } catch {
+      // Best-effort cleanup; failures are not actionable here.
+    }
   };
   if (opts.signal) {
     if (opts.signal.aborted) killOnAbort();
@@ -341,7 +348,9 @@ export async function stopRpcServer(opts: StopRpcServerOptions = {}): Promise<St
   }
   try {
     process.kill(pid, "SIGKILL");
-  } catch {}
+  } catch {
+    // Best-effort cleanup; failures are not actionable here.
+  }
   clearTracking(resolved);
   return { stopped: true, pid, killed: true };
 }
@@ -372,7 +381,9 @@ function tcpProbe(host: string, port: number, timeoutMs: number): Promise<boolea
     const done = (ok: boolean): void => {
       try {
         socket.destroy();
-      } catch {}
+      } catch {
+        // Best-effort cleanup; failures are not actionable here.
+      }
       resolve(ok);
     };
     socket.once("connect", () => {

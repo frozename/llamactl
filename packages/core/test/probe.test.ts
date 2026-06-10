@@ -24,9 +24,10 @@ describe("probeHealthEndpoint", () => {
   function makeFetch(
     handler: (url: string) => Response | Promise<Response>,
   ): typeof globalThis.fetch {
-    return (async (input: Parameters<typeof fetch>[0]) => {
-      const url = typeof input === "string" ? input : input.toString();
-      return await handler(url);
+    return ((input: Parameters<typeof fetch>[0]) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      return Promise.resolve(handler(url));
     }) as typeof globalThis.fetch;
   }
 

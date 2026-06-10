@@ -103,7 +103,7 @@ export function uninstall(opts: UninstallOptions): UninstallReport {
   }
 
   report.actions.push(
-    `Uninstalling ${rel} (scope=${report.scope ?? "unknown"}, force=${force ? 1 : 0})`,
+    `Uninstalling ${rel} (scope=${report.scope ?? "unknown"}, force=${String(force ? 1 : 0)})`,
   );
 
   if (existsSync(modelPath)) {

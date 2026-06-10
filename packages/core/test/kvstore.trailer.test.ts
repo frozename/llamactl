@@ -55,7 +55,7 @@ test("readTrailer returns null for missing trailer file", () => {
 
 test("atomic write leaves previous trailer intact when rename fails", () => {
   const t = makeTempRoot();
-  let renameSpy: ReturnType<typeof spyOn> | null = null;
+  let restoreRename = () => undefined;
   try {
     const slotFile = join(t.root, "slots", "wl-a", "stable.kvslot");
     const baseline: KvTrailer = {
@@ -63,10 +63,13 @@ test("atomic write leaves previous trailer intact when rename fails", () => {
       sessionTitle: "baseline",
     };
     expect(writeTrailer(slotFile, baseline)).toEqual({ ok: true });
-    renameSpy = spyOn(fs, "renameSync").mockImplementation(() => {
+    const renameSpy = spyOn(fs, "renameSync").mockImplementation(() => {
       const err = new Error("rename blocked");
       throw err;
     });
+    restoreRename = () => {
+      renameSpy.mockRestore();
+    };
 
     const replace: KvTrailer = {
       extFlags: EXT_FLAG_TOOL_MAP,
@@ -78,7 +81,7 @@ test("atomic write leaves previous trailer intact when rename fails", () => {
 
     expect(readTrailer(slotFile)).toEqual(baseline);
   } finally {
-    renameSpy?.mockRestore();
+    restoreRename();
     t.cleanup();
   }
 });

@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { type KvEntry, KvRegistry, openKvStorage } from "../src/kvstore/index.js";
 import { runMigrations } from "../src/kvstore/storage.js";
+import { resolveEnv } from "../src/env.js";
 import { workloadRuntimeRoot } from "../src/workloadRuntime.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
@@ -416,7 +417,10 @@ test("kv metadata writes do not change workloadRuntimeRoot mtimeNs", () => {
   try {
     const runtimeDir = join(t.root, "runtime");
     mkdirSync(runtimeDir, { recursive: true });
-    const resolved = { LOCAL_AI_RUNTIME_DIR: runtimeDir } as any;
+    const resolved = resolveEnv({
+      DEV_STORAGE: t.root,
+      LOCAL_AI_RUNTIME_DIR: runtimeDir,
+    });
     const root = workloadRuntimeRoot(resolved);
     mkdirSync(root, { recursive: true });
 

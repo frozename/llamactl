@@ -5,7 +5,9 @@ import { join } from "node:path";
 
 import type { PeerSnapshot } from "../src/workloadRuntime.js";
 
+import { resolveEnv } from "../src/env.js";
 import { openaiProxy } from "../src/index.js";
+import type { ResolvedEnv } from "../src/types.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -17,12 +19,16 @@ afterEach(() => {
 function tempEnv() {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-openai-proxy-core-"));
   return {
-    env: { LOCAL_AI_RUNTIME_DIR: dir } as any,
+    env: resolveEnv({
+      DEV_STORAGE: dir,
+      LOCAL_AI_RUNTIME_DIR: dir,
+      LLAMA_CPP_MODELS: join(dir, "models"),
+    }),
     dir,
     cleanup: () => {
       rmSync(dir, { recursive: true, force: true });
     },
-  };
+  } satisfies { env: ResolvedEnv; dir: string; cleanup: () => void };
 }
 
 test("routes chat completions to a ModelHost by rel alias", async () => {
@@ -30,7 +36,7 @@ test("routes chat completions to a ModelHost by rel alias", async () => {
   try {
     const workload = join(t.dir, "workloads", "mlx-host");
     mkdirSync(workload, { recursive: true });
-    writeFileSync(join(workload, "modelhost.pid"), `${process.pid}\n`);
+    writeFileSync(join(workload, "modelhost.pid"), `${String(process.pid)}\n`);
     writeFileSync(
       join(workload, "modelhost.state"),
       JSON.stringify({
@@ -45,12 +51,12 @@ test("routes chat completions to a ModelHost by rel alias", async () => {
     );
 
     const calls: { url: string; body: string | null }[] = [];
-    globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
+    globalThis.fetch = ((input: Request | URL | string, init?: RequestInit) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       calls.push({ url, body: typeof init?.body === "string" ? init.body : null });
       return Response.json({ echoed: { url } });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
       new Request("http://localhost/v1/chat/completions", {
@@ -79,7 +85,7 @@ test("route cache invalidates when a workload state file is rewritten in place",
   try {
     const workload = join(t.dir, "workloads", "mlx-host");
     mkdirSync(workload, { recursive: true });
-    writeFileSync(join(workload, "modelhost.pid"), `${process.pid}\n`);
+    writeFileSync(join(workload, "modelhost.pid"), `${String(process.pid)}\n`);
     const writeState = (port: number) => {
       writeFileSync(
         join(workload, "modelhost.state"),
@@ -97,12 +103,12 @@ test("route cache invalidates when a workload state file is rewritten in place",
     writeState(8123);
 
     const calls: string[] = [];
-    globalThis.fetch = (async (input: Request | URL | string) => {
+    globalThis.fetch = ((input: Request | URL | string) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       calls.push(url);
       return Response.json({ ok: true });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const req = () =>
       openaiProxy.proxyOpenAI(
@@ -143,7 +149,7 @@ test("routes chat completions to a ModelHost by basename alias", async () => {
   try {
     const workload = join(t.dir, "workloads", "mlx-host");
     mkdirSync(workload, { recursive: true });
-    writeFileSync(join(workload, "modelhost.pid"), `${process.pid}\n`);
+    writeFileSync(join(workload, "modelhost.pid"), `${String(process.pid)}\n`);
     writeFileSync(
       join(workload, "modelhost.state"),
       JSON.stringify({
@@ -158,12 +164,12 @@ test("routes chat completions to a ModelHost by basename alias", async () => {
     );
 
     const calls: { url: string }[] = [];
-    globalThis.fetch = (async (input: Request | URL | string) => {
+    globalThis.fetch = ((input: Request | URL | string) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       calls.push({ url });
       return Response.json({ ok: true });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
       new Request("http://localhost/v1/chat/completions", {
@@ -191,7 +197,7 @@ test("forwards chat completions with the current request shape intact", async ()
   try {
     const workload = join(t.dir, "workloads", "mlx-host");
     mkdirSync(workload, { recursive: true });
-    writeFileSync(join(workload, "modelhost.pid"), `${process.pid}\n`);
+    writeFileSync(join(workload, "modelhost.pid"), `${String(process.pid)}\n`);
     writeFileSync(
       join(workload, "modelhost.state"),
       JSON.stringify({
@@ -206,26 +212,29 @@ test("forwards chat completions with the current request shape intact", async ()
     );
 
     let observedRequest: Request | null = null;
-    globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
-      observedRequest =
+    globalThis.fetch = ((input: Request | URL | string, init?: RequestInit) => {
+      const request =
         typeof input === "string"
           ? new Request(input, init)
           : input instanceof URL
             ? new Request(input.toString(), init)
             : new Request(input, init);
-      return Response.json(
-        {
-          ok: true,
-          url: observedRequest.url,
-          method: observedRequest.method,
-          headers: [...observedRequest.headers.entries()].sort(),
-          body: await observedRequest.clone().text(),
-        },
-        {
-          headers: { "x-upstream": "llama-server" },
-        },
+      observedRequest = request;
+      return Promise.resolve(request.clone().text()).then((body) =>
+        Response.json(
+          {
+            ok: true,
+            url: request.url,
+            method: request.method,
+            headers: [...request.headers.entries()].sort(),
+            body,
+          },
+          {
+            headers: { "x-upstream": "llama-server" },
+          },
+        ),
       );
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
       new Request("http://localhost/v1/chat/completions?foo=bar", {
@@ -247,24 +256,16 @@ test("forwards chat completions with the current request shape intact", async ()
     );
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchInlineSnapshot(`
-      {
-        "body": "{\"model\":\"mlx-community/Qwen3-8B-MLX-4bit\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
-        "headers": [
-          [
-            "content-type",
-            "application/json",
-          ],
-          [
-            "x-test",
-            "preserved",
-          ],
-        ],
-        "method": "POST",
-        "ok": true,
-        "url": "http://127.0.0.1:8125/v1/chat/completions?foo=bar",
-      }
-    `);
+    expect(await res.json()).toEqual({
+      body: '{"model":"mlx-community/Qwen3-8B-MLX-4bit","messages":[{"role":"user","content":"hi"}]}',
+      headers: [
+        ["content-type", "application/json"],
+        ["x-test", "preserved"],
+      ],
+      method: "POST",
+      ok: true,
+      url: "http://127.0.0.1:8125/v1/chat/completions?foo=bar",
+    });
     expect(res.headers.get("x-upstream")).toBe("llama-server");
     expect(observedRequest).not.toBeNull();
     expect(observedRequest!.headers.get("authorization")).toBeNull();
@@ -280,7 +281,7 @@ test("/v1/messages translates into /v1/chat/completions and forwards upstream", 
   const t = tempEnv();
   try {
     const calls: { url: string; body: string | null }[] = [];
-    globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
+    globalThis.fetch = ((input: Request | URL | string, init?: RequestInit) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       calls.push({ url, body: typeof init?.body === "string" ? init.body : null });
@@ -340,7 +341,7 @@ test("/v1/messages translates into /v1/chat/completions and forwards upstream", 
 test("/v1/messages rejects oversized content-length before reading body", async () => {
   const t = tempEnv();
   try {
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (() => {
       throw new Error("upstream should not be called");
     }) as unknown as typeof fetch;
     const req = new Request("http://localhost/v1/messages", {
@@ -364,7 +365,7 @@ test("/v1/messages rejects oversized content-length before reading body", async 
 test("/v1/messages translator errors return anthropic_translation_error with status 400", async () => {
   const t = tempEnv();
   try {
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (() => {
       throw new Error("upstream should not be called");
     }) as unknown as typeof fetch;
 
@@ -385,7 +386,7 @@ test("/v1/messages translator errors return anthropic_translation_error with sta
       t.env,
     );
     expect(res.status).toBe(400);
-    await expect(res.json()).resolves.toEqual({
+    expect(await Promise.resolve(res.json())).toEqual({
       error: {
         message: "unsupported content block type: video",
         type: "anthropic_translation_error",
@@ -399,7 +400,7 @@ test("/v1/messages translator errors return anthropic_translation_error with sta
 test("/v1/messages response translates non-streaming JSON back to anthropic shape", async () => {
   const t = tempEnv();
   try {
-    globalThis.fetch = (async () =>
+    globalThis.fetch = (() =>
       Response.json(
         {
           id: "msg_1",
@@ -478,7 +479,7 @@ test("/v1/messages SSE responses translate to anthropic stream events", async ()
         controller.close();
       },
     });
-    globalThis.fetch = (async () =>
+    globalThis.fetch = (() =>
       new Response(stream, {
         status: 200,
         headers: { "content-type": "text/event-stream" },
@@ -509,7 +510,7 @@ test("route map cache build count stays stable across identical requests", async
   try {
     const workload = join(t.dir, "workloads", "mlx-host");
     mkdirSync(workload, { recursive: true });
-    writeFileSync(join(workload, "modelhost.pid"), `${process.pid}\n`);
+    writeFileSync(join(workload, "modelhost.pid"), `${String(process.pid)}\n`);
     writeFileSync(
       join(workload, "modelhost.state"),
       JSON.stringify({
@@ -524,12 +525,12 @@ test("route map cache build count stays stable across identical requests", async
     );
 
     const seen: string[] = [];
-    globalThis.fetch = (async (input: Request | URL | string) => {
+    globalThis.fetch = ((input: Request | URL | string) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       seen.push(url);
       return Response.json({ ok: true });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const before = openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests();
     for (let i = 0; i < 5; i += 1) {
@@ -560,7 +561,7 @@ test("listOpenAIModels differentiates host and agent ownership", () => {
   try {
     const run = join(t.dir, "workloads", "run");
     mkdirSync(run, { recursive: true });
-    writeFileSync(join(run, "llama-server.pid"), `${process.pid}\n`);
+    writeFileSync(join(run, "llama-server.pid"), `${String(process.pid)}\n`);
     writeFileSync(
       join(run, "llama-server.state"),
       JSON.stringify({
@@ -576,7 +577,7 @@ test("listOpenAIModels differentiates host and agent ownership", () => {
 
     const host = join(t.dir, "workloads", "host");
     mkdirSync(host, { recursive: true });
-    writeFileSync(join(host, "modelhost.pid"), `${process.pid}\n`);
+    writeFileSync(join(host, "modelhost.pid"), `${String(process.pid)}\n`);
     writeFileSync(
       join(host, "modelhost.state"),
       JSON.stringify({
@@ -605,11 +606,11 @@ test("listOpenAIModels differentiates host and agent ownership", () => {
 
 test("basename alias collision prefers ModelRun over ModelHost and warns", () => {
   const t = tempEnv();
-  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
   try {
     const run = join(t.dir, "workloads", "run");
     mkdirSync(run, { recursive: true });
-    writeFileSync(join(run, "llama-server.pid"), `${process.pid}\n`);
+    writeFileSync(join(run, "llama-server.pid"), `${String(process.pid)}\n`);
     writeFileSync(
       join(run, "llama-server.state"),
       JSON.stringify({
@@ -626,7 +627,7 @@ test("basename alias collision prefers ModelRun over ModelHost and warns", () =>
 
     const host = join(t.dir, "workloads", "host");
     mkdirSync(host, { recursive: true });
-    writeFileSync(join(host, "modelhost.pid"), `${process.pid}\n`);
+    writeFileSync(join(host, "modelhost.pid"), `${String(process.pid)}\n`);
     writeFileSync(
       join(host, "modelhost.state"),
       JSON.stringify({
@@ -654,11 +655,11 @@ test("basename alias collision prefers ModelRun over ModelHost and warns", () =>
 
 test("same-kind alias collision keeps the alphabetically earlier workload", async () => {
   const t = tempEnv();
-  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
   try {
     const alpha = join(t.dir, "workloads", "alpha");
     mkdirSync(alpha, { recursive: true });
-    writeFileSync(join(alpha, "modelhost.pid"), `${process.pid}\n`);
+    writeFileSync(join(alpha, "modelhost.pid"), `${String(process.pid)}\n`);
     writeFileSync(
       join(alpha, "modelhost.state"),
       JSON.stringify({
@@ -674,7 +675,7 @@ test("same-kind alias collision keeps the alphabetically earlier workload", asyn
 
     const beta = join(t.dir, "workloads", "beta");
     mkdirSync(beta, { recursive: true });
-    writeFileSync(join(beta, "modelhost.pid"), `${process.pid}\n`);
+    writeFileSync(join(beta, "modelhost.pid"), `${String(process.pid)}\n`);
     writeFileSync(
       join(beta, "modelhost.state"),
       JSON.stringify({
@@ -689,12 +690,12 @@ test("same-kind alias collision keeps the alphabetically earlier workload", asyn
     );
 
     const calls: { url: string }[] = [];
-    globalThis.fetch = (async (input: Request | URL | string) => {
+    globalThis.fetch = ((input: Request | URL | string) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       calls.push({ url });
       return Response.json({ ok: true });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
       new Request("http://localhost/v1/chat/completions", {
@@ -723,7 +724,7 @@ test("/v1/models includes local and peer models from peer routing config", () =>
   try {
     const workload = join(t.dir, "workloads", "local-run");
     mkdirSync(workload, { recursive: true });
-    writeFileSync(join(workload, "llama-server.pid"), `${process.pid}\n`);
+    writeFileSync(join(workload, "llama-server.pid"), `${String(process.pid)}\n`);
     writeFileSync(
       join(workload, "llama-server.state"),
       JSON.stringify({
@@ -793,23 +794,19 @@ test("POST /v1/chat/completions forwards peer-only model to peer endpoint", asyn
     let forwardedAuthorization = "";
     let forwardedCa = "";
     const calls: { url: string }[] = [];
-    globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
+    globalThis.fetch = ((input: Request | URL | string, init?: RequestInit) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (init?.headers) {
         forwardedAuthorization = new Headers(init.headers).get("authorization") ?? "";
       }
       const forwardedInit = init as RequestInit & { tls?: { ca: string } };
-      if (
-        typeof forwardedInit?.tls === "object" &&
-        forwardedInit.tls !== undefined &&
-        "ca" in forwardedInit.tls
-      ) {
-        forwardedCa = String(forwardedInit.tls.ca);
+      if (forwardedInit.tls) {
+        forwardedCa = forwardedInit.tls.ca;
       }
       calls.push({ url });
       return Response.json({ ok: true });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
       new Request("http://localhost/v1/chat/completions", {
@@ -850,7 +847,7 @@ test("peer route + x_omlx_request_handle returns 400 with exact error message", 
       ]),
     });
 
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (() => {
       throw new Error("peer fetch should not run for slot ops");
     }) as unknown as typeof fetch;
 
@@ -892,7 +889,7 @@ test("peer 502 invalidates route cache so next request refetches routes", async 
     });
 
     let calls = 0;
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (() => {
       calls += 1;
       return calls === 1
         ? new Response("bad gateway", { status: 502 })

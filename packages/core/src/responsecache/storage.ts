@@ -59,7 +59,7 @@ function migrate(db: Database): void {
   const fromVersion = versionRow?.version ?? 0;
   if (fromVersion > SCHEMA_VERSION) {
     throw new Error(
-      `responsecache schema_version ${fromVersion} is newer than supported ${SCHEMA_VERSION}`,
+      `responsecache schema_version ${String(fromVersion)} is newer than supported ${String(SCHEMA_VERSION)}`,
     );
   }
   runMigrations(db, fromVersion, SCHEMA_VERSION);
@@ -133,7 +133,7 @@ export function runMigrations(db: Database, fromVersion: number, toVersion: numb
         }
         break;
       default:
-        throw new Error(`Unsupported responsecache schema migration target ${next}`);
+        throw new Error(`Unsupported responsecache schema migration target ${String(next)}`);
     }
   }
 }

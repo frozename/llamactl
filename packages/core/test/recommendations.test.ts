@@ -53,7 +53,7 @@ function estimateRelSizeGb(rel: string): number {
   // marking a recommendation as too-large rather than too-small.
   let bpw: number;
   if (fname.includes("IQ1_M")) bpw = 2.3;
-  else if (/IQ2_(M|XS|XXS)/.test(fname)) bpw = 2.6;
+  else if (/IQ2_(?:M|XS|XXS)/.test(fname)) bpw = 2.6;
   else if (fname.includes("Q2_K")) bpw = 2.85;
   else if (/IQ3|Q3_K_S/.test(fname)) bpw = 3.5;
   else if (fname.includes("Q3_K_M")) bpw = 3.85;
@@ -79,7 +79,7 @@ describe("recommendationsForProfile — fit-envelope guarantees", () => {
         if (sizeGb > ceiling) {
           throw new Error(
             `${profile}/${row.target}: rel '${row.rel}' is ~${sizeGb.toFixed(1)} GB, ` +
-              `over the ${ceiling} GB ceiling for this profile`,
+              `over the ${String(ceiling)} GB ceiling for this profile`,
           );
         }
       }

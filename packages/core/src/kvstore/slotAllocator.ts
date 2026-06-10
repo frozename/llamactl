@@ -5,7 +5,7 @@ export class SlotAllocator {
 
   constructor(maxSlots = 1) {
     if (!Number.isInteger(maxSlots) || maxSlots < 1) {
-      throw new Error(`SlotAllocator maxSlots must be >= 1, got ${maxSlots}`);
+      throw new Error(`SlotAllocator maxSlots must be >= 1, got ${String(maxSlots)}`);
     }
     this.maxSlots = maxSlots;
   }

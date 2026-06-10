@@ -10,7 +10,7 @@ import { ENGINES } from "../../src/engines/index.js";
 function makeFakeBinary(): string {
   const dir = join(
     tmpdir(),
-    `omlx-dflash-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    `omlx-dflash-test-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`,
   );
   mkdirSync(dir, { recursive: true });
   const path = join(dir, "omlx");
@@ -21,7 +21,7 @@ function makeFakeBinary(): string {
 const fakeBinary = makeFakeBinary();
 const runtimeRoot = join(
   tmpdir(),
-  `llamactl-runtime-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  `llamactl-runtime-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`,
 );
 
 const baseSpec: ModelHostSpecForEngine = {
@@ -94,9 +94,13 @@ describe("omlx engine dflash boot command", () => {
   afterAll(() => {
     try {
       rmSync(fakeBinary, { force: true });
-    } catch {}
+    } catch {
+      // Best-effort cleanup; failures are not actionable here.
+    }
     try {
       rmSync(runtimeRoot, { recursive: true, force: true });
-    } catch {}
+    } catch {
+      // Best-effort cleanup; failures are not actionable here.
+    }
   });
 });

@@ -359,7 +359,7 @@ export function ensureDirs(resolved: ResolvedEnv, env: NodeJS.ProcessEnv = proce
   }
 }
 
-const POSIX_SAFE = /^[A-Za-z0-9_./:=@%+,\-]+$/;
+const POSIX_SAFE = /^[A-Za-z0-9_./:=@%+,-]+$/;
 
 /**
  * Escape a value for inclusion in a POSIX `export KEY="VALUE"` line.

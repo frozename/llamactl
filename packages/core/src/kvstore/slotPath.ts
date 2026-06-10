@@ -18,7 +18,8 @@ export function resolveSlotSavePathArgs(
   const args = [...extraArgs];
   const slotDir = canonicalSlotDir(runtimeDir, workload);
   for (let i = 0; i < args.length; i += 1) {
-    const token = args[i]!;
+    const token = args[i];
+    if (token === undefined) continue;
     if (token === "--slot-save-path") {
       const value = args[i + 1];
       if (value === undefined) return { args, slotSavePath: null };
@@ -41,7 +42,8 @@ export function resolveSlotSavePathArgs(
 
 export function parseAbsoluteSlotSavePath(extraArgs: readonly string[]): string | null {
   for (let i = 0; i < extraArgs.length; i += 1) {
-    const token = extraArgs[i]!;
+    const token = extraArgs[i];
+    if (token === undefined) continue;
     if (token === "--slot-save-path") {
       const value = extraArgs[i + 1];
       return typeof value === "string" && value.startsWith("/") ? value : null;
@@ -57,7 +59,8 @@ export function parseAbsoluteSlotSavePath(extraArgs: readonly string[]): string 
 export function parseSlotSavePathFromCommand(cmdline: string): string | null {
   const match = /(?:^|\s)--slot-save-path(?:=|\s+)(\S+)/.exec(cmdline);
   if (!match) return null;
-  const value = match[1]!;
+  const value = match[1];
+  if (value === undefined) return null;
   return value.startsWith("/") ? value : null;
 }
 

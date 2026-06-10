@@ -53,7 +53,9 @@ export async function gracefulShutdown(pid: number, graceMs = 10_000): Promise<v
   const target = shutdownSignalTarget(pid);
   try {
     process.kill(target, "SIGTERM");
-  } catch {}
+  } catch {
+    // Best-effort cleanup; failures are not actionable here.
+  }
 
   const deadline = Date.now() + graceMs;
   while (Date.now() < deadline) {
@@ -66,7 +68,9 @@ export async function gracefulShutdown(pid: number, graceMs = 10_000): Promise<v
 
   try {
     process.kill(target, "SIGKILL");
-  } catch {}
+  } catch {
+    // Best-effort cleanup; failures are not actionable here.
+  }
 }
 
 async function fetchModelIds(
@@ -74,7 +78,7 @@ async function fetchModelIds(
   timeoutMs: number,
 ): Promise<string[]> {
   const response = await fetch(
-    `http://${formatHostForUrl(endpoint.host)}:${endpoint.port}/v1/models`,
+    `http://${formatHostForUrl(endpoint.host)}:${String(endpoint.port)}/v1/models`,
     {
       signal: AbortSignal.timeout(timeoutMs),
     },
@@ -98,7 +102,9 @@ export async function pollUntilModelIds(
       if (modelIds.length > 0) {
         return { ready: true, modelIds };
       }
-    } catch {}
+    } catch {
+      // Best-effort cleanup; failures are not actionable here.
+    }
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
       break;

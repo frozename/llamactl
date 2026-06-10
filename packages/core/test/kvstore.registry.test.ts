@@ -272,19 +272,19 @@ test("safeWrite reports ENOSPC, increments counter, and keeps reads available", 
     registry.insert(baseEntry({ sha: "keep", upstreamSlotFile: slotFile }));
 
     const realDb = storage.db;
-    const realQuery = realDb.query.bind(realDb);
-    (storage as unknown as { db: { query: (sql: string) => any } }).db = {
-      query(sql: string): any {
+    type QueryResult = ReturnType<typeof realDb.query>;
+    const realQuery = (sql: string): QueryResult => realDb.query(sql);
+    (storage as unknown as { db: { query(sql: string): QueryResult } }).db = {
+      query(sql: string): QueryResult {
         if (sql.includes("INSERT INTO kv_entries")) {
           const stmt = realQuery(sql);
-          return {
-            ...stmt,
+          return Object.assign(stmt, {
             run(): never {
               const error = new Error("disk full") as Error & { code?: string };
               error.code = "ENOSPC";
               throw error;
             },
-          };
+          });
         }
         return realQuery(sql);
       },

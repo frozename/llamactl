@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveEnv } from "../src/env.js";
+import type { ResolvedEnv } from "../src/types.js";
 import {
   advertisedEndpoint,
   endpoint,
@@ -20,9 +21,31 @@ import { envForTemp, makeTempRuntime } from "./helpers.js";
 
 const TEST_KEY = { name: "test-wl" };
 
+function mockSpawnedProcess(pid: number): childProcess.ChildProcessWithoutNullStreams {
+  return {
+    pid,
+    unref: () => undefined,
+  } as unknown as childProcess.ChildProcessWithoutNullStreams;
+}
+
+function mockSpawnImplementation(pid: number): typeof childProcess.spawn {
+  return (() => mockSpawnedProcess(pid)) as unknown as typeof childProcess.spawn;
+}
+
+function mockReadinessFetch(): ReturnType<typeof spyOn<typeof globalThis, "fetch">> {
+  let fetchCalls = 0;
+  return spyOn(globalThis, "fetch").mockImplementation((() => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) {
+      return Promise.reject(new Error("connection refused"));
+    }
+    return Promise.resolve(new Response("ok", { status: 200 }));
+  }) as unknown as typeof fetch);
+}
+
 describe("server.endpoint", () => {
   test("builds an http URL from host + port", () => {
-    expect(endpoint({ LLAMA_CPP_HOST: "127.0.0.1", LLAMA_CPP_PORT: "9876" } as any)).toBe(
+    expect(endpoint({ LLAMA_CPP_HOST: "127.0.0.1", LLAMA_CPP_PORT: "9876" } as ResolvedEnv)).toBe(
       "http://127.0.0.1:9876",
     );
   });
@@ -179,20 +202,9 @@ describe("server.startServer (error paths)", () => {
     process.env.LLAMA_CPP_PORT = "8080";
 
     const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
-      () =>
-        ({
-          pid: 12345,
-          unref() {},
-        }) as any,
+      mockSpawnImplementation(12345),
     );
-    let fetchCalls = 0;
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => {
-      fetchCalls += 1;
-      if (fetchCalls === 1) {
-        throw new Error("connection refused");
-      }
-      return new Response("ok", { status: 200 }) as any;
-    }) as any);
+    const fetchSpy = mockReadinessFetch();
 
     try {
       const result = await startServer({
@@ -230,18 +242,9 @@ describe("server.startServer (error paths)", () => {
     process.env.LLAMA_CPP_PORT = "8081";
 
     const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
-      () =>
-        ({
-          pid: process.pid,
-          unref() {},
-        }) as any,
+      mockSpawnImplementation(process.pid),
     );
-    let fetchCalls = 0;
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => {
-      fetchCalls += 1;
-      if (fetchCalls === 1) throw new Error("connection refused");
-      return new Response("ok", { status: 200 }) as any;
-    }) as any);
+    const fetchSpy = mockReadinessFetch();
 
     try {
       const result = await startServer({
@@ -270,13 +273,20 @@ describe("server.startServer (error paths)", () => {
     writeFileSync(join(binDir, "llama-server"), "#!/bin/sh\nexit 0\n");
     process.env.LLAMA_CPP_BIN = binDir;
 
-    await expect(
-      startServer({
-        key: TEST_KEY,
-        target: "Demo/demo.gguf",
-        extraArgs: ["--host", "0.0.0.0"],
-      }),
-    ).rejects.toThrow("refusing to bind llama-server to 0.0.0.0");
+    let thrown: unknown;
+    try {
+      await Promise.resolve().then(() =>
+        startServer({
+          key: TEST_KEY,
+          target: "Demo/demo.gguf",
+          extraArgs: ["--host", "0.0.0.0"],
+        }),
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain("refusing to bind llama-server to 0.0.0.0");
   });
 
   test("allows a non-loopback host bind when allowExternalBind is set", async () => {
@@ -291,20 +301,9 @@ describe("server.startServer (error paths)", () => {
     process.env.LLAMA_CPP_PORT = "8080";
 
     const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
-      () =>
-        ({
-          pid: process.pid,
-          unref() {},
-        }) as any,
+      mockSpawnImplementation(process.pid),
     );
-    let fetchCalls = 0;
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => {
-      fetchCalls += 1;
-      if (fetchCalls === 1) {
-        throw new Error("connection refused");
-      }
-      return new Response("ok", { status: 200 }) as any;
-    }) as any);
+    const fetchSpy = mockReadinessFetch();
 
     try {
       const result = await startServer({
@@ -336,20 +335,9 @@ describe("server.startServer (error paths)", () => {
     process.env.LLAMA_CPP_PORT = "8080";
 
     const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
-      () =>
-        ({
-          pid: process.pid,
-          unref() {},
-        }) as any,
+      mockSpawnImplementation(process.pid),
     );
-    let fetchCalls = 0;
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => {
-      fetchCalls += 1;
-      if (fetchCalls === 1) {
-        throw new Error("connection refused");
-      }
-      return new Response("ok", { status: 200 }) as any;
-    }) as any);
+    const fetchSpy = mockReadinessFetch();
 
     try {
       const result = await startServer({
@@ -379,20 +367,9 @@ describe("server.startServer (error paths)", () => {
     process.env.LLAMA_CPP_PORT = "8080";
 
     const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
-      () =>
-        ({
-          pid: process.pid,
-          unref() {},
-        }) as any,
+      mockSpawnImplementation(process.pid),
     );
-    let fetchCalls = 0;
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => {
-      fetchCalls += 1;
-      if (fetchCalls === 1) {
-        throw new Error("connection refused");
-      }
-      return new Response("ok", { status: 200 }) as any;
-    }) as any);
+    const fetchSpy = mockReadinessFetch();
 
     try {
       const result = await startServer({
@@ -413,7 +390,7 @@ describe("server.startServer (error paths)", () => {
         advertisedEndpoint({
           LLAMA_CPP_HOST: "127.0.0.1",
           LLAMA_CPP_PORT: "8080",
-        } as any),
+        } as ResolvedEnv),
       ).toBe("http://127.0.0.1:8080");
     } finally {
       spawnSpy.mockRestore();
@@ -437,20 +414,9 @@ describe("server.startServer (error paths)", () => {
     process.env.LLAMA_CPP_PORT = "8080";
 
     const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
-      () =>
-        ({
-          pid: process.pid,
-          unref() {},
-        }) as any,
+      mockSpawnImplementation(process.pid),
     );
-    let fetchCalls = 0;
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => {
-      fetchCalls += 1;
-      if (fetchCalls === 1) {
-        throw new Error("connection refused");
-      }
-      return new Response("ok", { status: 200 }) as any;
-    }) as any);
+    const fetchSpy = mockReadinessFetch();
 
     try {
       await startServer({

@@ -76,7 +76,8 @@ export function filterProfileArgs(
   };
   const out: string[] = [];
   for (let i = 0; i < profileArgs.length; i += 2) {
-    const flag = profileArgs[i]!;
+    const flag = profileArgs[i];
+    if (flag === undefined) continue;
     const value = profileArgs[i + 1];
     const conflicts = aliasGroups[flag] ?? [flag];
     if (hasFlag(userArgs, ...conflicts)) continue;
@@ -96,7 +97,7 @@ export function endpoint(
 ): string {
   const host = override?.host ?? resolved.LLAMA_CPP_HOST;
   const port = override?.port ?? resolved.LLAMA_CPP_PORT;
-  return `http://${host}:${port}`;
+  return `http://${host}:${String(port)}`;
 }
 
 /**
@@ -110,9 +111,10 @@ export function advertisedEndpoint(
   resolved: ResolvedEnv = resolveEnv(),
   override?: { host?: string; port?: number | string },
 ): string {
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Empty string means "fall back to bind host" for advertised host.
   const host = resolved.LLAMA_CPP_ADVERTISED_HOST || override?.host || resolved.LLAMA_CPP_HOST;
   const port = override?.port ?? resolved.LLAMA_CPP_PORT;
-  return `http://${host}:${port}`;
+  return `http://${host}:${String(port)}`;
 }
 
 function useTunedArgsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -174,7 +176,7 @@ export function readServerPid(
 
 function writeServerPid(resolved: ResolvedEnv, key: WorkloadKey, pid: number): void {
   ensureWorkloadRuntimeDir(resolved, key);
-  writeFileSync(pidFile(resolved, key), `${pid}\n`);
+  writeFileSync(pidFile(resolved, key), `${String(pid)}\n`);
 }
 
 function removeServerPid(resolved: ResolvedEnv, key: WorkloadKey): void {
@@ -392,7 +394,7 @@ async function detectPortConflict(endpointUrl: string): Promise<string | null> {
     // = a foreign listener (Docker forwards, etc.).
     return (
       `port ${endpointUrl.replace(/^https?:\/\//, "")} is already bound ` +
-      `(HTTP ${res.status} on /health) \u2014 stop the foreign process ` +
+      `(HTTP ${String(res.status)} on /health) \u2014 stop the foreign process ` +
       `(try: lsof -P -iTCP:PORT) or set LLAMA_CPP_PORT to a free port`
     );
   } catch {
@@ -433,7 +435,9 @@ function lsofListenerPid(filter: string): Promise<number | null> {
       clearTimeout(timer);
       try {
         child?.kill("SIGKILL");
-      } catch {}
+      } catch {
+        // Process may have already exited between lsof and timeout cleanup.
+      }
       resolve(value);
     };
     const timer = setTimeout(() => {
@@ -471,9 +475,9 @@ async function findListenerPid(host: string, port: number): Promise<number | nul
   // even though detectPortConflict reached it via 127.0.0.1. Ownership is
   // already confirmed by the /v1/models probe in the caller, so the
   // port-only fallback is safe.
-  const exact = await lsofListenerPid(`-iTCP@${host}:${port}`);
+  const exact = await lsofListenerPid(`-iTCP@${host}:${String(port)}`);
   if (exact !== null) return exact;
-  return await lsofListenerPid(`-iTCP:${port}`);
+  return await lsofListenerPid(`-iTCP:${String(port)}`);
 }
 
 async function probeServerModelIds(endpointUrl: string, timeoutMs: number): Promise<string[]> {
@@ -485,7 +489,7 @@ async function probeServerModelIds(endpointUrl: string, timeoutMs: number): Prom
     if (!res.ok) return [];
     const body = (await res.json()) as { data?: { id?: unknown }[] };
     return (body.data ?? [])
-      .map((m) => (typeof m?.id === "string" ? m.id : ""))
+      .map((m) => (typeof m.id === "string" ? m.id : ""))
       .filter((id): id is string => id.length > 0);
   } catch {
     return [];
@@ -498,7 +502,10 @@ async function probeServerModelIds(endpointUrl: string, timeoutMs: number): Prom
 export function aliasesFromArgs(extraArgs: readonly string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i + 1 < extraArgs.length; i += 1) {
-    if (extraArgs[i] === "--alias" || extraArgs[i] === "-a") out.push(extraArgs[i + 1]!);
+    const value = extraArgs[i + 1];
+    if ((extraArgs[i] === "--alias" || extraArgs[i] === "-a") && value !== undefined) {
+      out.push(value);
+    }
   }
   return out;
 }
@@ -929,7 +936,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
       advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
       tunedProfile,
       retried,
-      error: `llama-server readiness check timed out after ${timeoutSeconds}s${conflictHint}`,
+      error: `llama-server readiness check timed out after ${String(timeoutSeconds)}s${conflictHint}`,
     };
   }
 
@@ -962,7 +969,8 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 
 function findArgValue(args: readonly string[], flag: string): string | null {
   for (let i = 0; i < args.length; i += 1) {
-    const tok = args[i]!;
+    const tok = args[i];
+    if (tok === undefined) continue;
     if (tok === flag) return args[i + 1] ?? null;
     if (tok.startsWith(flag + "=")) return tok.slice(flag.length + 1);
   }

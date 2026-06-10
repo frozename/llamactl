@@ -50,7 +50,7 @@ describe("maybeTuneAfterPull", () => {
   });
 
   test("skip when the file was already present", async () => {
-    const runCli: RunCli = async () => ({ code: 0, stdout: "", stderr: "" });
+    const runCli: RunCli = () => Promise.resolve({ code: 0, stdout: "", stderr: "" });
     const report = await maybeTuneAfterPull({ rel, wasMissing: false, runCli });
     expect(report.preset.ran).toBe(false);
     if (!report.preset.ran) expect(report.preset.reason.kind).toBe("not-missing");
@@ -58,7 +58,7 @@ describe("maybeTuneAfterPull", () => {
 
   test("skip when auto-tune env flag is disabled", async () => {
     process.env.LLAMA_CPP_AUTO_TUNE_ON_PULL = "off";
-    const runCli: RunCli = async () => ({ code: 0, stdout: "", stderr: "" });
+    const runCli: RunCli = () => Promise.resolve({ code: 0, stdout: "", stderr: "" });
     const report = await maybeTuneAfterPull({ rel, wasMissing: true, runCli });
     if (!report.preset.ran) {
       expect(report.preset.reason.kind).toBe("auto-tune-disabled");
@@ -69,7 +69,7 @@ describe("maybeTuneAfterPull", () => {
 
   test("skip when llama-bench binary is missing", async () => {
     process.env.LLAMA_CPP_BIN = join(temp.devStorage, "nonexistent-bin");
-    const runCli: RunCli = async () => ({ code: 0, stdout: "", stderr: "" });
+    const runCli: RunCli = () => Promise.resolve({ code: 0, stdout: "", stderr: "" });
     const report = await maybeTuneAfterPull({ rel, wasMissing: true, runCli });
     if (!report.preset.ran) {
       expect(report.preset.reason.kind).toBe("bench-binary-missing");
@@ -80,13 +80,13 @@ describe("maybeTuneAfterPull", () => {
 
   test("runs benchPreset and records the profile when all conditions hold", async () => {
     let calls = 0;
-    const runCli: RunCli = async () => {
+    const runCli: RunCli = () => {
       calls += 1;
-      return {
+      return Promise.resolve({
         code: 0,
         stdout: JSON.stringify({ n_gen: 64, n_prompt: 0, avg_ts: 25.0 }),
         stderr: "",
-      };
+      });
     };
     const report = await maybeTuneAfterPull({ rel, wasMissing: true, runCli });
     expect(calls).toBe(3); // one per profile

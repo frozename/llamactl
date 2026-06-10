@@ -3,13 +3,16 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import type { ModelHostSpecForEngine } from "../../src/engines/types.js";
+import type { EngineBootEnv, ModelHostSpecForEngine } from "../../src/engines/types.js";
 
 import { ENGINES } from "../../src/engines/index.js";
 import { gracefulShutdown } from "../../src/engines/lifecycle.js";
 
 function makeFakeBinary(): string {
-  const dir = join(tmpdir(), `omlx-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const dir = join(
+    tmpdir(),
+    `omlx-test-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`,
+  );
   mkdirSync(dir, { recursive: true });
   const path = join(dir, "omlx");
   writeFileSync(path, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
@@ -85,7 +88,7 @@ describe("omlx engine adapter", () => {
     const built = ENGINES.omlx.buildBootCommand(baseSpec, {
       LLAMA_CPP_MODELS: "/tmp",
       machineProfile: "balanced",
-    } as any);
+    } satisfies EngineBootEnv);
     const idx = built.args.indexOf("--max-model-memory");
     expect(idx).toBeGreaterThanOrEqual(0);
     expect(built.args[idx + 1]).toBe("12GB");
@@ -100,7 +103,7 @@ describe("omlx engine adapter", () => {
       {
         LLAMA_CPP_MODELS: "/tmp",
         machineProfile: "balanced",
-      } as any,
+      } satisfies EngineBootEnv,
     );
     const idx = built.args.indexOf("--max-model-memory");
     expect(idx).toBeGreaterThanOrEqual(0);
@@ -127,15 +130,15 @@ describe("omlx engine adapter", () => {
       ...baseSpec,
       hostedModels: [{ rel: "../../escape" }],
     };
-    expect(() =>
-      ENGINES.omlx.buildBootCommand(bad, { LLAMA_CPP_MODELS: "/tmp/models" } as any),
-    ).toThrow(/escapes models dir/);
+    expect(() => ENGINES.omlx.buildBootCommand(bad, { LLAMA_CPP_MODELS: "/tmp/models" })).toThrow(
+      /escapes models dir/,
+    );
   });
 
   test("buildBootCommand uses per-workload isolated model dir when workloadName is set", () => {
     const runtimeDir = join(
       tmpdir(),
-      `omlx-iso-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      `omlx-iso-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`,
     );
     const built = ENGINES.omlx.buildBootCommand(baseSpec, {
       LLAMACTL_MODELS_DIR: "/neutral/models",
@@ -156,7 +159,7 @@ describe("omlx engine adapter", () => {
     // Mock models dir with the hosted model present.
     const modelsDir = join(
       tmpdir(),
-      `omlx-models-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      `omlx-models-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`,
     );
     const hostedRel = baseSpec.hostedModels[0]!.rel;
     mkdirSync(join(modelsDir, hostedRel), { recursive: true });
@@ -164,7 +167,7 @@ describe("omlx engine adapter", () => {
 
     const runtimeDir = join(
       tmpdir(),
-      `omlx-iso-prep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      `omlx-iso-prep-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`,
     );
     await ENGINES.omlx.prepareLaunch?.(baseSpec, {
       LLAMACTL_MODELS_DIR: modelsDir,
@@ -190,7 +193,7 @@ describe("omlx engine adapter", () => {
   test("prepareLaunch is idempotent (recreates a stale symlink)", async () => {
     const modelsDir = join(
       tmpdir(),
-      `omlx-models-2-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      `omlx-models-2-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`,
     );
     const hostedRel = baseSpec.hostedModels[0]!.rel;
     mkdirSync(join(modelsDir, hostedRel), { recursive: true });
@@ -198,13 +201,13 @@ describe("omlx engine adapter", () => {
 
     const runtimeDir = join(
       tmpdir(),
-      `omlx-iso-idem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      `omlx-iso-idem-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`,
     );
     const envBoot = {
       LLAMACTL_MODELS_DIR: modelsDir,
       LLAMACTL_RUNTIME_DIR: runtimeDir,
       workloadName: "iso-idem-host",
-    } as any;
+    } satisfies EngineBootEnv;
     await ENGINES.omlx.prepareLaunch?.(baseSpec, envBoot);
     // Second call should not throw despite the symlink already existing.
     await ENGINES.omlx.prepareLaunch?.(baseSpec, envBoot);
@@ -223,7 +226,7 @@ describe("omlx engine adapter", () => {
 
   test("probeReady returns matching modelIds when /v1/models contains the rel basename", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
+    globalThis.fetch = (() =>
       new Response(
         JSON.stringify({
           object: "list",
@@ -285,6 +288,8 @@ describe("omlx engine adapter", () => {
   afterAll(() => {
     try {
       rmSync(goodBinary, { force: true });
-    } catch {}
+    } catch {
+      // Best-effort cleanup for a temp binary already removed by the OS.
+    }
   });
 });

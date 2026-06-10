@@ -13,7 +13,7 @@ export const llamacppEngine: EngineAdapter = {
     if (!spec.binary || spec.binary.trim() === "") {
       return { ok: false, error: "llamacpp engine requires spec.binary" };
     }
-    if (!spec.endpoint || typeof spec.endpoint.port !== "number") {
+    if (typeof spec.endpoint.port !== "number") {
       return { ok: false, error: "llamacpp engine requires spec.endpoint.port" };
     }
     if (!LOOPBACK.has(spec.endpoint.host)) {
@@ -28,7 +28,9 @@ export const llamacppEngine: EngineAdapter = {
     return { ok: true };
   },
 
-  async prepareLaunch() {},
+  async prepareLaunch() {
+    // No pre-launch preparation required for llama.cpp.
+  },
 
   buildBootCommand(spec: ModelHostSpecForEngine, env: EngineBootEnv) {
     const hostedModel = spec.hostedModels[0];

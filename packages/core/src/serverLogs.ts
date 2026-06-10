@@ -97,7 +97,7 @@ export async function tailServerLog(opts: TailOptions): Promise<void> {
       });
       for await (const chunk of stream) {
         if (opts.signal?.aborted) return;
-        tail += chunk;
+        tail += String(chunk);
         const parts = tail.split("\n");
         tail = parts.pop() ?? "";
         for (const line of parts) {

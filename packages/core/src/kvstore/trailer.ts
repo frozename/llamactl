@@ -35,7 +35,7 @@ export function writeTrailer(
   const fallback = { registry_write_fail_total: 0 } as KvStorage;
   return safeWrite(storage ?? fallback, () => {
     fs.mkdirSync(dirname(target), { recursive: true });
-    const tmp = `${target}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
+    const tmp = `${target}.tmp-${String(process.pid)}-${Math.random().toString(36).slice(2)}`;
     fs.writeFileSync(tmp, body);
     fs.renameSync(tmp, target);
   });

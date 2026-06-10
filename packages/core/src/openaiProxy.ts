@@ -98,7 +98,7 @@ export function listOpenAIModels(
 }
 
 function createdAtForRoute(route: workloadRuntime.ClusterRoute, resolved: ResolvedEnv): number {
-  if ("isPeer" in route && route.isPeer) return 0;
+  if (isPeerClusterRoute(route)) return 0;
   if (route.kind === "ModelHost") {
     const state = readModelHostState({ name: route.workload }, resolved);
     if (state?.startedAt) return Math.floor(new Date(state.startedAt).getTime() / 1000);
@@ -128,7 +128,8 @@ function buildListOpenAIModels(resolved: ResolvedEnv): ModelListResponse {
   });
   for (const route of routes) {
     if (winners.has(route.model)) {
-      const prior = winners.get(route.model)!;
+      const prior = winners.get(route.model);
+      if (!prior) continue;
       console.warn(
         `[openaiProxy] route-map collision on model='${route.model}': keeping ${prior.kind}:${prior.workload}, ignoring ${route.kind}:${route.workload}`,
       );
@@ -203,6 +204,12 @@ function isJsonContentType(contentType: string | null): boolean {
   return lower.includes("application/json") || lower.includes("+json");
 }
 
+function isPeerClusterRoute(
+  route: workloadRuntime.ClusterRoute,
+): route is Extract<workloadRuntime.ClusterRoute, { isPeer: true }> {
+  return "isPeer" in route;
+}
+
 function peerTlsForRoute(route: RoutedEntry | undefined): { ca: string } | undefined {
   if (!route?.isPeer || !route.certificate) return undefined;
   return { ca: route.certificate };
@@ -229,7 +236,7 @@ function routedEndpointForModel(
   const target =
     entry.isPeer && entry.peerEndpoint
       ? `${entry.peerEndpoint}${pathname}${search}`
-      : `http://${entry.host}:${entry.port}${pathname}${search}`;
+      : `http://${entry.host}:${String(entry.port)}${pathname}${search}`;
   return {
     ...entry,
     target,
@@ -361,6 +368,16 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
       );
       continue;
     }
+    const peerFields = isPeerClusterRoute(route)
+      ? {
+          isPeer: true as const,
+          peerEndpoint: route.peerEndpoint,
+          certificate: route.certificate,
+          token: route.token,
+          targetNodeId: route.targetNodeId,
+          revision: route.revision,
+        }
+      : {};
     winners.set(route.model, { kind: route.kind, workload: route.workload });
     out.set(route.model, {
       host: route.host,
@@ -369,12 +386,7 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
       kind: route.kind,
       engine: route.engine,
       model: route.model,
-      isPeer: "isPeer" in route && route.isPeer ? true : undefined,
-      peerEndpoint: "isPeer" in route && route.isPeer ? route.peerEndpoint : undefined,
-      certificate: "isPeer" in route && route.isPeer ? route.certificate : undefined,
-      token: "isPeer" in route && route.isPeer ? route.token : undefined,
-      targetNodeId: "isPeer" in route && route.isPeer ? route.targetNodeId : undefined,
-      revision: "isPeer" in route && route.isPeer ? route.revision : undefined,
+      ...peerFields,
     });
   }
   return out;
@@ -593,7 +605,7 @@ function slotClientFor(
   port: number,
   engine?: string,
 ): UpstreamSlotClient {
-  const endpoint = `http://${host}:${port}`;
+  const endpoint = `http://${host}:${String(port)}`;
   const cached = runtime.slotClients.get(workload);
   if (cached?.endpoint === endpoint) return cached.client;
   const client = new UpstreamSlotClient(
@@ -608,7 +620,8 @@ function parseContextWindow(extraArgs: readonly string[] | undefined, fallback: 
   if (!extraArgs || extraArgs.length === 0) return fallback;
   const readAfterFlag = (...flags: string[]): number | null => {
     for (let i = 0; i < extraArgs.length; i += 1) {
-      const token = extraArgs[i]!;
+      const token = extraArgs[i];
+      if (token === undefined) continue;
       if (flags.includes(token)) {
         const value = extraArgs[i + 1];
         if (value && Number.isInteger(Number.parseInt(value, 10))) {
@@ -649,7 +662,7 @@ function resolveRouteKvMetadata(context: ProxyContext): {
 } | null {
   const route = context.route;
   if (!route) return null;
-  if ("isPeer" in route && route.isPeer) return null;
+  if (route.isPeer === true) return null;
   if (!isRouteKvEligible(route)) return null;
 
   const key = { name: route.workload };
@@ -778,6 +791,7 @@ function cacheHitResponse(entry: ResponseCacheEntry): Response {
   });
 }
 
+// eslint-disable-next-line @typescript-eslint/require-await -- Pipeline stages share an async contract.
 async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyContext> {
   if (!shouldUseResponseCachePath(context)) return context;
   // Response-cache metadata is resolved independently of the KV *slot* path
@@ -800,7 +814,8 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
     ? `peer:${route.targetNodeId ?? route.workload}:${route.model}${peerRevision}`
     : readWorkloadEpoch({ name: route.workload }, context.resolved);
   if (!workloadEpoch) return context;
-  const bodyText = context.bodyText!;
+  const bodyText = context.bodyText;
+  if (bodyText === undefined) return context;
   let parsedBody: unknown;
   try {
     parsedBody = JSON.parse(bodyText);
@@ -896,7 +911,7 @@ function extractFirstResponseTokenFromJson(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
   const choices = (payload as { choices?: unknown }).choices;
   if (!Array.isArray(choices) || choices.length === 0) return null;
-  const firstChoice = choices[0];
+  const firstChoice: unknown = choices[0];
   if (!firstChoice || typeof firstChoice !== "object") return null;
   const message = (firstChoice as { message?: unknown }).message;
   if (message && typeof message === "object") {
@@ -978,6 +993,7 @@ function basenameStripKvslot(path: string): string {
 }
 
 function logSlotInjectionEvent(event: string, fields: Record<string, unknown>): void {
+  // eslint-disable-next-line no-console -- Structured debug event consumed by tests and local diagnostics.
   console.debug(JSON.stringify({ event, ...fields }));
 }
 
@@ -1125,7 +1141,8 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   const metadata = resolveRouteKvMetadata(context);
   if (!metadata) return context;
   const runtime = kvRuntimeFor(context.resolved);
-  const bodyText = context.bodyText!;
+  const bodyText = context.bodyText;
+  if (bodyText === undefined) return context;
   const enforceFirstTokenEquivalence = shouldEnforceFirstTokenEquivalence(bodyText);
   let prefixMetric = Buffer.byteLength(bodyText, "utf8");
   let sha = boundaryNaiveBytePrefixSha(bodyText);
@@ -1159,11 +1176,11 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
 
   if (hit) {
     let replayMismatch = false;
-    let reserved = false;
+    const reserveState = { reserved: false };
     const reserveWrite = runtime.storage.safeWrite(() => {
-      reserved = runtime.registry.reserve(hit.sha);
+      reserveState.reserved = runtime.registry.reserve(hit.sha);
     });
-    if (reserveWrite.ok && reserved) {
+    if (reserveWrite.ok && reserveState.reserved) {
       const lease = slotAllocatorFor(runtime, metadata.workload).acquire();
       if (lease) {
         const slotClient = slotClientFor(
@@ -1182,11 +1199,11 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
           basename(hit.upstreamSlotFile),
           context.route?.engine === "omlx" ? { model: metadata.model } : undefined,
         );
-        let activated = false;
+        const activateState = { activated: false };
         const activateWrite = runtime.storage.safeWrite(() => {
-          activated = runtime.registry.activate(hit.sha);
+          activateState.activated = runtime.registry.activate(hit.sha);
         });
-        if (restore.ok && activateWrite.ok && activated) {
+        if (activateWrite.ok && restore.ok && activateState.activated) {
           if (
             context.isAnthropic &&
             context.anthropicRequest &&
@@ -1382,7 +1399,7 @@ async function maybePersistResponseCache(
   if (isJson) {
     try {
       const parsed = JSON.parse(Buffer.from(bodyBytes).toString("utf8")) as { error?: unknown };
-      if (parsed && typeof parsed === "object" && parsed.error) {
+      if (typeof parsed === "object" && parsed.error) {
         console.warn(
           JSON.stringify({
             event: "response_cache_skip_error_envelope",
@@ -1392,7 +1409,9 @@ async function maybePersistResponseCache(
         );
         return replay;
       }
-    } catch {}
+    } catch {
+      // Invalid JSON responses are still replayed but not cached as JSON envelopes.
+    }
   }
   if (isSse) {
     const sseBody = Buffer.from(bodyBytes).toString("utf8");
@@ -1549,9 +1568,8 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
   const kv = context.kv;
   if (!kv) return;
   const contentType = upstream.headers.get("content-type");
-  const shouldParseJson =
-    upstream.status === 200 && !!contentType && isJsonContentType(contentType);
-  let upstreamJson: unknown | null = null;
+  const shouldParseJson = upstream.status === 200 && isJsonContentType(contentType);
+  let upstreamJson: unknown = null;
   if (shouldParseJson) {
     try {
       upstreamJson = await upstream.clone().json();
@@ -1701,6 +1719,7 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
         now,
       );
       for (const blockedSha of eviction.blockedActive) {
+        // eslint-disable-next-line no-console -- Structured debug event consumed by tests and local diagnostics.
         console.debug(
           JSON.stringify({
             event: "slot_eviction_blocked_active_request",

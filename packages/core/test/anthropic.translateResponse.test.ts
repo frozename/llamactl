@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 
+import type { OpenAIChatResponse } from "../src/anthropic/types.js";
+
 import { AnthropicTranslationError } from "../src/anthropic/translateRequest.js";
 import { translateOpenAIResponse } from "../src/anthropic/translateResponse.js";
 
@@ -143,7 +145,7 @@ test("throws for malformed responses", () => {
       id: "msg_4",
       model: "claude-3-7-sonnet",
       choices: [],
-    } as any),
+    }),
   ).toThrow(AnthropicTranslationError);
 
   expect(() =>
@@ -167,6 +169,6 @@ test("throws for malformed responses", () => {
           finish_reason: "tool_calls",
         },
       ],
-    } as any),
+    } as unknown as OpenAIChatResponse),
   ).toThrow(AnthropicTranslationError);
 });

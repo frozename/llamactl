@@ -172,7 +172,6 @@ export function readCustomCatalog(file: string): CuratedModel[] {
   const out: CuratedModel[] = [];
   const lines = raw.split("\n");
   for (const [i, line] of lines.entries()) {
-    if (line === undefined) continue;
     const trimmed = line.trim();
     if (trimmed === "" || trimmed.startsWith("#")) continue;
 
@@ -181,7 +180,6 @@ export function readCustomCatalog(file: string): CuratedModel[] {
 
     const record: Record<string, string> = {};
     for (const [j, field] of curatedTsvFields.entries()) {
-      if (field === undefined) continue;
       if (field === "format" && (cols[j] === undefined || cols[j] === "")) {
         record[field] = "gguf";
         continue;
@@ -192,7 +190,7 @@ export function readCustomCatalog(file: string): CuratedModel[] {
     const parsed = CuratedModel.safeParse(record);
     if (!parsed.success) {
       process.stderr.write(
-        `llamactl: skipping invalid catalog row in ${file}:${i + 1} (${parsed.error.issues.map((i) => i.message).join("; ")})\n`,
+        `llamactl: skipping invalid catalog row in ${file}:${String(i + 1)} (${parsed.error.issues.map((i) => i.message).join("; ")})\n`,
       );
       continue;
     }
@@ -224,7 +222,7 @@ export function listCatalog(scope: CatalogScope, opts: CatalogLoadOptions = {}):
 
 /** Serialise an entry as a TSV row using the canonical column order. */
 export function formatCatalogRow(entry: CuratedModel): string {
-  const normalized = { ...entry, format: entry.format ?? "gguf" };
+  const normalized = { ...entry, format: entry.format };
   return formatTsvRow(curatedTsvFields, normalized as unknown as Record<string, unknown>);
 }
 

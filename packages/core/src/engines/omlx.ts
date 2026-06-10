@@ -58,9 +58,8 @@ function ensureIsolatedModelSymlink(
   const target = join(isolatedDir, basename(hostedRel));
   // Re-create the symlink each time to recover from a stale or broken link.
   try {
-    if (lstatSync(target)) {
-      unlinkSync(target);
-    }
+    lstatSync(target);
+    unlinkSync(target);
   } catch {
     /* not present — fine */
   }
@@ -68,7 +67,7 @@ function ensureIsolatedModelSymlink(
 }
 
 function writeAtomicJson(path: string, value: unknown): void {
-  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+  const tmp = `${path}.tmp-${String(process.pid)}-${String(Date.now())}`;
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
   renameSync(tmp, path);
@@ -77,11 +76,11 @@ function writeAtomicJson(path: string, value: unknown): void {
 function buildDflashModelSettings(spec: ModelHostSpecForEngine): Record<string, unknown> | null {
   const hostedModel = spec.hostedModels[0];
   const dflash = hostedModel?.dflash;
-  if (!dflash?.enabled) return null;
+  if (dflash?.enabled !== true) return null;
   const settings: Record<string, unknown> = { dflash_enabled: dflash.dflash_enabled ?? true };
   for (const [key, value] of Object.entries(dflash)) {
     if (key === "enabled") continue;
-    if (value !== undefined) settings[key] = value;
+    settings[key] = value;
   }
   return settings;
 }
@@ -99,7 +98,7 @@ export const omlxEngine: EngineAdapter = {
         error: `omlx binary not found at ${spec.binary}; run tools/install-omlx-from-source.sh`,
       };
     }
-    if (!spec.endpoint || typeof spec.endpoint.port !== "number") {
+    if (typeof spec.endpoint.port !== "number") {
       return { ok: false, error: "omlx engine requires spec.endpoint.port" };
     }
     if (!LOOPBACK.has(spec.endpoint.host)) {
@@ -114,6 +113,7 @@ export const omlxEngine: EngineAdapter = {
     return { ok: true };
   },
 
+  // eslint-disable-next-line @typescript-eslint/require-await -- EngineAdapter prepare hook is async; oMLX setup is synchronous today.
   async prepareLaunch(spec: ModelHostSpecForEngine, env: EngineBootEnv) {
     const hostedModel = spec.hostedModels[0];
     if (!hostedModel) {
@@ -175,7 +175,7 @@ export const omlxEngine: EngineAdapter = {
     const maxModelMemoryGiB =
       spec.resources?.expectedMemoryGiB ??
       defaultOmlxMemoryGiBForProfile(env.machineProfile ?? "macbook-pro-48g");
-    args.push("--max-model-memory", `${maxModelMemoryGiB}GB`);
+    args.push("--max-model-memory", `${String(maxModelMemoryGiB)}GB`);
     const modelSettings = workloadName ? buildDflashModelSettings(spec) : null;
     if (workloadName && modelSettings) {
       const basePath = omxBasePath(env, workloadName);

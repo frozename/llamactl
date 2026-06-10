@@ -13,10 +13,13 @@ async function startTestServer(
   handler: (req: IncomingMessage, res: ServerResponse, url: URL) => void | Promise<void>,
 ): Promise<TestServer> {
   let requests = 0;
-  const server = createServer(async (req, res) => {
+  const server = createServer((req, res) => {
     requests += 1;
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    await handler(req, res, url);
+    void Promise.resolve(handler(req, res, url)).catch((error: unknown) => {
+      res.statusCode = 500;
+      res.end(error instanceof Error ? error.message : "handler failed");
+    });
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -27,12 +30,13 @@ async function startTestServer(
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Failed to bind test server");
   return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
+    baseUrl: `http://127.0.0.1:${String(address.port)}`,
     requestCount: () => requests,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => {
-          error ? reject(error) : resolve();
+          if (error) reject(error);
+          else resolve();
         });
       }),
   };
@@ -58,7 +62,8 @@ async function acquireClosedLocalPort(): Promise<number> {
   const port = address.port;
   await new Promise<void>((resolve, reject) => {
     server.close((error) => {
-      error ? reject(error) : resolve();
+      if (error) reject(error);
+      else resolve();
     });
   });
   return port;
@@ -75,7 +80,7 @@ test("omlx engine: save sends model in payload + probes /v1/slots/capabilities",
     }
     if (req.method === "POST" && url.pathname === "/slots/0") {
       let body = "";
-      for await (const chunk of req) body += chunk;
+      for await (const chunk of req) body += String(chunk);
       saveBody = JSON.parse(body) as { filename?: string; model?: string };
       json(res, 200, { n_saved: 7 });
       return;
@@ -107,7 +112,7 @@ test("default (llamacpp) engine: save omits model + probes /props", async () => 
     }
     if (req.method === "POST" && url.pathname === "/slots/0") {
       let body = "";
-      for await (const chunk of req) body += chunk;
+      for await (const chunk of req) body += String(chunk);
       saveBody = JSON.parse(body) as { filename?: string; model?: string };
       json(res, 200, { n_saved: 3 });
       return;
@@ -137,7 +142,7 @@ test("save success returns ok + tokensSaved + sends filename in JSON body", asyn
       return;
     }
     let body = "";
-    for await (const chunk of req) body += chunk;
+    for await (const chunk of req) body += String(chunk);
     try {
       const parsed = JSON.parse(body) as { filename?: string };
       sentFilename = parsed.filename ?? null;
@@ -186,7 +191,7 @@ test("restore success returns ok + tokensRestored + sends filename in JSON body"
       return;
     }
     let body = "";
-    for await (const chunk of req) body += chunk;
+    for await (const chunk of req) body += String(chunk);
     try {
       const parsed = JSON.parse(body) as { filename?: string };
       sentFilename = parsed.filename ?? null;
@@ -222,7 +227,8 @@ test("restore returns null restore_epoch when server omits the field", async () 
     const client = new UpstreamSlotClient(upstream.baseUrl);
     const result = await client.restore(4, "slot-no-epoch.bin");
     expect(result).toMatchObject({ ok: true, tokensRestored: 42 });
-    expect((result as any).restore_epoch).toBeNull();
+    if (!result.ok) throw new Error("expected restore success");
+    expect(result.restore_epoch).toBeNull();
   } finally {
     await upstream.close();
   }
@@ -241,7 +247,8 @@ test("restore returns restore_epoch string when server provides it", async () =>
     const client = new UpstreamSlotClient(upstream.baseUrl);
     const result = await client.restore(5, "slot-with-epoch.bin");
     expect(result).toMatchObject({ ok: true, tokensRestored: 42 });
-    expect((result as any).restore_epoch).toBe("epoch-xyz");
+    if (!result.ok) throw new Error("expected restore success");
+    expect(result.restore_epoch).toBe("epoch-xyz");
   } finally {
     await upstream.close();
   }
@@ -266,7 +273,7 @@ test("restore 404 returns not_found", async () => {
 
 test("network failure returns network", async () => {
   const port = await acquireClosedLocalPort();
-  const client = new UpstreamSlotClient(`http://127.0.0.1:${port}`);
+  const client = new UpstreamSlotClient(`http://127.0.0.1:${String(port)}`);
   const result = await client.save(1, "slot-d.bin");
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected save failure");
@@ -401,7 +408,7 @@ test("supportsRequestHandle returns false when slots block absent entirely", asy
 
 test("supportsRequestHandle returns false on fetch failure (network error)", async () => {
   const port = await acquireClosedLocalPort();
-  const client = new UpstreamSlotClient(`http://127.0.0.1:${port}`);
+  const client = new UpstreamSlotClient(`http://127.0.0.1:${String(port)}`);
   expect(await client.supportsRequestHandle()).toBe(false);
 });
 

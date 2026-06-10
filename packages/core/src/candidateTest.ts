@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { BenchCompareRow } from "./bench/compare.js";
-import type { MachineProfile, ResolvedEnv } from "./types.js";
+import type { ResolvedEnv } from "./types.js";
 
 import { autoVisionBenchEnabled } from "./autotune.js";
 import {
@@ -44,7 +44,7 @@ export type CandidateTestEvent = PullEvent | BenchEvent;
 export interface CandidateTestOptions {
   repo: string;
   file?: string;
-  profile?: MachineProfile | string;
+  profile?: string;
   onEvent?: (e: CandidateTestEvent) => void;
   runHf?: RunHf;
   runCli?: RunCli;
@@ -130,7 +130,7 @@ export async function candidateTest(
     signal: opts.signal,
   });
   if (pulled.code !== 0) {
-    return { error: `Pull failed (code=${pulled.code}) for ${rel}` };
+    return { error: `Pull failed (code=${String(pulled.code)}) for ${rel}` };
   }
 
   const mode = defaultModeForRel(rel, resolved);

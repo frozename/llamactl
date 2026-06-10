@@ -1,6 +1,4 @@
 import type { CuratedModel } from "./schemas.js";
-import type { ModelClass } from "./types.js";
-
 import { findByRel, listCatalog } from "./catalog.js";
 import { classifyRepo } from "./discovery.js";
 import { resolveEnv } from "./env.js";
@@ -14,7 +12,7 @@ export interface AddCuratedInput {
   fileOrRel: string;
   label?: string;
   family?: string;
-  class?: ModelClass | string;
+  class?: string;
   /** Defaults to `candidate` to match the shell library. */
   scope?: string;
 }

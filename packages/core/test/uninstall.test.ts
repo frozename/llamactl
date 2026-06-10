@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { uninstall } from "../src/uninstall.js";
@@ -67,7 +67,7 @@ describe("uninstall (integration)", () => {
 
   afterEach(() => {
     for (const key of Object.keys(process.env)) {
-      if (!(key in originalEnv)) delete process.env[key];
+      if (!(key in originalEnv)) Reflect.deleteProperty(process.env, key);
     }
     for (const [k, v] of Object.entries(originalEnv)) {
       if (v !== undefined) process.env[k] = v;
@@ -88,7 +88,7 @@ describe("uninstall (integration)", () => {
     expect(overridesBody).toBeDefined();
 
     // Bench profile row for rel pruned, unrelated row retained
-    const bp = require("node:fs").readFileSync(benchProfileFile, "utf8");
+    const bp = readFileSync(benchProfileFile, "utf8");
     expect(bp).not.toContain(rel);
     expect(bp).toContain("unrelated-rel");
 
@@ -117,7 +117,7 @@ describe("uninstall (integration)", () => {
     const report = uninstall({ rel, force: true });
     expect(report.code).toBe(0);
     // Promotion file keeps the unrelated row, but the rel row is gone
-    const body = require("node:fs").readFileSync(overridesFile, "utf8");
+    const body = readFileSync(overridesFile, "utf8");
     expect(body).not.toContain(rel);
     expect(body).toContain("another/model.gguf");
   });

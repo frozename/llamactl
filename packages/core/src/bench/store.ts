@@ -74,7 +74,6 @@ export function readBenchProfiles(file: string): BenchProfileRows {
     if (cols.length >= benchProfileFields.length) {
       const record: Record<string, string> = {};
       for (const [i, field] of benchProfileFields.entries()) {
-        if (field === undefined) continue;
         record[field] = cols[i] ?? "";
       }
       const parsed = BenchProfile.safeParse(record);
@@ -148,7 +147,6 @@ export function readBenchVision(file: string): BenchVision[] {
     if (cols.length < benchVisionFields.length) continue;
     const record: Record<string, string> = {};
     for (const [i, field] of benchVisionFields.entries()) {
-      if (field === undefined) continue;
       record[field] = cols[i] ?? "";
     }
     const parsed = BenchVision.safeParse(record);
@@ -190,7 +188,6 @@ export function readBenchHistory(file: string): BenchHistoryRows {
     if (cols.length >= benchHistoryFields.length) {
       const record: Record<string, string> = {};
       for (const [i, field] of benchHistoryFields.entries()) {
-        if (field === undefined) continue;
         record[field] = cols[i] ?? "";
       }
       const parsed = BenchHistoryEntry.safeParse(record);

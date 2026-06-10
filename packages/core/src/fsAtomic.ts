@@ -12,7 +12,7 @@ export function atomicWriteFile(file: string, body: string): void {
   mkdirSync(dir, { recursive: true });
   const tmp = join(
     dir,
-    `.${file.slice(dir.length + 1)}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`,
+    `.${file.slice(dir.length + 1)}.tmp-${String(process.pid)}-${Math.random().toString(36).slice(2)}`,
   );
   writeFileSync(tmp, body);
   renameSync(tmp, file);

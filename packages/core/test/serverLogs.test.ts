@@ -27,7 +27,7 @@ afterEach(() => {
 
 describe("tailServerLog", () => {
   test("backfills the last N lines from an existing log, then returns", async () => {
-    const lines = Array.from({ length: 12 }, (_, i) => `line-${i}`);
+    const lines = Array.from({ length: 12 }, (_, i) => `line-${String(i)}`);
     writeFileSync(logPath, `${lines.join("\n")}\n`, "utf8");
     const seen: string[] = [];
     await tailServerLog({

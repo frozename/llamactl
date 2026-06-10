@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,10 +17,8 @@ describe("fsAtomic", () => {
     expect(existsSync(target)).toBe(true);
     expect(readFileSync(target, "utf8")).toBe("hello\n");
     // No tmp-* sibling
-    const entries = existsSync(join(dir, "nested"))
-      ? require("node:fs").readdirSync(join(dir, "nested"))
-      : [];
-    expect(entries.filter((n: string) => n.startsWith(".")).length).toBe(0);
+    const entries = existsSync(join(dir, "nested")) ? readdirSync(join(dir, "nested")) : [];
+    expect(entries.filter((n) => n.startsWith(".")).length).toBe(0);
   });
 
   test("atomicWriteFile replaces contents on subsequent calls", () => {

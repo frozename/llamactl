@@ -123,9 +123,9 @@ describe("pull.pullRepo (injected runHf)", () => {
 
   test("defaults target to $LLAMA_CPP_MODELS/<repo-basename> and assembles argv", async () => {
     const captured: string[][] = [];
-    const runHf: RunHf = async (args) => {
+    const runHf: RunHf = (args) => {
       captured.push(args);
-      return 0;
+      return Promise.resolve(0);
     };
     const result = await pullRepo({ repo: "unsloth/demo-GGUF", runHf });
     const expectedTarget = join(temp.modelsDir, "demo-GGUF");
@@ -136,7 +136,7 @@ describe("pull.pullRepo (injected runHf)", () => {
 
   test("honours explicit targetDir", async () => {
     const override = join(temp.devStorage, "custom");
-    const runHf: RunHf = async () => 0;
+    const runHf: RunHf = () => Promise.resolve(0);
     const result = await pullRepo({
       repo: "unsloth/demo",
       targetDir: override,
@@ -146,7 +146,7 @@ describe("pull.pullRepo (injected runHf)", () => {
   });
 
   test("propagates non-zero exit code", async () => {
-    const runHf: RunHf = async () => 2;
+    const runHf: RunHf = () => Promise.resolve(2);
     const result = await pullRepo({ repo: "unsloth/demo", runHf });
     expect(result.code).toBe(2);
   });
@@ -170,9 +170,9 @@ describe("pull.pullRepoFile (injected runHf)", () => {
 
   test("wasMissing=true when target is absent; argv omits mmproj when skipMmproj", async () => {
     const captured: string[][] = [];
-    const runHf: RunHf = async (args) => {
+    const runHf: RunHf = (args) => {
       captured.push(args);
-      return 0;
+      return Promise.resolve(0);
     };
     const result = await pullRepoFile({
       repo: "unsloth/demo-GGUF",
@@ -195,7 +195,7 @@ describe("pull.pullRepoFile (injected runHf)", () => {
     const target = join(temp.modelsDir, "demo-GGUF");
     mkdirSync(target, { recursive: true });
     writeFileSync(join(target, "demo-Q4.gguf"), "");
-    const runHf: RunHf = async () => 0;
+    const runHf: RunHf = () => Promise.resolve(0);
     const result = await pullRepoFile({
       repo: "unsloth/demo-GGUF",
       file: "demo-Q4.gguf",
@@ -206,7 +206,7 @@ describe("pull.pullRepoFile (injected runHf)", () => {
   });
 
   test("respects caller-supplied rel-style file (contains /)", async () => {
-    const runHf: RunHf = async () => 0;
+    const runHf: RunHf = () => Promise.resolve(0);
     const result = await pullRepoFile({
       repo: "unsloth/demo-GGUF",
       file: "nested/demo-Q8.gguf",
@@ -219,10 +219,10 @@ describe("pull.pullRepoFile (injected runHf)", () => {
 
   test("emits a start event before spawn", async () => {
     const events: PullEvent[] = [];
-    const runHf: RunHf = async (_, onEvent) => {
+    const runHf: RunHf = (_args, onEvent) => {
       onEvent?.({ type: "stderr", line: "progress..." });
       onEvent?.({ type: "exit", code: 0 });
-      return 0;
+      return Promise.resolve(0);
     };
     await pullRepoFile({
       repo: "unsloth/demo",
@@ -253,16 +253,16 @@ describe("pull.pullCandidate", () => {
   });
 
   test("error when HF is disabled and no file override is given", async () => {
-    const runHf: RunHf = async () => 0;
+    const runHf: RunHf = () => Promise.resolve(0);
     const result = await pullCandidate({ repo: "unsloth/demo", runHf });
     expect(result).toEqual({ error: "Unable to resolve a candidate file for unsloth/demo" });
   });
 
   test("short-circuits to pullRepoFile when caller supplies the file", async () => {
     const captured: string[][] = [];
-    const runHf: RunHf = async (args) => {
+    const runHf: RunHf = (args) => {
       captured.push(args);
-      return 0;
+      return Promise.resolve(0);
     };
     const result = await pullCandidate({
       repo: "unsloth/demo-GGUF",
