@@ -101,7 +101,7 @@ export async function completeChat(
     body: JSON.stringify(req.body),
   });
   if (!r.ok) {
-    throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    throw new Error(`HTTP ${String(r.status)}: ${await r.text()}`);
   }
   const resp = (await r.json()) as CompletionResponse;
   return { resp, wallMs: performance.now() - t0 };

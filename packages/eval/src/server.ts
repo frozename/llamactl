@@ -40,14 +40,10 @@ export interface SpawnedServer {
   logPath: string;
 }
 
-async function pipeStream(
-  stream: ReadableStream<Uint8Array> | null,
-  writer: WriteStream,
-): Promise<void> {
-  if (!stream) return;
+async function pipeStream(stream: ReadableStream<Uint8Array>, writer: WriteStream): Promise<void> {
   const reader = stream.getReader();
   try {
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       writer.write(value);
@@ -57,11 +53,7 @@ async function pipeStream(
   }
 }
 
-export async function spawnServer(
-  binary: string,
-  opts: ServerOptions,
-  logPath: string,
-): Promise<SpawnedServer> {
+export function spawnServer(binary: string, opts: ServerOptions, logPath: string): SpawnedServer {
   const proc = spawn([binary, ...buildServerArgs(opts)], {
     stdout: "pipe",
     stderr: "pipe",
@@ -69,7 +61,7 @@ export async function spawnServer(
   const log = createWriteStream(logPath, { flags: "a" });
   void pipeStream(proc.stdout, log);
   void pipeStream(proc.stderr, log);
-  return { proc, url: `http://127.0.0.1:${opts.port}`, logPath };
+  return { proc, url: `http://127.0.0.1:${String(opts.port)}`, logPath };
 }
 
 export async function waitForHealth(
@@ -80,7 +72,7 @@ export async function waitForHealth(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (proc.exitCode !== null) {
-      throw new Error(`server died during startup (exit code ${proc.exitCode})`);
+      throw new Error(`server died during startup (exit code ${String(proc.exitCode)})`);
     }
     try {
       const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(1000) });
@@ -90,7 +82,7 @@ export async function waitForHealth(
     }
     await Bun.sleep(500);
   }
-  throw new Error(`server failed health within ${timeoutMs}ms`);
+  throw new Error(`server failed health within ${String(timeoutMs)}ms`);
 }
 
 export async function killServer(s: SpawnedServer): Promise<void> {

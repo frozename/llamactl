@@ -1,7 +1,7 @@
 import type { SubBenchScores } from "../score/compose.js";
 import type { LeaderboardRow } from "../store/sqlite.js";
 
-export interface HardwareMatrixRow extends LeaderboardRow {}
+export type HardwareMatrixRow = LeaderboardRow;
 
 export interface ThroughputDetail {
   name: string;
@@ -80,7 +80,7 @@ function strengthNames(best: HardwareMatrixRow | undefined): { strong: string[];
   };
 }
 
-function formatFailureList<T extends { name: string; reason: string }>(items?: T[]): string[] {
+function formatFailureList(items?: readonly { name: string; reason: string }[]): string[] {
   if (!items || items.length === 0)
     return ["(no per-prompt details available — re-run to regenerate)"];
   return items.map((item) => `- ${item.name}: ${item.reason}`);
@@ -93,11 +93,13 @@ function formatThroughputDetail(detail?: SubBenchDetail["throughput"]): string[]
     const sorted = [...detail.samples].sort(
       (a, b) => a.predicted_per_second - b.predicted_per_second,
     );
-    const slowest = sorted[0]!;
-    const fastest = sorted[sorted.length - 1]!;
-    lines.push(
-      `- spread: slowest ${slowest.name} ${slowest.predicted_per_second.toFixed(2)} tps, fastest ${fastest.name} ${fastest.predicted_per_second.toFixed(2)} tps`,
-    );
+    const slowest = sorted[0];
+    const fastest = sorted.at(-1);
+    if (slowest && fastest) {
+      lines.push(
+        `- spread: slowest ${slowest.name} ${slowest.predicted_per_second.toFixed(2)} tps, fastest ${fastest.name} ${fastest.predicted_per_second.toFixed(2)} tps`,
+      );
+    }
   }
   return lines;
 }
@@ -106,7 +108,8 @@ function formatContextDetail(detail?: SubBenchDetail["contextRetrieval"]): strin
   if (!detail) return ["(no per-prompt details available — re-run to regenerate)"];
   const scores = new Map(detail.scores.map((item) => [item.depth, item.score]));
   return ([4096, 8192, 16384] as const).map(
-    (depth) => `- ${depth / 1024}k: ${Math.round((scores.get(depth) ?? 0) * 3)}/3 found`,
+    (depth) =>
+      `- ${String(depth / 1024)}k: ${String(Math.round((scores.get(depth) ?? 0) * 3))}/3 found`,
   );
 }
 
@@ -139,7 +142,7 @@ export function renderCard(input: RenderCardInput): string {
   lines.push("| --- | --- | --- | --- | --- | --- |");
   for (const row of input.hwMatrix) {
     lines.push(
-      `| ${row.node} | ${row.ub} | ${row.throughput_tps.toFixed(2)} | ${row.ttft_ms.toFixed(0)} | ${row.composite.toFixed(3)} | ${row.asof} |`,
+      `| ${row.node} | ${String(row.ub)} | ${row.throughput_tps.toFixed(2)} | ${row.ttft_ms.toFixed(0)} | ${row.composite.toFixed(3)} | ${row.asof} |`,
     );
   }
   lines.push("");
@@ -167,14 +170,16 @@ export function renderCard(input: RenderCardInput): string {
   lines.push("| ub | composite | throughput_tps |");
   lines.push("| --- | --- | --- |");
   for (const row of input.hwMatrix) {
-    lines.push(`| ${row.ub} | ${row.composite.toFixed(3)} | ${row.throughput_tps.toFixed(2)} |`);
+    lines.push(
+      `| ${String(row.ub)} | ${row.composite.toFixed(3)} | ${row.throughput_tps.toFixed(2)} |`,
+    );
   }
   lines.push("");
   lines.push("## Verdict");
   const best = [...input.hwMatrix].sort((a, b) => b.composite - a.composite)[0];
   lines.push(
     best
-      ? `Best result is ${best.node} ub ${best.ub} with composite ${best.composite.toFixed(3)}. ${verdictForBest(best)}`
+      ? `Best result is ${best.node} ub ${String(best.ub)} with composite ${best.composite.toFixed(3)}. ${verdictForBest(best)}`
       : "No runs recorded yet.",
   );
   return lines.join("\n");

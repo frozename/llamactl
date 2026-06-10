@@ -191,13 +191,15 @@ describe("runMatrix", () => {
     ].join("\n");
     await Bun.write(tmpPath, jsonl);
     const origFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(
-        JSON.stringify({
-          choices: [{ message: { content: '{"memory_related":true}' } }],
-          usage: { completion_tokens: 5 },
-        }),
-        { headers: { "Content-Type": "application/json" } },
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '{"memory_related":true}' } }],
+            usage: { completion_tokens: 5 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        ),
       )) as unknown as typeof fetch;
     try {
       const workload: WorkloadEval = {
@@ -233,7 +235,9 @@ describe("runMatrix", () => {
       globalThis.fetch = origFetch;
       try {
         rmSync(tmpPath);
-      } catch {}
+      } catch {
+        // Temporary corpus cleanup is best effort on teardown.
+      }
     }
   });
 
@@ -250,13 +254,15 @@ describe("runMatrix", () => {
     ].join("\n");
     await Bun.write(tmpPath, jsonl);
     const origFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(
-        JSON.stringify({
-          choices: [{ message: { content: '{"memory_related":true}' } }],
-          usage: { completion_tokens: 5 },
-        }),
-        { headers: { "Content-Type": "application/json" } },
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '{"memory_related":true}' } }],
+            usage: { completion_tokens: 5 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        ),
       )) as unknown as typeof fetch;
     try {
       const workload: WorkloadEval = {
@@ -277,7 +283,9 @@ describe("runMatrix", () => {
       globalThis.fetch = origFetch;
       try {
         rmSync(tmpPath);
-      } catch {}
+      } catch {
+        // Temporary corpus cleanup is best effort on teardown.
+      }
     }
   });
 
@@ -307,18 +315,20 @@ describe("runMatrix", () => {
     await Bun.write(tmpPath, jsonl);
     const origFetch = globalThis.fetch;
     let lastRequestBody: Record<string, unknown> | undefined;
-    globalThis.fetch = (async (_url: Request | string | URL, init: RequestInit | undefined) => {
+    globalThis.fetch = ((_url: Request | string | URL, init: RequestInit | undefined) => {
       if (init && typeof init.body === "string") {
         lastRequestBody = JSON.parse(init.body) as Record<string, unknown>;
       }
-      return new Response(
-        JSON.stringify({
-          choices: [
-            { message: { content: '{"classification":"missed_registration","reason":"x"}' } },
-          ],
-          usage: { completion_tokens: 5 },
-        }),
-        { headers: { "Content-Type": "application/json" } },
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [
+              { message: { content: '{"classification":"missed_registration","reason":"x"}' } },
+            ],
+            usage: { completion_tokens: 5 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        ),
       );
     }) as unknown as typeof fetch;
     try {
@@ -349,7 +359,9 @@ describe("runMatrix", () => {
       globalThis.fetch = origFetch;
       try {
         rmSync(tmpPath);
-      } catch {}
+      } catch {
+        // Temporary corpus cleanup is best effort on teardown.
+      }
     }
   });
 
@@ -370,18 +382,20 @@ describe("runMatrix", () => {
     await Bun.write(tmpPath, jsonl);
     const origFetch = globalThis.fetch;
     let lastRequestBody: Record<string, unknown> | undefined;
-    globalThis.fetch = (async (_url: Request | string | URL, init: RequestInit | undefined) => {
+    globalThis.fetch = ((_url: Request | string | URL, init: RequestInit | undefined) => {
       if (init && typeof init.body === "string") {
         lastRequestBody = JSON.parse(init.body) as Record<string, unknown>;
       }
-      return new Response(
-        JSON.stringify({
-          choices: [
-            { message: { content: '{"classification":"missed_registration","reason":"x"}' } },
-          ],
-          usage: { completion_tokens: 5 },
-        }),
-        { headers: { "Content-Type": "application/json" } },
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [
+              { message: { content: '{"classification":"missed_registration","reason":"x"}' } },
+            ],
+            usage: { completion_tokens: 5 },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        ),
       );
     }) as unknown as typeof fetch;
     try {
@@ -400,7 +414,9 @@ describe("runMatrix", () => {
       globalThis.fetch = origFetch;
       try {
         rmSync(tmpPath);
-      } catch {}
+      } catch {
+        // Temporary corpus cleanup is best effort on teardown.
+      }
     }
   });
 });
@@ -475,6 +491,41 @@ describe("matrix CLI", () => {
     ).toThrow("--run-id and --report-all-runs are mutually exclusive");
   });
 
+  test("parseArgs accepts md, csv, and both for --report", () => {
+    for (const value of ["md", "csv", "both"] as const) {
+      const args = parseArgs([
+        "--models",
+        "/tmp/m.json",
+        "--workloads",
+        "memory-efficacy-binary",
+        "--out-db",
+        "/tmp/x.db",
+        "--report",
+        value,
+        "--report-out",
+        "/tmp/report",
+      ]);
+      expect(args.report).toBe(value);
+    }
+  });
+
+  test("parseArgs rejects an unknown --report value", () => {
+    expect(() =>
+      parseArgs([
+        "--models",
+        "/tmp/m.json",
+        "--workloads",
+        "memory-efficacy-binary",
+        "--out-db",
+        "/tmp/x.db",
+        "--report",
+        "bothh",
+        "--report-out",
+        "/tmp/report",
+      ]),
+    ).toThrow("unknown report format: bothh");
+  });
+
   test("parseCorpusOverrides parses one entry", () => {
     const m = parseCorpusOverrides("tool-call-grammar=/tmp/foo.jsonl");
     expect(m.size).toBe(1);
@@ -522,15 +573,27 @@ describe("matrix CLI", () => {
 
   test("runMatrix throws on empty models list", async () => {
     const db = new Database(":memory:");
-    await expect(
-      runMatrix({ models: [], workloads: [memoryEfficacyBinaryWorkload], db }),
-    ).rejects.toThrow("models list is empty");
+    await runMatrix({ models: [], workloads: [memoryEfficacyBinaryWorkload], db }).then(
+      () => {
+        throw new Error("expected runMatrix to reject");
+      },
+      (error: unknown) => {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe("runMatrix: models list is empty — no work to do");
+      },
+    );
   });
 
   test("runMatrix throws on empty workloads list", async () => {
     const db = new Database(":memory:");
-    await expect(runMatrix({ models: [makeModel("m")], workloads: [], db })).rejects.toThrow(
-      "workloads list is empty",
+    await runMatrix({ models: [makeModel("m")], workloads: [], db }).then(
+      () => {
+        throw new Error("expected runMatrix to reject");
+      },
+      (error: unknown) => {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe("runMatrix: workloads list is empty — no work to do");
+      },
     );
   });
 
@@ -619,7 +682,9 @@ describe("matrix CLI", () => {
       globalThis.fetch = origFetch;
       try {
         rmSync(tmpPath);
-      } catch {}
+      } catch {
+        // Temporary corpus cleanup is best effort on teardown.
+      }
     }
   });
 });

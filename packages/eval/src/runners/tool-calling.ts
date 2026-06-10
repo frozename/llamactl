@@ -52,7 +52,7 @@ function toResponse(resp: CompletionResponse): ToolCallingResponse {
 
 function parseToolArgs(raw: string): { valid: boolean; args: Record<string, unknown> } {
   try {
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     return {
       valid: parsed !== null && typeof parsed === "object" && !Array.isArray(parsed),
       args: parsed as Record<string, unknown>,

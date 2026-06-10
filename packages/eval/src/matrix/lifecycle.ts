@@ -33,7 +33,9 @@ function signalOwnedProcessGroup(proc: ChildProcess, signal: NodeJS.Signals): vo
   if (pid === undefined) {
     try {
       proc.kill(signal);
-    } catch {}
+    } catch {
+      // Best-effort cleanup during process teardown.
+    }
     return;
   }
   try {
@@ -41,7 +43,9 @@ function signalOwnedProcessGroup(proc: ChildProcess, signal: NodeJS.Signals): vo
   } catch {
     try {
       proc.kill(signal);
-    } catch {}
+    } catch {
+      // Best-effort fallback after process-group signalling fails.
+    }
   }
 }
 
@@ -50,10 +54,10 @@ function signalOwnedProcessGroup(proc: ChildProcess, signal: NodeJS.Signals): vo
  * A SIGTERM/SIGKILL-terminated process keeps `exitCode === null` and reports the
  * signal in `signalCode`, so checking only `exitCode` never observes a
  * signal-killed server and spins the teardown wait loop for its full timeout.
- * Loose `!= null` treats an absent field (plain mock procs) as "not exited".
  */
 function hasExited(proc: ChildProcess): boolean {
-  return proc.exitCode !== null || proc.signalCode != null;
+  const signalCode = (proc as { signalCode?: NodeJS.Signals | null }).signalCode;
+  return proc.exitCode !== null || (signalCode !== null && signalCode !== undefined);
 }
 
 function installExitHook() {
@@ -83,7 +87,9 @@ async function pingHealth(host: string, port: number, timeoutMs = 2000): Promise
     const timer = setTimeout(() => {
       controller.abort();
     }, timeoutMs);
-    const resp = await fetch(`http://${host}:${port}/health`, { signal: controller.signal });
+    const resp = await fetch(`http://${host}:${String(port)}/health`, {
+      signal: controller.signal,
+    });
     clearTimeout(timer);
     return resp.ok;
   } catch {
@@ -102,7 +108,7 @@ export async function probeInference(
     const timer = setTimeout(() => {
       controller.abort();
     }, timeoutMs);
-    const resp = await fetch(`http://${host}:${port}/v1/chat/completions`, {
+    const resp = await fetch(`http://${host}:${String(port)}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -129,8 +135,11 @@ export async function probeInference(
 }
 
 function buildLlamaCppBootCommand(model: ModelSpec): { binary: string; args: string[] } {
+  if (!model.binary) {
+    throw new Error(`model ${model.name} managed=true but binary not found: ${model.binary ?? ""}`);
+  }
   return {
-    binary: model.binary!,
+    binary: model.binary,
     args: [
       "-m",
       model.gguf_path,
@@ -147,7 +156,9 @@ function buildLlamaCppBootCommand(model: ModelSpec): { binary: string; args: str
 export function buildBootCommandForModelSpec(model: ModelSpec): { binary: string; args: string[] } {
   if ((model.engine ?? "llamacpp") === "omlx") {
     if (!model.binary || !existsSync(model.binary)) {
-      throw new Error(`model ${model.name} managed=true but binary not found: ${model.binary}`);
+      throw new Error(
+        `model ${model.name} managed=true but binary not found: ${model.binary ?? ""}`,
+      );
     }
     const rel =
       model.request_model_id ?? (model.gguf_path ? basename(model.gguf_path) : model.name);
@@ -179,11 +190,11 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
   }
   if (!model.managed) {
     throw new Error(
-      `model ${model.name} at ${model.host}:${model.port} is not reachable and managed=false`,
+      `model ${model.name} at ${model.host}:${String(model.port)} is not reachable and managed=false`,
     );
   }
   if (!model.binary || !existsSync(model.binary)) {
-    throw new Error(`model ${model.name} managed=true but binary not found: ${model.binary}`);
+    throw new Error(`model ${model.name} managed=true but binary not found: ${model.binary ?? ""}`);
   }
   if ((model.engine ?? "llamacpp") === "omlx") {
     const rel =
@@ -216,13 +227,13 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
       while (stderrTail.length > STDERR_BUFFER_LINES) stderrTail.shift();
     }
   }
-  proc.stdout?.on("data", () => {});
-  proc.stderr?.on("data", pushStderr);
+  proc.stdout.resume();
+  proc.stderr.on("data", pushStderr);
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (proc.exitCode !== null) {
       throw new Error(
-        `llama-server for ${model.name} exited before /health came up (code=${proc.exitCode})\n--- stderr tail ---\n${stderrTail.join("\n")}`,
+        `llama-server for ${model.name} exited before /health came up (code=${String(proc.exitCode)})\n--- stderr tail ---\n${stderrTail.join("\n")}`,
       );
     }
     if (await pingHealth(model.host, model.port)) {
@@ -250,7 +261,7 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
   }
   signalOwnedProcessGroup(proc, "SIGTERM");
   throw new Error(
-    `llama-server for ${model.name} health timeout after ${HEALTH_TIMEOUT_MS}ms\n--- stderr tail ---\n${stderrTail.join("\n")}`,
+    `llama-server for ${model.name} health timeout after ${String(HEALTH_TIMEOUT_MS)}ms\n--- stderr tail ---\n${stderrTail.join("\n")}`,
   );
 }
 

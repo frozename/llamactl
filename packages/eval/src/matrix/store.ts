@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { Database, SQLQueryBindings } from "bun:sqlite";
 
 import type { CellRow, CellRowDetail } from "./types.js";
 
@@ -96,14 +96,14 @@ export function listCellRows(
 ): CellRow[] {
   ensureMatrixSchema(db);
   const clauses: string[] = [];
-  const params: Record<string, unknown> = {};
+  const params: SQLQueryBindings[] = [];
   if (filter.run_id) {
-    clauses.push("run_id = $run_id");
-    params.$run_id = filter.run_id;
+    clauses.push("run_id = ?");
+    params.push(filter.run_id);
   }
   if (filter.workload_name) {
-    clauses.push("workload_name = $workload_name");
-    params.$workload_name = filter.workload_name;
+    clauses.push("workload_name = ?");
+    params.push(filter.workload_name);
   }
   return db
     .query(
@@ -112,7 +112,7 @@ export function listCellRows(
        ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
        ORDER BY run_id ASC, model_name ASC, workload_name ASC`,
     )
-    .all(params as any) as CellRow[];
+    .all(...params) as CellRow[];
 }
 
 export function insertCellRowDetail(db: Database, detail: CellRowDetail): void {
@@ -150,18 +150,18 @@ export function listCellRowDetails(
 ): CellRowDetail[] {
   ensureMatrixSchema(db);
   const clauses: string[] = [];
-  const params: Record<string, unknown> = {};
+  const params: SQLQueryBindings[] = [];
   if (filter.run_id) {
-    clauses.push("run_id = $run_id");
-    params.$run_id = filter.run_id;
+    clauses.push("run_id = ?");
+    params.push(filter.run_id);
   }
   if (filter.model_name) {
-    clauses.push("model_name = $model_name");
-    params.$model_name = filter.model_name;
+    clauses.push("model_name = ?");
+    params.push(filter.model_name);
   }
   if (filter.workload_name) {
-    clauses.push("workload_name = $workload_name");
-    params.$workload_name = filter.workload_name;
+    clauses.push("workload_name = ?");
+    params.push(filter.workload_name);
   }
   return db
     .query(
@@ -170,5 +170,5 @@ export function listCellRowDetails(
        ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
        ORDER BY run_id ASC, model_name ASC, workload_name ASC, row_index ASC`,
     )
-    .all(params as any) as CellRowDetail[];
+    .all(...params) as CellRowDetail[];
 }

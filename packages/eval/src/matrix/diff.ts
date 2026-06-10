@@ -15,7 +15,7 @@
  * latest run per (model, workload).
  */
 
-import { Database } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { existsSync } from "node:fs";
 
 export interface DiffArgs {
@@ -78,7 +78,7 @@ export function loadCells(
                     primary_metric_value, throughput_tps, latency_p50_ms, errors, started_at
              FROM matrix_runs`;
   const conditions: string[] = [];
-  const params: unknown[] = [];
+  const params: SQLQueryBindings[] = [];
   if (args.models && args.models.length > 0) {
     conditions.push(`model_name IN (${args.models.map(() => "?").join(",")})`);
     params.push(...args.models);
@@ -89,7 +89,7 @@ export function loadCells(
   }
   if (conditions.length > 0) sql += " WHERE " + conditions.join(" AND ");
   sql += " ORDER BY started_at DESC";
-  const all = db.query(sql).all(...(params as never[])) as Cell[];
+  const all = db.query(sql).all(...params) as Cell[];
 
   if (args.allRuns) return all;
 
@@ -123,7 +123,7 @@ export function renderMd(cells: Cell[]): string {
   ];
   for (const c of sorted) {
     lines.push(
-      `| ${c.workload_name} | ${c.model_name} | ${c.n_rows} | ${c.primary_metric_name} | ${fmt(c.primary_metric_value, 4)} | ${fmt(c.throughput_tps, 2)} | ${fmt(c.latency_p50_ms, 0)} | ${c.errors} |`,
+      `| ${c.workload_name} | ${c.model_name} | ${String(c.n_rows)} | ${c.primary_metric_name} | ${fmt(c.primary_metric_value, 4)} | ${fmt(c.throughput_tps, 2)} | ${fmt(c.latency_p50_ms, 0)} | ${String(c.errors)} |`,
     );
   }
   return lines.join("\n") + "\n";
@@ -133,7 +133,7 @@ export function renderCsv(cells: Cell[]): string {
   const header = "workload,model,n,metric,value,tps,p50_ms,errors,run_id,started_at";
   const rows = cells.map(
     (c) =>
-      `${c.workload_name},${c.model_name},${c.n_rows},${c.primary_metric_name},${fmt(c.primary_metric_value, 4)},${fmt(c.throughput_tps, 2)},${fmt(c.latency_p50_ms, 0)},${c.errors},${c.run_id},${c.started_at}`,
+      `${c.workload_name},${c.model_name},${String(c.n_rows)},${c.primary_metric_name},${fmt(c.primary_metric_value, 4)},${fmt(c.throughput_tps, 2)},${fmt(c.latency_p50_ms, 0)},${String(c.errors)},${c.run_id},${c.started_at}`,
   );
   return [header, ...rows].join("\n") + "\n";
 }
@@ -142,7 +142,7 @@ export function renderJson(cells: Cell[]): string {
   return JSON.stringify(cells, null, 2) + "\n";
 }
 
-export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+export function main(argv: string[] = process.argv.slice(2)): number {
   let args: DiffArgs;
   try {
     args = parseArgs(argv);
@@ -175,5 +175,5 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 }
 
 if (import.meta.main) {
-  main().then((code) => process.exit(code));
+  process.exit(main());
 }

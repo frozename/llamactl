@@ -11,7 +11,7 @@ let dbPath: string;
 
 function seedDb(path: string): void {
   const db = new Database(path);
-  db.exec(`
+  db.run(`
     CREATE TABLE matrix_runs (
       run_id TEXT NOT NULL,
       runner_version INTEGER NOT NULL DEFAULT 0,
@@ -103,7 +103,9 @@ beforeEach(() => {
 afterEach(() => {
   try {
     rmSync(tmp, { recursive: true, force: true });
-  } catch {}
+  } catch {
+    // Temporary directory cleanup is best effort on teardown.
+  }
 });
 
 describe("matrix/diff parseArgs", () => {

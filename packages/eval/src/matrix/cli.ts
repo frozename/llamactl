@@ -57,6 +57,13 @@ export function parseCorpusOverrides(raw: string): Map<string, string> {
   return out;
 }
 
+function parseReportFormat(raw: string | undefined): MatrixCliArgs["report"] {
+  if (raw === undefined || raw === "md" || raw === "csv" || raw === "both") {
+    return raw;
+  }
+  throw new Error(`unknown report format: ${raw}`);
+}
+
 export function parseArgs(argv: string[]): MatrixCliArgs {
   const readArg = (flag: string): string | undefined => {
     const index = argv.indexOf(flag);
@@ -66,7 +73,7 @@ export function parseArgs(argv: string[]): MatrixCliArgs {
   const workloadsArg = readArg("--workloads");
   const outDb = readArg("--out-db") ?? "packages/eval/results/matrix.db";
   const concurrencyRaw = readArg("--concurrency");
-  const report = readArg("--report") as MatrixCliArgs["report"];
+  const report = parseReportFormat(readArg("--report"));
   const reportOut = readArg("--report-out");
   const runId = readArg("--run-id");
   const reportAllRuns = argv.includes("--report-all-runs");
@@ -123,7 +130,7 @@ function validateModelSpec(value: unknown): ModelSpec {
           ? Array.isArray(fieldValue) && fieldValue.every((item) => typeof item === "string")
           : typeof fieldValue === "string";
     if (!ok) {
-      throw new Error(`invalid ModelSpec: missing/bad field ${String(field)}`);
+      throw new Error(`invalid ModelSpec: missing/bad field ${field}`);
     }
   }
   const optional: (keyof Pick<
@@ -140,7 +147,7 @@ function validateModelSpec(value: unknown): ModelSpec {
             (Array.isArray(fieldValue) && fieldValue.every((item) => typeof item === "string"))
           : fieldValue === undefined || typeof fieldValue === "boolean";
     if (!ok) {
-      throw new Error(`invalid ModelSpec: missing/bad field ${String(field)}`);
+      throw new Error(`invalid ModelSpec: missing/bad field ${field}`);
     }
   }
   return spec as unknown as ModelSpec;
@@ -167,15 +174,15 @@ async function main(): Promise<void> {
   if (argv[0] === "run" && argv[1] === "kv-warm-bench") {
     const args = parseKvWarmBenchRunArgs(argv.slice(2));
     const result = await runKvWarmBench(args);
-    console.log(`kv-warm-bench wrote ${result.outputPath}`);
+    process.stdout.write(`kv-warm-bench wrote ${result.outputPath}\n`);
     return;
   }
 
   if (process.argv.includes("--help") || process.argv.includes("-h")) {
-    console.log(
+    process.stdout.write(
       "usage: --models <json> --workloads <names> --out-db <path> [--concurrency <1-8>] [--report md|csv|both] [--report-out <path>] [--corpus-override workload=path[,...]]",
     );
-    console.log(
+    process.stdout.write(
       "   or: run kv-warm-bench --model <name> [--proxy <url>] [--temperature <n>] [--max-tokens <n>] [--frontiers <csv>] [--warm-runs <n>] [--data-root <path>] [--out <path>]",
     );
     return;
@@ -227,21 +234,19 @@ async function main(): Promise<void> {
       await Bun.write(reportOut, renderMarkdownReport(cells, reportOpts));
     } else if (report === "csv") {
       await Bun.write(reportOut, renderCsvReport(cells, reportOpts));
-    } else if (report === "both") {
+    } else {
       await Bun.write(`${reportOut}.md`, renderMarkdownReport(cells, reportOpts));
       await Bun.write(`${reportOut}.csv`, renderCsvReport(cells, reportOpts));
-    } else {
-      throw new Error(`unknown report format: ${report}`);
     }
   }
-  console.log(`runId=${result.runId} cellsWritten=${result.cellsWritten}`);
+  process.stdout.write(`runId=${result.runId} cellsWritten=${String(result.cellsWritten)}\n`);
   if (reportAllRuns) {
-    console.log("report-mode=all-runs");
+    process.stdout.write("report-mode=all-runs\n");
   }
 }
 
 if (import.meta.main) {
-  main().catch((error) => {
+  main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   });

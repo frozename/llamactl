@@ -100,10 +100,10 @@ export async function runContextRetrievalWithServer(
   modelPath: string,
   port: number,
 ): Promise<ContextRetrievalResult> {
-  const server = await spawnServer(
+  const server = spawnServer(
     binary,
     { modelPath, port, ub: 512, ctxSize: 17408 },
-    `/tmp/context-retrieval-${port}.log`,
+    `/tmp/context-retrieval-${String(port)}.log`,
   );
   try {
     await waitForHealth(server.url, server.proc);

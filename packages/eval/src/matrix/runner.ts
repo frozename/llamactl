@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 
+import type { ChatMessage, ToolDef } from "../client.js";
 import type { ModelSpec, WorkloadEval } from "./types.js";
 
 import { buildCompletionRequest, completeChat } from "../client.js";
@@ -110,20 +111,20 @@ export async function runMatrix(
               const built = workload.prompt_builder(row);
               const structuredOutputsSupported = model.structured_outputs_supported !== false;
               const req = buildCompletionRequest({
-                messages: built.messages as any[],
+                messages: built.messages as ChatMessage[],
                 maxTokens: workload.maxTokens ?? 256,
                 temperature: workload.temperature,
                 ...(model.request_model_id ? { model: model.request_model_id } : {}),
                 ...(model.disable_thinking ? { enableThinking: false } : {}),
                 ...(built.tools
-                  ? { tools: built.tools as any[], tool_choice: built.tool_choice }
+                  ? { tools: built.tools as ToolDef[], tool_choice: built.tool_choice }
                   : {}),
                 ...(structuredOutputsSupported && workload.response_format
                   ? { response_format: workload.response_format }
                   : {}),
               });
               const { resp, wallMs } = await completeChat(
-                `http://${model.host}:${model.port}`,
+                `http://${model.host}:${String(model.port)}`,
                 req,
               );
               wallMsArr.push(wallMs);
@@ -135,9 +136,9 @@ export async function runMatrix(
               // <|channel>thought ... <channel|> markers. Concatenate so
               // workload parsers see the full text.
               const _msg = resp.choices[0]?.message;
-              const completion = (_msg?.reasoning_content ?? "") + (_msg?.content ?? "") || "";
+              const completion = `${_msg?.reasoning_content ?? ""}${_msg?.content ?? ""}`;
               const scored = await workload.scorer(row, completion, {
-                tool_calls: resp.choices[0]?.message?.tool_calls,
+                tool_calls: _msg?.tool_calls,
               });
               predictions.push({ pred: scored.prediction, gold: scored.gold });
               rowMetrics.push(scored.metrics);
@@ -155,7 +156,7 @@ export async function runMatrix(
               errors += 1;
               const message = err instanceof Error ? err.message : String(err);
               console.warn(
-                `[matrix] inference failed for ${workload.name} row ${rowIndex + 1}: ${message}`,
+                `[matrix] inference failed for ${workload.name} row ${String(rowIndex + 1)}: ${message}`,
               );
             }
           };
@@ -167,7 +168,7 @@ export async function runMatrix(
           } else {
             let nextRowIndex = 0;
             const workers = Array.from({ length: Math.min(concurrency, rows.length) }, async () => {
-              while (true) {
+              for (;;) {
                 const rowIndex = nextRowIndex;
                 nextRowIndex += 1;
                 if (rowIndex >= rows.length) {

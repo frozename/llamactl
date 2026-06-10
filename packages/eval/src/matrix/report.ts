@@ -47,7 +47,7 @@ function mdField(value: string): string {
 }
 
 function csvField(value: string): string {
-  if (/[,\"\n\r]/.test(value)) {
+  if (/[,"\n\r]/.test(value)) {
     return `"${value.replaceAll('"', '""')}"`;
   }
   return value;
@@ -120,7 +120,7 @@ export function renderMarkdownReport(cells: CellRow[], opts: ReportOpts = {}): s
     "# Matrix report",
     "",
     `Run: ${opts.runId ?? "all"}`,
-    `Cells: ${filtered.length}`,
+    `Cells: ${String(filtered.length)}`,
     "",
     `## Primary metric (${primaryMetricName})`,
     "",

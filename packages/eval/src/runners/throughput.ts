@@ -30,7 +30,7 @@ export function aggregateThroughput(samples: ThroughputSample[]): ThroughputResu
     };
   }
   const mean = tps.reduce((a, b) => a + b, 0) / tps.length;
-  const pct = (p: number): number => tps[Math.min(tps.length - 1, Math.floor(p * tps.length))]!;
+  const pct = (p: number): number => tps[Math.min(tps.length - 1, Math.floor(p * tps.length))] ?? 0;
   return {
     samples,
     mean_tps: mean,
@@ -53,8 +53,8 @@ export async function runThroughput(url: string): Promise<ThroughputResult> {
     samples.push({
       name: p.name,
       predicted_per_second: resp.timings?.predicted_per_second ?? 0,
-      predicted_n: Number(resp.timings?.predicted_n ?? resp.usage?.completion_tokens ?? 0),
-      wallMs: Number(wallMs ?? 0),
+      predicted_n: resp.timings?.predicted_n ?? resp.usage?.completion_tokens ?? 0,
+      wallMs,
     });
   }
   return aggregateThroughput(samples);

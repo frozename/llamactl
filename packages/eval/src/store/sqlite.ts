@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { Database, SQLQueryBindings } from "bun:sqlite";
 
 export interface LeaderboardRow {
   model: string;
@@ -80,18 +80,18 @@ export function upsertRow(db: Database, row: LeaderboardRow): void {
 export function queryRows(db: Database, filter: QueryFilter = {}): LeaderboardRow[] {
   ensureSchema(db);
   const clauses: string[] = [];
-  const params: Record<string, unknown> = {};
+  const params: SQLQueryBindings[] = [];
   if (filter.node) {
-    clauses.push("node = $node");
-    params.$node = filter.node;
+    clauses.push("node = ?");
+    params.push(filter.node);
   }
   if (filter.min_throughput !== undefined) {
-    clauses.push("throughput_tps >= $min_throughput");
-    params.$min_throughput = filter.min_throughput;
+    clauses.push("throughput_tps >= ?");
+    params.push(filter.min_throughput);
   }
   if (filter.min_tool_call_score !== undefined) {
-    clauses.push("tool_call_score >= $min_tool_call_score");
-    params.$min_tool_call_score = filter.min_tool_call_score;
+    clauses.push("tool_call_score >= ?");
+    params.push(filter.min_tool_call_score);
   }
   const orderBy = filter.sort_by ?? "composite";
   const rows = db
@@ -101,6 +101,6 @@ export function queryRows(db: Database, filter: QueryFilter = {}): LeaderboardRo
        ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
        ORDER BY ${orderBy} DESC, model ASC, node ASC, ub ASC`,
     )
-    .all(params as any) as LeaderboardRow[];
+    .all(...params) as LeaderboardRow[];
   return rows;
 }

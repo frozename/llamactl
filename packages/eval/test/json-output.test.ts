@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
-import { extractJsonPayload, validateJsonAgainstSchema } from "../src/runners/json-output.js";
+import {
+  extractJsonPayload,
+  type JsonSchema,
+  validateJsonAgainstSchema,
+} from "../src/runners/json-output.js";
 
-const schema = {
+const schema: JsonSchema = {
   type: "object",
   required: ["name", "count"],
   properties: {
@@ -37,10 +41,10 @@ describe("extractJsonPayload", () => {
 
 describe("validateJsonAgainstSchema", () => {
   test("accepts matching objects", () => {
-    expect(validateJsonAgainstSchema({ name: "ok", count: 2 }, schema as any)).toBe(true);
+    expect(validateJsonAgainstSchema({ name: "ok", count: 2 }, schema)).toBe(true);
   });
 
   test("rejects mismatched types", () => {
-    expect(validateJsonAgainstSchema({ name: "ok", count: "two" }, schema as any)).toBe(false);
+    expect(validateJsonAgainstSchema({ name: "ok", count: "two" }, schema)).toBe(false);
   });
 });

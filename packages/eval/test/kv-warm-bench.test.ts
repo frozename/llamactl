@@ -21,19 +21,22 @@ describe("buildFrontierPrompt", () => {
   test("matches the exact token frontier when tokenize endpoint is available", async () => {
     const origFetch = globalThis.fetch;
     const tokenizeCalls: number[] = [];
-    globalThis.fetch = (async (input: Request | string | URL, init?: RequestInit) => {
-      const url = String(input);
+    globalThis.fetch = ((input: Request | string | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : input.toString();
       if (url.endsWith("/v1/tokenize")) {
-        const body = JSON.parse(String(init?.body ?? "{}")) as { prompt?: string };
-        const payload = String(body.prompt ?? "");
+        const body =
+          typeof init?.body === "string" ? (JSON.parse(init.body) as { prompt?: string }) : {};
+        const payload = body.prompt ?? "";
         const words = payload.split("\n")[1]?.trim().split(/\s+/).filter(Boolean).length ?? 0;
         tokenizeCalls.push(words);
-        return new Response(JSON.stringify({ token_ids: [], n_tokens: words * 6 }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return Promise.resolve(
+          new Response(JSON.stringify({ token_ids: [], n_tokens: words * 6 }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
       }
-      return new Response("unexpected", { status: 500 });
+      return Promise.resolve(new Response("unexpected", { status: 500 }));
     }) as unknown as typeof fetch;
 
     try {
@@ -62,8 +65,8 @@ describe("createTokenizeClient", () => {
   test("warns once and falls back when tokenize endpoint is unavailable", async () => {
     const origFetch = globalThis.fetch;
     const warnings: string[] = [];
-    globalThis.fetch = (async () =>
-      new Response("not found", { status: 404 })) as unknown as typeof fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(new Response("not found", { status: 404 }))) as unknown as typeof fetch;
 
     try {
       const tokenizeClient = await createTokenizeClient({

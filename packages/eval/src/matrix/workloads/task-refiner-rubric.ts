@@ -74,8 +74,12 @@ function parseJudgeJson(
     const endParts = s.split("@@end", 1);
     if (endParts.length > 0) s = endParts[0] ?? "";
   }
-  const fenceMatch = /```(?:json)?\s*\n?([\s\S]*?)\n?```/.exec(s);
-  if (fenceMatch) s = fenceMatch[1] ?? "";
+  const fenceStart = s.indexOf("```");
+  const fenceEnd = fenceStart >= 0 ? s.indexOf("```", fenceStart + 3) : -1;
+  if (fenceStart >= 0 && fenceEnd > fenceStart) {
+    const fenced = s.slice(fenceStart + 3, fenceEnd).trim();
+    s = fenced.startsWith("json") ? fenced.slice(4).trim() : fenced;
+  }
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
@@ -134,7 +138,7 @@ export const taskRefinerRubricWorkload: WorkloadEval = {
       max_tokens: 300,
       temperature: 0,
     };
-    const judgeUrl = `http://${judgeModel.host}:${judgeModel.port}/v1/chat/completions`;
+    const judgeUrl = `http://${judgeModel.host}:${String(judgeModel.port)}/v1/chat/completions`;
     let judgeText: string;
     try {
       const resp = await fetch(judgeUrl, {
@@ -142,9 +146,9 @@ export const taskRefinerRubricWorkload: WorkloadEval = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(judgeReq),
       });
-      if (!resp.ok) return fail(`judge_http_${resp.status}`);
+      if (!resp.ok) return fail(`judge_http_${String(resp.status)}`);
       const j = (await resp.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
+        choices?: { message?: { content?: string } }[];
       };
       judgeText = j.choices?.[0]?.message?.content ?? "";
     } catch (err) {

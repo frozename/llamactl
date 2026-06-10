@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -124,7 +125,8 @@ describe("matrix lifecycle - engine dispatch", () => {
 describe("ensureModelServing", () => {
   test("returns owned=false when server already responds to /health", async () => {
     const origFetch = globalThis.fetch;
-    globalThis.fetch = (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(new Response("ok", { status: 200 }))) as unknown as typeof fetch;
     try {
       const boot = await ensureModelServing(baseModel({ managed: true, binary: "/nonexistent" }));
       expect(boot.owned).toBe(false);
@@ -136,12 +138,16 @@ describe("ensureModelServing", () => {
 
   test("throws when managed=false and /health is unreachable", async () => {
     const origFetch = globalThis.fetch;
-    globalThis.fetch = (async () => {
-      throw new Error("ECONNREFUSED");
-    }) as unknown as typeof fetch;
+    globalThis.fetch = (() => Promise.reject(new Error("ECONNREFUSED"))) as unknown as typeof fetch;
     try {
-      await expect(ensureModelServing(baseModel({ managed: false }))).rejects.toThrow(
-        /not reachable/,
+      await ensureModelServing(baseModel({ managed: false })).then(
+        () => {
+          throw new Error("expected ensureModelServing to reject");
+        },
+        (error: unknown) => {
+          expect(error).toBeInstanceOf(Error);
+          expect((error as Error).message).toContain("not reachable");
+        },
       );
     } finally {
       globalThis.fetch = origFetch;
@@ -150,13 +156,17 @@ describe("ensureModelServing", () => {
 
   test("throws when managed=true but binary path does not exist", async () => {
     const origFetch = globalThis.fetch;
-    globalThis.fetch = (async () => {
-      throw new Error("ECONNREFUSED");
-    }) as unknown as typeof fetch;
+    globalThis.fetch = (() => Promise.reject(new Error("ECONNREFUSED"))) as unknown as typeof fetch;
     try {
-      await expect(
-        ensureModelServing(baseModel({ managed: true, binary: "/nonexistent-binary" })),
-      ).rejects.toThrow(/binary not found/);
+      await ensureModelServing(baseModel({ managed: true, binary: "/nonexistent-binary" })).then(
+        () => {
+          throw new Error("expected ensureModelServing to reject");
+        },
+        (error: unknown) => {
+          expect(error).toBeInstanceOf(Error);
+          expect((error as Error).message).toContain("binary not found");
+        },
+      );
     } finally {
       globalThis.fetch = origFetch;
     }
@@ -165,24 +175,30 @@ describe("ensureModelServing", () => {
   test("throws when managed spawn passes /health but /v1 boot-probe fails", async () => {
     const origFetch = globalThis.fetch;
     let healthChecks = 0;
-    globalThis.fetch = (async (input: Request | string | URL) => {
-      const url = String(input);
+    globalThis.fetch = ((input: Request | string | URL) => {
+      const url = input instanceof Request ? input.url : input.toString();
       if (url.endsWith("/health")) {
         healthChecks += 1;
-        if (healthChecks === 1) throw new Error("ECONNREFUSED");
-        return new Response("ok", { status: 200 });
+        if (healthChecks === 1) return Promise.reject(new Error("ECONNREFUSED"));
+        return Promise.resolve(new Response("ok", { status: 200 }));
       }
       if (url.endsWith("/v1/chat/completions")) {
-        return new Response("nope", { status: 500 });
+        return Promise.resolve(new Response("nope", { status: 500 }));
       }
-      throw new Error(`unexpected fetch ${url}`);
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
     }) as unknown as typeof fetch;
     try {
-      await expect(
-        ensureModelServing(
-          baseModel({ managed: true, binary: "/bin/sleep", start_args: ["1000"], port: 65502 }),
-        ),
-      ).rejects.toThrow(/\/v1 boot-probe failed/);
+      await ensureModelServing(
+        baseModel({ managed: true, binary: "/bin/sleep", start_args: ["1000"], port: 65502 }),
+      ).then(
+        () => {
+          throw new Error("expected ensureModelServing to reject");
+        },
+        (error: unknown) => {
+          expect(error).toBeInstanceOf(Error);
+          expect((error as Error).message).toContain("/v1 boot-probe failed");
+        },
+      );
     } finally {
       globalThis.fetch = origFetch;
     }
@@ -192,13 +208,15 @@ describe("ensureModelServing", () => {
 describe("probeInference", () => {
   test("returns true when /v1 responds with valid JSON", async () => {
     const origFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ choices: [{ message: { content: "" } }] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      })) as unknown as typeof fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ choices: [{ message: { content: "" } }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )) as unknown as typeof fetch;
     try {
-      await expect(probeInference("127.0.0.1", 65501, 1000)).resolves.toBe(true);
+      expect(await probeInference("127.0.0.1", 65501, 1000)).toBe(true);
     } finally {
       globalThis.fetch = origFetch;
     }
@@ -207,14 +225,13 @@ describe("probeInference", () => {
   test("returns false when /v1 responds 500 or fetch throws", async () => {
     const origFetch = globalThis.fetch;
     try {
-      globalThis.fetch = (async () =>
-        new Response("nope", { status: 500 })) as unknown as typeof fetch;
-      await expect(probeInference("127.0.0.1", 65501, 1000)).resolves.toBe(false);
+      globalThis.fetch = (() =>
+        Promise.resolve(new Response("nope", { status: 500 }))) as unknown as typeof fetch;
+      expect(await probeInference("127.0.0.1", 65501, 1000)).toBe(false);
 
-      globalThis.fetch = (async () => {
-        throw new Error("ECONNREFUSED");
-      }) as unknown as typeof fetch;
-      await expect(probeInference("127.0.0.1", 65501, 1000)).resolves.toBe(false);
+      globalThis.fetch = (() =>
+        Promise.reject(new Error("ECONNREFUSED"))) as unknown as typeof fetch;
+      expect(await probeInference("127.0.0.1", 65501, 1000)).toBe(false);
     } finally {
       globalThis.fetch = origFetch;
     }
@@ -227,17 +244,22 @@ describe("teardownIfOwned", () => {
   });
 
   test("no-op when proc already exited", async () => {
-    await teardownIfOwned({ owned: true, proc: { exitCode: 0, kill: () => false } as any });
+    const proc = { exitCode: 0, signalCode: null, kill: () => false } as unknown as ChildProcess;
+    await teardownIfOwned({ owned: true, proc });
   });
 
   test("removes owned proc from the tracked set", async () => {
+    let exitCode: number | null = null;
     const proc = {
-      exitCode: null,
+      get exitCode() {
+        return exitCode;
+      },
+      signalCode: null,
       kill: () => {
-        proc.exitCode = 0;
+        exitCode = 0;
         return true;
       },
-    } as any;
+    } as unknown as ChildProcess;
     __seedOwnedProcForTests(proc);
     expect(__ownedProcsForTests().has(proc)).toBe(true);
     await teardownIfOwned({ owned: true, proc });
@@ -273,20 +295,26 @@ describe("teardownIfOwned", () => {
       // The group signal reaps the grandchild too. Pre-fix (direct-child kill)
       // the grandchild survived as an orphan and this assertion failed.
       expect(await waitUntil(() => !isAlive(grandchildPid), 4000)).toBe(true);
-      expect(isAlive(proc.pid!)).toBe(false);
+      if (proc.pid !== undefined) {
+        expect(isAlive(proc.pid)).toBe(false);
+      }
     } finally {
       // Safety net so a failed assertion never leaks the process tree.
       if (proc.pid) {
         try {
           process.kill(-proc.pid, "SIGKILL");
-        } catch {}
+        } catch {
+          // Safety-net cleanup is best effort after assertions fail.
+        }
       }
       try {
         if (existsSync(gpidFile)) {
           const g = Number.parseInt(readFileSync(gpidFile, "utf8").trim(), 10);
           if (Number.isInteger(g) && g > 0) process.kill(g, "SIGKILL");
         }
-      } catch {}
+      } catch {
+        // Safety-net cleanup is best effort after assertions fail.
+      }
       rmSync(dir, { recursive: true, force: true });
     }
   });

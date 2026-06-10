@@ -23,7 +23,7 @@ The "ranking" array MUST include every candidate ID exactly once. Most relevant 
 
 function buildUserMessage(row: CorpusRow): string {
   const ctx = row.context ? `Context: ${row.context}\n\n` : "";
-  const cands = row.candidates.map((c, i) => `${i + 1}. [${c.id}] ${c.text}`).join("\n");
+  const cands = row.candidates.map((c, i) => `${String(i + 1)}. [${c.id}] ${c.text}`).join("\n");
   return `${ctx}Query: ${row.query}\n\nCandidates:\n${cands}\n\nReturn the ranked IDs as JSON.`;
 }
 
@@ -37,8 +37,12 @@ function parseRanking(text: string): string[] | null {
       if (head !== undefined) s = head;
     }
   }
-  const fenceMatch = /```(?:json)?\s*\n?([\s\S]*?)\n?```/.exec(s);
-  if (fenceMatch?.[1] !== undefined) s = fenceMatch[1];
+  const fenceStart = s.indexOf("```");
+  const fenceEnd = fenceStart >= 0 ? s.indexOf("```", fenceStart + 3) : -1;
+  if (fenceStart >= 0 && fenceEnd > fenceStart) {
+    const fenced = s.slice(fenceStart + 3, fenceEnd).trim();
+    s = fenced.startsWith("json") ? fenced.slice(4).trim() : fenced;
+  }
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
   if (start < 0 || end <= start) return null;

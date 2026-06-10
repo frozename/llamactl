@@ -25,7 +25,7 @@ const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 function buildUserMessage(r: ReasoningRow): string {
   if (r.kind === "mc") {
-    const opts = (r.options ?? []).map((opt, i) => `${LETTERS[i]}) ${opt}`).join("\n");
+    const opts = (r.options ?? []).map((opt, i) => `${LETTERS[i] ?? ""}) ${opt}`).join("\n");
     return (
       `${r.question}\n\nOptions:\n${opts}\n\n` +
       `Reason briefly, then end with a single final line exactly:\nAnswer: <letter>`
@@ -60,7 +60,8 @@ function normalizeNumber(raw: string): string | null {
 
 function extractMc(completion: string, nOptions: number): string {
   const max = Math.max(1, Math.min(nOptions, LETTERS.length));
-  const valid = new RegExp(`[A-${LETTERS[max - 1]}]`);
+  const maxLetter = LETTERS[max - 1] ?? "A";
+  const valid = new RegExp(`[A-${maxLetter}]`);
   const ans = lastAnswerLine(completion);
   if (ans) {
     const letter = /[A-Za-z]/.exec(ans);
@@ -86,7 +87,8 @@ function extractNumeric(completion: string): string {
   }
   // fallback: last number anywhere
   const all = completion.replaceAll(",", "").match(/-?\d+(?:\.\d+)?/g);
-  if (all && all.length) return normalizeNumber(all[all.length - 1]!) ?? "__no_answer__";
+  const last = all?.at(-1);
+  if (last !== undefined) return normalizeNumber(last) ?? "__no_answer__";
   return "__no_answer__";
 }
 
@@ -125,7 +127,7 @@ export function buildReasoningMcWorkload(opts: {
     },
     scorer: (row, completion) => {
       const r = row as ReasoningRow;
-      const gold = String(r.answer).trim();
+      const gold = r.answer.trim();
       let prediction: string;
       let correct: boolean;
       if (r.kind === "mc") {

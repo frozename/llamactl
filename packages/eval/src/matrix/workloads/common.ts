@@ -44,7 +44,7 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
       }
     : undefined;
   function stripCodeFences(s: string): string {
-    const m = /```(?:json)?\s*\n([\s\S]*?)\n```/.exec(s);
+    const m = /```(?:json)?[ \t]*\n([\s\S]*?)\n```/.exec(s);
     if (m) return m[1] ?? "";
     return s;
   }
@@ -52,12 +52,16 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
     const stripped = stripCodeFences(s);
     try {
       return JSON.parse(stripped) as Record<string, unknown>;
-    } catch {}
+    } catch {
+      // Ignore malformed prompt-candidate JSON and fall through to text extraction.
+    }
     const m = /\{[\s\S]*\}/.exec(stripped);
     if (m) {
       try {
         return JSON.parse(m[0]) as Record<string, unknown>;
-      } catch {}
+      } catch {
+        // Ignore malformed embedded JSON and continue scanning later fragments.
+      }
     }
     return null;
   }

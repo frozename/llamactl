@@ -86,7 +86,7 @@ function buildPromptWithStableWords(seed: number, wordCount: number): string {
   for (let i = 0; i < safeWordCount; i += 1) {
     tokens.push(stableToken(seed, i));
   }
-  return `KV-WARM-BENCH-SEED=${seed}\n${tokens.join(" ")}`;
+  return `KV-WARM-BENCH-SEED=${String(seed)}\n${tokens.join(" ")}`;
 }
 
 export function buildDeterministicPrompt(opts: { approxTokens: number; seed?: number }): string {
@@ -146,7 +146,7 @@ export async function createTokenizeClient(args: {
     });
     if (!response.ok) {
       throw new Error(
-        `kv-warm-bench: HTTP ${response.status} from ${endpoint}: ${await response.text()}`,
+        `kv-warm-bench: HTTP ${String(response.status)} from ${endpoint}: ${await response.text()}`,
       );
     }
     const payload = (await response.json()) as { n_tokens?: unknown };
@@ -189,7 +189,7 @@ export async function buildFrontierPrompt(args: {
 }
 
 function normalizeArgs(args: KvWarmBenchArgs): NormalizedKvWarmBenchArgs {
-  if (!args.model?.trim()) {
+  if (args.model.trim() === "") {
     throw new Error("kv-warm-bench: model is required");
   }
   const warmRuns = args.warmRuns ?? 3;
@@ -241,7 +241,7 @@ export function formatKvWarmBenchCsvRow(row: KvWarmBenchRow): string {
 }
 
 function formatKvWarmBenchTableRow(row: KvWarmBenchRow): string {
-  return `| ${row.promptSize} | ${formatFixed(row.tColdMs)} | ${formatFixed(row.tColdFirstByteMs)} | ${formatFixed(row.tWarmMinMs)} | ${formatFixed(row.tWarmP50Ms)} | ${formatFixed(row.tWarmP95Ms)} | ${formatFixed(row.ratioColdOverWarm)} | ${row.kvWarmHitTotal} | ${row.kvColdMissTotal} | ${row.kvFalseHitTotal} |`;
+  return `| ${String(row.promptSize)} | ${formatFixed(row.tColdMs)} | ${formatFixed(row.tColdFirstByteMs)} | ${formatFixed(row.tWarmMinMs)} | ${formatFixed(row.tWarmP50Ms)} | ${formatFixed(row.tWarmP95Ms)} | ${formatFixed(row.ratioColdOverWarm)} | ${String(row.kvWarmHitTotal)} | ${String(row.kvColdMissTotal)} | ${String(row.kvFalseHitTotal)} |`;
 }
 
 function renderKvWarmBenchCsv(rows: KvWarmBenchRow[]): string {
@@ -263,7 +263,7 @@ export function renderKvWarmBenchMarkdown(input: KvWarmBenchMarkdownInput): stri
     `- Machine: ${input.machine}`,
     `- OS: ${input.os}`,
     `- Frontiers: ${input.frontiers.join(", ")}`,
-    `- Warm runs: ${input.warmRuns}`,
+    `- Warm runs: ${String(input.warmRuns)}`,
     "",
     "## Per-frontier results",
     "",
@@ -312,7 +312,7 @@ async function measureChatCompletion(args: {
 
   if (!response.ok) {
     throw new Error(
-      `kv-warm-bench: HTTP ${response.status} from ${args.proxyBaseUrl}/v1/chat/completions: ${await response.text()}`,
+      `kv-warm-bench: HTTP ${String(response.status)} from ${args.proxyBaseUrl}/v1/chat/completions: ${await response.text()}`,
     );
   }
 
@@ -355,8 +355,8 @@ export function readKvCountersFromRegistry(dataRoot: string): KvWarmBenchCounter
       )
       .get() as { n: number } | null;
     return {
-      kv_warm_hit_total: Number(warm?.n ?? 0),
-      kv_cold_miss_total: Number(cold?.n ?? 0),
+      kv_warm_hit_total: warm?.n ?? 0,
+      kv_cold_miss_total: cold?.n ?? 0,
       // false-hit total is maintained in-process today; registry-only mode cannot read it.
       kv_false_hit_total: 0,
     };
